@@ -40,4 +40,25 @@ describe("useSelection", () => {
     act(() => result.current.clearSelection());
     expect(result.current.selectedIds).toEqual([]);
   });
+
+  it("列表过滤后自动剔除失效选中项", () => {
+    const { result, rerender } = renderHook(
+      ({ nextItems }: { nextItems: typeof items }) => useSelection(nextItems, "id"),
+      { initialProps: { nextItems: items } }
+    );
+
+    act(() => result.current.toggleSelect(1));
+    act(() => result.current.toggleSelect(3));
+    expect(result.current.selectedIds).toEqual([1, 3]);
+
+    // 模拟搜索过滤：只剩 id=1 可见
+    rerender({ nextItems: [items[0]] });
+    expect(result.current.selectedIds).toEqual([1]);
+    expect(result.current.hasSelection).toBe(true);
+    expect(result.current.isAllSelected).toBe(true);
+
+    // 恢复完整列表后，被剔除的选择不会“复活”
+    rerender({ nextItems: items });
+    expect(result.current.selectedIds).toEqual([1]);
+  });
 });
