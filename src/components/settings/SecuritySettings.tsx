@@ -6,29 +6,54 @@ import { Key, Eye, EyeOff, Trash2, ShieldCheck, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-interface ApiKey { id: number; name: string; masked: string; }
+interface ApiKey { id: number; name: string; masked: string; url: string; }
+
+/** 常用服务商 → 默认 Base URL：填名称自动带出，可改为代理/私有端点 */
+const PROVIDER_URLS: { match: RegExp; url: string }[] = [
+  { match: /openai/i,     url: "https://api.openai.com/v1" },
+  { match: /anthropic/i,  url: "https://api.anthropic.com/v1" },
+  { match: /github/i,     url: "https://api.github.com" },
+  { match: /gemini|google/i, url: "https://generativelanguage.googleapis.com/v1beta" },
+  { match: /deepseek/i,   url: "https://api.deepseek.com/v1" },
+  { match: /ollama|本地/i, url: "http://localhost:11434/v1" },
+];
 
 const SEED_KEYS: ApiKey[] = [
-  { id: 1, name: "OpenAI（模型 + Embedding）", masked: "sk-demo-••••••••4821" },
-  { id: 2, name: "GitHub（代码仓库接入）",     masked: "ghp_••••••••••9f2c" },
+  { id: 1, name: "OpenAI（模型 + Embedding）", masked: "sk-demo-••••••••4821", url: "https://api.openai.com/v1" },
+  { id: 2, name: "GitHub（代码仓库接入）",     masked: "ghp_••••••••••9f2c",     url: "https://api.github.com" },
 ];
 
 export function SecuritySettings() {
   const [keys, setKeys] = useState<ApiKey[]>(SEED_KEYS);
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const [newName, setNewName] = useState("");
+  const [newUrl, setNewUrl] = useState("");
   const [newValue, setNewValue] = useState("");
 
+  /** 名称匹配已知服务商时自动填端点（不覆盖用户手输的 URL） */
+  const handleNameChange = (v: string) => {
+    setNewName(v);
+    const hit = PROVIDER_URLS.find((p) => p.match.test(v));
+    if (hit && (!newUrl.trim() || PROVIDER_URLS.some((p) => p.url === newUrl.trim()))) {
+      setNewUrl(hit.url);
+    }
+  };
+
   const addKey = () => {
-    if (!newName.trim() || !newValue.trim()) {
-      toast.error("请填写名称和密钥");
+    if (!newName.trim() || !newUrl.trim() || !newValue.trim()) {
+      toast.error("请填写名称、端点 URL 和密钥");
+      return;
+    }
+    if (!/^https?:\/\//.test(newUrl.trim())) {
+      toast.error("端点 URL 需以 http(s):// 开头");
       return;
     }
     const masked = newValue.slice(0, 4) + "••••••••" + newValue.slice(-4);
-    setKeys((prev) => [...prev, { id: Date.now(), name: newName.trim(), masked }]);
+    setKeys((prev) => [...prev, { id: Date.now(), name: newName.trim(), masked, url: newUrl.trim() }]);
     setNewName("");
+    setNewUrl("");
     setNewValue("");
-    toast.success("API 密钥已添加（仅保存在本地）");
+    toast.success("接入配置已保存：请求将发送到你填写的端点");
   };
 
   const removeKey = (id: number) => {
@@ -49,6 +74,7 @@ export function SecuritySettings() {
               <div key={k.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-medium text-foreground truncate">{k.name}</div>
+                  <div className="text-[11px] font-mono text-muted-foreground truncate">{k.url}</div>
                   <div className="text-[11px] font-mono text-muted-foreground">{k.masked}</div>
                 </div>
                 <Button variant="ghost" size="icon" className="w-7 h-7 text-muted-foreground" onClick={() => setRevealed((p) => ({ ...p, [k.id]: !p[k.id] }))} title="显示/隐藏">
@@ -61,12 +87,20 @@ export function SecuritySettings() {
             ))}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Input placeholder="密钥名称（如 Anthropic）" className="h-9 text-sm flex-1" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            <Input placeholder="粘贴密钥（本地脱敏存储）" className="h-9 text-sm font-mono flex-1" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
-            <Button size="sm" className="h-9 px-3 text-xs" onClick={addKey}>
-              <Plus className="w-3.5 h-3.5 mr-1" /> 添加
-            </Button>
+          <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <Input placeholder="服务商名称（如 Anthropic，自动带出端点）" className="h-9 text-sm" value={newName} onChange={(e) => handleNameChange(e.target.value)} />
+              <Input placeholder="Base URL（https://api.anthropic.com/v1）" className="h-9 text-sm font-mono" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} />
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input placeholder="粘贴密钥（本地脱敏存储）" className="h-9 text-sm font-mono flex-1" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+              <Button size="sm" className="h-9 px-3 text-xs shrink-0" onClick={addKey}>
+                <Plus className="w-3.5 h-3.5 mr-1" /> 添加
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              接入配置 = 名称 + 端点 URL + 密钥。使用代理或私有部署时，把 URL 改成你的端点即可。
+            </p>
           </div>
         </div>
       </div>
