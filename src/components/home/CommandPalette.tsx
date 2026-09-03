@@ -14,7 +14,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   if (!isOpen) return null;
 
   const suggestions = [
-    { icon: FileText, iconClass: "text-blue-500 dark:text-blue-400", label: "总结 2024_Q2_产品规划.pdf", href: "/chat" },
+    { icon: FileText, iconClass: "text-blue-500 dark:text-blue-400", label: "总结 NestJS部署手册.pdf", href: "/chat" },
     { icon: Database, iconClass: "text-purple-500 dark:text-purple-400", label: "查询订单数据", href: "/data-sources" },
   ];
 

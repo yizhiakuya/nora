@@ -72,7 +72,7 @@ export function RetrievalTest() {
             <SearchCode className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
             <input
               className="w-full pl-9 pr-3 py-2 h-9 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-xs focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500"
-              placeholder="输入问题，如：哪条产品线下滑最严重？"
+              placeholder="输入问题，如：Redis 连接失败怎么排查？"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}

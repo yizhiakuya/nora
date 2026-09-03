@@ -24,27 +24,27 @@ export type ChatResponder = (
 ) => Promise<void>;
 
 const CHAT_RESPONSE_TEXT =
-  "根据您提供的数据，以下是分析结果的总结：\n\n- **总销售额** 同比增长 15%\n- **核心产品线** 占据了 60% 的营收\n- 建议下个季度继续加大对核心产品线的资源投入。";
+  "根据 orders 表的查询结果，订单状态分布如下：\n\n- **paid** 5,214 单（62%）\n- **shipped** 2,380 单（28%）\n- **pending** 826 单（10%）\n\npending 占比 10% 略高于上周（6%），建议检查支付回调是否有延迟。";
 
 const AGENT_RESPONSE_TEXT =
-  "根据查询结果，昨天北京地区的平均客单价为 **128.5 元**，相比上周同期上涨了 4.2%。\n\n建议持续关注高价值订单的转化趋势。";
+  "根据巡检记录，api-gateway 平均响应时间 **128ms**，相比上周上涨了 4.2%，仍在健康阈值内。\n\n建议持续关注 Redis 连接池使用率，当前峰值已达 80%。";
 
 /** Chat 页初始演示对话 */
 export const SEED_CONVERSATION: ChatMessage[] = [
   {
     id: "msg-0",
     role: "user",
-    content: "请帮我分析一下我们公司 2024 年第二季度的销售数据趋势，按产品线和地区维度分析，并给出主要结论和建议。",
+    content: "帮我查一下 orders 表最近的订单状态分布，看看有没有异常。",
     timestamp: "14:32",
   },
   {
     id: "msg-1",
     role: "assistant",
-    content: "一、产品线销售趋势\n\n- 整体趋势：2024 年 Q2 总销售额为 3.2 亿元，环比增长 18.7%，同比增长 23.4%。",
+    content: "一、订单状态分布\n\n- 已支付（paid）5,214 单，占比 62%，环比持平。\n- 已发货（shipped）2,380 单，占比 28%。\n- 待支付（pending）826 单，占比 10%，高于上周的 6%。",
     timestamp: "14:32",
     steps: [
-      { id: "s1", type: "think", title: "思考过程", detail: "分析需求与维度", status: "completed" },
-      { id: "s2", type: "tool", title: "执行数据查询", detail: "返回 12,532 条销售记录", duration: "2.34s", status: "completed" },
+      { id: "s1", type: "think", title: "思考过程", detail: "解析查询意图，定位 orders 表", status: "completed" },
+      { id: "s2", type: "tool", title: "执行 SQL 查询", detail: "SELECT status, COUNT(*) FROM orders… 返回 3 行", duration: "2.34s", status: "completed" },
     ],
   },
 ];
@@ -65,15 +65,15 @@ const THINK_STEP: ChatStep = {
   id: "1",
   type: "think",
   title: "思考过程",
-  detail: "分析用户意图与查询参数",
+  detail: "解析查询意图，定位 orders 表",
   status: "completed",
 };
 
 const TOOL_STEP = (status: ChatStep["status"]): ChatStep => ({
   id: "2",
   type: "tool",
-  title: "执行数据查询",
-  detail: "调用 PostgreSQL 查询器",
+  title: "执行 SQL 查询",
+  detail: "myapp_dev › orders",
   duration: "1.2s",
   status,
 });

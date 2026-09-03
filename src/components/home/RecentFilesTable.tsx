@@ -7,8 +7,8 @@ import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { FileItem } from "@/types";
 
 const RECENT_FILES = [
-  { name: "2024_Q2_产品规划.pdf", icon: FileText, iconClass: "text-red-500 dark:text-red-400", indexed: true, time: "10 分钟前" },
-  { name: "竞品分析数据.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600 dark:text-green-400", indexed: true, time: "2 小时前" },
+  { name: "NestJS部署手册.pdf", icon: FileText, iconClass: "text-red-500 dark:text-red-400", indexed: true, time: "10 分钟前" },
+  { name: "服务器巡检记录.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600 dark:text-green-400", indexed: true, time: "2 小时前" },
 ];
 
 export function RecentFilesTable() {

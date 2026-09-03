@@ -14,8 +14,8 @@ const ACTIONS = [
     href: "/chat",
   },
   {
-    label: "数据可视化分析",
-    desc: "基于 Excel 生成趋势图表",
+    label: "巡检数据分析",
+    desc: "基于巡检记录生成趋势图表",
     icon: FileSpreadsheet,
     iconBg: "bg-purple-600 dark:bg-purple-500",
     gradient: "from-purple-50 dark:from-purple-950/30 to-fuchsia-50 dark:to-fuchsia-950/30",

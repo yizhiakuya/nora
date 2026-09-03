@@ -19,7 +19,7 @@ export default function ChatPage() {
         breadcrumbs={[
           { label: "工作台", isCurrent: false }, 
           { label: "对话", isCurrent: false },
-          { label: "分析 Q2 销售数据趋势", isCurrent: true }
+          { label: "查询订单状态分布", isCurrent: true }
         ]}
         actions={
           <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400 text-sm">

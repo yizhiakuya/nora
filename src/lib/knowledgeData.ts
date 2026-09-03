@@ -13,11 +13,11 @@ export const SOURCE_META: Record<KnowledgeSource, { label: string; icon: LucideI
 };
 
 const BASE_DOCS: KnowledgeDoc[] = [
-  { id: 1,  name: "2024_Q2_产品规划.pdf",       source: "file",        chunks: 42,  status: "indexed",   size: "2.4 MB",  updatedAt: "2024-06-02 14:30", quality: 92 },
-  { id: 2,  name: "竞品分析数据.xlsx",          source: "file",        chunks: 18,  status: "indexed",   size: "1.2 MB",  updatedAt: "2024-06-01 10:15", quality: 87 },
-  { id: 3,  name: "年度财报草稿.docx",          source: "file",        chunks: 36,  status: "indexed",   size: "845 KB",  updatedAt: "2024-05-28 09:00", quality: 90 },
-  { id: 4,  name: "会议纪要_0520.txt",          source: "file",        chunks: 8,   status: "indexed",   size: "12 KB",   updatedAt: "2024-05-20 18:30", quality: 78 },
-  { id: 5,  name: "用户访谈汇总.md",            source: "file",        chunks: 24,  status: "processing", size: "340 KB", updatedAt: "2024-06-03 09:12", quality: 0 },
+  { id: 1,  name: "NestJS部署手册.pdf",          source: "file",        chunks: 42,  status: "indexed",   size: "2.4 MB",  updatedAt: "2024-06-02 14:30", quality: 92 },
+  { id: 2,  name: "服务器巡检记录.xlsx",         source: "file",        chunks: 18,  status: "indexed",   size: "1.2 MB",  updatedAt: "2024-06-01 10:15", quality: 87 },
+  { id: 3,  name: "API接口设计规范.docx",        source: "file",        chunks: 36,  status: "indexed",   size: "845 KB",  updatedAt: "2024-05-28 09:00", quality: 90 },
+  { id: 4,  name: "周会纪要_0520.txt",           source: "file",        chunks: 8,   status: "indexed",   size: "12 KB",   updatedAt: "2024-05-20 18:30", quality: 78 },
+  { id: 5,  name: "数据库设计评审.md",           source: "file",        chunks: 24,  status: "processing", size: "340 KB", updatedAt: "2024-06-03 09:12", quality: 0 },
   { id: 6,  name: "users 表结构",              source: "database",    chunks: 6,   status: "indexed",   size: "4 KB",    updatedAt: "2024-06-02 08:00", quality: 95 },
   { id: 7,  name: "orders 表结构",             source: "database",    chunks: 8,   status: "indexed",   size: "6 KB",    updatedAt: "2024-06-02 08:00", quality: 93 },
   { id: 8,  name: "products 表结构",            source: "database",    chunks: 5,   status: "indexed",   size: "3 KB",    updatedAt: "2024-06-02 08:00", quality: 91 },
@@ -28,18 +28,18 @@ const BASE_DOCS: KnowledgeDoc[] = [
 ];
 
 const EXTRA_DOCS: KnowledgeDoc[] = [
-  { id: 13, name: "Q1复盘报告.pdf",             source: "file",        chunks: 28,  status: "indexed",   size: "1.8 MB",  updatedAt: "2024-04-15 10:00", quality: 89 },
+  { id: 13, name: "Docker入门笔记.pdf",          source: "file",        chunks: 28,  status: "indexed",   size: "1.8 MB",  updatedAt: "2024-04-15 10:00", quality: 89 },
   { id: 14, name: "payments 表结构",            source: "database",    chunks: 7,   status: "indexed",   size: "5 KB",    updatedAt: "2024-06-02 08:00", quality: 94 },
   { id: 15, name: "api-gateway OpenAPI.yml",    source: "repo",        chunks: 46,  status: "indexed",   size: "92 KB",   updatedAt: "2024-06-02 14:00", quality: 91 },
   { id: 16, name: "worker-service .env",        source: "environment", chunks: 2,   status: "indexed",   size: "1 KB",    updatedAt: "2024-06-03 07:45", quality: 97 },
-  { id: 17, name: "产品需求文档_v3.docx",        source: "file",        chunks: 52,  status: "indexed",   size: "3.1 MB",  updatedAt: "2024-05-25 14:20", quality: 93 },
+  { id: 17, name: "系统架构设计_v3.docx",        source: "file",        chunks: 52,  status: "indexed",   size: "3.1 MB",  updatedAt: "2024-05-25 14:20", quality: 93 },
   { id: 18, name: "session_20240602_14.md",     source: "chat",        chunks: 12,  status: "indexed",   size: "8 KB",    updatedAt: "2024-06-02 15:00", quality: 82 },
   { id: 19, name: "session_20240601_10.md",     source: "chat",        chunks: 9,   status: "indexed",   size: "6 KB",    updatedAt: "2024-06-01 11:00", quality: 79 },
   { id: 20, name: "监控告警规则.yml",            source: "environment", chunks: 5,   status: "indexed",   size: "3 KB",    updatedAt: "2024-06-03 07:45", quality: 95 },
-  { id: 21, name: "技术选型对比.xlsx",           source: "file",        chunks: 15,  status: "failed",    size: "620 KB",  updatedAt: "2024-05-22 09:00", quality: 0 },
+  { id: 21, name: "技术调研对比.xlsx",           source: "file",        chunks: 15,  status: "failed",    size: "620 KB",  updatedAt: "2024-05-22 09:00", quality: 0 },
   { id: 22, name: "Redis 配置说明",              source: "environment", chunks: 3,   status: "indexed",   size: "2 KB",    updatedAt: "2024-06-03 07:45", quality: 96 },
   { id: 23, name: "session_20240530_16.md",     source: "chat",        chunks: 7,   status: "indexed",   size: "5 KB",    updatedAt: "2024-05-30 17:00", quality: 81 },
-  { id: 24, name: "营销活动方案_618.docx",       source: "file",        chunks: 20,  status: "indexed",   size: "1.1 MB",  updatedAt: "2024-05-28 16:00", quality: 86 },
+  { id: 24, name: "学习笔记_TypeScript.md",      source: "file",        chunks: 20,  status: "indexed",   size: "1.1 MB",  updatedAt: "2024-05-28 16:00", quality: 86 },
 ];
 
 export const ALL_DOCS: KnowledgeDoc[] = [...BASE_DOCS, ...EXTRA_DOCS];
@@ -67,14 +67,14 @@ export const MOCK_RULES: PipelineRule[] = [
 ];
 
 export const MOCK_RETRIEVAL: RetrievalResult[] = [
-  { docName: "2024_Q2_产品规划.pdf", source: "file",     chunkIndex: 12, score: 0.94, snippet: "…核心产品线营收占比 60%，较 Q1 下降 3.2%，是本期下滑最严重的一条产品线…" },
-  { docName: "竞品分析数据.xlsx",    source: "file",     chunkIndex: 3,  score: 0.87, snippet: "…移动端用户留存率环比下降 4.6%，与新版引导流程变更相关…" },
-  { docName: "会议纪要_0520.txt",    source: "file",     chunkIndex: 5,  score: 0.82, snippet: "…[14:15] 团队复盘：漏斗第三步流失率环比下降 4.6%…" },
-  { docName: "api-gateway README.md", source: "repo",    chunkIndex: 18, score: 0.74, snippet: "…产品线数据通过 /api/v2/products 端点暴露，支持按季度维度筛选…" },
+  { docName: "NestJS部署手册.pdf",      source: "file",        chunkIndex: 12, score: 0.94, snippet: "…ECONNREFUSED 表示目标端口无进程监听，先到环境控制台确认 Redis 服务状态…" },
+  { docName: "docker-compose.yml",      source: "environment", chunkIndex: 3,  score: 0.87, snippet: "…redis: image redis:7-alpine, ports 6379:6379, restart: unless-stopped…" },
+  { docName: "周会纪要_0520.txt",        source: "file",        chunkIndex: 5,  score: 0.82, snippet: "…[14:15] 协作：Redis 偶发 ECONNREFUSED，怀疑连接池上限过低…" },
+  { docName: "api-gateway README.md",   source: "repo",        chunkIndex: 18, score: 0.74, snippet: "…Redis 连接池默认 maxActive=50，可通过 REDIS_POOL_MAX 环境变量调整…" },
 ];
 
 export const MOCK_GRAPH: GraphProject[] = [
-  { id: 1, name: "电商平台",   files: ["Q2产品规划.pdf", "竞品分析.xlsx", "用户访谈.md"], tables: ["users", "orders", "payments"], services: ["api-gateway", "worker-service"] },
-  { id: 2, name: "内部工具",   files: ["技术选型对比.xlsx", "需求文档_v3.docx"],          tables: ["products"],                    services: ["cron-scheduler"] },
-  { id: 3, name: "数据平台",   files: ["Q1复盘报告.pdf"],                                tables: ["analytics_events"],            services: ["report-generator"] },
+  { id: 1, name: "电商后端",   files: ["NestJS部署手册.pdf", "服务器巡检记录.xlsx", "周会纪要_0520.txt"], tables: ["users", "orders", "payments"], services: ["api-gateway", "worker-service"] },
+  { id: 2, name: "内部工具",   files: ["技术调研对比.xlsx", "API接口设计规范.docx"],                    tables: ["products"],                    services: ["cron-scheduler"] },
+  { id: 3, name: "数据平台",   files: ["数据库设计评审.md"],                                          tables: ["analytics_events"],            services: ["report-generator"] },
 ];

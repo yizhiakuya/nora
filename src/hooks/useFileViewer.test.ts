@@ -6,7 +6,7 @@ import { FileText } from "lucide-react";
 
 const pdfFile: FileItem = {
   id: 1,
-  name: "2024_Q2_产品规划.pdf",
+  name: "NestJS部署手册.pdf",
   type: "PDF 文档",
   size: "2.4 MB",
   date: "2024-06-02 14:30",
@@ -46,7 +46,7 @@ describe("useFileViewer", () => {
   it("快速连续打开不同文件时仅保留最新响应", async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useFileViewer());
-    const wordFile: FileItem = { ...pdfFile, id: 2, name: "年度总结.docx", type: "Word 文档" };
+    const wordFile: FileItem = { ...pdfFile, id: 2, name: "API接口设计规范.docx", type: "Word 文档" };
 
     act(() => {
       void result.current.open(pdfFile);
