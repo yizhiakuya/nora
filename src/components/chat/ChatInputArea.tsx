@@ -1,5 +1,7 @@
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2 } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useSkills } from "@/hooks/useSkills";
+import { toast } from "sonner";
 
 interface ChatInputAreaProps {
   input: string;
@@ -9,9 +11,36 @@ interface ChatInputAreaProps {
 }
 
 export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputAreaProps) {
+  const skills = useSkills((s) => s.skills);
+  const toggleSkill = useSkills((s) => s.toggleSkill);
+
+  const handleToggle = (id: number, name: string, enabled: boolean) => {
+    toggleSkill(id);
+    toast.success(`能力「${name}」已${enabled ? "停用" : "启用"}，AI ${enabled ? "不再" : "现在"}可以使用它`);
+  };
+
   return (
     <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
       <div className="max-w-3xl mx-auto pointer-events-auto">
+          {/* AI 能力状态条：启用=高亮，停用=置灰；点击切换 */}
+          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500 mr-1">
+              <Zap className="w-3 h-3" /> AI 能力
+            </span>
+            {skills.map((skill) => (
+              <button
+                key={skill.id}
+                type="button"
+                onClick={() => handleToggle(skill.id, skill.name, skill.enabled)}
+                title={skill.desc}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border cursor-pointer transition-colors ${skill.enabled ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800" : "bg-gray-100 dark:bg-gray-900 text-gray-400 dark:text-gray-600 border-gray-200 dark:border-gray-800 line-through opacity-60"}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${skill.enabled ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-700"}`} />
+                {skill.name}
+              </button>
+            ))}
+          </div>
+
           <div className="border border-gray-200 dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-900 shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all flex flex-col overflow-hidden relative group">
               <textarea 
                 rows={2} 

@@ -16,6 +16,17 @@ export interface ChatMessage {
   timestamp: string;
   isTyping?: boolean;
   steps?: ChatStep[];
+  /** RAG 引用来源（回答基于哪些知识库片段） */
+  sources?: Citation[];
+}
+
+export interface Citation {
+  docName: string;
+  /** 摄入来源：file/database/repo/environment/chat */
+  source: "file" | "database" | "repo" | "environment" | "chat";
+  chunkIndex: number;
+  score: number;
+  snippet: string;
 }
 
 export type ChatResponder = (
@@ -45,6 +56,10 @@ export const SEED_CONVERSATION: ChatMessage[] = [
     steps: [
       { id: "s1", type: "think", title: "思考过程", detail: "解析查询意图，定位 orders 表", status: "completed" },
       { id: "s2", type: "tool", title: "执行 SQL 查询", detail: "SELECT status, COUNT(*) FROM orders… 返回 3 行", duration: "2.34s", status: "completed" },
+    ],
+    sources: [
+      { docName: "orders 表结构", source: "database", chunkIndex: 2, score: 0.93, snippet: "…status VARCHAR NOT NULL — 取值 pending/paid/shipped，默认 pending…" },
+      { docName: "周会纪要_0520.txt", source: "file", chunkIndex: 5, score: 0.81, snippet: "…[14:15] 协作：Redis 偶发 ECONNREFUSED，怀疑连接池上限过低…" },
     ],
   },
 ];
@@ -92,7 +107,13 @@ export const MockChatAPI: { sendMessage: ChatResponder } = {
 
     await delay(400);
     await streamText(CHAT_RESPONSE_TEXT, onUpdate);
-    onUpdate({ isTyping: false });
+    onUpdate({
+      sources: [
+        { docName: "orders 表结构", source: "database", chunkIndex: 2, score: 0.93, snippet: "…status VARCHAR NOT NULL — 取值 pending/paid/shipped…" },
+        { docName: "服务器巡检记录.xlsx", source: "file", chunkIndex: 4, score: 0.85, snippet: "…06-02 redis 0% / 0 MB 离线；06-03 恢复健康…" },
+      ],
+      isTyping: false,
+    });
   },
 };
 

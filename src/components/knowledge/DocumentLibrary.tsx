@@ -2,7 +2,8 @@
 
 import { useMemo } from "react";
 import { Search } from "lucide-react";
-import { ALL_DOCS, SOURCE_META } from "@/lib/knowledgeData";
+import { SOURCE_META } from "@/lib/knowledgeData";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeDoc, KnowledgeSource } from "@/types";
 
 const SOURCE_ORDER: KnowledgeSource[] = ["file", "database", "repo", "environment", "chat"];
@@ -37,14 +38,15 @@ function QualityBar({ score }: { score: number }) {
 }
 
 export function DocumentLibrary() {
+  const allDocs = useKnowledgeDocs((s) => s.docs);
   const grouped = useMemo(() => {
     const map = new Map<KnowledgeSource, KnowledgeDoc[]>();
     for (const src of SOURCE_ORDER) {
-      const docs = ALL_DOCS.filter((d) => d.source === src);
+      const docs = allDocs.filter((d) => d.source === src);
       if (docs.length) map.set(src, docs);
     }
     return map;
-  }, []);
+  }, [allDocs]);
 
   return (
     <div className="space-y-6">
@@ -95,7 +97,7 @@ export function DocumentLibrary() {
         );
       })}
 
-      {ALL_DOCS.length === 0 && (
+      {allDocs.length === 0 && (
         <div className="py-16 flex flex-col items-center text-gray-400 dark:text-gray-500">
           <Search className="w-10 h-10 mb-3 opacity-20" />
           <div className="text-sm">没有已摄入的文档</div>

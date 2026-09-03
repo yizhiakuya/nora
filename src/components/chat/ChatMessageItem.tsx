@@ -1,6 +1,75 @@
-import { Sparkles, Brain, Wrench, Database, MessageSquare, ChevronDown, Loader2 } from "lucide-react";
+import { Sparkles, Brain, Wrench, Database, MessageSquare, ChevronDown, Loader2, BookOpen, FileCode, Server, FileText, Check } from "lucide-react";
+import { useState } from "react";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { Markdown } from "@/components/shared/Markdown";
+import { toast } from "sonner";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+
+const SOURCE_ICON: Record<string, React.ElementType> = {
+  file: FileText,
+  database: Database,
+  repo: FileCode,
+  environment: Server,
+  chat: MessageSquare,
+};
+
+function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["sources"]> }) {
+  return (
+    <div className="relative animate-in fade-in slide-in-from-bottom-2">
+      <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-purple-50 dark:bg-purple-950/40 border border-purple-100 dark:border-purple-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)] dark:shadow-[0_0_0_2px_rgba(17,24,39,1)]">
+        <BookOpen className="w-[10px] h-[10px] text-purple-500 dark:text-purple-400" />
+      </div>
+      <div className="pt-0.5">
+        <div className="text-[10px] text-gray-400 dark:text-gray-500 mb-2">引用来源 · {sources.length} 个知识库片段</div>
+        <div className="space-y-2">
+          {sources.map((s, i) => {
+            const Icon = SOURCE_ICON[s.source] ?? FileText;
+            return (
+              <div key={i} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3 relative overflow-hidden">
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-purple-500" style={{ opacity: s.score }} />
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Icon className="w-3 h-3 text-purple-500 dark:text-purple-400 shrink-0" />
+                    <span className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate">{s.docName}</span>
+                    <span className="text-[9px] text-gray-400 dark:text-gray-500 shrink-0">chunk #{s.chunkIndex}</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded-full tabular-nums shrink-0">
+                    {(s.score * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{s.snippet}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
+  const [saved, setSaved] = useState(false);
+  const addChatDoc = useKnowledgeDocs((s) => s.addChatDoc);
+
+  const handleSave = () => {
+    if (saved) return;
+    const title = `对话结论 · ${msg.content.slice(0, 24).replace(/[#*\n]/g, "").trim()}…`;
+    addChatDoc(title, msg.content);
+    setSaved(true);
+    toast.success("已保存到知识库（对话产出）");
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleSave}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${saved ? "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800" : "bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-800 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700"}`}
+    >
+      {saved ? <Check className="w-3 h-3" /> : <BookOpen className="w-3 h-3" />}
+      {saved ? "已保存到知识库" : "保存到知识库"}
+    </button>
+  );
+}
 
 export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
   if (msg.role === 'user') {
@@ -65,6 +134,16 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
                             </div>
                             {msg.isTyping && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
                         </div>
+                    </div>
+                  )}
+
+                  {!msg.isTyping && msg.sources && msg.sources.length > 0 && (
+                    <SourceCitations sources={msg.sources} />
+                  )}
+
+                  {!msg.isTyping && msg.content && (
+                    <div className="relative pt-1">
+                      <SaveToKnowledgeButton msg={msg} />
                     </div>
                   )}
 
