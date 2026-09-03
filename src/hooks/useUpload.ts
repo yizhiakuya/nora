@@ -1,4 +1,4 @@
-import { useState, useCallback, DragEvent } from 'react';
+import { useState, useCallback, useRef, DragEvent } from 'react';
 import { toast } from 'sonner';
 import { useTimedSequence } from './useTimedSequence';
 
@@ -9,11 +9,14 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [isDragging, setIsDragging] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
+  /** 拖拽上传时的真实文件名（点击上传无文件则保持 null） */
+  const fileNameRef = useRef<string | null>(null);
 
   const open = useCallback(() => {
     setIsOpen(true);
     setStatus('idle');
     setIsDragging(false);
+    fileNameRef.current = null;
   }, []);
 
   const close = useCallback(() => {
@@ -22,7 +25,7 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setIsDragging(false);
   }, [cancelAll]);
 
-  const startUpload = useCallback((onSuccess?: () => void) => {
+  const startUpload = useCallback((onSuccess?: (fileName?: string) => void) => {
     if (status !== 'idle') return;
     setStatus('uploading');
     
@@ -36,7 +39,7 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
           schedule(() => {
             close();
             setStatus('idle');
-            if (onSuccess) onSuccess();
+            if (onSuccess) onSuccess(fileNameRef.current ?? undefined);
           }, successDurationMs);
           return '文件上传成功！';
         },
@@ -58,12 +61,13 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, onSuccess?: () => void) => {
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, onSuccess?: (fileName?: string) => void) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      fileNameRef.current = e.dataTransfer.files[0].name;
       startUpload(onSuccess);
     }
   }, [startUpload]);

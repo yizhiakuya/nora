@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export interface ModelProvider {
   id: number;
@@ -40,36 +41,41 @@ interface ModelProvidersState {
  * 模型服务商接入唯一数据源：模型管理页与对话页模型选择器共享。
  * 完整接入 = 名称 + 端点 URL + 密钥。
  */
-export const useModelProviders = create<ModelProvidersState>((set, get) => ({
-  providers: SEED,
-  defaultModel: "GPT-4o",
-  addProvider: ({ name, url, key, models }) => {
-    const provider: ModelProvider = {
-      id: Date.now(),
-      name: name.trim(),
-      url: url.trim(),
-      masked: key.slice(0, 4) + "••••••••" + key.slice(-4),
-      enabled: true,
-      status: "untested",
-      models: models?.length ? models : ["默认模型"],
-    };
-    set((state) => ({ providers: [...state.providers, provider] }));
-  },
-  removeProvider: (id) => {
-    const { providers, defaultModel } = get();
-    const target = providers.find((p) => p.id === id);
-    const next = providers.filter((p) => p.id !== id);
-    const patch: Partial<ModelProvidersState> = { providers: next };
-    if (target?.models.includes(defaultModel)) {
-      patch.defaultModel = next.find((p) => p.enabled)?.models[0] ?? "未配置";
-    }
-    set(patch as ModelProvidersState);
-  },
-  toggleEnabled: (id) =>
-    set((state) => ({
-      providers: state.providers.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
-    })),
-  setDefaultModel: (m) => set({ defaultModel: m }),
-  markStatus: (id, status) =>
-    set((state) => ({ providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)) })),
-}));
+export const useModelProviders = create<ModelProvidersState>()(
+  persist(
+    (set, get) => ({
+      providers: SEED,
+      defaultModel: "GPT-4o",
+      addProvider: ({ name, url, key, models }) => {
+        const provider: ModelProvider = {
+          id: Date.now(),
+          name: name.trim(),
+          url: url.trim(),
+          masked: key.slice(0, 4) + "••••••••" + key.slice(-4),
+          enabled: true,
+          status: "untested",
+          models: models?.length ? models : ["默认模型"],
+        };
+        set((state) => ({ providers: [...state.providers, provider] }));
+      },
+      removeProvider: (id) => {
+        const { providers, defaultModel } = get();
+        const target = providers.find((p) => p.id === id);
+        const next = providers.filter((p) => p.id !== id);
+        const patch: Partial<ModelProvidersState> = { providers: next };
+        if (target?.models.includes(defaultModel)) {
+          patch.defaultModel = next.find((p) => p.enabled)?.models[0] ?? "未配置";
+        }
+        set(patch as ModelProvidersState);
+      },
+      toggleEnabled: (id) =>
+        set((state) => ({
+          providers: state.providers.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
+        })),
+      setDefaultModel: (m) => set({ defaultModel: m }),
+      markStatus: (id, status) =>
+        set((state) => ({ providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)) })),
+    }),
+    { name: "model-providers" }
+  )
+);

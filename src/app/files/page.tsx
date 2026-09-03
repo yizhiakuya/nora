@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { Search, FolderPlus, CloudUpload, FileText } from "lucide-react";
+import { Search, FolderPlus, CloudUpload, FileText, FileSpreadsheet, FileImage } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FolderGrid } from "@/components/files/FolderGrid";
@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { FileItem } from "@/types";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useRecentFiles } from "@/hooks/useRecentFiles";
 
 export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -25,6 +26,7 @@ export default function FilesPage() {
   const viewer = useFileViewer();
   const indexFile = useKnowledgeDocs((s) => s.indexFile);
   const addNotification = useNotifications((s) => s.addNotification);
+  const addRecent = useRecentFiles((s) => s.addRecent);
 
   const filteredFiles = files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const selection = useSelection(filteredFiles, "id");
@@ -36,19 +38,24 @@ export default function FilesPage() {
     toast.success(`已成功移入回收站 (${count}个文件)`);
   };
 
-  const handleUploadComplete = () => {
-    const stamp = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).replace(":", "");
+  const handleUploadComplete = (fileName?: string) => {
+    const ext = fileName?.split(".").pop()?.toLowerCase() ?? "pdf";
+    const meta = ext === "xlsx" || ext === "csv" ? { type: "Excel 表格", Icon: FileSpreadsheet, color: "text-green-600 dark:text-green-400" }
+      : ["png", "jpg", "jpeg", "gif", "webp"].includes(ext) ? { type: "图像", Icon: FileImage, color: "text-purple-500 dark:text-purple-400" }
+      : { type: "PDF 文档", Icon: FileText, color: "text-red-500 dark:text-red-400" };
     const newFile: FileItem = {
       id: Date.now(),
-      name: `服务器文档_${stamp}.pdf`,
-      type: "PDF 文档",
+      name: fileName ?? `上传文档_${Date.now().toString().slice(-4)}.pdf`,
+      type: meta.type,
       size: "1.5 MB",
       date: new Date().toISOString().slice(0, 16).replace("T", " "),
-      icon: FileText,
-      color: "text-red-500 dark:text-red-400",
+      icon: meta.Icon,
+      color: meta.color,
       indexed: false,
     };
     setFiles([newFile, ...files]);
+    addRecent(newFile.name, meta.type);
+    addNotification("上传完成", `「${newFile.name}」已保存到文件中心，可在列表中查看。`);
   };
 
   const handleIndexFile = (file: FileItem) => {
@@ -97,7 +104,13 @@ export default function FilesPage() {
             <div className="text-xs text-gray-500 dark:text-gray-400">共 {files.length} 个文件</div>
           </div>
 
-          <FileTable files={filteredFiles} selection={selection} onDeleteSelected={handleDeleteSelected} onOpen={viewer.open} onIndex={handleIndexFile} />
+          <FileTable
+            files={filteredFiles}
+            selection={selection}
+            onDeleteSelected={handleDeleteSelected}
+            onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
+            onIndex={handleIndexFile}
+          />
         </div>
       </div>
 

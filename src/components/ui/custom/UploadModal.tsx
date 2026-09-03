@@ -10,7 +10,7 @@ interface UploadModalProps {
   upload: UploadInstance;
   title: string;
   hint?: string;
-  onUploadComplete?: () => void;
+  onUploadComplete?: (fileName?: string) => void;
 }
 
 /**
@@ -21,10 +21,10 @@ export function UploadModal({ upload, title, hint = "单文件最大支持 50MB"
     <Modal isOpen={upload.isOpen} onClose={upload.close} title={title} width="w-[90%] sm:w-[450px]">
       {upload.status === "idle" && (
         <div
-          onClick={() => upload.startUpload(onUploadComplete)}
+          onClick={() => upload.startUpload((fileName) => onUploadComplete?.(fileName))}
           onDragOver={upload.handleDragOver}
           onDragLeave={upload.handleDragLeave}
-          onDrop={(e) => upload.handleDrop(e, onUploadComplete)}
+          onDrop={(e) => upload.handleDrop(e, (fileName) => onUploadComplete?.(fileName))}
           className={`border-2 border-dashed rounded-xl p-8 sm:p-10 flex flex-col items-center justify-center text-center transition-all cursor-pointer group ${
             upload.isDragging
               ? "border-blue-500 bg-blue-100 dark:bg-blue-900/50 scale-[1.02]"

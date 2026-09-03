@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export interface AppNotification {
   id: number;
@@ -26,12 +27,17 @@ interface NotificationsState {
  * 系统通知唯一数据源：自动任务执行、修复任务创建、文件索引入库等
  * 业务动作调用 addNotification，通知中心实时更新。
  */
-export const useNotifications = create<NotificationsState>((set) => ({
-  notifications: SEED,
-  addNotification: (title, detail) =>
-    set((state) => ({
-      notifications: [{ id: Date.now(), title, detail, time: now(), read: false }, ...state.notifications].slice(0, 50),
-    })),
-  markAllRead: () =>
-    set((state) => ({ notifications: state.notifications.map((n) => ({ ...n, read: true })) })),
-}));
+export const useNotifications = create<NotificationsState>()(
+  persist(
+    (set) => ({
+      notifications: SEED,
+      addNotification: (title, detail) =>
+        set((state) => ({
+          notifications: [{ id: Date.now(), title, detail, time: now(), read: false }, ...state.notifications].slice(0, 50),
+        })),
+      markAllRead: () =>
+        set((state) => ({ notifications: state.notifications.map((n) => ({ ...n, read: true })) })),
+    }),
+    { name: "notifications" }
+  )
+);

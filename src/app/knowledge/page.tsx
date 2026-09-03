@@ -4,6 +4,11 @@ import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { BookOpen, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { UploadModal } from "@/components/ui/custom/UploadModal";
+import { useSimulatedUpload } from "@/hooks/useUpload";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { useNotifications } from "@/hooks/useNotifications";
+import { toast } from "sonner";
 import { KnowledgeTabs } from "@/components/knowledge/KnowledgeTabs";
 import { DocumentLibrary } from "@/components/knowledge/DocumentLibrary";
 import { RetrievalTest } from "@/components/knowledge/RetrievalTest";
@@ -13,13 +18,23 @@ import { CleaningRules } from "@/components/knowledge/CleaningRules";
 
 export default function KnowledgePage() {
   const [activeTab, setActiveTab] = useState("文档库");
+  const upload = useSimulatedUpload();
+  const indexFile = useKnowledgeDocs((s) => s.indexFile);
+  const addNotification = useNotifications((s) => s.addNotification);
+
+  const handleImport = (fileName?: string) => {
+    const name = fileName ?? `导入文档_${Date.now().toString().slice(-4)}.pdf`;
+    indexFile(name);
+    addNotification("文档索引入库", `「${name}」已完成清洗与向量化，AI 现在可以检索其内容。`);
+    toast.success(`「${name}」已导入知识库`);
+  };
 
   return (
     <>
       <Header
         breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "知识库", isCurrent: true }]}
         actions={
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600">
+          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => upload.open()}>
             <Plus className="w-3.5 h-3.5 mr-1.5" /> 导入文档
           </Button>
         }
@@ -48,6 +63,13 @@ export default function KnowledgePage() {
           </div>
         </div>
       </div>
+
+      <UploadModal
+        upload={upload}
+        title="导入文档到知识库"
+        hint="支持 PDF / Word / Excel / Markdown，完成后自动清洗与索引"
+        onUploadComplete={handleImport}
+      />
     </>
   );
 }

@@ -1,30 +1,36 @@
 'use client';
 
 import { useRouter } from "next/navigation";
-import { Clock, FileText, FileSpreadsheet, BookOpen } from "lucide-react";
+import { Clock, FileText, FileSpreadsheet, FileImage, BookOpen } from "lucide-react";
 import { useFileViewer } from "@/hooks/useFileViewer";
+import { useRecentFiles } from "@/hooks/useRecentFiles";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { FileItem } from "@/types";
 
-const RECENT_FILES = [
-  { name: "NestJS部署手册.pdf", icon: FileText, iconClass: "text-red-500 dark:text-red-400", indexed: true, time: "10 分钟前" },
-  { name: "服务器巡检记录.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600 dark:text-green-400", indexed: true, time: "2 小时前" },
-];
+function iconFor(name: string) {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (["xlsx", "csv"].includes(ext)) return { Icon: FileSpreadsheet, color: "text-green-600 dark:text-green-400", type: "Excel 表格" };
+  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) return { Icon: FileImage, color: "text-purple-500 dark:text-purple-400", type: "图像" };
+  return { Icon: FileText, color: "text-red-500 dark:text-red-400", type: "PDF 文档" };
+}
 
 export function RecentFilesTable() {
   const router = useRouter();
   const viewer = useFileViewer();
+  const recent = useRecentFiles((s) => s.recent);
+  const docs = useKnowledgeDocs((s) => s.docs);
 
-  const openRecent = (name: string) => {
-    const isExcel = name.endsWith(".xlsx");
+  const openRecent = (name: string, type: string) => {
+    const { Icon, color } = iconFor(name);
     const file: FileItem = {
-      id: isExcel ? 901 : 900,
+      id: name.length * 7 + name.charCodeAt(0),
       name,
-      type: isExcel ? "Excel 表格" : "PDF 文档",
-      size: isExcel ? "1.2 MB" : "2.4 MB",
+      type,
+      size: "1.5 MB",
       date: "刚刚",
-      icon: isExcel ? FileSpreadsheet : FileText,
-      color: isExcel ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400",
+      icon: Icon,
+      color,
       indexed: false,
     };
     void viewer.open(file);
@@ -49,31 +55,35 @@ export function RecentFilesTable() {
             </tr>
           </thead>
           <tbody className="text-sm">
-            {RECENT_FILES.map(({ name, icon: Icon, iconClass, indexed, time }) => (
-              <tr key={name} className="border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors group">
-                <td className="p-3 pl-4">
-                  <div className="flex items-center gap-3">
-                    <Icon className={`${iconClass} w-5 h-5 flex-shrink-0`} />
-                    <div
-                      className="font-medium text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 cursor-pointer hover:underline underline-offset-2 truncate max-w-[150px] sm:max-w-[200px]"
-                      title="点击预览"
-                      onClick={() => openRecent(name)}
-                    >
-                      {name}
+            {recent.map(({ name, type, time }) => {
+              const { Icon, color } = iconFor(name);
+              const indexed = docs.some((d) => d.name === name);
+              return (
+                <tr key={name} className="border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors group">
+                  <td className="p-3 pl-4">
+                    <div className="flex items-center gap-3">
+                      <Icon className={`${color} w-5 h-5 flex-shrink-0`} />
+                      <div
+                        className="font-medium text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 cursor-pointer hover:underline underline-offset-2 truncate max-w-[150px] sm:max-w-[200px]"
+                        title="点击预览"
+                        onClick={() => openRecent(name, type)}
+                      >
+                        {name}
+                      </div>
                     </div>
-                  </div>
-                </td>
-                <td className="p-3">
-                  <span
-                    onClick={() => router.push("/knowledge")}
-                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] border cursor-pointer hover:opacity-80 transition-colors whitespace-nowrap ${indexed ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-100 dark:border-green-900" : "bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700"}`}
-                  >
-                    <BookOpen className="w-3 h-3" /> {indexed ? "已索引" : "未索引"}
-                  </span>
-                </td>
-                <td className="p-3 text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap">{time}</td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="p-3">
+                    <span
+                      onClick={() => router.push("/knowledge")}
+                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] border cursor-pointer hover:opacity-80 transition-colors whitespace-nowrap ${indexed ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-100 dark:border-green-900" : "bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700"}`}
+                    >
+                      <BookOpen className="w-3 h-3" /> {indexed ? "已索引" : "未索引"}
+                    </span>
+                  </td>
+                  <td className="p-3 text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap">{time}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
