@@ -72,7 +72,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={handleSubmit}>
+          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSubmit}>
             {isEdit ? "保存修改" : "保存并创建"}
           </Button>
         </>
@@ -80,18 +80,18 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
     >
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700">技能名称</label>
+          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">技能名称</label>
           <Input
             placeholder="例如：查询外部实时汇率"
             className={`h-9 text-sm ${errors.name ? "border-red-400 focus-visible:ring-red-400" : ""}`}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          {errors.name && <p className="text-[11px] text-red-500">{errors.name}</p>}
+          {errors.name && <p className="text-[11px] text-red-500 dark:text-red-400">{errors.name}</p>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700">技能分类</label>
+          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">技能分类</label>
           <Select value={category} onValueChange={setCategory}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="选择分类" />
@@ -106,8 +106,8 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
 
         <div className="space-y-1.5">
           <div className="flex justify-between items-end">
-            <label className="text-xs font-bold text-gray-700">OpenAPI Schema</label>
-            <span className="text-[10px] text-blue-600 cursor-pointer hover:underline flex items-center gap-1">
+            <label className="text-xs font-bold text-gray-700 dark:text-gray-200">OpenAPI Schema</label>
+            <span className="text-[10px] text-blue-600 dark:text-blue-400 cursor-pointer hover:underline flex items-center gap-1">
               <Code className="w-3 h-3" /> AI 辅助生成
             </span>
           </div>
@@ -120,11 +120,11 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
               onChange={(e) => setSchema(e.target.value)}
             ></textarea>
           </div>
-          {errors.schema && <p className="text-[11px] text-red-500">{errors.schema}</p>}
+          {errors.schema && <p className="text-[11px] text-red-500 dark:text-red-400">{errors.schema}</p>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
+          <label className="text-xs font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1">
             <Key className="w-3 h-3" /> 鉴权设置 (可选)
           </label>
           <div className="flex gap-2">

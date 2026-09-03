@@ -8,18 +8,18 @@ const ACTIONS = [
     label: "总结这份文档",
     desc: "提取核心观点和行动项",
     icon: FileText,
-    iconBg: "bg-blue-600",
-    gradient: "from-blue-50 to-indigo-50",
-    hoverBorder: "hover:border-blue-200",
+    iconBg: "bg-blue-600 dark:bg-blue-500",
+    gradient: "from-blue-50 dark:from-blue-950/30 to-indigo-50 dark:to-indigo-950/30",
+    hoverBorder: "hover:border-blue-200 dark:hover:border-blue-800",
     href: "/chat",
   },
   {
     label: "数据可视化分析",
     desc: "基于 Excel 生成趋势图表",
     icon: FileSpreadsheet,
-    iconBg: "bg-purple-600",
-    gradient: "from-purple-50 to-fuchsia-50",
-    hoverBorder: "hover:border-purple-200",
+    iconBg: "bg-purple-600 dark:bg-purple-500",
+    gradient: "from-purple-50 dark:from-purple-950/30 to-fuchsia-50 dark:to-fuchsia-950/30",
+    hoverBorder: "hover:border-purple-200 dark:hover:border-purple-800",
     href: "/chat",
   },
 ];
@@ -38,14 +38,14 @@ export function QuickActions() {
           <div className={`w-8 h-8 rounded-lg ${iconBg} text-white flex items-center justify-center mb-3 shadow-sm group-hover:scale-110 transition-transform`}>
             <Icon className="w-4 h-4" />
           </div>
-          <div className="text-sm font-bold text-gray-800 mb-1">{label}</div>
-          <div className="text-[10px] text-gray-500">{desc}</div>
+          <div className="text-sm font-bold text-gray-800 dark:text-gray-100 mb-1">{label}</div>
+          <div className="text-[10px] text-gray-500 dark:text-gray-400">{desc}</div>
         </div>
       ))}
 
       <div
         onClick={() => router.push("/agents")}
-        className="group border border-dashed border-gray-300 bg-white p-4 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all flex flex-col items-center justify-center text-gray-400 hover:text-blue-500 min-h-[110px]"
+        className="group border border-dashed border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 rounded-xl cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 hover:text-blue-500 dark:hover:text-blue-400 min-h-[110px]"
       >
         <Plus className="w-6 h-6 mb-2 group-hover:scale-110 transition-transform" />
         <div className="text-xs font-medium">创建自定义 Agent</div>

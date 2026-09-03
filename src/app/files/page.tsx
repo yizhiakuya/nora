@@ -40,7 +40,7 @@ export default function FilesPage() {
       size: "1.5 MB",
       date: new Date().toISOString().slice(0, 16).replace("T", " "),
       icon: FileText,
-      color: "text-red-500",
+      color: "text-red-500 dark:text-red-400",
       agent: null,
     };
     setFiles([newFile, ...files]);
@@ -57,32 +57,32 @@ export default function FilesPage() {
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <div className="relative w-[100px] sm:w-[180px] shrink-0">
-              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-3.5 h-3.5" />
               <Input
                 placeholder="搜索..."
-                className="pl-7 pr-3 py-1.5 h-8 bg-gray-50 border-gray-200 text-xs focus-visible:ring-1 focus-visible:ring-blue-500 transition-all w-full"
+                className="pl-7 pr-3 py-1.5 h-8 bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-xs focus-visible:ring-1 focus-visible:ring-blue-500 transition-all w-full"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <div className="w-px h-5 bg-gray-200 mx-1 shrink-0 hidden sm:block"></div>
-            <Button variant="outline" size="sm" className="h-8 text-xs bg-white text-gray-700 hover:bg-gray-50 shrink-0 hidden md:flex">
+            <div className="w-px h-5 bg-gray-200 dark:bg-gray-800 mx-1 shrink-0 hidden sm:block"></div>
+            <Button variant="outline" size="sm" className="h-8 text-xs bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 shrink-0 hidden md:flex">
               <FolderPlus className="w-3.5 h-3.5 mr-1.5" /> 新建文件夹
             </Button>
-            <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700 shrink-0" onClick={upload.open}>
+            <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 shrink-0" onClick={upload.open}>
               <CloudUpload className="w-3.5 h-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">上传文件</span>
             </Button>
           </div>
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] relative">
+      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] dark:bg-gray-950 relative">
         <div className="max-w-6xl mx-auto pb-24">
           <FolderGrid folders={MOCK_FOLDERS} />
 
           <div className="flex items-center justify-between mb-4 animate-in fade-in">
-            <h2 className="text-sm font-bold text-gray-800">所有文件</h2>
-            <div className="text-xs text-gray-500">共 {files.length} 个文件</div>
+            <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100">所有文件</h2>
+            <div className="text-xs text-gray-500 dark:text-gray-400">共 {files.length} 个文件</div>
           </div>
 
           <FileTable files={filteredFiles} selection={selection} onDeleteSelected={handleDeleteSelected} onOpen={viewer.open} />

@@ -22,17 +22,17 @@ export default function ChatPage() {
           { label: "分析 Q2 销售数据趋势", isCurrent: true }
         ]}
         actions={
-          <div className="flex items-center gap-3 text-gray-500 text-sm">
-            <div className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-100 rounded text-xs flex items-center gap-1.5 mr-2">
+          <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400 text-sm">
+            <div className="px-2 py-1 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900 rounded text-xs flex items-center gap-1.5 mr-2">
                 <Sparkles className="w-3 h-3" /> GPT-4o
             </div>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-yellow-400 hover:bg-yellow-50">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 dark:text-gray-500 hover:text-yellow-400 dark:hover:text-yellow-300 hover:bg-yellow-50 dark:hover:bg-yellow-950/40">
               <Star className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-gray-700">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200">
               <Share2 className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500 hover:bg-red-50">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40">
               <Trash2 className="w-4 h-4" />
             </Button>
           </div>

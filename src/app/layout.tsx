@@ -23,7 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body className={`${inter.className} h-screen flex overflow-hidden text-gray-800 bg-background dark:bg-background`}>
+      <body className={`${inter.className} h-screen flex overflow-hidden text-gray-800 dark:text-gray-100 bg-background dark:bg-background`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

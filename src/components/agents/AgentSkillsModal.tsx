@@ -41,7 +41,7 @@ export function AgentSkillsModal({ isOpen, onClose }: AgentSkillsModalProps) {
       footer={
         <>
           <Button variant="outline" size="sm" onClick={() => { setPending({}); onClose(); }}>取消</Button>
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={changedCount === 0}>
+          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSave} disabled={changedCount === 0}>
             保存{changedCount > 0 ? `（${changedCount} 项变更）` : ""}
           </Button>
         </>
@@ -54,11 +54,11 @@ export function AgentSkillsModal({ isOpen, onClose }: AgentSkillsModalProps) {
           return (
             <label
               key={skill.id}
-              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${checked ? "border-blue-200 bg-blue-50/50" : "border-gray-200 hover:bg-gray-50"}`}
+              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${checked ? "border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30" : "border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
             >
               <input
                 type="checkbox"
-                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="w-4 h-4 rounded border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400 focus:ring-blue-500 cursor-pointer"
                 checked={checked}
                 onChange={() => setPending((prev) => ({ ...prev, [skill.id]: !checked }))}
               />
@@ -66,10 +66,10 @@ export function AgentSkillsModal({ isOpen, onClose }: AgentSkillsModalProps) {
                 <Icon className="w-4 h-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-gray-800 truncate">{skill.name}</div>
-                <div className="text-[10px] text-gray-500 truncate">{skill.desc}</div>
+                <div className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{skill.name}</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate">{skill.desc}</div>
               </div>
-              <span className={`text-[10px] px-2 py-0.5 rounded font-medium shrink-0 ${skill.isOfficial ? "bg-blue-50 text-blue-600" : "bg-gray-100 text-gray-600"}`}>
+              <span className={`text-[10px] px-2 py-0.5 rounded font-medium shrink-0 ${skill.isOfficial ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"}`}>
                 {skill.isOfficial ? "官方" : "自定义"}
               </span>
             </label>
@@ -77,7 +77,7 @@ export function AgentSkillsModal({ isOpen, onClose }: AgentSkillsModalProps) {
         })}
       </div>
       <button
-        className="mt-4 text-xs text-blue-600 hover:underline flex items-center gap-1"
+        className="mt-4 text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
         onClick={() => { router.push("/skills"); }}
       >
         <ExternalLink className="w-3 h-3" /> 去技能中心创建自定义技能

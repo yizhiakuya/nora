@@ -28,12 +28,12 @@ export default function AgentsPage() {
         ]}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-8 text-xs bg-white text-gray-700">
+            <Button variant="outline" size="sm" className="h-8 text-xs bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200">
               测试运行
             </Button>
             <Button
               size="sm"
-              className={"h-8 text-xs transition-colors " + (published ? "bg-green-600 hover:bg-green-700" : "bg-blue-600 hover:bg-blue-700")}
+              className={"h-8 text-xs transition-colors " + (published ? "bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600" : "bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600")}
               onClick={handlePublish}
             >
               {published ? <><Check className="w-3.5 h-3.5 mr-1.5" /> 发布成功</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> 发布更新</>}

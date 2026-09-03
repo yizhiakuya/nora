@@ -15,7 +15,7 @@ export default function KnowledgePage() {
         breadcrumbs={[{ label: "AI 工作台", isCurrent: false }, { label: "知识库", isCurrent: false }, { label: "核心产品语料库", isCurrent: true }]}
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            <Button variant="outline" size="sm" className="h-8 text-xs bg-white text-gray-700 hidden sm:flex shrink-0">
+            <Button variant="outline" size="sm" className="h-8 text-xs bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hidden sm:flex shrink-0">
               <Settings className="w-3.5 h-3.5 mr-1.5" /> 设置
             </Button>
             <KnowledgeImportModal />
@@ -23,7 +23,7 @@ export default function KnowledgePage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scroll relative bg-[#f4f5f7]">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scroll relative bg-[#f4f5f7] dark:bg-gray-950">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <MetricsCards />
 

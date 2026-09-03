@@ -7,8 +7,8 @@ import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { FileItem } from "@/types";
 
 const RECENT_FILES = [
-  { name: "2024_Q2_产品规划.pdf", icon: FileText, iconClass: "text-red-500", agent: "产品助理", badge: "bg-blue-50 text-blue-700 border-blue-100", time: "10 分钟前" },
-  { name: "竞品分析数据.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600", agent: "数据分析师", badge: "bg-purple-50 text-purple-700 border-purple-100", time: "2 小时前" },
+  { name: "2024_Q2_产品规划.pdf", icon: FileText, iconClass: "text-red-500 dark:text-red-400", agent: "产品助理", badge: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-100 dark:border-blue-900", time: "10 分钟前" },
+  { name: "竞品分析数据.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600 dark:text-green-400", agent: "数据分析师", badge: "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 border-purple-100 dark:border-purple-900", time: "2 小时前" },
 ];
 
 export function RecentFilesTable() {
@@ -24,7 +24,7 @@ export function RecentFilesTable() {
       size: isExcel ? "1.2 MB" : "2.4 MB",
       date: "刚刚",
       icon: isExcel ? FileSpreadsheet : FileText,
-      color: isExcel ? "text-green-600" : "text-red-500",
+      color: isExcel ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400",
       agent: null,
     };
     void viewer.open(file);
@@ -33,16 +33,16 @@ export function RecentFilesTable() {
   return (
     <div className="w-full lg:w-[65%] flex flex-col space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-blue-500" /> 最近使用
+        <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <Clock className="w-4 h-4 text-blue-500 dark:text-blue-400" /> 最近使用
         </h2>
-        <span className="text-xs text-blue-600 cursor-pointer hover:underline" onClick={() => router.push("/files")}>查看全部</span>
+        <span className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer hover:underline" onClick={() => router.push("/files")}>查看全部</span>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm overflow-hidden overflow-x-auto">
         <table className="w-full min-w-[500px] text-left border-collapse">
           <thead>
-            <tr className="bg-gray-50/80 border-b border-gray-200 text-[11px] text-gray-500 font-medium">
+            <tr className="bg-gray-50/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 text-[11px] text-gray-500 dark:text-gray-400 font-medium">
               <th className="p-3 pl-4">文件名</th>
               <th className="p-3">相关智能体</th>
               <th className="p-3 whitespace-nowrap">打开时间</th>
@@ -50,12 +50,12 @@ export function RecentFilesTable() {
           </thead>
           <tbody className="text-sm">
             {RECENT_FILES.map(({ name, icon: Icon, iconClass, agent, badge, time }) => (
-              <tr key={name} className="border-b border-gray-50 hover:bg-gray-50 transition-colors group">
+              <tr key={name} className="border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors group">
                 <td className="p-3 pl-4">
                   <div className="flex items-center gap-3">
                     <Icon className={`${iconClass} w-5 h-5 flex-shrink-0`} />
                     <div
-                      className="font-medium text-gray-800 group-hover:text-blue-600 cursor-pointer hover:underline underline-offset-2 truncate max-w-[150px] sm:max-w-[200px]"
+                      className="font-medium text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 cursor-pointer hover:underline underline-offset-2 truncate max-w-[150px] sm:max-w-[200px]"
                       title="点击预览"
                       onClick={() => openRecent(name)}
                     >
@@ -71,7 +71,7 @@ export function RecentFilesTable() {
                     <Bot className="w-3 h-3" /> {agent}
                   </span>
                 </td>
-                <td className="p-3 text-[11px] text-gray-500 whitespace-nowrap">{time}</td>
+                <td className="p-3 text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap">{time}</td>
               </tr>
             ))}
           </tbody>

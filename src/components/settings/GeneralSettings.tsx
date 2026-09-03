@@ -108,7 +108,7 @@ export function GeneralSettings() {
         <Button variant="outline" size="sm" className="bg-background">还原默认</Button>
         <Button
           size="sm"
-          className={`transition-colors ${saved ? "bg-green-600 hover:bg-green-700 text-white" : "bg-primary hover:bg-primary/90 text-primary-foreground"}`}
+          className={`transition-colors ${saved ? "bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white" : "bg-primary hover:bg-primary/90 text-primary-foreground"}`}
           onClick={handleSave}
         >
           {saved ? <><CheckCircle2 className="w-4 h-4 mr-1.5" /> 已保存</> : "保存更改"}
