@@ -4,6 +4,11 @@ import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
+import { KnowledgeAISettings } from "@/components/settings/KnowledgeAISettings";
+import { AccountSettings } from "@/components/settings/AccountSettings";
+import { SecuritySettings } from "@/components/settings/SecuritySettings";
+import { NotificationSettings } from "@/components/settings/NotificationSettings";
+import { BillingSettings } from "@/components/settings/BillingSettings";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("通用");
@@ -27,13 +32,12 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">管理您的工作台环境、API 密钥与个人偏好。</p>
             </div>
 
-            {activeTab === "通用" ? (
-              <GeneralSettings />
-            ) : (
-              <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-16 text-center text-sm text-muted-foreground">
-                {activeTab}设置即将上线
-              </div>
-            )}
+            {activeTab === "通用" && <GeneralSettings />}
+            {activeTab === "知识库与 AI" && <KnowledgeAISettings />}
+            {activeTab === "账号" && <AccountSettings />}
+            {activeTab === "安全与 API" && <SecuritySettings />}
+            {activeTab === "通知" && <NotificationSettings />}
+            {activeTab === "订阅" && <BillingSettings />}
           </div>
         </div>
       </div>

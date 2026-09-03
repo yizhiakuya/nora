@@ -88,18 +88,15 @@ export function GeneralSettings() {
 
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-bold text-foreground">默认文件隐私</label>
-            <p className="text-xs text-muted-foreground">新上传到文件中心和知识库的文件默认权限。</p>
+            <label className="text-sm font-bold text-foreground">本地数据</label>
+            <p className="text-xs text-muted-foreground">所有文件与索引数据仅保存在本机浏览器与本地存储，不上传云端。</p>
           </div>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer hover:text-foreground">
-              <input type="radio" name="privacy" className="text-primary focus:ring-primary w-4 h-4 accent-primary" defaultChecked />
-              仅自己可见 (Private)
-            </label>
-            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer hover:text-foreground">
-              <input type="radio" name="privacy" className="text-primary focus:ring-primary w-4 h-4 accent-primary" />
-              工作区可见 (Workspace)
-            </label>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-foreground">启动时恢复上次浏览的页面</div>
+              <div className="text-xs text-muted-foreground mt-0.5">关闭后每次打开都从首页开始</div>
+            </div>
+            <Switch defaultChecked />
           </div>
         </div>
       </div>

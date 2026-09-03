@@ -1,8 +1,9 @@
-import { User, Bell, Key, CreditCard, Monitor, LogOut } from "lucide-react";
+import { User, Bell, Key, CreditCard, Monitor, LogOut, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const SETTINGS_TABS = [
   { name: "通用", icon: Monitor },
+  { name: "知识库与 AI", icon: BookOpen },
   { name: "账号", icon: User },
   { name: "安全与 API", icon: Key },
   { name: "通知", icon: Bell },
