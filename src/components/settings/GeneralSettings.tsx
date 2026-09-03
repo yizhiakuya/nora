@@ -65,21 +65,6 @@ export function GeneralSettings() {
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium text-foreground">代码块自动换行</div>
-              <div className="text-xs text-muted-foreground mt-0.5">在对话中输出的代码段是否默认折叠过长行</div>
-            </div>
-            <Switch defaultChecked />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium text-foreground">紧凑模式</div>
-              <div className="text-xs text-muted-foreground mt-0.5">减小组件间距，在屏幕上显示更多内容</div>
-            </div>
-            <Switch />
-          </div>
         </div>
 
         <div className="w-full h-px bg-border"></div>
@@ -88,13 +73,6 @@ export function GeneralSettings() {
           <div>
             <label className="text-sm font-bold text-foreground">本地数据</label>
             <p className="text-xs text-muted-foreground">所有文件与索引数据仅保存在本机浏览器与本地存储，不上传云端。</p>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium text-foreground">启动时恢复上次浏览的页面</div>
-              <div className="text-xs text-muted-foreground mt-0.5">关闭后每次打开都从首页开始</div>
-            </div>
-            <Switch defaultChecked />
           </div>
         </div>
       </div>

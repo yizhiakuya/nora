@@ -25,7 +25,7 @@ import { toast } from "sonner";
 const NAV_ITEMS = [
 { name: "首页", icon: Home, href: "/" },
 { name: "文件", icon: Folder, href: "/files", subItems: [{ name: "全部文件", href: "/files" }, { name: "最近使用", href: "/files?view=recent" }, { name: "收藏文件", href: "/files?view=favorites" }, { name: "回收站", href: "/files?view=trash" }] },
-{ name: "对话", icon: MessageSquare, href: "/chat", subItems: [{ name: "查询订单状态分布", href: "/chat" }, { name: "排查 Redis 连接问题", href: "/chat?session=2" }] },
+{ name: "对话", icon: MessageSquare, href: "/chat" },
 { name: "知识库", icon: BookOpen, href: "/knowledge" },
 { name: "AI 能力", icon: Zap, href: "/skills" },
 { name: "数据源", icon: Database, href: "/data-sources" },
