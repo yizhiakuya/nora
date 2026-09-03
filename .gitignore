@@ -29,6 +29,9 @@ yarn-error.log*
 dev.log
 dev.pid
 
+# IDE-specific
+.claude/
+
 # local env files
 .env*.local
 
