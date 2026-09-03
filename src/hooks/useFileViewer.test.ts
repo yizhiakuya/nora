@@ -12,7 +12,7 @@ const pdfFile: FileItem = {
   date: "2024-06-02 14:30",
   icon: FileText,
   color: "text-red-500",
-  agent: null,
+  indexed: false,
 };
 
 describe("useFileViewer", () => {

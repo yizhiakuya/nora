@@ -20,7 +20,7 @@ export default function DataSourcesPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "AI 工作台", isCurrent: false }, { label: "数据源", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "数据源", isCurrent: true }]}
         actions={
           <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600">
             <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建连接

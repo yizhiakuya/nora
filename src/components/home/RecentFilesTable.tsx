@@ -1,14 +1,14 @@
 'use client';
 
 import { useRouter } from "next/navigation";
-import { Clock, FileText, FileSpreadsheet, Bot } from "lucide-react";
+import { Clock, FileText, FileSpreadsheet, BookOpen } from "lucide-react";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { FileItem } from "@/types";
 
 const RECENT_FILES = [
-  { name: "2024_Q2_产品规划.pdf", icon: FileText, iconClass: "text-red-500 dark:text-red-400", agent: "产品助理", badge: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-100 dark:border-blue-900", time: "10 分钟前" },
-  { name: "竞品分析数据.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600 dark:text-green-400", agent: "数据分析师", badge: "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 border-purple-100 dark:border-purple-900", time: "2 小时前" },
+  { name: "2024_Q2_产品规划.pdf", icon: FileText, iconClass: "text-red-500 dark:text-red-400", indexed: true, time: "10 分钟前" },
+  { name: "竞品分析数据.xlsx", icon: FileSpreadsheet, iconClass: "text-green-600 dark:text-green-400", indexed: true, time: "2 小时前" },
 ];
 
 export function RecentFilesTable() {
@@ -25,7 +25,7 @@ export function RecentFilesTable() {
       date: "刚刚",
       icon: isExcel ? FileSpreadsheet : FileText,
       color: isExcel ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400",
-      agent: null,
+      indexed: false,
     };
     void viewer.open(file);
   };
@@ -44,12 +44,12 @@ export function RecentFilesTable() {
           <thead>
             <tr className="bg-gray-50/80 dark:bg-gray-900/80 border-b border-gray-200 dark:border-gray-800 text-[11px] text-gray-500 dark:text-gray-400 font-medium">
               <th className="p-3 pl-4">文件名</th>
-              <th className="p-3">相关智能体</th>
+              <th className="p-3">索引状态</th>
               <th className="p-3 whitespace-nowrap">打开时间</th>
             </tr>
           </thead>
           <tbody className="text-sm">
-            {RECENT_FILES.map(({ name, icon: Icon, iconClass, agent, badge, time }) => (
+            {RECENT_FILES.map(({ name, icon: Icon, iconClass, indexed, time }) => (
               <tr key={name} className="border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors group">
                 <td className="p-3 pl-4">
                   <div className="flex items-center gap-3">
@@ -65,10 +65,10 @@ export function RecentFilesTable() {
                 </td>
                 <td className="p-3">
                   <span
-                    onClick={() => router.push("/agents")}
-                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] ${badge} border cursor-pointer hover:opacity-80 transition-colors whitespace-nowrap`}
+                    onClick={() => router.push("/knowledge")}
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] border cursor-pointer hover:opacity-80 transition-colors whitespace-nowrap ${indexed ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-100 dark:border-green-900" : "bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700"}`}
                   >
-                    <Bot className="w-3 h-3" /> {agent}
+                    <BookOpen className="w-3 h-3" /> {indexed ? "已索引" : "未索引"}
                   </span>
                 </td>
                 <td className="p-3 text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap">{time}</td>

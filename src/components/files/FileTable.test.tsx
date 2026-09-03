@@ -6,8 +6,8 @@ import { useSelection } from "@/hooks/useSelection";
 import { File as FileIcon } from "lucide-react";
 
 const files: FileItem[] = [
-  { id: 1, name: "报告.pdf", type: "PDF 文档", size: "2.4 MB", date: "2024-06-02", icon: FileIcon, color: "", agent: null },
-  { id: 2, name: "数据.xlsx", type: "Excel 表格", size: "1.2 MB", date: "2024-06-01", icon: FileIcon, color: "", agent: "数据分析师" },
+  { id: 1, name: "报告.pdf", type: "PDF 文档", size: "2.4 MB", date: "2024-06-02", icon: FileIcon, color: "", indexed: true },
+  { id: 2, name: "数据.xlsx", type: "Excel 表格", size: "1.2 MB", date: "2024-06-01", icon: FileIcon, color: "", indexed: false },
 ];
 
 interface TestHarnessProps {

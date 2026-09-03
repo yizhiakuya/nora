@@ -8,8 +8,8 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AI 个人文件工作台",
-  description: "AI-Native Personal Knowledge and Business Workspace",
+  title: "Nora 个人工作台",
+  description: "AI 驱动的个人文件管理与开发者工作台",
   icons: {
     icon: "/icon.png",
     apple: "/apple-icon.png",

@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from "next/navigation";
-import { Search, FileText, Bot } from "lucide-react";
+import { Search, FileText, Database } from "lucide-react";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -15,7 +15,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
   const suggestions = [
     { icon: FileText, iconClass: "text-blue-500 dark:text-blue-400", label: "总结 2024_Q2_产品规划.pdf", href: "/chat" },
-    { icon: Bot, iconClass: "text-purple-500 dark:text-purple-400", label: "和 数据分析专家 对话", href: "/agents" },
+    { icon: Database, iconClass: "text-purple-500 dark:text-purple-400", label: "查询订单数据", href: "/data-sources" },
   ];
 
   return (
@@ -32,7 +32,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           <input
             autoFocus
             type="text"
-            placeholder="搜索文件、智能体、或向 AI 提问..."
+          placeholder="搜索文件、数据源，或向 AI 提问..."
             className="w-full bg-transparent border-none focus:outline-none p-4 text-sm"
           />
           <kbd className="hidden sm:inline-block border border-gray-200 dark:border-gray-800 rounded px-1.5 py-0.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-900 shrink-0">ESC</kbd>

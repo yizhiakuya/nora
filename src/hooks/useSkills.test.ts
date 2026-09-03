@@ -22,9 +22,9 @@ describe("useSkills", () => {
   it("以官方技能播种", () => {
     const { result } = renderHook(() => useSkills());
     expect(result.current.skills.length).toBe(6);
-    // 数据设定：5 个官方 + 1 个示例自定义（内部工单查询 API）
+    // 数据设定：6 个内置能力（全部 isOfficial）
     expect(result.current.skills[0].isOfficial).toBe(true);
-    expect(result.current.skills.filter((s) => s.isOfficial)).toHaveLength(5);
+    expect(result.current.skills.filter((s) => s.isOfficial)).toHaveLength(6);
   });
 
   it("addSkill 追加自定义技能", () => {

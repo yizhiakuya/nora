@@ -29,7 +29,7 @@ export function GeneralSettings() {
       <div className="p-6 space-y-6">
         <div className="space-y-1.5">
           <label className="text-sm font-bold text-foreground">默认大语言模型 (LLM)</label>
-          <p className="text-xs text-muted-foreground mb-2">选择在对话和智能体中默认使用的基础大模型。</p>
+          <p className="text-xs text-muted-foreground mb-2">选择在对话和自动任务中默认使用的基础大模型。</p>
           <Select value={model} onValueChange={setModel}>
             <SelectTrigger className="w-full max-w-sm h-10 rounded-lg">
               <SelectValue />

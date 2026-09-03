@@ -13,7 +13,7 @@ export interface SkillFormErrors {
   schema?: string;
 }
 
-const CATEGORIES = ["自定义", "计算", "数据", "搜索", "集成"];
+const CATEGORIES = ["自定义", "数据", "计算", "环境", "通知"];
 const AUTH_OPTIONS = ["无鉴权", "Bearer Token", "API Key"];
 
 export { CATEGORIES, AUTH_OPTIONS };
@@ -40,7 +40,7 @@ export function useSkillForm(initial: Skill | null, isOpen: boolean) {
 
   const validate = useCallback((): SkillFormErrors | null => {
     const next: SkillFormErrors = {};
-    if (!name.trim()) next.name = "技能名称不能为空";
+    if (!name.trim()) next.name = "工具名称不能为空";
     if (!schema.trim()) {
       next.schema = "OpenAPI Schema 不能为空";
     } else {

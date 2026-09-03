@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, Bot, Eye } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, BookOpen, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
 import { useSelection } from "@/hooks/useSelection";
@@ -90,10 +90,10 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen }: FileTa
                       >
                         {file.name}
                       </span>
-                      {file.agent && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900 font-medium ml-2 select-none shrink-0">
-                          <Bot className="w-2.5 h-2.5" /> {file.agent}
-                        </span>
+                      {file.indexed && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border border-green-100 dark:border-green-900 font-medium ml-2 select-none shrink-0" title="已索引入知识库，AI 可检索此文件内容">
+                          <BookOpen className="w-2.5 h-2.5" /> 已索引
+                       </span>
                       )}
                     </div>
                   </td>

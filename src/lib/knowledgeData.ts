@@ -69,7 +69,7 @@ export const MOCK_RULES: PipelineRule[] = [
 export const MOCK_RETRIEVAL: RetrievalResult[] = [
   { docName: "2024_Q2_产品规划.pdf", source: "file",     chunkIndex: 12, score: 0.94, snippet: "…核心产品线营收占比 60%，较 Q1 下降 3.2%，是本期下滑最严重的一条产品线…" },
   { docName: "竞品分析数据.xlsx",    source: "file",     chunkIndex: 3,  score: 0.87, snippet: "…移动端用户留存率环比下降 4.6%，与新版引导流程变更相关…" },
-  { docName: "会议纪要_0520.txt",    source: "file",     chunkIndex: 5,  score: 0.82, snippet: "…[14:15] 数据分析师：漏斗第三步流失率环比下降 4.6%…" },
+  { docName: "会议纪要_0520.txt",    source: "file",     chunkIndex: 5,  score: 0.82, snippet: "…[14:15] 团队复盘：漏斗第三步流失率环比下降 4.6%…" },
   { docName: "api-gateway README.md", source: "repo",    chunkIndex: 18, score: 0.74, snippet: "…产品线数据通过 /api/v2/products 端点暴露，支持按季度维度筛选…" },
 ];
 

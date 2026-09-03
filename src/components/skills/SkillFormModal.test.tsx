@@ -6,7 +6,7 @@ import { Braces } from "lucide-react";
 
 const validSkill: Skill = {
   id: 1,
-  name: "已有技能",
+  name: "已有工具",
   desc: "测试",
   icon: Braces,
   color: "",
@@ -34,21 +34,21 @@ function renderForm(props: Partial<Parameters<typeof SkillFormModal>[0]> = {}) {
 }
 
 describe("SkillFormModal", () => {
-  it("创建模式：标题为「创建自定义技能 (OpenAPI)」", () => {
+  it("创建模式：标题为「注册自定义工具 (OpenAPI)」", () => {
     renderForm();
-    expect(screen.getByText("创建自定义技能 (OpenAPI)")).toBeInTheDocument();
+    expect(screen.getByText("注册自定义工具 (OpenAPI)")).toBeInTheDocument();
   });
 
   it("编辑模式：标题包含技能名且回填数据", () => {
     renderForm({ initial: validSkill });
-    expect(screen.getByText("编辑技能 · 已有技能")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("已有技能")).toBeInTheDocument();
+    expect(screen.getByText("编辑工具 · 已有工具")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("已有工具")).toBeInTheDocument();
   });
 
   it("名称为空时提交显示校验错误", () => {
     renderForm();
     fireEvent.click(screen.getByText("保存并创建"));
-    expect(screen.getByText("技能名称不能为空")).toBeInTheDocument();
+    expect(screen.getByText("工具名称不能为空")).toBeInTheDocument();
   });
 
   it("Schema 为空时提交显示校验错误", () => {
@@ -73,7 +73,7 @@ describe("SkillFormModal", () => {
     const textarea = document.querySelector("textarea")!;
     fireEvent.change(textarea, { target: { value: '{ "openapi": "3.0.0" }' } });
     fireEvent.click(screen.getByText("保存并创建"));
-    expect(screen.queryByText("技能名称不能为空")).not.toBeInTheDocument();
+    expect(screen.queryByText("工具名称不能为空")).not.toBeInTheDocument();
   });
 
   it("点击取消调用 onClose", () => {

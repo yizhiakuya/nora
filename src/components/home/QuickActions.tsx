@@ -44,11 +44,11 @@ export function QuickActions() {
       ))}
 
       <div
-        onClick={() => router.push("/agents")}
+        onClick={() => router.push("/knowledge")}
         className="group border border-dashed border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 rounded-xl cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 hover:text-blue-500 dark:hover:text-blue-400 min-h-[110px]"
       >
         <Plus className="w-6 h-6 mb-2 group-hover:scale-110 transition-transform" />
-        <div className="text-xs font-medium">创建自定义 Agent</div>
+        <div className="text-xs font-medium">导入文档到知识库</div>
       </div>
     </div>
   );

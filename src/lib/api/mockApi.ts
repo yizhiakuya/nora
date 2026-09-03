@@ -1,49 +1,13 @@
-import { Task, FileItem, FilePreview, FilePreviewKind } from '@/types';
+import { FileItem, FilePreview, FilePreviewKind } from '@/types';
 import { delay } from './delay';
 
 export { delay };
-
-// ==========================================
-// 数据工厂 (Data Factories)
-// ==========================================
-
-const generateTasks = (count: number, faker: typeof import('@faker-js/faker').fakerZH_CN): Task[] => {
-  const statuses: Task['status'][] = ['completed', 'running', 'scheduled', 'failed'];
-  
-  return Array.from({ length: count }).map(() => ({
-    id: `TSK-${faker.string.numeric(4)}`,
-    name: faker.helpers.arrayElement([
-      `${faker.system.fileName()} 数据清洗`,
-      `${faker.company.name()} 财报总结`,
-      `自动回复 ${faker.internet.email()} 邮件`,
-      `爬取 ${faker.internet.domainName()} 最新资讯`
-    ]),
-    agent: faker.helpers.arrayElement(["产品文档助理", "数据分析专家", "信息收集机器人", "财务分析师", "系统管家"]),
-    status: faker.helpers.arrayElement(statuses),
-    time: faker.date.recent().toLocaleString('zh-CN', { hour12: false }),
-    duration: faker.helpers.arrayElement(["12s", "45s", "2m 10s", "running", "-"]),
-  }));
-};
-
-// 会话级缓存：同一会话内重复请求返回同一份数据，避免"切换筛选后数据全变"的假 bug
-let cachedTasks: Task[] | null = null;
 
 // ==========================================
 // 模拟 API 服务 (Mock API Services)
 // ==========================================
 
 export const MockAPI = {
-  tasks: {
-    getList: async (): Promise<Task[]> => {
-      await delay(600); // 模拟网络延迟
-      if (!cachedTasks) {
-        // faker 体积较大，按需加载（不进入 /tasks 首屏包）
-        const { fakerZH_CN: faker } = await import('@faker-js/faker');
-        cachedTasks = generateTasks(25, faker);
-      }
-      return [...cachedTasks];
-    }
-  },
   files: {
     getPreview: async (file: Pick<FileItem, "id" | "name" | "type">): Promise<FilePreview> => {
       await delay(500);
@@ -121,10 +85,10 @@ const buildPreview = (file: Pick<FileItem, "id" | "name" | "type">): FilePreview
           `# 会议纪要 ${file.name}`,
           "",
           "时间：2024-06-20 14:00 - 15:10",
-          "参与：产品组全员、数据分析师、项目负责人",
+          "参与：产品组全员、负责人",
           "",
           "[14:02] 项目负责人：Q2 复盘整体节奏正常，重点看转化漏斗。",
-          "[14:15] 数据分析师：漏斗第三步流失率环比下降 4.6%，与新版引导相关。",
+          "[14:15] 产品：漏斗第三步流失率环比下降 4.6%，与新版引导相关。",
           "[14:33] 产品：下一版本优先处理移动端加载时长，目标 P90 < 2s。",
           "[14:51] 全员：确认下周迭代范围，会前同步 PRD 至知识库。",
           "[15:08] 散会。",

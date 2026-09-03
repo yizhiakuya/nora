@@ -27,7 +27,7 @@ export function NotificationBell() {
             <div className="w-2 h-2 bg-blue-500 rounded-full mt-1.5 shrink-0"></div>
             <div>
               <div className="text-xs font-bold text-gray-800 dark:text-gray-100 mb-0.5">任务执行完成</div>
-              <div className="text-[11px] text-gray-500 dark:text-gray-400 line-clamp-2">智能体 &quot;数据分析专家&quot; 已成功完成「竞品分析数据.xlsx 数据清洗」任务。</div>
+              <div className="text-[11px] text-gray-500 dark:text-gray-400 line-clamp-2">自动任务「每日数据备份」已成功完成，耗时 42s。</div>
               <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-1">10 分钟前</div>
             </div>
           </DropdownMenuItem>

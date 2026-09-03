@@ -9,7 +9,7 @@ export default function EnvironmentsPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "AI 工作台", isCurrent: false }, { label: "环境控制台", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "环境控制台", isCurrent: true }]}
         actions={<span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline">本地开发环境</span>}
       />
 

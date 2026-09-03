@@ -25,7 +25,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEdit ? `编辑技能 · ${initial?.name}` : "创建自定义技能 (OpenAPI)"}
+      title={isEdit ? `编辑工具 · ${initial?.name}` : "注册自定义工具 (OpenAPI)"}
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
@@ -37,7 +37,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
     >
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">技能名称</label>
+          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">工具名称</label>
           <Input
             placeholder="例如：查询外部实时汇率"
             className={`h-9 text-sm ${errors.name ? "border-red-400 focus-visible:ring-red-400" : ""}`}

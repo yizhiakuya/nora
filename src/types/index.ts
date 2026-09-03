@@ -35,24 +35,13 @@ export interface FileItem {
   date: string;
   icon: LucideIcon;
   color: string;
-  agent: string | null;
+  /** AI 是否已索引入知识库 */
+  indexed: boolean;
 }
 
 export interface FolderItem {
   name: string;
   count: number;
-}
-
-export interface DataSource {
-  id: number;
-  name: string;
-  type: string;
-  host: string;
-  status: 'connected' | 'error';
-  syncStatus: string;
-  icon: LucideIcon;
-  color: string;
-  bg: string;
 }
 
 export type FilePreviewKind = "pdf" | "word" | "excel" | "image" | "text" | "unknown";

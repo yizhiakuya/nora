@@ -8,7 +8,7 @@ export default function AutomationsPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "AI 工作台", isCurrent: false }, { label: "自动任务", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "自动任务", isCurrent: true }]}
       />
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] dark:bg-gray-950">

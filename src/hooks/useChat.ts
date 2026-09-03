@@ -3,7 +3,7 @@ import { ChatMessage, ChatResponder, MockChatAPI } from "@/lib/api/chatApi";
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
-  /** 响应器：决定谁来回应用户消息（主对话 / 智能体调试等场景） */
+/** 响应器：决定谁来回应用户消息（主对话 / 调试预览等场景） */
   responder?: ChatResponder;
 }
 

@@ -96,7 +96,7 @@ export const MockChatAPI: { sendMessage: ChatResponder } = {
   },
 };
 
-/** 智能体调试预览（Agents 页）使用的模拟响应 */
+/** 调试预览使用的模拟响应 */
 export const MockAgentChatAPI: { sendMessage: ChatResponder } = {
   async sendMessage(_message, onUpdate) {
     await delay(1000);

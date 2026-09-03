@@ -41,7 +41,7 @@ export default function FilesPage() {
       date: new Date().toISOString().slice(0, 16).replace("T", " "),
       icon: FileText,
       color: "text-red-500 dark:text-red-400",
-      agent: null,
+      indexed: false,
     };
     setFiles([newFile, ...files]);
   };
@@ -50,7 +50,7 @@ export default function FilesPage() {
     <>
       <Header
         breadcrumbs={[
-          { label: "AI 工作台", isCurrent: false },
+          { label: "工作台", isCurrent: false },
           { label: "文件中心", isCurrent: false },
           { label: "全部文件", isCurrent: true },
         ]}

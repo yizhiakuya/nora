@@ -6,13 +6,6 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { Skill } from "@/types";
 import { toast } from "sonner";
 
-/** Mock：技能被智能体引用的静态映射 */
-const AGENT_REFERENCES: Record<string, string[]> = {
-  "PostgreSQL 查询器": ["数据分析专家"],
-  "Python 沙盒环境": ["数据分析专家"],
-  "Bing 联网搜索": ["信息收集机器人"],
-};
-
 interface SkillDetailModalProps {
   skill: Skill | null;
   onClose: () => void;
@@ -26,7 +19,12 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
   if (!skill) return null;
 
   const Icon = skill.icon;
-  const referenced = AGENT_REFERENCES[skill.name] ?? [];
+  const usedInAutomations: Record<string, string> = {
+    "SQL 查询": "每日数据备份",
+    "代码执行": "CSV 上传入库",
+    "服务日志": "服务异常告警",
+  };
+  const usedBy = usedInAutomations[skill.name];
   let schemaPreview = "";
   if (skill.schema) {
     try {
@@ -80,8 +78,8 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
             <div className="text-gray-700 dark:text-gray-200 font-medium">{skill.createdAt ?? "官方预置"}</div>
           </div>
           <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-            <div className="text-gray-400 dark:text-gray-500 mb-0.5">被引用智能体</div>
-            <div className="text-gray-700 dark:text-gray-200 font-medium">{referenced.length ? referenced.join("、") : "暂无"}</div>
+            <div className="text-gray-400 dark:text-gray-500 mb-0.5">被自动任务使用</div>
+            <div className="text-gray-700 dark:text-gray-200 font-medium">{usedBy ?? "暂无"}</div>
           </div>
         </div>
 
@@ -92,7 +90,7 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
               <pre className="text-gray-300 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">{schemaPreview}</pre>
             </div>
           ) : (
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 text-xs text-gray-400 dark:text-gray-500">官方维护，无需配置</div>
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 text-xs text-gray-400 dark:text-gray-500">内置能力，无需配置</div>
           )}
         </div>
 

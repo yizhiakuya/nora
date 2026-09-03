@@ -17,7 +17,7 @@ export default function ChatPage() {
     <>
       <Header 
         breadcrumbs={[
-          { label: "AI 工作台", isCurrent: false }, 
+          { label: "工作台", isCurrent: false }, 
           { label: "对话", isCurrent: false },
           { label: "分析 Q2 销售数据趋势", isCurrent: true }
         ]}

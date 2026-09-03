@@ -11,8 +11,8 @@ interface SkillsState {
 }
 
 /**
- * 技能中心唯一数据源：技能中心页与智能体配置页共享，
- * 启停状态全局一致。
+ * AI 能力唯一数据源：能力页共享，
+ * 启停状态全局一致（决定 AI 在本工作台能做什么）。
  */
 export const useSkills = create<SkillsState>((set) => ({
   skills: MOCK_SKILLS,

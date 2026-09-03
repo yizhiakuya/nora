@@ -3,7 +3,7 @@
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
-const TABS = ["全部", "计算", "数据", "搜索", "集成", "自定义"];
+const TABS = ["全部", "内置", "数据", "计算", "环境", "通知", "自定义"];
 
 interface SkillTabsProps {
   activeTab: string;

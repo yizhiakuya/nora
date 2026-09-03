@@ -42,12 +42,12 @@ export default function SkillsPage() {
   const handleSubmit = (values: SkillFormValues) => {
     if (editing) {
       updateSkill(editing.id, values);
-      toast.success(`技能「${values.name}」已更新`);
+      toast.success(`工具「${values.name}」已更新`);
     } else {
       const newSkill: Skill = {
         id: Date.now(),
         name: values.name,
-        desc: "通过 OpenAPI Schema 接入的自定义技能",
+        desc: "通过 OpenAPI Schema 接入的自定义工具",
         icon: Braces,
         color: "text-blue-500 dark:text-blue-400",
         bg: "bg-blue-100 dark:bg-blue-900/50",
@@ -59,7 +59,7 @@ export default function SkillsPage() {
         authType: values.authType,
       };
       addSkill(newSkill);
-      toast.success(`技能「${values.name}」创建成功`);
+      toast.success(`工具「${values.name}」创建成功`);
     }
     setFormOpen(false);
     setEditing(null);
@@ -68,10 +68,10 @@ export default function SkillsPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "AI 工作台", isCurrent: false }, { label: "技能中心", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "AI 能力", isCurrent: true }]}
         actions={
           <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={openCreate}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 创建自定义技能
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> 注册工具
           </Button>
         }
       />
@@ -81,9 +81,9 @@ export default function SkillsPage() {
           <div className="flex flex-col mb-6 space-y-4 animate-in fade-in slide-in-from-top-4">
             <div>
               <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                <Zap className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> 技能中心 (Skills/Tools)
+                <Zap className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> AI 能力 (Tools)
               </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">管理并创建工具集，为你的 AI 智能体赋予行动能力。</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">定义 AI 在本工作台能做什么：启停内置能力，或通过 OpenAPI 注册自定义工具。</p>
             </div>
 
             <SkillTabs
@@ -103,7 +103,7 @@ export default function SkillsPage() {
           {filteredSkills.length === 0 && (
             <div className="py-20 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 animate-in fade-in">
               <Search className="w-10 h-10 mb-4 opacity-20" />
-              <div className="text-sm">没有找到匹配的技能</div>
+              <div className="text-sm">没有找到匹配的工具</div>
             </div>
           )}
         </div>

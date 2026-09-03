@@ -60,7 +60,7 @@ export default function Home() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "AI 工作台", isCurrent: false }, { label: "概览", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "概览", isCurrent: true }]}
         actions={headerActions}
       />
 
@@ -69,7 +69,7 @@ export default function Home() {
           <div className="flex items-center justify-between mb-2 animate-in fade-in slide-in-from-bottom-2">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100">早上好，Nora！</h1>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">今天你想让 AI 帮你处理什么工作？</p>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">管理文件、查数据库、控制环境——AI 都能帮你。</p>
             </div>
           </div>
 

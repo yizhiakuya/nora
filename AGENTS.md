@@ -1,7 +1,7 @@
-# AI 工作台前端项目规约 (Frontend Agent Constraints)
+# Nora 个人工作台前端项目规约 (Frontend Agent Constraints)
 
 ## 📌 项目定位
-本项目（`ai-workbench-web`）是一个 AI-Native 个人知识与商业工作台的 **纯前端（Frontend-Only）** 仓库。项目采用 Next.js 14 (App Router)、Tailwind CSS、Lucide React 和部分 Radix UI primitives 搭建。
+本项目（`ai-workbench-web`）是一个 AI 驱动的**个人文件管理与开发者工作台**的 **纯前端（Frontend-Only）** 仓库。目标用户：个人用户（文件管理）+ 开发者（数据源查询、环境控制、自动任务）。项目采用 Next.js 14 (App Router)、Tailwind CSS、Lucide React 和部分 Radix UI primitives 搭建。
 
 ## 🤖 AI 智能体开发职责边界 (Agent Boundaries)
 
@@ -20,7 +20,7 @@
 **核心原则：高内聚、低耦合，严禁出现数百行的臃肿组件。**
 
 1. **业务解耦 (Mock 数据层)**：
-   - 数据始终基于 Mock，开发和调优时，永远使用 `src/lib/mockData.ts`。
+   - 数据始终基于 Mock，开发和调优时按模块使用：`src/lib/mockData.ts`（文件/能力）、`src/lib/devData.ts`（数据源/环境/自动任务）、`src/lib/knowledgeData.ts`（知识库 RAG）。
    - 配合 `@faker-js/faker` 与 `src/lib/api/` (如 `mockApi.ts`) 模拟后端延迟(`setTimeout`)与分页机制。
 2. **UI 模块化拆分 (UI Componentization)**：
    - 页面级文件 (`page.tsx`) **仅作为胶水层** (Controller)，负责引入组件、使用 Hook 传递状态。

@@ -1,55 +1,82 @@
 'use client';
 
 import { useRouter } from "next/navigation";
-import { Bot, Database } from "lucide-react";
-
-const AGENTS = [
-  { name: "数据分析专家", desc: "关联 3 个知识库资源", avatar: "数", avatarClass: "bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400" },
-  { name: "产品文档助理", desc: "关联 12 个知识库资源", avatar: "产", avatarClass: "bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-400" },
-];
+import { Database, Server, BookOpen } from "lucide-react";
+import { MOCK_CONNECTIONS } from "@/lib/devData";
+import { MOCK_SERVICES } from "@/lib/devData";
+import { MOCK_INDEX_STATS } from "@/lib/knowledgeData";
 
 export function HomeSidePanel() {
   const router = useRouter();
+  const connectedDb = MOCK_CONNECTIONS.filter((c) => c.status === "connected").length;
+  const runningSvcs = MOCK_SERVICES.filter((s) => s.status === "running").length;
 
   return (
     <div className="w-full lg:w-[35%] flex flex-col space-y-4">
+      {/* 数据源状态 */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-          <Bot className="w-4 h-4 text-orange-500 dark:text-orange-400" /> 常用智能体
+          <Database className="w-4 h-4 text-purple-500 dark:text-purple-400" /> 数据源
         </h2>
+        <button onClick={() => router.push("/data-sources")} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+          管理 →
+        </button>
       </div>
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm p-2 flex flex-col gap-2">
-        {AGENTS.map(({ name, desc, avatar, avatarClass }) => (
-          <div
-            key={name}
-            onClick={() => router.push("/agents")}
-            className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors border border-transparent hover:border-gray-200 dark:hover:border-gray-800"
-          >
-            <div className={`w-8 h-8 ${avatarClass} rounded-lg flex items-center justify-center font-bold text-xs shadow-inner shrink-0`}>{avatar}</div>
-            <div>
-              <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{name}</div>
-              <div className="text-[10px] text-gray-500 dark:text-gray-400">{desc}</div>
-            </div>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-2xl font-bold text-gray-800 dark:text-gray-100 tabular-nums">{connectedDb}<span className="text-sm text-gray-400 dark:text-gray-500 font-normal">/{MOCK_CONNECTIONS.length}</span></div>
+            <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">已连接数据源</div>
           </div>
-        ))}
+          <div className="flex flex-col items-end gap-0.5">
+            {MOCK_CONNECTIONS.slice(0, 3).map((c) => (
+              <span key={c.id} className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${c.status === "connected" ? "bg-green-500" : "bg-red-500"}`} />
+                {c.name}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="flex items-center justify-between mt-2">
+      {/* 环境状态 */}
+      <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-          <Database className="w-4 h-4 text-purple-500 dark:text-purple-400" /> 存储空间
+          <Server className="w-4 h-4 text-green-500 dark:text-green-400" /> 环境
         </h2>
+        <button onClick={() => router.push("/environments")} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+          控制台 →
+        </button>
       </div>
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-sm">
-        <div className="flex justify-between items-end mb-3">
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm p-4">
+        <div className="flex items-center justify-between">
           <div>
-            <div className="text-2xl font-bold text-gray-800 dark:text-gray-100">12.5 <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">GB</span></div>
-            <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">总计 50 GB</div>
+            <div className="text-2xl font-bold text-gray-800 dark:text-gray-100 tabular-nums">{runningSvcs}<span className="text-sm text-gray-400 dark:text-gray-500 font-normal">/{MOCK_SERVICES.length}</span></div>
+            <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">服务运行中</div>
           </div>
-          <div className="text-xs font-medium text-blue-600 dark:text-blue-400">25% 已用</div>
+          <div className="flex flex-col items-end gap-0.5">
+            {MOCK_SERVICES.map((s) => (
+              <span key={s.id} className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${s.status === "running" ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`} />
+                {s.name}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="w-full h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden flex mb-4">
-          <div className="h-full bg-blue-500" style={{ width: "25%" }}></div>
-        </div>
+      </div>
+
+      {/* 知识库状态 */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-blue-500 dark:text-blue-400" /> 知识库
+        </h2>
+        <button onClick={() => router.push("/knowledge")} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+          管理 →
+        </button>
+      </div>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm p-4">
+        <div className="text-2xl font-bold text-gray-800 dark:text-gray-100 tabular-nums">{MOCK_INDEX_STATS.totalChunks.toLocaleString()} <span className="text-sm text-gray-400 dark:text-gray-500 font-normal">chunks</span></div>
+        <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{MOCK_INDEX_STATS.totalDocs} 个文档已索引 · {MOCK_INDEX_STATS.model}</div>
       </div>
     </div>
   );
