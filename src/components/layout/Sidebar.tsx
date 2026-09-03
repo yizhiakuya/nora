@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { 
-  Home, Folder, MessageSquare, Zap, Bot, BookOpen, 
+  Home, Folder, MessageSquare, Zap, BookOpen, Server,
   Database, ListCheck, Settings, ChevronDown, ChevronUp, ChevronsUpDown,
   User, CreditCard, LogOut, Check, X, PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
@@ -26,11 +26,12 @@ const NAV_ITEMS = [
   { name: "首页", icon: Home, href: "/" },
   { name: "文件", icon: Folder, href: "/files", subItems: [{ name: "全部文件", href: "/files" }, { name: "最近使用", href: "/files?view=recent" }, { name: "收藏文件", href: "/files?view=favorites" }, { name: "回收站", href: "/files?view=trash" }] },
   { name: "对话", icon: MessageSquare, href: "/chat", subItems: [{ name: "分析 Q2 销售数据", href: "/chat" }, { name: "产品需求文档优化", href: "/chat?session=2" }] },
-  { name: "技能中心", icon: Zap, href: "/skills" },
-  { name: "智能体", icon: Bot, href: "/agents" },
   { name: "知识库", icon: BookOpen, href: "/knowledge" },
+  { name: "AI 能力", icon: Zap, href: "/skills" },
   { name: "数据源", icon: Database, href: "/data-sources" },
-  { name: "任务中心", icon: ListCheck, href: "/tasks" },
+  { name: "环境控制台", icon: Server, href: "/environments" },
+  { name: "自动任务", icon: ListCheck, href: "/automations" },
+  { name: "设置", icon: Settings, href: "/settings" },
 ];
 
 export function Sidebar() {

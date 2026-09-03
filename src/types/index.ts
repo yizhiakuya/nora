@@ -124,3 +124,47 @@ export interface GraphProject {
   tables: string[];
   services: string[];
 }
+
+// ==========================================
+// 开发者工作台 (Developer Console)
+// ==========================================
+
+/** 数据库连接 */
+export interface DbConnection {
+  id: number;
+  name: string;
+  engine: "postgresql" | "mysql" | "sqlite" | "redis";
+  host: string;
+  port: number;
+  database: string;
+  status: "connected" | "error" | "connecting";
+  /** 连接池活跃数 */
+  activeConn: number;
+  maxConn: number;
+}
+
+/** 数据库表结构 */
+export interface DbTable {
+  name: string;
+  rows: number;
+  size: string;
+  columns: DbColumn[];
+}
+
+export interface DbColumn {
+  name: string;
+  type: string;
+  nullable: boolean;
+  isPrimary?: boolean;
+  comment?: string;
+}
+
+/** 查询历史 */
+export interface QueryHistory {
+  id: number;
+  sql: string;
+  duration: string;
+  rowsAffected: number;
+  time: string;
+  status: "success" | "error";
+}
