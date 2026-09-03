@@ -1,0 +1,10 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ai-workbench-web",
+      "port": 3334,
+      "url": "http://localhost:3334"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+'use client';
+
+import { useState } from "react";
+import { Header } from "@/components/layout/Header";
+import { SettingsNav } from "@/components/settings/SettingsNav";
+import { GeneralSettings } from "@/components/settings/GeneralSettings";
+
+export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState("通用");
+
+  return (
+    <>
+      <Header
+        breadcrumbs={[
+          { label: "AI 工作台", isCurrent: false },
+          { label: "设置中心", isCurrent: true },
+        ]}
+      />
+
+      <div className="flex-1 flex overflow-hidden bg-background dark:bg-background">
+        <SettingsNav activeTab={activeTab} onSelect={setActiveTab} />
+
+        <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scroll relative">
+          <div className="max-w-3xl space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div>
+              <h1 className="text-2xl font-bold text-foreground mb-1">{activeTab}设置</h1>
+              <p className="text-sm text-muted-foreground">管理您的工作台环境、API 密钥与个人偏好。</p>
+            </div>
+
+            {activeTab === "通用" ? (
+              <GeneralSettings />
+            ) : (
+              <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-16 text-center text-sm text-muted-foreground">
+                {activeTab}设置即将上线
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

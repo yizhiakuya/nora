@@ -1,0 +1,10 @@
+import { FilePreview } from "@/types";
+
+export function ImagePreview({ preview }: { preview: FilePreview }) {
+  return (
+    <div className="bg-[#f0f2f5] rounded-lg border border-gray-200 p-6 flex items-center justify-center min-h-[380px]">
+      {/* eslint-disable-next-line @next/next/no-img-element -- data URI 占位图，无需 next/image 优化 */}
+      <img src={preview.imageUrl} alt="图片预览" className="max-w-full max-h-[420px] rounded-lg shadow-md" />
+    </div>
+  );
+}
