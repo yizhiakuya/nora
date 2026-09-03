@@ -1,0 +1,122 @@
+diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
+index 5d7e631..6c750ff 100644
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -1,2 +1,2 @@
+ allowBuilds:
+-  unrs-resolver: set this to true or false
++  unrs-resolver: true
+diff --git a/src/app/skills/page.tsx b/src/app/skills/page.tsx
+index 058b1bc..d6be58c 100644
+--- a/src/app/skills/page.tsx
++++ b/src/app/skills/page.tsx
+@@ -89,17 +89,20 @@ export default function SkillsPage() {
+             </div>
+ 
+             <div className="flex items-center justify-between">
+-              <div className="flex gap-1 p-1 bg-gray-200/50 rounded-lg">
+-                {TABS.map((tab) => (
+-                  <div
+-                    key={tab}
+-                    onClick={() => setActiveTab(tab)}
+-                    className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${activeTab === tab ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
+-                  >
+-                    {tab}
+-                  </div>
+-                ))}
+-              </div>
++            <div role="tablist" aria-label="技能分类" className="flex gap-1 p-1 bg-gray-200/50 rounded-lg">
++              {TABS.map((tab) => (
++                <button
++                  key={tab}
++                  type="button"
++                  role="tab"
++                  aria-selected={activeTab === tab}
++                  onClick={() => setActiveTab(tab)}
++                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${activeTab === tab ? "bg-white text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
++                >
++                  {tab}
++                </button>
++              ))}
++            </div>
+ 
+               <div className="relative">
+                 <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 w-3 h-3" />
+diff --git a/src/hooks/useSelection.test.ts b/src/hooks/useSelection.test.ts
+index b2852e7..3786675 100644
+--- a/src/hooks/useSelection.test.ts
++++ b/src/hooks/useSelection.test.ts
+@@ -40,4 +40,25 @@ describe("useSelection", () => {
+     act(() => result.current.clearSelection());
+     expect(result.current.selectedIds).toEqual([]);
+   });
++
++  it("列表过滤后自动剔除失效选中项", () => {
++    const { result, rerender } = renderHook(
++      ({ nextItems }: { nextItems: typeof items }) => useSelection(nextItems, "id"),
++      { initialProps: { nextItems: items } }
++    );
++
++    act(() => result.current.toggleSelect(1));
++    act(() => result.current.toggleSelect(3));
++    expect(result.current.selectedIds).toEqual([1, 3]);
++
++    // 模拟搜索过滤：只剩 id=1 可见
++    rerender({ nextItems: [items[0]] });
++    expect(result.current.selectedIds).toEqual([1]);
++    expect(result.current.hasSelection).toBe(true);
++    expect(result.current.isAllSelected).toBe(true);
++
++    // 恢复完整列表后，被剔除的选择不会“复活”
++    rerender({ nextItems: items });
++    expect(result.current.selectedIds).toEqual([1]);
++  });
+ });
+diff --git a/src/hooks/useSelection.ts b/src/hooks/useSelection.ts
+index f1ad888..4e15654 100644
+--- a/src/hooks/useSelection.ts
++++ b/src/hooks/useSelection.ts
+@@ -1,8 +1,19 @@
+-import { useState, useCallback } from 'react';
++import { useState, useCallback, useEffect } from 'react';
+ 
+ export function useSelection<T>(items: T[], key: keyof T) {
+   const [selectedIds, setSelectedIds] = useState<T[keyof T][]>([]);
+ 
++  // 列表变化（搜索过滤 / 删除）后剔除已不在当前列表中的失效选中项，
++  // 避免 hasSelection / isAllSelected 基于陈旧 id 误判，进而误删不可见文件。
++  useEffect(() => {
++    setSelectedIds((prev) => {
++      if (prev.length === 0) return prev;
++      const validIds = new Set(items.map((item) => item[key]));
++      const next = prev.filter((id) => validIds.has(id));
++      return next.length === prev.length ? prev : next;
++    });
++  }, [items, key]);
++
+   const toggleSelectAll = useCallback(() => {
+     if (selectedIds.length === items.length && items.length > 0) {
+       setSelectedIds([]);
+diff --git a/vitest.config.ts b/vitest.config.mjs
+similarity index 66%
+rename from vitest.config.ts
+rename to vitest.config.mjs
+index f6a524c..05c6471 100644
+--- a/vitest.config.ts
++++ b/vitest.config.mjs
+@@ -1,5 +1,5 @@
++import { fileURLToPath } from "node:url";
+ import { defineConfig } from "vitest/config";
+-import path from "path";
+ 
+ export default defineConfig({
+   test: {
+@@ -8,7 +8,7 @@ export default defineConfig({
+   },
+   resolve: {
+     alias: {
+-      "@": path.resolve(__dirname, "src"),
++      "@": fileURLToPath(new URL("./src", import.meta.url)),
+     },
+   },
+ });
