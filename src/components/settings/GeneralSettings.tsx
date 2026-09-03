@@ -30,14 +30,14 @@ export function GeneralSettings() {
       <div className="p-6 space-y-6">
         <button
           type="button"
-          onClick={() => router.push("/models")}
+          onClick={() => router.push("/settings?tab=" + encodeURIComponent("模型管理"))}
           className="w-full flex items-center justify-between px-4 py-3 rounded-lg bg-muted/40 border border-border cursor-pointer hover:border-primary/40 transition-colors text-left"
         >
           <div className="flex items-center gap-3">
             <Cpu className="w-4 h-4 text-primary" />
             <div>
               <div className="text-sm font-medium text-foreground">默认大语言模型与服务商接入</div>
-              <div className="text-xs text-muted-foreground mt-0.5">已移至独立的「模型管理」页</div>
+              <div className="text-xs text-muted-foreground mt-0.5">在设置 → 模型管理 中配置</div>
             </div>
           </div>
           <ArrowRight className="w-4 h-4 text-muted-foreground" />

@@ -29,14 +29,14 @@ export function SecuritySettings() {
 
       <button
         type="button"
-        onClick={() => router.push("/models")}
+        onClick={() => router.push("/settings?tab=" + encodeURIComponent("模型管理"))}
         className="w-full bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5 flex items-center justify-between cursor-pointer hover:border-primary/40 transition-colors text-left"
       >
         <div className="flex items-center gap-3">
           <Cpu className="w-4 h-4 text-primary" />
           <div>
             <div className="text-sm font-bold text-foreground">模型服务商接入</div>
-            <div className="text-xs text-muted-foreground mt-0.5">已移至独立的「模型管理」页：名称 + 端点 URL + 密钥</div>
+            <div className="text-xs text-muted-foreground mt-0.5">在设置 → 模型管理 中配置（名称 + 端点 URL + 密钥）</div>
           </div>
         </div>
         <ArrowRight className="w-4 h-4 text-muted-foreground" />

@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { 
-  Home, Folder, MessageSquare, Zap, BookOpen, Server, Cpu, FileCog,
+  Home, Folder, MessageSquare, Zap, BookOpen, Server,
   Database, ListCheck, Settings, ChevronDown, ChevronUp, ChevronsUpDown,
   User, CreditCard, LogOut, Check, X, PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
@@ -28,10 +28,8 @@ const NAV_ITEMS = [
 { name: "对话", icon: MessageSquare, href: "/chat", subItems: [{ name: "查询订单状态分布", href: "/chat" }, { name: "排查 Redis 连接问题", href: "/chat?session=2" }] },
 { name: "知识库", icon: BookOpen, href: "/knowledge" },
 { name: "AI 能力", icon: Zap, href: "/skills" },
-{ name: "模型管理", icon: Cpu, href: "/models" },
 { name: "数据源", icon: Database, href: "/data-sources" },
 { name: "环境控制台", icon: Server, href: "/environments" },
-{ name: "环境变量", icon: FileCog, href: "/env-vars" },
 { name: "自动任务", icon: ListCheck, href: "/automations" },
 { name: "设置", icon: Settings, href: "/settings" },
 ];

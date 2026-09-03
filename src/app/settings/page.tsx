@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
+import { ModelSettings } from "@/components/settings/ModelSettings";
 import { KnowledgeAISettings } from "@/components/settings/KnowledgeAISettings";
 import { AccountSettings } from "@/components/settings/AccountSettings";
 import { SecuritySettings } from "@/components/settings/SecuritySettings";
@@ -12,6 +13,13 @@ import { BillingSettings } from "@/components/settings/BillingSettings";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("通用");
+
+  // 支持 /settings?tab=模型管理 深链（替代原独立页路由）
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    const valid = ["通用", "模型管理", "知识库与 AI", "账号", "安全", "通知", "订阅"];
+    if (tab && valid.includes(tab)) setActiveTab(tab);
+  }, []);
 
   return (
     <>
@@ -33,6 +41,7 @@ export default function SettingsPage() {
             </div>
 
             {activeTab === "通用" && <GeneralSettings />}
+            {activeTab === "模型管理" && <ModelSettings />}
             {activeTab === "知识库与 AI" && <KnowledgeAISettings />}
             {activeTab === "账号" && <AccountSettings />}
             {activeTab === "安全与 API" && <SecuritySettings />}
