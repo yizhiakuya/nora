@@ -130,14 +130,15 @@ export interface EnvVar {
   key: string;
   value: string;
   secret: boolean;
-  comment?: string;
+  /** 用途说明（显示在变量名下方） */
+  note?: string;
 }
 
+/** 用户自定义凭据与环境变量（设置 → 环境变量）：
+ *  在自定义技能、自动任务配置中以 {{KEY}} 引用；secret 值对 AI 自动脱敏。 */
 export const MOCK_ENV_VARS: EnvVar[] = [
-  { key: "NODE_ENV",           value: "development",              secret: false, comment: "运行环境" },
-  { key: "DATABASE_URL",       value: "postgres://localhost:5432/myapp_dev", secret: false, comment: "主数据库连接串" },
-  { key: "REDIS_URL",          value: "redis://localhost:6379/0", secret: false, comment: "缓存连接" },
-  { key: "REDIS_POOL_MAX",     value: "50",                        secret: false, comment: "连接池上限（周会决议调到 100）" },
-  { key: "OPENAI_API_KEY",     value: "sk-demo-••••••••••••4821", secret: true,  comment: "模型服务密钥（已脱敏）" },
-  { key: "JWT_SECRET",         value: "••••••••••••••••••••••",    secret: true,  comment: "登录态签名（已脱敏）" },
+  { key: "GH_TOKEN",        value: "ghp_demo_9f2c8a1e774b", secret: true,  note: "GitHub 仓库接入（知识库代码源）" },
+  { key: "OPENAI_API_KEY",  value: "sk-demo-4821ff9e77c3",  secret: true,  note: "自定义技能 / 自动任务调用模型" },
+  { key: "SMTP_PASSWORD",   value: "demo-pass-3311ab",      secret: true,  note: "邮件通知发送" },
+  { key: "STATUS_WEBHOOK",  value: "https://hooks.example.com/x1y2z3", secret: false, note: "服务异常告警回调地址" },
 ];

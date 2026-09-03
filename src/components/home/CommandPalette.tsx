@@ -32,7 +32,7 @@ const NAV_PAGES: SearchResult[] = [
   { id: "nav-models",  group: "页面", label: "模型管理",   hint: "设置 · LLM 服务商接入", href: "/settings?tab=模型管理", icon: Cpu, color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-ds",      group: "页面", label: "数据源",     hint: "数据库连接与查询", href: "/data-sources", icon: Database,  color: "text-purple-500 dark:text-purple-400" },
   { id: "nav-env",     group: "页面", label: "环境控制台", hint: "服务与日志",     href: "/environments",   icon: Server,    color: "text-green-500 dark:text-green-400" },
-  { id: "nav-envvars", group: "页面", label: "环境变量",   hint: "环境控制台 · .env", href: "/environments?tab=环境变量", icon: Server, color: "text-green-500 dark:text-green-400" },
+  { id: "nav-envvars", group: "页面", label: "环境变量",   hint: "设置 · 自定义凭据", href: "/settings?tab=环境变量", icon: Server, color: "text-green-500 dark:text-green-400" },
   { id: "nav-auto",    group: "页面", label: "自动任务",   hint: "触发与执行历史",  href: "/automations",   icon: ListCheck, color: "text-yellow-500 dark:text-yellow-400" },
   { id: "nav-set",     group: "页面", label: "设置",       hint: "偏好与模型配置",  href: "/settings",      icon: Settings,  color: "text-gray-500 dark:text-gray-400" },
 ];

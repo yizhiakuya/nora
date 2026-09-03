@@ -1,22 +1,14 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Server } from "lucide-react";
 import { ServiceCards } from "@/components/environments/ServiceCards";
 import { LogStream } from "@/components/environments/LogStream";
-import { EnvEditor } from "@/components/environments/EnvEditor";
-
-const TABS = ["服务", "日志", "环境变量"] as const;
+const TABS = ["服务", "日志"] as const;
 
 export default function EnvironmentsPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("服务");
-
-  // 支持 /environments?tab=环境变量 深链
-  useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get("tab");
-    if (t === "环境变量") setTab("环境变量");
-  }, []);
 
   return (
     <>
@@ -58,7 +50,6 @@ export default function EnvironmentsPage() {
               </>
             )}
             {tab === "日志" && <LogStream />}
-            {tab === "环境变量" && <EnvEditor />}
           </div>
         </div>
       </div>

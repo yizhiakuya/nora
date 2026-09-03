@@ -30,7 +30,7 @@ export function AccountSettings() {
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold flex items-center justify-center shadow-sm shrink-0">NC</div>
           <div>
             <div className="text-sm font-bold text-foreground">{name}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">{email} · 个人版</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{email} · 自部署</div>
             <button type="button" className="text-xs text-primary hover:underline mt-1 cursor-pointer" onClick={() => toast.info("头像上传为演示功能")}>更换头像</button>
           </div>
         </div>

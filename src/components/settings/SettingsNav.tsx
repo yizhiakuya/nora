@@ -1,14 +1,14 @@
-import { User, Bell, Key, CreditCard, Monitor, LogOut, BookOpen, Cpu } from "lucide-react";
+import { User, Bell, Key, Monitor, LogOut, BookOpen, Cpu, FileCog } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const SETTINGS_TABS = [
   { name: "通用", icon: Monitor },
   { name: "模型管理", icon: Cpu },
   { name: "知识库与 AI", icon: BookOpen },
+  { name: "环境变量", icon: FileCog },
   { name: "账号", icon: User },
   { name: "安全", icon: Key },
   { name: "通知", icon: Bell },
-  { name: "订阅", icon: CreditCard },
 ];
 
 export function SettingsNav({ activeTab, onSelect }: { activeTab: string; onSelect: (name: string) => void }) {
