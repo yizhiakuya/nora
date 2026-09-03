@@ -29,7 +29,7 @@ export default function SettingsPage() {
           <div className="max-w-3xl space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div>
               <h1 className="text-2xl font-bold text-foreground mb-1">{activeTab}设置</h1>
-              <p className="text-sm text-muted-foreground">管理您的工作台环境、API 密钥与个人偏好。</p>
+              <p className="text-sm text-muted-foreground">管理您的账号、通知、订阅与本地安全偏好。</p>
             </div>
 
             {activeTab === "通用" && <GeneralSettings />}

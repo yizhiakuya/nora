@@ -18,8 +18,10 @@
 /chat           AI 对话
 /knowledge      知识库 RAG（5 Tab：文档库/检索测试/索引状态/数据图谱/清洗规则）
 /skills         AI 能力（原「技能中心」，定义 AI 能做什么）
+/models         模型管理（LLM 服务商接入：名称 + 端点 URL + 密钥，默认模型）
 /data-sources   数据源（连接列表 + Schema 浏览 + 查询控制台）
 /environments   环境控制台（服务卡片 + 日志流 + AI 诊断）
+/env-vars       环境变量（.env 编辑器，独立页面）
 /automations    自动任务（触发条件 → 执行动作）
 /settings       设置
 ```

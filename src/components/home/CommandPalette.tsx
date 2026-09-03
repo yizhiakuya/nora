@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Home, Folder, MessageSquare, BookOpen, Zap, Database, Server, ListCheck, Settings, File, FileCode, ArrowRight } from "lucide-react";
+import { Search, Home, Folder, MessageSquare, BookOpen, Zap, Database, Server, ListCheck, Settings, File, FileCode, FileCog, Cpu, ArrowRight } from "lucide-react";
 import { MOCK_FILES } from "@/lib/mockData";
 import { MOCK_CONNECTIONS, MOCK_SERVICES } from "@/lib/devData";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
@@ -29,8 +29,10 @@ const NAV_PAGES: SearchResult[] = [
   { id: "nav-chat",    group: "页面", label: "对话",       hint: "AI 对话助手",    href: "/chat",           icon: MessageSquare, color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-know",    group: "页面", label: "知识库",     hint: "RAG 管线管理",   href: "/knowledge",      icon: BookOpen,  color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-skills",  group: "页面", label: "AI 能力",    hint: "定义 AI 能做什么", href: "/skills",       icon: Zap,       color: "text-yellow-500 dark:text-yellow-400" },
+  { id: "nav-models",  group: "页面", label: "模型管理",   hint: "LLM 服务商接入",  href: "/models",       icon: Cpu,       color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-ds",      group: "页面", label: "数据源",     hint: "数据库连接与查询", href: "/data-sources", icon: Database,  color: "text-purple-500 dark:text-purple-400" },
   { id: "nav-env",     group: "页面", label: "环境控制台", hint: "服务与日志",     href: "/environments",   icon: Server,    color: "text-green-500 dark:text-green-400" },
+  { id: "nav-envvars", group: "页面", label: "环境变量",   hint: ".env 配置",      href: "/env-vars",      icon: FileCog,   color: "text-green-500 dark:text-green-400" },
   { id: "nav-auto",    group: "页面", label: "自动任务",   hint: "触发与执行历史",  href: "/automations",   icon: ListCheck, color: "text-yellow-500 dark:text-yellow-400" },
   { id: "nav-set",     group: "页面", label: "设置",       hint: "偏好与模型配置",  href: "/settings",      icon: Settings,  color: "text-gray-500 dark:text-gray-400" },
 ];

@@ -2,17 +2,18 @@ import { useState, useEffect } from "react";
 import { CheckCircle2, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
+import { useRouter } from "next/navigation";
+import { Cpu, ArrowRight } from "lucide-react";
 
 export function GeneralSettings() {
   const [saved, setSaved] = useState(false);
-  const [model, setModel] = useState("GPT-4o (推荐)");
   const { schedule, cancelAll } = useTimedSequence();
   const { setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const router = useRouter();
 
   // Avoid hydration mismatch
   useEffect(() => setMounted(true), []);
@@ -27,23 +28,20 @@ export function GeneralSettings() {
   return (
     <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="p-6 space-y-6">
-        <div className="space-y-1.5">
-          <label className="text-sm font-bold text-foreground">默认大语言模型 (LLM)</label>
-          <p className="text-xs text-muted-foreground mb-2">选择在对话和自动任务中默认使用的基础大模型。</p>
-          <Select value={model} onValueChange={setModel}>
-            <SelectTrigger className="w-full max-w-sm h-10 rounded-lg">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="GPT-4o (推荐)">GPT-4o (推荐)</SelectItem>
-              <SelectItem value="Claude 3.5 Sonnet">Claude 3.5 Sonnet</SelectItem>
-              <SelectItem value="Gemini 1.5 Pro">Gemini 1.5 Pro</SelectItem>
-              <SelectItem value="自定义私有模型部署">自定义私有模型部署</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="w-full h-px bg-border"></div>
+        <button
+          type="button"
+          onClick={() => router.push("/models")}
+          className="w-full flex items-center justify-between px-4 py-3 rounded-lg bg-muted/40 border border-border cursor-pointer hover:border-primary/40 transition-colors text-left"
+        >
+          <div className="flex items-center gap-3">
+            <Cpu className="w-4 h-4 text-primary" />
+            <div>
+              <div className="text-sm font-medium text-foreground">默认大语言模型与服务商接入</div>
+              <div className="text-xs text-muted-foreground mt-0.5">已移至独立的「模型管理」页</div>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-muted-foreground" />
+        </button>
 
         <div className="space-y-4">
           <div>

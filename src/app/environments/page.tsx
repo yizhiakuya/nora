@@ -5,9 +5,8 @@ import { Header } from "@/components/layout/Header";
 import { Server } from "lucide-react";
 import { ServiceCards } from "@/components/environments/ServiceCards";
 import { LogStream } from "@/components/environments/LogStream";
-import { EnvEditor } from "@/components/environments/EnvEditor";
 
-const TABS = ["服务", "日志", "环境变量"] as const;
+const TABS = ["服务", "日志"] as const;
 
 export default function EnvironmentsPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("服务");
@@ -52,7 +51,6 @@ export default function EnvironmentsPage() {
               </>
             )}
             {tab === "日志" && <LogStream />}
-            {tab === "环境变量" && <EnvEditor />}
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
+import { useModelProviders } from "@/hooks/useModelProviders";
 import { toast } from "sonner";
 
 interface ChatInputAreaProps {
@@ -13,6 +14,7 @@ interface ChatInputAreaProps {
 export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputAreaProps) {
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
+  const defaultModel = useModelProviders((s) => s.defaultModel);
 
   const handleToggle = (id: number, name: string, enabled: boolean) => {
     toggleSkill(id);
@@ -76,7 +78,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputA
                       <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
 
                       <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-gray-600 dark:text-gray-300">
-                          GPT-4o <ChevronDown className="w-3 h-3 ml-1 text-gray-400 dark:text-gray-500" />
+                          {defaultModel} <ChevronDown className="w-3 h-3 ml-1 text-gray-400 dark:text-gray-500" />
                       </Button>
                       
                       <Button 

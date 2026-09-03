@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { 
-  Home, Folder, MessageSquare, Zap, BookOpen, Server,
+  Home, Folder, MessageSquare, Zap, BookOpen, Server, Cpu, FileCog,
   Database, ListCheck, Settings, ChevronDown, ChevronUp, ChevronsUpDown,
   User, CreditCard, LogOut, Check, X, PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
@@ -23,15 +23,17 @@ import {
 import { toast } from "sonner";
 
 const NAV_ITEMS = [
-  { name: "首页", icon: Home, href: "/" },
-  { name: "文件", icon: Folder, href: "/files", subItems: [{ name: "全部文件", href: "/files" }, { name: "最近使用", href: "/files?view=recent" }, { name: "收藏文件", href: "/files?view=favorites" }, { name: "回收站", href: "/files?view=trash" }] },
-  { name: "对话", icon: MessageSquare, href: "/chat", subItems: [{ name: "查询订单状态分布", href: "/chat" }, { name: "排查 Redis 连接问题", href: "/chat?session=2" }] },
-  { name: "知识库", icon: BookOpen, href: "/knowledge" },
-  { name: "AI 能力", icon: Zap, href: "/skills" },
-  { name: "数据源", icon: Database, href: "/data-sources" },
-  { name: "环境控制台", icon: Server, href: "/environments" },
-  { name: "自动任务", icon: ListCheck, href: "/automations" },
-  { name: "设置", icon: Settings, href: "/settings" },
+{ name: "首页", icon: Home, href: "/" },
+{ name: "文件", icon: Folder, href: "/files", subItems: [{ name: "全部文件", href: "/files" }, { name: "最近使用", href: "/files?view=recent" }, { name: "收藏文件", href: "/files?view=favorites" }, { name: "回收站", href: "/files?view=trash" }] },
+{ name: "对话", icon: MessageSquare, href: "/chat", subItems: [{ name: "查询订单状态分布", href: "/chat" }, { name: "排查 Redis 连接问题", href: "/chat?session=2" }] },
+{ name: "知识库", icon: BookOpen, href: "/knowledge" },
+{ name: "AI 能力", icon: Zap, href: "/skills" },
+{ name: "模型管理", icon: Cpu, href: "/models" },
+{ name: "数据源", icon: Database, href: "/data-sources" },
+{ name: "环境控制台", icon: Server, href: "/environments" },
+{ name: "环境变量", icon: FileCog, href: "/env-vars" },
+{ name: "自动任务", icon: ListCheck, href: "/automations" },
+{ name: "设置", icon: Settings, href: "/settings" },
 ];
 
 export function Sidebar() {
