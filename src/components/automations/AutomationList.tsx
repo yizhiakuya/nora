@@ -1,11 +1,9 @@
-'use client';
-
-import { useState } from "react";
 import { toast } from "sonner";
 import { Play, Zap, Clock, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { MOCK_AUTOMATIONS, AutomationRule } from "@/lib/devData";
+import { AutomationRule } from "@/lib/devData";
+import { useAutomations } from "@/hooks/useAutomations";
 
 const STATUS_MAP = {
   active: { label: "运行中", cls: "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300" },
@@ -14,16 +12,18 @@ const STATUS_MAP = {
 };
 
 export function AutomationList() {
-  const [rules, setRules] = useState<AutomationRule[]>(MOCK_AUTOMATIONS);
+  const rules = useAutomations((s) => s.rules);
+  const toggleRule = useAutomations((s) => s.toggleRule);
+  const markRun = useAutomations((s) => s.markRun);
 
   const toggle = (id: number) => {
-    setRules((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled, status: r.enabled ? "paused" : "active" } : r))
-    );
+    const rule = rules.find((r) => r.id === id);
+    toggleRule(id);
+    if (rule) toast.success(`「${rule.name}」已${rule.enabled ? "暂停" : "启用"}`);
   };
 
   const runNow = (rule: AutomationRule) => {
-    setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, lastRun: "刚刚" } : r)));
+    markRun(rule.id);
     toast.success(`「${rule.name}」已触发`);
   };
 

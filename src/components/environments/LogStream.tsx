@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from "react";
-import { Sparkles, Terminal } from "lucide-react";
+import { Sparkles, Terminal, Zap, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MOCK_LOGS, LogEntry } from "@/lib/devData";
+import { useAutomations } from "@/hooks/useAutomations";
+import { toast } from "sonner";
 
 const LEVEL_CLS: Record<LogEntry["level"], string> = {
   info:  "text-blue-600 dark:text-blue-400",
@@ -14,6 +16,19 @@ const LEVEL_CLS: Record<LogEntry["level"], string> = {
 export function LogStream() {
   const [filter, setFilter] = useState<"all" | LogEntry["level"]>("all");
   const [selected, setSelected] = useState<LogEntry | null>(null);
+  const [taskCreated, setTaskCreated] = useState(false);
+  const addRule = useAutomations((s) => s.addRule);
+
+  const createFixTask = () => {
+    if (taskCreated) return;
+    addRule(
+      "修复任务：恢复 Redis 服务",
+      "手动触发",
+      "启动 redis 容器 → 等待健康检查通过 → 观察 api-gateway 重连日志 5 分钟",
+    );
+    setTaskCreated(true);
+    toast.success("修复任务已创建，到「自动任务」页运行");
+  };
 
   const filtered = MOCK_LOGS.filter((l) => filter === "all" || l.level === filter);
 
@@ -63,6 +78,14 @@ export function LogStream() {
                 该错误为 Redis 连接拒绝（ECONNREFUSED）。当前 <code className="font-mono text-red-600 dark:text-red-400">redis</code> 服务状态为「离线」。
                 建议在上方服务卡片中点击「启动」恢复 Redis，或检查端口 6379 是否被占用。恢复后 api-gateway 会自动重连（最多重试 10 次，间隔 5s）。
               </p>
+              <button
+                type="button"
+                onClick={createFixTask}
+                className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${taskCreated ? "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800" : "bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-800 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700"}`}
+              >
+                {taskCreated ? <Check className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                {taskCreated ? "修复任务已创建" : "创建修复任务"}
+              </button>
             </div>
           </div>
         </div>

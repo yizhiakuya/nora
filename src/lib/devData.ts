@@ -108,3 +108,20 @@ export const MOCK_AUTOMATIONS: AutomationRule[] = [
   { id: 4, name: "周报生成",        trigger: "每周五 17:00",       action: "查询汇总 → Markdown 报告", enabled: true,  lastRun: "3 天前",    nextRun: "周五 17:00", status: "active" },
   { id: 5, name: "缓存预热",        trigger: "服务启动后",         action: "刷新热点数据到 Redis",    enabled: false, lastRun: "—",        status: "paused" },
 ];
+
+/** 自动任务执行记录 */
+export interface ExecutionRecord {
+  id: number;
+  ruleName: string;
+  time: string;
+  duration: string;
+  status: "success" | "failed" | "running";
+  detail: string;
+}
+
+export const MOCK_EXECUTIONS: ExecutionRecord[] = [
+  { id: 1, ruleName: "服务异常告警",     time: "14:02", duration: "1.2s",  status: "success", detail: "AI 诊断 ECONNREFUSED → 已生成修复建议" },
+  { id: 2, ruleName: "每日数据备份",     time: "02:00", duration: "42s",   status: "success", detail: "pg_dump → S3 (myapp_dev, 128 MB)" },
+  { id: 3, ruleName: "CSV 上传入库",     time: "13:05", duration: "3.8s",  status: "success", detail: "orders_export.csv → 826 行已插入" },
+  { id: 4, ruleName: "周报生成",         time: "周五 17:00", duration: "12s", status: "failed", detail: "查询超时（>10s）：analytics_events 表锁等待" },
+];

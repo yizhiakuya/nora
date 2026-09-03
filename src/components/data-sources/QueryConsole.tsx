@@ -1,19 +1,40 @@
 'use client';
 
 import { useState } from "react";
-import { Play, History, Loader2 } from "lucide-react";
+import { Play, History, Loader2, Download, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { MOCK_QUERIES } from "@/lib/devData";
+import { useAutomations } from "@/hooks/useAutomations";
 import { QueryHistory } from "@/types";
+import { toast } from "sonner";
 
 const AI_SUGGEST = "SELECT status, COUNT(*) as count FROM orders GROUP BY status ORDER BY count DESC;";
+
+const RESULT_COLUMNS = ["status", "count"];
+const RESULT_ROWS: string[][] = [
+  ["paid", "5214"],
+  ["shipped", "2380"],
+  ["pending", "826"],
+];
+
+function downloadCsv() {
+  const csv = [RESULT_COLUMNS.join(","), ...RESULT_ROWS.map((r) => r.join(","))].join("\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `query_result_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function QueryConsole({ database }: { database: string }) {
   const [sql, setSql] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [history, setHistory] = useState<QueryHistory[]>(MOCK_QUERIES);
+  const addRule = useAutomations((s) => s.addRule);
   const { schedule, cancelAll } = useTimedSequence();
 
   const handleRun = () => {
@@ -28,6 +49,15 @@ export function QueryConsole({ database }: { database: string }) {
         ...prev,
       ].slice(0, 50));
     }, 800);
+  };
+
+  const saveAsAutomation = () => {
+    addRule(
+      "定时执行查询：订单状态分布",
+      "每日 09:00",
+      sql.trim() || AI_SUGGEST,
+    );
+    toast.success("已保存为自动任务（每日 09:00 执行），到「自动任务」页查看");
   };
 
   return (
@@ -80,7 +110,23 @@ export function QueryConsole({ database }: { database: string }) {
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
           <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50 flex items-center justify-between">
             <span className="text-xs font-bold text-gray-700 dark:text-gray-200">结果</span>
-            <span className="text-[10px] text-green-600 dark:text-green-400">✓ 3 rows · 8ms</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-green-600 dark:text-green-400">✓ 3 rows · 8ms</span>
+              <button
+                type="button"
+                onClick={downloadCsv}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+              >
+                <Download className="w-2.5 h-2.5" /> 导出 CSV
+              </button>
+              <button
+                type="button"
+                onClick={saveAsAutomation}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
+              >
+                <Zap className="w-2.5 h-2.5" /> 保存为自动任务
+              </button>
+            </div>
           </div>
           <table className="w-full text-xs">
             <thead>
@@ -90,11 +136,7 @@ export function QueryConsole({ database }: { database: string }) {
               </tr>
             </thead>
             <tbody>
-              {[
-                ["paid", "5214"],
-                ["shipped", "2380"],
-                ["pending", "826"],
-              ].map(([a, b]) => (
+              {RESULT_ROWS.map(([a, b]) => (
                 <tr key={a} className="border-b border-gray-100 dark:border-gray-800 last:border-0 text-gray-800 dark:text-gray-100">
                   <td className="p-2.5 font-mono">{a}</td>
                   <td className="p-2.5 tabular-nums">{b}</td>
