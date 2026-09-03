@@ -125,3 +125,19 @@ export const MOCK_EXECUTIONS: ExecutionRecord[] = [
   { id: 3, ruleName: "CSV 上传入库",     time: "13:05", duration: "3.8s",  status: "success", detail: "orders_export.csv → 826 行已插入" },
   { id: 4, ruleName: "周报生成",         time: "周五 17:00", duration: "12s", status: "failed", detail: "查询超时（>10s）：analytics_events 表锁等待" },
 ];
+
+export interface EnvVar {
+  key: string;
+  value: string;
+  secret: boolean;
+  comment?: string;
+}
+
+export const MOCK_ENV_VARS: EnvVar[] = [
+  { key: "NODE_ENV",           value: "development",              secret: false, comment: "运行环境" },
+  { key: "DATABASE_URL",       value: "postgres://localhost:5432/myapp_dev", secret: false, comment: "主数据库连接串" },
+  { key: "REDIS_URL",          value: "redis://localhost:6379/0", secret: false, comment: "缓存连接" },
+  { key: "REDIS_POOL_MAX",     value: "50",                        secret: false, comment: "连接池上限（周会决议调到 100）" },
+  { key: "OPENAI_API_KEY",     value: "sk-demo-••••••••••••4821", secret: true,  comment: "模型服务密钥（已脱敏）" },
+  { key: "JWT_SECRET",         value: "••••••••••••••••••••••",    secret: true,  comment: "登录态签名（已脱敏）" },
+];

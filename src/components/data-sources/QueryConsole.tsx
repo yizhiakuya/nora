@@ -35,6 +35,7 @@ export function QueryConsole({ database }: { database: string }) {
   const [hasRun, setHasRun] = useState(false);
   const [history, setHistory] = useState<QueryHistory[]>(MOCK_QUERIES);
   const addRule = useAutomations((s) => s.addRule);
+  const [aiGenerating, setAiGenerating] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
 
   const handleRun = () => {
@@ -58,6 +59,24 @@ export function QueryConsole({ database }: { database: string }) {
       sql.trim() || AI_SUGGEST,
     );
     toast.success("已保存为自动任务（每日 09:00 执行），到「自动任务」页查看");
+  };
+
+  /** AI 生成 SQL：模拟分析表结构 → 逐段输出 */
+  const generateWithAI = () => {
+    if (aiGenerating) return;
+    setAiGenerating(true);
+    setSql("");
+    const text = AI_SUGGEST;
+    let i = 0;
+    const timer = setInterval(() => {
+      i += 8;
+      setSql(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(timer);
+        setAiGenerating(false);
+        toast.success("SQL 已生成，可编辑后运行");
+      }
+    }, 40);
   };
 
   return (
@@ -89,10 +108,11 @@ export function QueryConsole({ database }: { database: string }) {
         <div className="px-4 py-2 border-t border-gray-100 dark:border-gray-800 flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setSql(AI_SUGGEST)}
-            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
+            onClick={generateWithAI}
+            disabled={aiGenerating}
+            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-60"
           >
-            ✨ AI 生成：按状态统计订单数
+            {aiGenerating ? "✨ AI 正在分析表结构并生成…" : "✨ AI 生成：按状态统计订单数"}
           </button>
           <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">⌘+Enter 运行</span>
         </div>

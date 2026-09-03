@@ -1,16 +1,19 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatMessage, ChatResponder, MockChatAPI } from "@/lib/api/chatApi";
+import { useChatSessions } from "./useChatSessions";
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
 /** 响应器：决定谁来回应用户消息（主对话 / 调试预览等场景） */
   responder?: ChatResponder;
+  /** 传入时消息自动持久化到会话 store */
+  sessionId?: string;
 }
 
 const formatTime = () =>
   new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function useChat({ initialMessages = [], responder = MockChatAPI.sendMessage }: UseChatOptions = {}) {
+export function useChat({ initialMessages = [], responder = MockChatAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -33,6 +36,12 @@ export function useChat({ initialMessages = [], responder = MockChatAPI.sendMess
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // 会话持久化：消息变化即写回 store（未传 sessionId 时不持久化，测试/调试场景不受影响）
+  useEffect(() => {
+    if (!sessionId) return;
+    useChatSessions.getState().saveMessages(sessionId, messages);
+  }, [messages, sessionId]);
 
   const updateMessage = useCallback((id: string, partial: Partial<ChatMessage>) => {
     if (!mountedRef.current) return; // 卸载后忽略流式更新

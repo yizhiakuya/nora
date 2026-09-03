@@ -3,15 +3,17 @@
 import { Header } from "@/components/layout/Header";
 import { Sparkles, Star, Share2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useChat } from "@/hooks/useChat";
-import { SEED_CONVERSATION } from "@/lib/api/chatApi";
-import { ChatMessageItem } from "@/components/chat/ChatMessageItem";
-import { ChatInputArea } from "@/components/chat/ChatInputArea";
+import { useChatSessions } from "@/hooks/useChatSessions";
+import { ChatSessionList } from "@/components/chat/ChatSessionList";
+import { ChatConversation } from "@/components/chat/ChatConversation";
+import { toast } from "sonner";
 
 export default function ChatPage() {
-  const { messages, input, setInput, isSending, sendMessage, scrollRef } = useChat({
-    initialMessages: SEED_CONVERSATION,
-  });
+  const sessions = useChatSessions((s) => s.sessions);
+  const activeId = useChatSessions((s) => s.activeId);
+  const deleteSession = useChatSessions((s) => s.deleteSession);
+
+  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
 
   return (
     <>
@@ -19,7 +21,7 @@ export default function ChatPage() {
         breadcrumbs={[
           { label: "工作台", isCurrent: false }, 
           { label: "对话", isCurrent: false },
-          { label: "查询订单状态分布", isCurrent: true }
+          { label: active?.title ?? "新对话", isCurrent: true }
         ]}
         actions={
           <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400 text-sm">
@@ -32,28 +34,24 @@ export default function ChatPage() {
             <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200">
               <Share2 className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
+              title="删除当前会话"
+              onClick={() => { if (active) { deleteSession(active.id); toast.success("会话已删除"); } }}
+            >
               <Trash2 className="w-4 h-4" />
             </Button>
           </div>
         }
       />
-      
-      {/* Chat History */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 custom-scroll">
-          <div className="max-w-3xl mx-auto space-y-8 pb-32">
-              {messages.map((msg) => (
-                  <ChatMessageItem key={msg.id} msg={msg} />
-              ))}
-          </div>
+      <div className="flex-1 flex overflow-hidden">
+        <ChatSessionList />
+        <div key={active?.id} className="flex-1 relative flex flex-col min-w-0">
+          <ChatConversation sessionId={active.id} initialMessages={active.messages} />
+        </div>
       </div>
-
-      <ChatInputArea 
-        input={input} 
-        setInput={setInput} 
-        isSending={isSending} 
-        onSend={sendMessage} 
-      />
     </>
   );
 }

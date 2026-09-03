@@ -1,20 +1,48 @@
 'use client';
 
 import { useState } from "react";
-import { ChevronRight, Key, Table2 } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronRight, Key, Table2, RefreshCw, Loader2, Database } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { MOCK_TABLES } from "@/lib/devData";
 
 export function SchemaBrowser({ database }: { database: string }) {
-  const tables = MOCK_TABLES[database] ?? MOCK_TABLES.myapp_dev;
+  const builtin = MOCK_TABLES[database] ?? [];
+  const [synced, setSynced] = useState<Record<string, boolean>>({});
+  const [syncing, setSyncing] = useState(false);
+  const tables = builtin.length > 0 ? builtin : synced[database] ? DEMO_TABLES : [];
   const [expanded, setExpanded] = useState<string | null>(tables[0]?.name ?? null);
+
+  const sync = () => {
+    setSyncing(true);
+    setTimeout(() => {
+      setSyncing(false);
+      setSynced((prev) => ({ ...prev, [database]: true }));
+      toast.success(`已同步 ${DEMO_TABLES.length} 张表结构`);
+    }, 800);
+  };
 
   return (
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
       <div className="p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50">
-        <span className="text-xs font-bold text-gray-700 dark:text-gray-200">
-          {database} · {tables.length} 张表
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-gray-700 dark:text-gray-200">
+            {database} · {tables.length} 张表
+          </span>
+          {builtin.length === 0 && (
+            <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={sync} disabled={syncing}>
+              {syncing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
+              同步 Schema
+            </Button>
+          )}
+        </div>
       </div>
+      {tables.length === 0 ? (
+        <div className="py-16 flex flex-col items-center text-gray-400 dark:text-gray-500 gap-2">
+          <Database className="w-8 h-8 opacity-20" />
+          <span className="text-xs">尚未同步表结构，点击右上「同步 Schema」拉取</span>
+        </div>
+      ) : (
       <div className="divide-y divide-gray-100 dark:divide-gray-800">
         {tables.map((table) => {
           const isOpen = expanded === table.name;
@@ -65,6 +93,9 @@ export function SchemaBrowser({ database }: { database: string }) {
           );
         })}
       </div>
+      )}
     </div>
   );
 }
+
+const DEMO_TABLES = MOCK_TABLES.myapp_dev;
