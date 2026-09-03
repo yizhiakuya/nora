@@ -129,18 +129,32 @@ export function ModelSettings() {
       </div>
 
       {/* Add provider */}
-      <div className="bg-card dark:bg-card rounded-xl border border-dashed border-border p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <Plus className="w-4 h-4 text-primary" />
-          <span className="text-sm font-bold text-foreground">接入新服务商</span>
+      <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5 space-y-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Plus className="w-4 h-4 text-primary" />
+            <span className="text-sm font-bold text-foreground">接入新服务商</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">输入常见服务商名称自动带出官方端点；使用代理或私有部署时手动修改 URL。</p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <Input placeholder="服务商名称（如 Anthropic，自动带出端点）" className="h-9 text-sm" value={name} onChange={(e) => handleNameChange(e.target.value)} />
-          <Input placeholder="Base URL" className="h-9 text-sm font-mono" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">服务商名称</label>
+            <Input placeholder="如 Anthropic / OpenAI" className="h-10 text-sm" value={name} onChange={(e) => handleNameChange(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">端点 URL</label>
+            <Input placeholder="https://api.anthropic.com/v1" className="h-10 text-sm font-mono" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Input placeholder="密钥（本地脱敏存储）" className="h-9 text-sm font-mono flex-1" value={key} onChange={(e) => setKey(e.target.value)} />
-          <Button size="sm" className="h-9 px-4 text-xs shrink-0" onClick={handleAdd}>接入</Button>
+        <div className="flex items-end gap-3">
+          <div className="space-y-1.5 flex-1">
+            <label className="text-xs font-bold text-foreground">API 密钥</label>
+            <Input placeholder="粘贴密钥（本地脱敏存储）" className="h-10 text-sm font-mono" value={key} onChange={(e) => setKey(e.target.value)} />
+          </div>
+          <Button className="h-10 px-5 text-sm shrink-0" onClick={handleAdd}>
+            <Plus className="w-4 h-4 mr-1" /> 接入
+          </Button>
         </div>
       </div>
     </div>
