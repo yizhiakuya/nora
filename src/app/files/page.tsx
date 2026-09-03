@@ -15,12 +15,16 @@ import { useFileViewer } from "@/hooks/useFileViewer";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { toast } from "sonner";
 import { FileItem } from "@/types";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { useNotifications } from "@/hooks/useNotifications";
 
 export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<FileItem[]>(MOCK_FILES);
   const upload = useSimulatedUpload();
   const viewer = useFileViewer();
+  const indexFile = useKnowledgeDocs((s) => s.indexFile);
+  const addNotification = useNotifications((s) => s.addNotification);
 
   const filteredFiles = files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const selection = useSelection(filteredFiles, "id");
@@ -44,6 +48,13 @@ export default function FilesPage() {
       indexed: false,
     };
     setFiles([newFile, ...files]);
+  };
+
+  const handleIndexFile = (file: FileItem) => {
+    indexFile(file.name);
+    setFiles(files.map((f) => (f.id === file.id ? { ...f, indexed: true } : f)));
+    addNotification("文件索引入库", `「${file.name}」已完成解析与向量化，AI 现在可以检索其内容。`);
+    toast.success(`「${file.name}」已加入知识库`);
   };
 
   return (
@@ -85,7 +96,7 @@ export default function FilesPage() {
             <div className="text-xs text-gray-500 dark:text-gray-400">共 {files.length} 个文件</div>
           </div>
 
-          <FileTable files={filteredFiles} selection={selection} onDeleteSelected={handleDeleteSelected} onOpen={viewer.open} />
+          <FileTable files={filteredFiles} selection={selection} onDeleteSelected={handleDeleteSelected} onOpen={viewer.open} onIndex={handleIndexFile} />
         </div>
       </div>
 

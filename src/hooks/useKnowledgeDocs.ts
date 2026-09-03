@@ -6,6 +6,8 @@ interface KnowledgeDocsState {
   docs: KnowledgeDoc[];
   /** 对话结论保存为知识库文档（来源 = chat） */
   addChatDoc: (name: string, snippet: string) => KnowledgeDoc;
+  /** 文件加入知识库（来源 = file） */
+  indexFile: (name: string) => KnowledgeDoc;
 }
 
 /**
@@ -24,6 +26,20 @@ export const useKnowledgeDocs = create<KnowledgeDocsState>((set) => ({
       size: `${Math.max(1, Math.round(snippet.length / 1024))} KB`,
       updatedAt: new Date().toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\//g, "-"),
       quality: 85,
+    };
+    set((state) => ({ docs: [doc, ...state.docs] }));
+    return doc;
+  },
+  indexFile: (name) => {
+    const doc: KnowledgeDoc = {
+      id: Date.now(),
+      name,
+      source: "file",
+      chunks: 6,
+      status: "indexed",
+      size: "—",
+      updatedAt: new Date().toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\//g, "-"),
+      quality: 88,
     };
     set((state) => ({ docs: [doc, ...state.docs] }));
     return doc;

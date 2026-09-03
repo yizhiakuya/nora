@@ -2,19 +2,27 @@
 
 import { useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { Zap } from "lucide-react";
+import { Zap, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { AutomationList } from "@/components/automations/AutomationList";
 import { ExecutionHistory } from "@/components/automations/ExecutionHistory";
+import { NewAutomationModal } from "@/components/automations/NewAutomationModal";
 
 const TABS = ["规则", "执行历史"] as const;
 
 export default function AutomationsPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("规则");
+  const [modalOpen, setModalOpen] = useState(false);
 
   return (
     <>
       <Header
         breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "自动任务", isCurrent: true }]}
+        actions={
+          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建任务
+          </Button>
+        }
       />
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] dark:bg-gray-950">
@@ -48,6 +56,8 @@ export default function AutomationsPage() {
           </div>
         </div>
       </div>
+
+      <NewAutomationModal isOpen={modalOpen} onClose={() => setModalOpen(false)} />
     </>
   );
 }

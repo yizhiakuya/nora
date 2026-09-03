@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { MOCK_AUTOMATIONS, AutomationRule } from "@/lib/devData";
+import { useNotifications } from "./useNotifications";
 
 interface AutomationsState {
   rules: AutomationRule[];
@@ -25,6 +26,7 @@ export const useAutomations = create<AutomationsState>((set) => ({
       status: "active",
     };
     set((state) => ({ rules: [rule, ...state.rules] }));
+    useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
     return rule;
   },
   toggleRule: (id) =>
@@ -36,7 +38,11 @@ export const useAutomations = create<AutomationsState>((set) => ({
       ),
     })),
   markRun: (id) =>
-    set((state) => ({
-      rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
-    })),
+    set((state) => {
+      const rule = state.rules.find((r) => r.id === id);
+      if (rule) {
+        useNotifications.getState().addNotification("任务执行完成", `自动任务「${rule.name}」已成功触发，耗时 1.2s。`);
+      }
+      return { rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)) };
+    }),
 }));

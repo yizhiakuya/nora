@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, BookOpen, Eye } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
 import { useSelection } from "@/hooks/useSelection";
@@ -14,9 +14,11 @@ interface FileTableProps {
   selection: FileSelection;
   onDeleteSelected: () => void;
   onOpen: (file: FileItem) => void;
+  /** 未索引文件 → 加入知识库 */
+  onIndex?: (file: FileItem) => void;
 }
 
-export function FileTable({ files, selection, onDeleteSelected, onOpen }: FileTableProps) {
+export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex }: FileTableProps) {
   return (
     <>
       {/* Batch Action Bar */}
@@ -90,10 +92,19 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen }: FileTa
                       >
                         {file.name}
                       </span>
-                      {file.indexed && (
+                      {file.indexed ? (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border border-green-100 dark:border-green-900 font-medium ml-2 select-none shrink-0" title="已索引入知识库，AI 可检索此文件内容">
                           <BookOpen className="w-2.5 h-2.5" /> 已索引
-                       </span>
+                        </span>
+                      ) : onIndex && (
+                        <button
+                          type="button"
+                          title="解析文件内容并索引入知识库，AI 即可检索"
+                          onClick={(e) => { e.stopPropagation(); onIndex(file); }}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ml-2 select-none shrink-0 cursor-pointer border border-dashed border-blue-300 dark:border-blue-700 text-blue-500 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                        >
+                          <Plus className="w-2.5 h-2.5" /> 加入知识库
+                        </button>
                       )}
                     </div>
                   </td>
