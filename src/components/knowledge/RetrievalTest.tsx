@@ -1,80 +1,138 @@
 'use client';
 
 import { useState } from "react";
-import { SearchCode, Loader2 } from "lucide-react";
+import { SearchCode, Loader2, Database, FileCode, Server, MessageSquare, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
+import { MOCK_RETRIEVAL, SOURCE_META } from "@/lib/knowledgeData";
+import { KnowledgeSource } from "@/types";
+
+const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
+  file: File,
+  database: Database,
+  repo: FileCode,
+  environment: Server,
+  chat: MessageSquare,
+};
+
+function ScoreColor({ score }: { score: number }) {
+  if (score >= 0.9) return "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800";
+  if (score >= 0.8) return "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800";
+  return "bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700";
+}
+
+function HighlightSnippet({ text, query }: { text: string; query: string }) {
+  const terms = query.split(/\s+/).filter((t) => t.length > 1);
+  if (!terms.length) return <>{text}</>;
+  const regex = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-200/60 dark:bg-yellow-900/40 text-yellow-900 dark:text-yellow-200 px-0.5 rounded">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
 
 export function RetrievalTest() {
   const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState(false);
+  const [lastQuery, setLastQuery] = useState("");
   const { schedule, cancelAll } = useTimedSequence();
 
   const handleSearch = () => {
-    if (!query) return;
+    if (!query.trim()) return;
     cancelAll();
     setIsSearching(true);
-    setResults(false);
+    setHasSearched(false);
     schedule(() => {
       setIsSearching(false);
-      setResults(true);
-    }, 1200);
+      setLastQuery(query);
+      setHasSearched(true);
+    }, 1000);
   };
 
   return (
-    <div className="w-full lg:w-[35%] flex flex-col space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100">命中率测试</h2>
-      </div>
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm flex flex-col h-[400px]">
-        <div className="p-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50 rounded-t-xl shrink-0">
-          <div className="relative">
-            <textarea
-              rows={2}
-              placeholder="模拟提问：2023年Q4的净利润率？"
-              className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-2.5 text-xs focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500 resize-none shadow-inner pr-10"
+    <div className="space-y-4">
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">检索测试</h3>
+          <span className="text-[10px] text-gray-400 dark:text-gray-500">模拟向量 + 关键词混合检索</span>
+        </div>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <SearchCode className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
+            <input
+              className="w-full pl-9 pr-3 py-2 h-9 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-xs focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500"
+              placeholder="输入问题，如：哪条产品线下滑最严重？"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSearch(); } }}
-            ></textarea>
-            <Button size="icon" className="absolute bottom-2 right-2 w-6 h-6 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50" onClick={handleSearch} disabled={isSearching || !query}>
-              {isSearching ? <Loader2 className="w-3 h-3 animate-spin text-white" /> : <SearchCode className="w-3 h-3 text-white" />}
-            </Button>
+              onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
+            />
           </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f8fafc] dark:bg-gray-900">
-          {!isSearching && !results && (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-2">
-              <SearchCode className="w-8 h-8 opacity-20" />
-              <span className="text-xs">输入内容以测试知识库检索效果</span>
-            </div>
-          )}
-
-          {isSearching && (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-3">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-500 dark:text-blue-400" />
-              <span className="text-xs animate-pulse">正在进行向量检索...</span>
-            </div>
-          )}
-
-          {results && (
-            <>
-              <div className="text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-2">召回结果 (3)</div>
-              <div className="bg-white dark:bg-gray-900 border border-green-200 dark:border-green-800 rounded-lg p-3 shadow-sm relative overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500"></div>
-                <div className="flex justify-between items-start mb-1.5 pl-1">
-                  <div className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-1.5">财报_Final.pdf</div>
-                  <div className="bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 text-[9px] px-1.5 py-0.5 rounded font-bold">92%</div>
-                </div>
-                <div className="text-xs text-gray-700 dark:text-gray-200 pl-1">
-                  ...由于核心产品线涨价，<span className="bg-yellow-200/60 dark:bg-yellow-900/40 text-yellow-900 dark:text-yellow-200 px-0.5">净利润率</span>跃升至创纪录的 <span className="bg-yellow-200/60 dark:bg-yellow-900/40 font-bold px-0.5">18.4%</span>...
-                </div>
-              </div>
-            </>
-          )}
+          <Button size="sm" className="h-9 px-4 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSearch} disabled={isSearching || !query.trim()}>
+            {isSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SearchCode className="w-3.5 h-3.5" />}
+            检索
+          </Button>
         </div>
       </div>
+
+      {isSearching && (
+        <div className="py-12 flex flex-col items-center text-gray-400 dark:text-gray-500 gap-3">
+          <Loader2 className="w-6 h-6 animate-spin text-blue-500 dark:text-blue-400" />
+          <span className="text-xs animate-pulse">正在向量检索…</span>
+        </div>
+      )}
+
+      {!isSearching && !hasSearched && (
+        <div className="py-12 flex flex-col items-center text-gray-400 dark:text-gray-500 gap-2">
+          <SearchCode className="w-8 h-8 opacity-20" />
+          <span className="text-xs">输入问题测试知识库召回效果</span>
+        </div>
+      )}
+
+      {!isSearching && hasSearched && (
+        <div className="space-y-3">
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            召回结果 <span className="font-bold text-gray-800 dark:text-gray-100">{MOCK_RETRIEVAL.length}</span> 条 ·
+            耗时 <span className="tabular-nums">34ms</span>
+          </div>
+          {MOCK_RETRIEVAL.map((r, i) => {
+            const Icon = SOURCE_ICONS[r.source];
+            const meta = SOURCE_META[r.source];
+            return (
+              <div
+                key={i}
+                className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 relative overflow-hidden animate-in fade-in slide-in-from-bottom-2"
+                style={{ animationDelay: `${i * 80}ms`, animationFillMode: "backwards" }}
+              >
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" style={{ opacity: r.score }} />
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Icon className={`w-3.5 h-3.5 ${meta.color}`} />
+                    <span className="text-xs font-medium text-gray-800 dark:text-gray-100">{r.docName}</span>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500">chunk #{r.chunkIndex}</span>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border tabular-nums ${ScoreColor({ score: r.score })}`}>
+                    {(r.score * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                  <HighlightSnippet text={r.snippet} query={lastQuery} />
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

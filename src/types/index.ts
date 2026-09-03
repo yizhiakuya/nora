@@ -64,3 +64,63 @@ export interface FilePreview {
   table?: { columns: string[]; rows: string[][] };
   imageUrl?: string;
 }
+
+// ==========================================
+// 知识库 / 上下文管线 (RAG Pipeline)
+// ==========================================
+
+/** 摄入来源 */
+export type KnowledgeSource = "file" | "database" | "repo" | "environment" | "chat";
+
+/** 知识文档（已摄入管线的一条记录） */
+export interface KnowledgeDoc {
+  id: number;
+  name: string;
+  source: KnowledgeSource;
+  /** 切分后的 chunk 数量 */
+  chunks: number;
+  status: "indexed" | "processing" | "failed";
+  size: string;
+  updatedAt: string;
+  /** 清洗质量评分 0-100 */
+  quality: number;
+}
+
+/** 索引统计 */
+export interface IndexStats {
+  totalDocs: number;
+  totalChunks: number;
+  vectorDim: number;
+  model: string;
+  lastUpdate: string;
+  pendingDocs: number;
+  vectorReady: boolean;
+  graphReady: boolean;
+}
+
+/** 清洗规则 */
+export interface PipelineRule {
+  id: number;
+  name: string;
+  description: string;
+  enabled: boolean;
+  category: "格式" | "去噪" | "分块" | "安全" | "质量";
+}
+
+/** 检索测试结果 */
+export interface RetrievalResult {
+  docName: string;
+  source: KnowledgeSource;
+  chunkIndex: number;
+  score: number;
+  snippet: string;
+}
+
+/** 数据图谱节点关联 */
+export interface GraphProject {
+  id: number;
+  name: string;
+  files: string[];
+  tables: string[];
+  services: string[];
+}
