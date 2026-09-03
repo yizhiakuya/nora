@@ -4,16 +4,14 @@ import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Zap, Search, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { SkillCard } from "@/components/skills/SkillCard";
+import { SkillTabs } from "@/components/skills/SkillTabs";
 import { SkillFormModal, SkillFormValues } from "@/components/skills/SkillFormModal";
 import { SkillDetailModal } from "@/components/skills/SkillDetailModal";
 import { useSkills } from "@/hooks/useSkills";
 import { Skill } from "@/types";
 import { toast } from "sonner";
 import { Braces } from "lucide-react";
-
-const TABS = ["全部", "计算", "数据", "搜索", "集成", "自定义"];
 
 export default function SkillsPage() {
   const [activeTab, setActiveTab] = useState("全部");
@@ -88,32 +86,12 @@ export default function SkillsPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">管理并创建工具集，为你的 AI 智能体赋予行动能力。</p>
             </div>
 
-            <div className="flex items-center justify-between">
-            <div role="tablist" aria-label="技能分类" className="flex gap-1 p-1 bg-gray-200/50 dark:bg-gray-800/50 rounded-lg">
-              {TABS.map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${activeTab === tab ? "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50"}`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-3 h-3" />
-                <Input
-                  placeholder="搜索技能名称或描述..."
-                  className="pl-7 pr-3 py-1.5 h-8 bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-xs shadow-sm w-64 focus-visible:ring-1 focus-visible:ring-blue-500"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-            </div>
+            <SkillTabs
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+            />
           </div>
 
           <div className="grid grid-cols-3 gap-5 animate-in fade-in slide-in-from-bottom-4 duration-500">

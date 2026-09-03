@@ -1,17 +1,12 @@
-import { useState, useEffect } from "react";
 import { Code, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSkillForm, CATEGORIES, AUTH_OPTIONS, SkillFormValues } from "@/hooks/useSkillForm";
 import { Skill } from "@/types";
 
-export interface SkillFormValues {
-  name: string;
-  category: string;
-  schema: string;
-  authType: string;
-}
+export type { SkillFormValues };
 
 interface SkillFormModalProps {
   isOpen: boolean;
@@ -21,48 +16,10 @@ interface SkillFormModalProps {
   onSubmit: (values: SkillFormValues) => void;
 }
 
-const CATEGORIES = ["自定义", "计算", "数据", "搜索", "集成"];
-const AUTH_OPTIONS = ["无鉴权", "Bearer Token", "API Key"];
-
 export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillFormModalProps) {
   const isEdit = !!initial;
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("自定义");
-  const [schema, setSchema] = useState("");
-  const [authType, setAuthType] = useState("无鉴权");
-  const [token, setToken] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; schema?: string }>({});
-
-  // 打开时回填（编辑）或复位（创建）
-  useEffect(() => {
-    if (isOpen) {
-      setName(initial?.name ?? "");
-      setCategory(initial?.category ?? "自定义");
-      setSchema(initial?.schema ?? "");
-      setAuthType(initial?.authType ?? "无鉴权");
-      setToken("");
-      setErrors({});
-    }
-  }, [isOpen, initial]);
-
-  const handleSubmit = () => {
-    const next: { name?: string; schema?: string } = {};
-    if (!name.trim()) next.name = "技能名称不能为空";
-    if (!schema.trim()) {
-      next.schema = "OpenAPI Schema 不能为空";
-    } else {
-      try {
-        JSON.parse(schema);
-      } catch {
-        next.schema = "Schema 不是合法的 JSON，请检查格式";
-      }
-    }
-    if (next.name || next.schema) {
-      setErrors(next);
-      return;
-    }
-    onSubmit({ name: name.trim(), category, schema, authType });
-  };
+  const form = useSkillForm(initial ?? null, isOpen);
+  const { name, setName, category, setCategory, schema, setSchema, authType, setAuthType, token, setToken, errors, submit } = form;
 
   return (
     <Modal
@@ -72,7 +29,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSubmit}>
+          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => submit(onSubmit)}>
             {isEdit ? "保存修改" : "保存并创建"}
           </Button>
         </>
