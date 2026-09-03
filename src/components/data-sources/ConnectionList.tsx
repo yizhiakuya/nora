@@ -1,8 +1,8 @@
 'use client';
 
 import { Database, HardDrive, Zap } from "lucide-react";
-import { MOCK_CONNECTIONS } from "@/lib/devData";
 import { DbConnection } from "@/types";
+import { useConnections } from "@/hooks/useConnections";
 
 const ENGINE_META: Record<DbConnection["engine"], { icon: React.ElementType; color: string }> = {
   postgresql: { icon: Database,  color: "text-blue-600 dark:text-blue-400" },
@@ -26,9 +26,10 @@ interface ConnectionListProps {
 }
 
 export function ConnectionList({ selectedId, onSelect }: ConnectionListProps) {
+  const connections = useConnections((s) => s.connections);
   return (
     <div className="w-full md:w-56 shrink-0 space-y-1.5">
-      {MOCK_CONNECTIONS.map((conn) => {
+      {connections.map((conn) => {
         const meta = ENGINE_META[conn.engine];
         const Icon = meta.icon;
         const active = conn.id === selectedId;

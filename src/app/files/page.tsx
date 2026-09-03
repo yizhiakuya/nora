@@ -37,9 +37,10 @@ export default function FilesPage() {
   };
 
   const handleUploadComplete = () => {
+    const stamp = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).replace(":", "");
     const newFile: FileItem = {
       id: Date.now(),
-      name: "新上传的分析报告.pdf",
+      name: `服务器文档_${stamp}.pdf`,
       type: "PDF 文档",
       size: "1.5 MB",
       date: new Date().toISOString().slice(0, 16).replace("T", " "),

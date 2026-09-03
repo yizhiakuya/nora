@@ -7,22 +7,33 @@ import { Button } from "@/components/ui/button";
 import { ConnectionList } from "@/components/data-sources/ConnectionList";
 import { SchemaBrowser } from "@/components/data-sources/SchemaBrowser";
 import { QueryConsole } from "@/components/data-sources/QueryConsole";
-import { MOCK_CONNECTIONS } from "@/lib/devData";
+import { NewConnectionModal } from "@/components/data-sources/NewConnectionModal";
+import { useConnections } from "@/hooks/useConnections";
+import { useNotifications } from "@/hooks/useNotifications";
 
 const VIEW_TABS = ["Schema 浏览", "查询控制台"] as const;
 
 export default function DataSourcesPage() {
-  const [selectedId, setSelectedId] = useState(MOCK_CONNECTIONS[0].id);
+  const [selectedId, setSelectedId] = useState<number>(() => useConnections.getState().connections[0].id);
   const [activeView, setActiveView] = useState<(typeof VIEW_TABS)[number]>("Schema 浏览");
+  const [modalOpen, setModalOpen] = useState(false);
+  const connections = useConnections((s) => s.connections);
+  const addNotification = useNotifications((s) => s.addNotification);
 
-  const selected = MOCK_CONNECTIONS.find((c) => c.id === selectedId) ?? MOCK_CONNECTIONS[0];
+  const selected = connections.find((c) => c.id === selectedId) ?? connections[0];
+
+  const handleCreated = (id: number) => {
+    setSelectedId(id);
+    const conn = useConnections.getState().connections.find((c) => c.id === id);
+    if (conn) addNotification("数据源已连接", `「${conn.name}」（${conn.engine}）连接成功，AI 可读取其 Schema 辅助生成 SQL。`);
+  };
 
   return (
     <>
       <Header
         breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "数据源", isCurrent: true }]}
         actions={
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600">
+          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
             <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建连接
           </Button>
         }
@@ -82,6 +93,8 @@ export default function DataSourcesPage() {
           </div>
         </div>
       </div>
+
+      <NewConnectionModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={handleCreated} />
     </>
   );
 }
