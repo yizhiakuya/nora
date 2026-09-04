@@ -88,6 +88,11 @@ nora-web/
 | 文档 | 内容 |
 |------|------|
 | [docs/product-redesign.md](docs/product-redesign.md) | 产品重定位、信息架构、业务流程闭环 |
+| [docs/home.md](docs/home.md) | 首页概览（快捷入口 / 最近文件 / 侧栏状态） |
+| [docs/chat.md](docs/chat.md) | 对话（多会话 / 流式消息 / 引用来源） |
+| [docs/data-sources.md](docs/data-sources.md) | 数据源（连接管理 / Schema 浏览 / 查询控制台） |
+| [docs/environments.md](docs/environments.md) | 环境控制台（服务卡片 / 日志流 / AI 诊断） |
+| [docs/automations.md](docs/automations.md) | 自动任务（触发条件 / 执行历史 / 通知联动） |
 | [docs/model-settings.md](docs/model-settings.md) | 模型管理设计（Tab 布局 + 协议类型 + 弹窗接入） |
 | [docs/rag-service.md](docs/rag-service.md) | RAG 服务层（后端 API 契约预留） |
 | [docs/skills-center.md](docs/skills-center.md) | AI 能力中心业务闭环设计 |
