@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Play, History, Loader2, Download, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
@@ -8,6 +8,8 @@ import { MOCK_QUERIES } from "@/lib/devData";
 import { useAutomations } from "@/hooks/useAutomations";
 import { QueryHistory } from "@/types";
 import { toast } from "sonner";
+import { datasourcesApi, type BackendQueryResult } from "@/lib/services/datasourcesApi";
+import { USE_BACKEND } from "@/lib/api/client";
 
 const AI_SUGGEST = "SELECT status, COUNT(*) as count FROM orders GROUP BY status ORDER BY count DESC;";
 
@@ -18,9 +20,9 @@ const RESULT_ROWS: string[][] = [
   ["pending", "826"],
 ];
 
-function downloadCsv() {
-  const csv = [RESULT_COLUMNS.join(","), ...RESULT_ROWS.map((r) => r.join(","))].join("\n");
-  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+function downloadCsv(columns: string[], rows: (string | null)[][]) {
+  const csv = [columns.join(","), ...rows.map((r) => r.map((c) => c ?? "").join(","))].join("\n");
+  const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -31,13 +33,22 @@ function downloadCsv() {
 
 interface QueryConsoleProps {
   database: string;
+  /** 服务端连接 id(后端模式必传) */
+  connectionId?: number;
   initialSql?: string;
 }
 
-export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
+/**
+ * 查询控制台:USE_BACKEND 时走 datasource-service 只读执行(限 200 行,
+ * 非 SELECT/SHOW/EXPLAIN 会被后端 SqlGuard 拒绝),历史来自服务端;Mock 模式沿用模拟行为。
+ */
+export function QueryConsole({ database, connectionId, initialSql }: QueryConsoleProps) {
+  const backendMode = USE_BACKEND && connectionId !== undefined;
   const [sql, setSql] = useState(initialSql ?? "");
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
+  const [result, setResult] = useState<BackendQueryResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistory[]>(MOCK_QUERIES);
   const addRule = useAutomations((s) => s.addRule);
   const [aiGenerating, setAiGenerating] = useState(false);
@@ -49,13 +60,53 @@ export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
     }
   }, [initialSql]);
 
-  const handleRun = () => {
+  // 后端模式:拉取服务端查询历史
+  const loadHistory = useCallback(async () => {
+    if (!backendMode || connectionId === undefined) return;
+    try {
+      const rows = await datasourcesApi.fetchHistory(connectionId, 50);
+      setHistory(rows.map((h) => ({
+        id: h.id,
+        sql: h.sql,
+        duration: h.durationMs != null ? `${h.durationMs}ms` : "—",
+        rowsAffected: h.rowsAffected,
+        time: h.executedAt?.slice(5, 16).replace("T", " ") ?? "",
+        status: h.status === "success" ? ("success" as const) : ("error" as const),
+      })));
+    } catch {
+      /* 历史拉取失败不打断 */
+    }
+  }, [backendMode, connectionId]);
+
+  useEffect(() => {
+    if (backendMode) void loadHistory();
+  }, [backendMode, loadHistory]);
+
+  const handleRun = async () => {
     if (!sql.trim() || isRunning) return;
     cancelAll();
     setIsRunning(true);
+    setRunError(null);
+    if (backendMode && connectionId !== undefined) {
+      try {
+        const r = await datasourcesApi.runQuery(connectionId, sql.trim());
+        setResult(r);
+        setHasRun(true);
+      } catch (e) {
+        setRunError((e as Error).message);
+        setResult(null);
+        setHasRun(true);
+      } finally {
+        setIsRunning(false);
+        void loadHistory();
+      }
+      return;
+    }
+    // Mock 模式
     schedule(() => {
       setIsRunning(false);
       setHasRun(true);
+      setResult({ columns: RESULT_COLUMNS, rows: RESULT_ROWS, rowCount: 3, durationMs: 8 });
       setHistory((prev) => [
         { id: Date.now(), sql, duration: "8ms", rowsAffected: 3, time: "刚刚", status: "success" as const },
         ...prev,
@@ -90,6 +141,9 @@ export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
     }, 40);
   };
 
+  const displayColumns = backendMode ? result?.columns ?? [] : RESULT_COLUMNS;
+  const displayRows = backendMode ? result?.rows ?? [] : RESULT_ROWS;
+
   return (
     <div className="space-y-4">
       {/* SQL Editor */}
@@ -110,7 +164,7 @@ export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
           <textarea
             rows={4}
             className="w-full bg-[#1e1e1e] text-gray-300 font-mono text-xs leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
-            placeholder="-- 输入 SQL，或点击下方 AI 生成"
+            placeholder="-- 只读查询（SELECT / SHOW / EXPLAIN），或点击下方 AI 生成"
             value={sql}
             onChange={(e) => setSql(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleRun(); }}
@@ -137,15 +191,24 @@ export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
         </div>
       )}
 
-      {!isRunning && hasRun && (
+      {!isRunning && hasRun && runError && (
+        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl px-4 py-3">
+          <div className="text-xs font-bold text-red-600 dark:text-red-400 mb-1">查询失败</div>
+          <div className="text-xs font-mono text-red-600/80 dark:text-red-400/80 break-all">{runError}</div>
+        </div>
+      )}
+
+      {!isRunning && hasRun && !runError && result && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center justify-between">
             <span className="text-xs font-bold text-foreground">结果</span>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-green-600 dark:text-green-400">✓ 3 rows · 8ms</span>
+              <span className="text-[10px] text-green-600 dark:text-green-400">
+                ✓ {result.rowCount} rows · {result.durationMs}ms
+              </span>
               <button
                 type="button"
-                onClick={downloadCsv}
+                onClick={() => downloadCsv(displayColumns, displayRows)}
                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
               >
                 <Download className="w-2.5 h-2.5" /> 导出 CSV
@@ -159,22 +222,28 @@ export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
               </button>
             </div>
           </div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-muted border-b border-border text-muted-foreground">
-                <th className="p-2.5 text-left font-medium">status</th>
-                <th className="p-2.5 text-left font-medium">count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {RESULT_ROWS.map(([a, b]) => (
-                <tr key={a} className="border-b border-border last:border-0 text-foreground">
-                  <td className="p-2.5 font-mono">{a}</td>
-                  <td className="p-2.5 tabular-nums">{b}</td>
+          <div className="max-h-80 overflow-y-auto custom-scroll">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted border-b border-border text-muted-foreground">
+                  {displayColumns.map((c) => (
+                    <th key={c} className="p-2.5 text-left font-medium">{c}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {displayRows.map((row, i) => (
+                  <tr key={i} className="border-b border-border last:border-0 text-foreground">
+                    {row.map((cell, j) => (
+                      <td key={j} className="p-2.5 font-mono">
+                        {cell ?? <span className="text-muted-foreground italic">NULL</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

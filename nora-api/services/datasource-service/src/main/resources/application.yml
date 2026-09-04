@@ -4,6 +4,15 @@ server:
 spring:
   application:
     name: datasource-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_datasource
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_datasource
+    default-schema: schema_datasource
+    create-schemas: true
   cloud:
     nacos:
       discovery:

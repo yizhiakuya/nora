@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnections } from "@/hooks/useConnections";
 import { DbConnection } from "@/types";
+import { USE_BACKEND } from "@/lib/api/client";
 
 const ENGINES: { value: DbConnection["engine"]; label: string; defaultPort: number }[] = [
   { value: "postgresql", label: "PostgreSQL", defaultPort: 5432 },
@@ -29,15 +30,25 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
   const [host, setHost] = useState("localhost");
   const [port, setPort] = useState("5432");
   const [database, setDatabase] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 后端模式仅支持 postgresql/mysql
+  const engineOptions = USE_BACKEND
+    ? ENGINES.filter((e) => e.value === "postgresql" || e.value === "mysql")
+    : ENGINES;
 
   useEffect(() => {
     if (isOpen) {
-      setEngine("postgresql");
+      setEngine(USE_BACKEND ? "postgresql" : "postgresql");
       setName("");
       setHost("localhost");
       setPort("5432");
       setDatabase("");
+      setUsername("");
+      setPassword("");
       setError(null);
     }
   }, [isOpen]);
@@ -50,7 +61,7 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
     else if (host === "—") setHost("localhost");
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name.trim()) {
       setError("连接名称不能为空");
       return;
@@ -63,16 +74,27 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
       setError(engine === "sqlite" ? "数据库文件路径不能为空" : "数据库名不能为空");
       return;
     }
-    const conn = addConnection({
-      name: name.trim(),
-      engine: engine as DbConnection["engine"],
-      host: host.trim(),
-      port: Number(port) || 0,
-      database: database.trim(),
-    });
-    toast.success(`连接「${conn.name}」已建立`);
-    onCreated?.(conn.id);
-    onClose();
+    if (USE_BACKEND && !username.trim()) {
+      setError("用户名不能为空");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const conn = await addConnection({
+        name: name.trim(),
+        engine: engine as DbConnection["engine"],
+        host: host.trim(),
+        port: Number(port) || 0,
+        database: database.trim(),
+        username: username.trim(),
+        password,
+      });
+      toast.success(`连接「${conn.name}」已建立`);
+      onCreated?.(conn.id);
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -83,8 +105,8 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSubmit}>
-            测试并连接
+          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "连接中…" : "测试并连接"}
           </Button>
         </>
       }
@@ -97,7 +119,7 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ENGINES.map((e) => (
+              {engineOptions.map((e) => (
                 <SelectItem key={e.value} value={e.value}>{e.label}</SelectItem>
               ))}
             </SelectContent>
@@ -131,6 +153,30 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
             onChange={(e) => { setDatabase(e.target.value); setError(null); }}
           />
         </div>
+
+        {USE_BACKEND && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-foreground">用户名</label>
+              <Input
+                placeholder="postgres"
+                className="h-9 text-sm font-mono"
+                value={username}
+                onChange={(e) => { setUsername(e.target.value); setError(null); }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-foreground">密码</label>
+              <Input
+                type="password"
+                placeholder="••••••••"
+                className="h-9 text-sm font-mono"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
 
         {error && <p className="text-[11px] text-red-500 dark:text-red-400">{error}</p>}
       </div>

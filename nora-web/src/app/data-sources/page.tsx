@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Database, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,13 @@ export default function DataSourcesPage() {
   const [targetSql, setTargetSql] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const connections = useConnections((s) => s.connections);
+  const syncFromBackend = useConnections((s) => s.syncFromBackend);
   const addNotification = useNotifications((s) => s.addNotification);
+
+  // 后端模式:进入页面拉一次服务端连接列表
+  useEffect(() => {
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
   const selected = connections.find((c) => c.id === selectedId) ?? connections[0];
 
@@ -96,10 +102,10 @@ export default function DataSourcesPage() {
               </div>
 
               {activeView === "Schema 浏览" && (
-                <SchemaBrowser database={selected.database} onQueryTable={handleQueryTable} />
+                <SchemaBrowser database={selected.database} connectionId={selected.id} onQueryTable={handleQueryTable} />
               )}
               {activeView === "查询控制台" && (
-                <QueryConsole database={selected.database} initialSql={targetSql} />
+                <QueryConsole database={selected.database} connectionId={selected.id} initialSql={targetSql} />
               )}
             </div>
           </div>

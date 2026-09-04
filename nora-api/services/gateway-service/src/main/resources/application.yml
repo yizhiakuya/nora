@@ -26,6 +26,10 @@ spring:
           uri: lb://rag-service
           predicates:
             - Path=/api/rag/**
+        - id: datasources
+          uri: lb://datasource-service
+          predicates:
+            - Path=/api/datasources/**
 
 management:
   endpoints:
