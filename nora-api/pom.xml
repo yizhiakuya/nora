@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.4</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.nora</groupId>
+    <artifactId>nora-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>nora-parent</name>
+    <description>Nora personal workbench backend — Maven parent POM: unified dependency and plugin version management for all modules (see docs/architecture-v2.md)</description>
+
+    <!-- Default reactor: common + api modules only.
+         Services live in the 'services' profile below (activeByDefault), so:
+           - plain `mvn install`          -> builds common + api + services (profile is on)
+           - `mvn install -P '!services'` -> builds only common + api (fast library-only build) -->
+    <modules>
+        <module>common/nora-common</module>
+        <module>common/nora-security</module>
+        <module>api/rag-api</module>
+        <module>api/file-api</module>
+        <module>api/datasource-api</module>
+        <module>api/env-api</module>
+        <module>api/automation-api</module>
+        <module>api/agent-api</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring Boot 3.3.4 baseline (redundant with starter-parent chain, kept explicit as the version anchor) -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>3.3.4</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Spring Cloud 2023.0.3 (Leyton) -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>2023.0.3</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Spring Cloud Alibaba 2023.0.1.2 (Nacos / Sentinel) -->
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>2023.0.1.2</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- LangChain4j 1.0.1 -->
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-bom</artifactId>
+                <version>1.0.1</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Apache Dubbo 3.3.0 (plain managed entry, per task spec: not the dubbo-bom import) -->
+            <dependency>
+                <groupId>org.apache.dubbo</groupId>
+                <artifactId>dubbo</artifactId>
+                <version>3.3.0</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <release>21</release>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>3.3.4</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+    <profiles>
+        <!-- Spring Boot executable services (jar + repackage). On by default; disable with -P '!services'. -->
+        <profile>
+            <id>services</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <modules>
+                <module>services/gateway-service</module>
+                <module>services/file-service</module>
+                <module>services/rag-service</module>
+                <module>services/agent-service</module>
+                <module>services/datasource-service</module>
+                <module>services/env-service</module>
+                <module>services/automation-service</module>
+            </modules>
+        </profile>
+    </profiles>
+</project>
