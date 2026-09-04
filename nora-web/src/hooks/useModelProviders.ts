@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { modelsApi } from "@/lib/services/modelsApi";
+import { USE_BACKEND } from "@/lib/api/client";
 
 export type ProviderProtocol = "openai" | "ollama" | "anthropic";
 
@@ -40,34 +42,73 @@ const SEED: ModelProvider[] = [
 interface ModelProvidersState {
   providers: ModelProvider[];
   defaultModel: string;
+  /** 后端模式:拉取服务端 provider 列表 */
+  syncFromBackend: () => Promise<void>;
   addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }) => void;
   removeProvider: (id: number) => void;
   toggleEnabled: (id: number) => void;
   setDefaultModel: (m: string) => void;
   markStatus: (id: number, status: ModelProvider["status"]) => void;
+  /** 真实连通测试(后端模式走 /test,Mock 模式由调用方自行模拟) */
+  testProvider: (id: number) => Promise<"ok" | "fail">;
+}
+
+/** 本地新增(后端不可用或 Mock 模式的回退路径) */
+function localProvider(input: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }): ModelProvider {
+  return {
+    id: Date.now(),
+    name: input.name.trim(),
+    url: input.url.trim(),
+    masked: input.key.slice(0, 4) + "••••••••" + input.key.slice(-4),
+    enabled: true,
+    status: "untested",
+    protocol: input.protocol ?? "openai",
+    models: input.models?.length ? input.models : ["默认模型"],
+  };
 }
 
 /**
  * 模型服务商接入唯一数据源：模型管理页与对话页模型选择器共享。
  * 完整接入 = 名称 + 端点 URL + 密钥。
+ * USE_BACKEND 时 CRUD 与连通测试走 agent-service /api/models/providers。
  */
 export const useModelProviders = create<ModelProvidersState>()(
   persist(
     (set, get) => ({
       providers: SEED,
       defaultModel: "GPT-4o",
+      syncFromBackend: async () => {
+        if (!USE_BACKEND) return;
+        try {
+          const providers = await modelsApi.listProviders();
+          // 后端为准:有数据时整体替换本地
+          if (providers.length > 0) {
+            set((state) => {
+              const defaultStillThere = providers.some((p) => p.models.includes(state.defaultModel));
+              return {
+                providers,
+                defaultModel: defaultStillThere
+                  ? state.defaultModel
+                  : providers.find((p) => p.enabled)?.models[0] ?? state.defaultModel,
+              };
+            });
+          }
+        } catch {
+          /* 后端不可用时沿用本地缓存 */
+        }
+      },
       addProvider: ({ name, url, key, protocol = "openai", models }) => {
-        const provider: ModelProvider = {
-          id: Date.now(),
-          name: name.trim(),
-          url: url.trim(),
-          masked: key.slice(0, 4) + "••••••••" + key.slice(-4),
-          enabled: true,
-          status: "untested",
-          protocol,
-          models: models?.length ? models : ["默认模型"],
-        };
-        set((state) => ({ providers: [...state.providers, provider] }));
+        const optimistic = localProvider({ name, url, key, protocol, models });
+        set((state) => ({ providers: [...state.providers, optimistic] }));
+        if (USE_BACKEND) {
+          modelsApi.createProvider({ name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models })
+            .then((saved) => {
+              set((state) => ({
+                providers: state.providers.map((p) => (p.id === optimistic.id ? saved : p)),
+              }));
+            })
+            .catch(() => { /* 保留本地乐观条目,错误由调用方 toast */ });
+        }
       },
       removeProvider: (id) => {
         const { providers, defaultModel } = get();
@@ -78,17 +119,36 @@ export const useModelProviders = create<ModelProvidersState>()(
           patch.defaultModel = next.find((p) => p.enabled)?.models[0] ?? "未配置";
         }
         set(patch as ModelProvidersState);
+        if (USE_BACKEND && id < 1e12) {
+          // 服务端 id(BIGSERIAL 小值)才发删除;本地 Date.now() 乐观条目跳过
+          modelsApi.deleteProvider(id).catch(() => { /* 本地已删,服务端失败不打断 */ });
+        }
       },
-      toggleEnabled: (id) =>
+      toggleEnabled: (id) => {
+        const target = get().providers.find((p) => p.id === id);
         set((state) => ({
           providers: state.providers.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
-        })),
+        }));
+        if (USE_BACKEND && target) {
+          modelsApi.updateProvider(id, { enabled: !target.enabled }).catch(() => { /* 乐观更新已生效 */ });
+        }
+      },
       setDefaultModel: (m) => set({ defaultModel: m }),
       markStatus: (id, status) =>
-        set((state) => ({ providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)) })),
+        set((state) => ({
+          providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)),
+        })),
+      testProvider: async (id) => {
+        if (!USE_BACKEND) {
+          throw new Error("mock mode: caller simulates the test");
+        }
+        const result = await modelsApi.testProvider(id);
+        set((state) => ({
+          providers: state.providers.map((p) => (p.id === id ? { ...p, status: result.status } : p)),
+        }));
+        return result.status;
+      },
     }),
     { name: "model-providers" }
   )
 );
-
-

@@ -14,6 +14,7 @@ export function ModelSettings() {
   const [addOpen, setAddOpen] = useState(false);
   const providers = useModelProviders((s) => s.providers);
   const defaultModel = useModelProviders((s) => s.defaultModel);
+  const syncFromBackend = useModelProviders((s) => s.syncFromBackend);
   const enabledModels = useMemo(() => providers.filter((p) => p.enabled).flatMap((p) => p.models), [providers]);
   const connectedCount = providers.filter((p) => p.status === "ok").length;
 
@@ -22,6 +23,11 @@ export function ModelSettings() {
     const t = new URLSearchParams(window.location.search).get("tab");
     if (t === "models") setTab("models");
   }, []);
+
+  // 后端模式:进入设置页拉一次服务端 provider 列表
+  useEffect(() => {
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
   return (
     <div className="space-y-4">

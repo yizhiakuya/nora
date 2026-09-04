@@ -7,26 +7,32 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/custom/States";
 import { useModelProviders, PROTOCOL_META, type ModelProvider } from "@/hooks/useModelProviders";
-import { useTimedSequence } from "@/hooks/useTimedSequence";
 
 function ProviderCard({ p }: { p: ModelProvider }) {
   const toggleEnabled = useModelProviders((s) => s.toggleEnabled);
   const removeProvider = useModelProviders((s) => s.removeProvider);
   const markStatus = useModelProviders((s) => s.markStatus);
-  const { schedule } = useTimedSequence();
+  const testProvider = useModelProviders((s) => s.testProvider);
   const [testing, setTesting] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
-  const test = () => {
+  const test = async () => {
     setTesting(true);
     markStatus(p.id, "untested");
-    schedule(() => {
-      setTesting(false);
+    try {
+      const status = await testProvider(p.id);
+      toast[status === "ok" ? "success" : "error"](
+        status === "ok" ? "连接成功，端点可用" : "连接失败，请检查端点与密钥"
+      );
+    } catch {
+      // Mock 模式(或后端异常):本地启发式回退
       const ok = /^https?:\/\//.test(p.url);
       markStatus(p.id, ok ? "ok" : "fail");
       toast[ok ? "success" : "error"](ok ? "连接成功，端点可用" : "连接失败，请检查 URL");
-    }, 900);
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
