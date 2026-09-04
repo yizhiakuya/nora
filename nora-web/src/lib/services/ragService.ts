@@ -5,17 +5,19 @@ import {
   KnowledgeSource,
   RetrievalResult,
 } from "@/types";
+import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 
 /**
- * RAG 服务层（前端 Mock 实现 + 后端 API 契约预留）。
+ * RAG 服务层（前端 Mock 实现 + 后端 API 接入）。
  *
- * 设计原则：所有调用方（知识库组件 / 对话页）只依赖本文件导出的函数，
- * 后端接入时只需将函数体替换为 fetch 请求，调用方零改动。
+ * 设计原则：所有调用方（知识库组件 / 对话页）只依赖本文件导出的函数；
+ * USE_BACKEND=false 时走本地 Mock（零依赖开发），=true 时走真实后端。
  *
- * 后端端点约定：
- * - searchDocs        → POST /api/rag/search        { query, topK } → RetrievalResult[]
- * - computeIndexStats → GET  /api/rag/index/stats    → IndexStats
- * - generateCitations → POST /api/rag/citations      { query, topK } → Citation[]
+ * 后端端点：
+ * - searchDocsAsync    → POST /api/rag/search        { query, topK } → RetrievalResult[]
+ * - fetchIndexStats    → GET  /api/rag/index/stats    → IndexStats
+ * - generateCitationsAsync → POST /api/rag/citations  { query, topK } → Citation[]
  */
 
 /** 将查询拆分为检索词：中文按单字，英文/数字按完整 token */
@@ -130,6 +132,40 @@ export function generateCitations(query: string, docs: KnowledgeDoc[], topK = 2)
     score: r.score,
     snippet: r.snippet,
   }));
+}
+
+// ==========================================
+// 后端接入层（USE_BACKEND 开关，异步）
+// ==========================================
+
+/** 检索：后端真实向量检索 / 本地 Mock 模拟 */
+export async function searchDocsAsync(query: string, topK = 8): Promise<RetrievalResult[]> {
+  if (!USE_BACKEND) {
+    return searchDocs(query, useKnowledgeDocs.getState().docs, topK);
+  }
+  return requestJson<RetrievalResult[]>("/rag/search", {
+    method: "POST",
+    body: JSON.stringify({ query, topK }),
+  });
+}
+
+/** 索引统计：后端真实统计 / 本地文档推导 */
+export async function fetchIndexStats(): Promise<IndexStats> {
+  if (!USE_BACKEND) {
+    return computeIndexStats(useKnowledgeDocs.getState().docs);
+  }
+  return requestJson<IndexStats>("/rag/index/stats");
+}
+
+/** 对话引用来源：后端真实 / 本地 Mock 模拟 */
+export async function generateCitationsAsync(query: string, topK = 2): Promise<Citation[]> {
+  if (!USE_BACKEND) {
+    return generateCitations(query, useKnowledgeDocs.getState().docs, topK);
+  }
+  return requestJson<Citation[]>("/rag/citations", {
+    method: "POST",
+    body: JSON.stringify({ query, topK }),
+  });
 }
 
 

@@ -34,7 +34,7 @@ class FileApiRecordsTest {
         assertEquals("hello.txt", request.name());
         assertEquals("aGVsbG8=", request.contentBytes());
 
-        FilePreview preview = new FilePreview(42L, "text", "hello world");
+        FilePreview preview = new FilePreview(42L, "text", "hello world", "greeting.txt", "12 B");
         assertEquals(42L, preview.fileId());
         assertEquals("text", preview.type());
         assertEquals("hello world", preview.textContent());

@@ -14,6 +14,14 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/chat/**
+        - id: file
+          uri: lb://file-service
+          predicates:
+            - Path=/api/files/**
+        - id: rag
+          uri: lb://rag-service
+          predicates:
+            - Path=/api/rag/**
 
 management:
   endpoints:

@@ -4,10 +4,29 @@ server:
 spring:
   application:
     name: rag-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_rag
+    default-schema: schema_rag
+    create-schemas: true
+    locations: classpath:db/migration
   cloud:
     nacos:
       discovery:
         enabled: true
+
+nora:
+  embedding:
+    api-key: ${NORA_EMBEDDING_API_KEY:}
+    base-url: https://api.jina.ai/v1
+    model: jina-embeddings-v3
+    dimensions: 1024
+  file-service:
+    base-url: http://localhost:8081
 
 management:
   endpoints:

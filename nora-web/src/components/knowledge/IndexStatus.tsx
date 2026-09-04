@@ -1,8 +1,11 @@
 'use client';
 
+import { useEffect, useState } from "react";
 import { Database, Layers, Boxes, Clock, CheckCircle2, AlertCircle } from "lucide-react";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
-import { computeIndexStats } from "@/lib/services/ragService";
+import { computeIndexStats, fetchIndexStats } from "@/lib/services/ragService";
+import { USE_BACKEND } from "@/lib/api/client";
+import type { IndexStats } from "@/types";
 
 function StatCard({ icon: Icon, label, value, sub, color }: {
   icon: React.ElementType; label: string; value: string | number; sub?: string; color: string;
@@ -21,7 +24,19 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
 
 export function IndexStatus() {
   const docs = useKnowledgeDocs((state) => state.docs);
-  const s = computeIndexStats(docs);
+  const localStats = computeIndexStats(docs);
+  const [stats, setStats] = useState<IndexStats>(localStats);
+
+  useEffect(() => {
+    if (!USE_BACKEND) return;
+    let mounted = true;
+    fetchIndexStats()
+      .then((s) => { if (mounted) setStats(s); })
+      .catch(() => { /* 后端不可用时保留本地推导值 */ });
+    return () => { mounted = false; };
+  }, []);
+
+  const s = stats;
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -39,7 +54,7 @@ export function IndexStatus() {
             {s.vectorReady ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-red-500" />}
             <div>
               <div className="text-sm font-medium text-foreground">向量索引</div>
-              <div className="text-xs text-muted-foreground">支持语义检索，1536 维</div>
+              <div className="text-xs text-muted-foreground">支持语义检索，{s.vectorDim} 维</div>
             </div>
           </div>
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.vectorReady ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300"}`}>

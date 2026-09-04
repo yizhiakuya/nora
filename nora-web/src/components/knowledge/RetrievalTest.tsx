@@ -5,8 +5,8 @@ import { SearchCode, Loader2, Database, FileCode, Server, MessageSquare, File } 
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { SOURCE_META } from "@/lib/knowledgeData";
-import { searchDocs } from "@/lib/services/ragService";
-import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { searchDocsAsync } from "@/lib/services/ragService";
+import { USE_BACKEND } from "@/lib/api/client";
 import { KnowledgeSource, RetrievalResult } from "@/types";
 
 const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
@@ -50,18 +50,31 @@ export function RetrievalTest() {
   const [lastQuery, setLastQuery] = useState("");
   const { schedule, cancelAll } = useTimedSequence();
   const [searchResults, setSearchResults] = useState<RetrievalResult[]>([]);
+  const [searchMs, setSearchMs] = useState(34);
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!query.trim()) return;
     cancelAll();
     setIsSearching(true);
     setHasSearched(false);
-    schedule(() => {
-      setIsSearching(false);
-      setLastQuery(query);
-      setHasSearched(true);
-      setSearchResults(searchDocs(query, useKnowledgeDocs.getState().docs));
-    }, 800);
+    const startedAt = performance.now();
+    const run = async () => {
+      try {
+        const results = await searchDocsAsync(query, 8);
+        setSearchResults(results);
+        setLastQuery(query);
+        setHasSearched(true);
+        setSearchMs(Math.max(1, Math.round(performance.now() - startedAt)));
+      } finally {
+        setIsSearching(false);
+      }
+    };
+    // Mock 模式保留 800ms 演示延迟；真实后端直接请求
+    if (USE_BACKEND) {
+      await run();
+    } else {
+      schedule(() => { void run(); }, 800);
+    }
   };
 
   return (
@@ -69,7 +82,7 @@ export function RetrievalTest() {
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-foreground">检索测试</h3>
-          <span className="text-[10px] text-muted-foreground">模拟向量 + 关键词混合检索</span>
+          <span className="text-[10px] text-muted-foreground">{USE_BACKEND ? "pgvector 语义检索" : "模拟向量 + 关键词混合检索"}</span>
         </div>
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -107,7 +120,7 @@ export function RetrievalTest() {
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">
             召回结果 <span className="font-bold text-foreground">{searchResults.length}</span> 条 ·
-            耗时 <span className="tabular-nums">34ms</span>
+            耗时 <span className="tabular-nums">{searchMs}ms</span>
           </div>
           {searchResults.map((r, i) => {
             const Icon = SOURCE_ICONS[r.source];

@@ -4,10 +4,29 @@ server:
 spring:
   application:
     name: file-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_file
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_file
+    default-schema: schema_file
+    create-schemas: true
   cloud:
     nacos:
       discovery:
         enabled: true
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+nora:
+  file:
+    storage-dir: ./data/files/
+  rag:
+    base-url: http://localhost:8082
 
 management:
   endpoints:
