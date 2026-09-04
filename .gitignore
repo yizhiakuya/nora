@@ -1,41 +1,12 @@
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
-nora-web/node_modules
-nora-api/node_modules
+# dependencies (fallback, normally each subproject has its own)
+node_modules/
 
-# testing
-/coverage
-
-# vite build output
-dist/
-nora-web/dist/
-
-# next.js legacy
-.next/
-next-env.d.ts
+# IDE-specific
+.claude/
 
 # misc
 .DS_Store
 *.pem
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local dev runtime artifacts
-dev.log
-dev.pid
-
-# IDE-specific
-.claude/
-
 # local env files
 .env*.local
-
-# typescript
-*.tsbuildinfo
-nora-web/tsconfig.tsbuildinfo

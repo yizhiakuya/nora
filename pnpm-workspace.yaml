@@ -1,7 +1,0 @@
-packages:
-  - nora-web
-  - nora-api
-
-allowBuilds:
-  esbuild: true
-  unrs-resolver: true
