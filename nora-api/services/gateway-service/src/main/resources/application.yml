@@ -30,6 +30,10 @@ spring:
           uri: lb://datasource-service
           predicates:
             - Path=/api/datasources/**
+        - id: automations
+          uri: lb://automation-service
+          predicates:
+            - Path=/api/automations/**
 
 management:
   endpoints:

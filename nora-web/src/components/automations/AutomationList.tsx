@@ -23,8 +23,10 @@ export function AutomationList() {
   };
 
   const runNow = (rule: AutomationRule) => {
-    markRun(rule.id);
-    toast.success(`「${rule.name}」已触发`);
+    toast.loading(`「${rule.name}」执行中…`, { id: `run-${rule.id}` });
+    void Promise.resolve(markRun(rule.id)).then(() => {
+      toast.success(`「${rule.name}」已触发`, { id: `run-${rule.id}` });
+    });
   };
 
   return (

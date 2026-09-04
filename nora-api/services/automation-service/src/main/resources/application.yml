@@ -4,10 +4,23 @@ server:
 spring:
   application:
     name: automation-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_automation
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_automation
+    default-schema: schema_automation
+    create-schemas: true
   cloud:
     nacos:
       discovery:
         enabled: true
+
+nora:
+  datasource:
+    base-url: http://localhost:8084
 
 management:
   endpoints:

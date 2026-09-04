@@ -1,18 +1,25 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Zap, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AutomationList } from "@/components/automations/AutomationList";
 import { ExecutionHistory } from "@/components/automations/ExecutionHistory";
 import { NewAutomationModal } from "@/components/automations/NewAutomationModal";
+import { useAutomations } from "@/hooks/useAutomations";
 
 const TABS = ["规则", "执行历史"] as const;
 
 export default function AutomationsPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("规则");
   const [modalOpen, setModalOpen] = useState(false);
+  const syncFromBackend = useAutomations((s) => s.syncFromBackend);
+
+  // 后端模式:进入页面拉一次服务端规则与执行历史
+  useEffect(() => {
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
   return (
     <>
