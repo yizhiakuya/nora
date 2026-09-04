@@ -3,15 +3,12 @@
 /.pnp
 .pnp.js
 .yarn/install-state.gz
-nora-web/node_modules
-nora-api/node_modules
 
 # testing
 /coverage
 
 # vite build output
 dist/
-nora-web/dist/
 
 # next.js legacy
 .next/
@@ -38,4 +35,5 @@ dev.pid
 
 # typescript
 *.tsbuildinfo
-nora-web/tsconfig.tsbuildinfo
+
+
