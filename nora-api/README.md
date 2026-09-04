@@ -4,6 +4,7 @@ Nora 个人工作台 Java 后端。当前为立项阶段，完整设计文档见
 
 - [docs/architecture-v2.md](docs/architecture-v2.md) — **微服务架构设计（当前基准）**
 - [docs/agent-design-research.md](docs/agent-design-research.md) — **Agent 设计调研**（ReAct/Reflexion/ReWOO/Voyager/SWE-agent 论文 + Anthropic/Cognition/LangGraph/OpenAI 实践）
+- [docs/frontend-impact-analysis.md](docs/frontend-impact-analysis.md) — **前端影响分析**（零改动/需改/需新增三分类 + 回退策略）
 - [docs/nora-api-initiation-2026-09-04.md](docs/nora-api-initiation-2026-09-04.md) — 领域需求反推 + API 契约（单体版，保留作参考）
 
 ## 定位

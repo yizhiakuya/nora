@@ -241,6 +241,7 @@ public class ModelRouter {
 ### 4.8 调研驱动的 Agent 设计（2026-09-04）
 
 > 完整调研来源见 [agent-design-research.md](agent-design-research.md)（ReAct / Reflexion / ReWOO / Voyager / SWE-agent / LATS 论文 + Anthropic / Cognition / LangGraph / OpenAI Agents SDK 实践）。
+> 前端对此设计的影响评估见 [frontend-impact-analysis.md](frontend-impact-analysis.md)。
 
 #### 4.8.1 执行模式：ReAct 基础 + ReWOO 优化
 
