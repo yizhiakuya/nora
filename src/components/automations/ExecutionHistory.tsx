@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { RotateCw, CheckCircle2, XCircle, Loader2, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MOCK_EXECUTIONS, ExecutionRecord } from "@/lib/devData";
+import { useNotifications } from "@/hooks/useNotifications";
 
 const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; cls: string; label: string }> = {
   success: { icon: CheckCircle2, cls: "text-green-600 dark:text-green-400", label: "成功" },
@@ -14,12 +15,26 @@ const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; 
 
 export function ExecutionHistory() {
   const [retrying, setRetrying] = useState<number | null>(null);
+  const [records, setRecords] = useState<ExecutionRecord[]>(MOCK_EXECUTIONS);
+  const addNotification = useNotifications((s) => s.addNotification);
 
   const retry = (record: ExecutionRecord) => {
     setRetrying(record.id);
     setTimeout(() => {
       setRetrying(null);
-      toast.success(`「${record.ruleName}」已重新触发`);
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === record.id
+            ? { ...r, status: "success" as const, time: "刚刚", duration: "1.4s", detail: `${r.detail} → 重试成功` }
+            : r
+        )
+      );
+      addNotification(
+        "任务执行完成",
+        `自动任务「${record.ruleName}」重试成功，耗时 1.4s。`,
+        "taskDone"
+      );
+      toast.success(`「${record.ruleName}」重试成功`);
     }, 800);
   };
 
@@ -28,10 +43,10 @@ export function ExecutionHistory() {
       <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
         <History className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
         <span className="text-xs font-bold text-gray-700 dark:text-gray-200">执行历史</span>
-        <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{MOCK_EXECUTIONS.length} 条 · 最近 24h</span>
+        <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{records.length} 条 · 最近 24h</span>
       </div>
       <div className="divide-y divide-gray-100 dark:divide-gray-800">
-        {MOCK_EXECUTIONS.map((rec) => {
+        {records.map((rec) => {
           const meta = STATUS_META[rec.status];
           const Icon = meta.icon;
           return (
