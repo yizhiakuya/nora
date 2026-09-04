@@ -1,6 +1,7 @@
 # Nora API 立项设计文档 · Java 后端
 
-> 状态：立项设计稿 · 目标：将 nora-web 纯前端 Mock 全面升级为前后端一体的个人工作台
+> 状态：已被 v2 微服务方案替代（领域需求与 API 契约仍有效）· 目标：将 nora-web 纯前端 Mock 全面升级为前后端一体的个人工作台
+> 架构基准：见 [architecture-v2.md](architecture-v2.md)
 > 日期：2026-09-04 · 前端基线：`18ffa9c` · 仓库：`D:\claude\Nora\nora-web`
 
 ---

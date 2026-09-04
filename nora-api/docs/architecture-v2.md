@@ -1,0 +1,664 @@
+# Nora API · 微服务架构设计 v2
+
+> 状态：立项设计稿（v2，替代单体方案）  
+> 日期：2026-09-04 · 前端基线：`18ffa9c`  
+> 前置文档：[nora-api-initiation-2026-09-04.md](nora-api-initiation-2026-09-04.md)（保留作为领域需求反推与 API 契约来源）
+
+---
+
+## 0. 变更摘要
+
+| 项 | v1 单体方案 | v2 微服务方案 |
+|----|------------|--------------|
+| 部署形态 | 单个 Spring Boot 应用 | 6 个可独立部署服务 + 2 个平台组件 |
+| LLM 接入 | Spring AI | **LangChain4j**（Req/Ai/Tool/Serve 四层） |
+| 服务治理 | 无 | **Spring Cloud Alibaba**（Nacos + Dubbo + Sentinel） |
+| 网关 | 无独立网关 | **Spring Cloud Gateway**（统一入口 + SSE 透传） |
+| 数据一致性 | 单库事务 | Saga + 最终一致 + outbox |
+| 部署 | 单 jar | Docker Compose / K8s，每服务独立镜像 |
+
+---
+
+## 1. 总体架构
+
+```
+                       ┌─────────────────────┐
+                       │     nora-web        │
+                       │  (Vite + React)     │
+                       └──────────┬──────────┘
+                                  │ HTTP / SSE
+                    ┌─────────────▼─────────────┐
+                    │  gateway-service :8080    │
+                    │  Spring Cloud Gateway     │
+                    │  路由/鉴权/限流/SSE透传     │
+                    └──────┬──────┬──────┬─────┘
+                           │      │      │
+        ┌──────────────────▼┐  ┌──▼───────────┐  ┌▼────────────────┐
+        │ file-service      │  │ rag-service  │  │ chat-service    │
+        │ :8081             │  │ :8082        │  │ :8083           │
+        │ 文件/上传/解析     │  │ 切块/嵌入/检索 │  │ LangChain4j编排  │
+        └────┬──────────────┘  └──┬───────────┘  └┬────────────────┘
+             │                    │                │
+        ┌────▼──────────────┐  ┌──▼────────────┐  │
+        │ datasource-service│  │ env-service    │  │
+        │ :8084             │  │ :8085          │  │
+        │ JDBC/SQL执行      │  │ Docker/日志     │  │
+        └────────────────────┘  └───────────────┘  │
+             │                                      │
+        ┌────▼──────────────┐                       │
+        │ automation-service│                       │
+        │ :8086             │                       │
+        │ Quartz/触发/执行   │                       │
+        └────────────────────┘                       │
+                                                    │
+                    ┌───────────────────────────────▼─┐
+                    │ platform components              │
+                    │ ├── nacos :8848                 │
+                    │ ├── rocketmq (or redis stream)  │
+                    │ ├── postgres:pgvector :5432     │
+                    │ └── redis :6379                 │
+                    └─────────────────────────────────┘
+```
+
+---
+
+## 2. 服务拆分
+
+| 服务 | 端口 | 职责 | 对应前端页面 |
+|------|------|------|-------------|
+| gateway-service | 8080 | 统一入口、JWT 鉴权、路由、限流、SSE 透传 | 全部 |
+| file-service | 8081 | 文件上传、Tika 解析、预览生成 | /files |
+| rag-service | 8082 | 文档切块、Embedding、pgvector 检索 | /knowledge |
+| chat-service | 8083 | LangChain4j 对话编排、SSE 流式 | /chat |
+| datasource-service | 8084 | JDBC 连接管理、Schema 浏览、SQL 执行 | /data-sources |
+| env-service | 8085 | Docker 探活、日志采集、AI 诊断 | /environments |
+| automation-service | 8086 | Quartz 调度、触发器、执行器 | /automations |
+
+**拆分原则：**
+
+1. 按前端路由域拆，与页面/团队心智一致
+2. 每个服务可独立部署、独立扩容（如 rag-service 需要更多 CPU 做嵌入）
+3. 服务间通信用 **Dubbo**（内部同步调用）+ **RocketMQ**（异步事件）
+4. 前端所有请求都走 gateway，服务之间不直接暴露端口
+```
+---
+
+## 3. 技术栈（微服务版）
+
+| 层 | 选型 | 理由 |
+|----|------|------|
+| 基础框架 | **Spring Boot 3.3** | Java 21 LTS、生态标准 |
+| 微服务治理 | **Spring Cloud Alibaba 2023.x** | Nacos 注册/配置中心、Sentinel 限流熔断 |
+| 内部 RPC | **Apache Dubbo 3.3** | 高性能内部调用，接口即契约 |
+| 网关 | **Spring Cloud Gateway** | 路由、JWT 鉴权、限流、SSE 透传 |
+| **LLM 框架** | **LangChain4j 1.x** | AiServices / Tools / RAG / Memory 一站式 |
+| 数据库 | PostgreSQL 16 + pgvector | 业务 + 向量同库 |
+| ORM | MyBatis-Flex 1.9 | 轻量、pgvector 类型扩展 |
+| 消息 | RocketMQ 5（可降级 Redis Stream） | 跨服务事件、outbox |
+| 调度 | Quartz（automation-service 内） | cron 持久化 job |
+| 文件解析 | Apache Tika 2.9 + POI | PDF/Word/Excel/文本 |
+| Docker 交互 | docker-java 3.3 | 容器启停、日志 |
+| 密钥加密 | Jasypt | BYO-Key 落库加密 |
+| 可观测 | Micrometer + OpenTelemetry + Grafana LGTM | 日志/指标/链路 |
+| 部署 | Docker Compose（开发）→ K8s（可选） | 每服务独立镜像 |
+| 测试 | Testcontainers + WireMock | 每服务独立集成测试 |
+
+---
+
+## 4. LangChain4j 设计（核心）
+
+LangChain4j 是 Java 生态最成熟的 LLM 编排框架，四个核心能力全部用上：
+
+### 4.1 依赖
+
+```kotlin
+// chat-service build.gradle.kts
+dependencies {
+    implementation("dev.langchain4j:langchain4j:1.0.1")
+    implementation("dev.langchain4j:langchain4j-open-ai:1.0.1")
+    implementation("dev.langchain4j:langchain4j-anthropic:1.0.1")
+    implementation("dev.langchain4j:langchain4j-ollama:1.0.1")
+    implementation("dev.langchain4j:langchain4j-reactor:1.0.1")  // Flux 流式
+    implementation("dev.langchain4j:langchain4j-pgvector:1.0.1") // 向量库集成
+}
+```
+
+### 4.2 AiServices（声明式对话接口）
+
+```java
+public interface NoraAssistant {
+
+    @SystemMessage("""
+        你是 Nora 个人工作台的助手。回答必须：
+        1. 优先使用检索到的知识库内容
+        2. 引用来源时使用 [[docName]] 标记
+        3. 如果工具返回错误，如实说明并给出下一步建议
+        """)
+    Flux<String> chat(@UserMessage String message);
+}
+```
+
+### 4.3 Tools（工具调用 = 前端"AI 能力"）
+
+```java
+public class NoraTools {
+
+    @Tool("查询已连接的数据库，只执行 SELECT 语句")
+    public String executeSql(
+        @P("数据源名称") String datasourceName,
+        @P("SQL 查询语句") String sql) {
+        return dubboSqlClient.executeReadOnly(datasourceName, sql);
+    }
+
+    @Tool("读取指定服务最近 N 条日志")
+    public String readServiceLogs(
+        @P("服务名") String service,
+        @P("条数") int limit) {
+        return dubboLogClient.tail(service, limit);
+    }
+
+    @Tool("创建自动修复任务")
+    public String createAutomation(
+        @P("任务名称") String name,
+        @P("触发条件") String trigger,
+        @P("执行动作") String action) {
+        return dubboAutomationClient.addRule(name, trigger, action);
+    }
+}
+```
+
+### 4.4 RAG（rag-service 侧）
+
+```java
+// 嵌入
+EmbeddingModel openAiEmbedding = OpenAiEmbeddingModel.builder()
+    .apiKey(key)
+    .dimensions(1536)
+    .build();
+
+// 向量库
+EmbeddingStore<TextSegment> store = PgVectorEmbeddingStore.builder()
+    .host("postgres")
+    .port(5432)
+    .database("nora")
+    .table("knowledge_chunk")
+    .dimension(1536)
+    .build();
+
+// 检索管道
+ContentRetriever retriever = EmbeddingStoreContentRetriever.builder()
+    .embeddingStore(store)
+    .embeddingModel(openAiEmbedding)
+    .maxResults(8)
+    .minScore(0.5)
+    .build();
+
+// 注入 chat-service 的 Assistant
+Assistant assistant = AiServices.builder(NoraAssistant.class)
+    .chatLanguageModel(model)
+    .contentRetriever(retriever)
+    .tools(new NoraTools())
+    .chatMemoryProvider(sessionId -> MessageWindowChatMemory.withMaxMessages(20))
+    .build();
+```
+
+### 4.5 多模型路由（LangChain4j ModelRouter 模式）
+
+```java
+public class ModelRouter {
+    private final Map<String, ChatModel> models;
+
+    public ChatModel route(String protocol, String modelName) {
+        return switch (protocol) {
+            case "openai"    -> openAiModel(modelName);
+            case "anthropic" -> anthropicModel(modelName);
+            case "ollama"    -> ollamaModel(modelName);
+            default          -> throw new IllegalArgumentException(protocol);
+        };
+        // model 字段来自 model_provider 表，用户在设置页自由切换
+    }
+}
+```
+
+### 4.6 LangChain4j 模块归属
+
+| 模块 | 所在服务 | 说明 |
+|------|---------|------|
+| ChatModel / StreamingChatModel | chat-service | 对话生成 |
+| EmbeddingModel | rag-service | 文档向量化 |
+| EmbeddingStore（pgvector） | rag-service | 向量存储 |
+| ContentRetriever | rag-service | 检索管道 |
+| Tools | chat-service | 工具调用（跨服务走 Dubbo） |
+| ChatMemoryProvider | chat-service | 会话记忆 |
+
+**注意**：`ContentRetriever` 在 rag-service，chat-service 通过 Dubbo 接口调用检索，把检索结果注入 prompt，不直接读 pgvector。
+
+---
+
+## 5. 服务间通信
+
+### 5.1 Dubbo（同步 RPC）
+
+内部服务接口定义在公共模块 `nora-api`（api 包）：
+
+```java
+// nora-api/rag-api/src/main/java/com/nora/rag/api/RagService.java
+public interface RagService {
+    List<RetrievalResult> search(SearchRequest request);
+    IndexStatistics getIndexStats();
+}
+
+// nora-api/file-api/src/main/java/com/nora/file/api/FileService.java
+public interface FileService {
+    FileItem upload(FileUploadRequest request);
+    PreviewResult preview(Long fileId);
+}
+```
+
+服务提供方实现接口并注册到 Nacos，消费方 `@DubboReference` 注入。
+
+### 5.2 RocketMQ（异步事件）
+
+| Topic | 生产者 | 消费者 | 事件 |
+|-------|--------|--------|------|
+| `file.uploaded` | file-service | rag-service | 文件上传完成 → 触发索引 |
+| `doc.indexed` | rag-service | chat-service、automation-service | 文档可检索 |
+| `sql.executed` | datasource-service | automation-service | 查询完成 |
+| `log.error` | env-service | automation-service | 触发告警任务 |
+| `task.executed` | automation-service | notification | 任务完成通知 |
+| `notification.created` | automation-service、env-service | notification | 推送通知 |
+
+**Outbox 模式**：业务写库与事件发布在同一本地事务中先写 `outbox` 表，后台任务轮询发送，保证不丢事件。
+
+### 5.3 Saga（跨服务最终一致）
+
+以"文件上传 → 索引 → 可检索"为例：
+
+```
+file-service: INSERT file_item + INSERT outbox(file.uploaded)
+    → MQ → rag-service: 插入 knowledge_doc(processing) + 异步嵌入
+    → rag-service: 更新 indexed + MQ(doc.indexed)
+    → chat-service / automation-service 消费（仅更新缓存/计数）
+```
+
+补偿：嵌入失败 → knowledge_doc.status = failed → 发 `doc.index.failed` → notification 推送。
+```
+---
+
+## 6. 目录结构（Maven 多模块）
+
+```
+nora-api/
+├── pom.xml                                # 父 POM：统一版本管理
+├── docker-compose.yml                     # PG + Redis + Nacos + RocketMQ + 全部服务
+├── services/
+│   ├── gateway-service/
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/nora/gateway/
+│   │       ├── GatewayApplication.java
+│   │       ├── config/SecurityConfig.java
+│   │       └── route/ApiRouteConfiguration.java
+│   │
+│   ├── file-service/
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/nora/file/
+│   │       ├── FileApplication.java
+│   │       ├── controller/FileController.java
+│   │       ├── service/FileStorageService.java
+│   │       ├── service/TextExtractionService.java      # Tika
+│   │       ├── service/PreviewService.java
+│   │       ├── domain/                                    # MyBatis-Flex
+│   │       └── mq/FileEventProducer.java                # outbox → MQ
+│   │
+│   ├── rag-service/
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/nora/rag/
+│   │       ├── RagApplication.java
+│   │       ├── controller/RagController.java
+│   │       ├── service/ChunkingService.java
+│   │       ├── service/EmbeddingService.java           # LangChain4j Embedding
+│   │       ├── service/RetrievalService.java
+│   │       ├── store/PgVectorStore.java                # LangChain4j pgvector
+│   │       └── mq/DocIndexConsumer.java                # 消费 file.uploaded
+│   │
+│   ├── chat-service/
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/nora/chat/
+│   │       ├── ChatApplication.java
+│   │       ├── controller/ChatController.java          # SSE
+│   │       ├── assistant/NoraAssistant.java           # LangChain4j AiServices
+│   │       ├── assistant/ModelRouter.java
+│   │       ├── tools/NoraTools.java                   # @Tool
+│   │       ├── memory/ChatMemoryProvider.java
+│   │       └── service/ChatOrchestrationService.java
+│   │
+│   ├── datasource-service/
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/nora/datasource/
+│   │       ├── DatasourceApplication.java
+│   │       ├── controller/ConnectionController.java
+│   │       ├── controller/SchemaController.java
+│   │       ├── controller/QueryController.java
+│   │       ├── pool/ConnectionPoolManager.java
+│   │       └── guard/SqlGuard.java                    # 只读校验
+│   │
+│   ├── env-service/
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/nora/env/
+│   │       ├── EnvApplication.java
+│   │       ├── controller/ServiceController.java
+│   │       ├── controller/LogStreamController.java    # SSE
+│   │       ├── docker/DockerClientFactory.java
+│   │       └── service/DiagnosisService.java          # 调 chat-service
+│   │
+│   └── automation-service/
+│       ├── pom.xml
+│       └── src/main/java/com/nora/automation/
+│           ├── AutomationApplication.java
+│           ├── controller/AutomationController.java
+│           ├── scheduler/QuartzSchedulerService.java
+│           ├── trigger/EventTriggerListener.java      # 消费 MQ 事件
+│           ├── executor/ActionExecutor.java
+│           └── mq/TaskEventConsumer.java
+│
+├── api/                                   # Dubbo 接口 + DTO（独立 jar）
+│   ├── rag-api/
+│   ├── file-api/
+│   ├── datasource-api/
+│   ├── env-api/
+│   └── automation-api/
+│
+├── common/
+│   ├── nora-common/                      # ApiResponse、异常、工具
+│   └── nora-security/                    # JWT 工具、过滤器
+│
+└── docs/
+    ├── architecture-v2.md
+    └── nora-api-initiation-2026-09-04.md
+```
+
+**Maven 而非 Gradle 的理由**：多模块微服务 + Dubbo 接口 jar 分发，Maven 的 reactor + BOM 管理更成熟直观。
+
+---
+
+## 7. 数据库策略
+
+### 7.1 每服务独立 schema（逻辑隔离）
+
+```
+postgres (single instance)
+├── schema_file      → file-service
+├── schema_rag       → rag-service
+├── schema_chat      → chat-service
+├── schema_datasource→ datasource-service
+├── schema_env       → env-service
+└── schema_automation→ automation-service
+```
+
+开发期单实例分 schema（简化运维），生产可平滑拆为独立实例（连接串只改配置）。
+
+### 7.2 跨服务数据所有权
+
+| 表 | 归属服务 | 其他服务访问方式 |
+|----|---------|----------------|
+| `file_item` | file-service | Dubbo `FileService.getById()` |
+| `knowledge_doc/chunk` | rag-service | Dubbo `RagService.search()` |
+| `model_provider` | chat-service | Dubbo `ModelService.list()` |
+| `chat_session/message` | chat-service | 直接 REST |
+| `db_connection` | datasource-service | Dubbo `DatasourceService.test()` |
+| `service_instance/log` | env-service | Dubbo `EnvService.tail()` |
+| `automation_rule/execution` | automation-service | 直接 REST |
+| `notification` | automation-service | SSE 推送 |
+
+**禁止跨 schema JOIN**，需要聚合时由消费方组装或前端并行请求。
+
+---
+
+## 8. 网关设计
+
+```yaml
+# gateway-service application.yml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: file
+          uri: lb://file-service
+          predicates:
+            - Path=/api/files/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+        - id: rag
+          uri: lb://rag-service
+          predicates:
+            - Path=/api/rag/**
+        - id: chat-sse
+          uri: lb://chat-service
+          predicates:
+            - Path=/api/chat/**
+          filters:
+            - name: SseTimeout            # 自定义 filter
+              args:
+                timeout: 300s
+        - id: env-logs
+          uri: lb://env-service
+          predicates:
+            - Path=/api/environment/logs/stream
+        - id: automation
+          uri: lb://automation-service
+          predicates:
+            - Path=/api/automations/**
+```
+
+**SSE 透传**：Gateway 必须设置：
+- `spring.cloud.gateway.httpclient.response-timeout: 300s`
+- 自定义 filter 清除 `Transfer-Encoding`，保持 `text/event-stream` 长连接
+
+---
+
+## 9. Docker Compose（开发环境）
+
+```yaml
+version: "3.9"
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: nora
+      POSTGRES_USER: nora
+      POSTGRES_PASSWORD: nora
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    environment:
+      MODE: standalone
+    ports: ["8848:8848", "9848:9848"]
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.1.4
+    command: sh mqnamesrv
+    ports: ["9876:9876"]
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.1.4
+    command: sh mqbroker -n rocketmq-namesrv:9876
+    ports: ["10911:10911"]
+
+  gateway-service:
+    build: services/gateway-service
+    ports: ["8080:8080"]
+    depends_on: [nacos, postgres, redis]
+
+  file-service:
+    build: services/file-service
+    depends_on: [nacos, postgres, rocketmq-broker]
+
+  rag-service:
+    build: services/rag-service
+    depends_on: [nacos, postgres]
+
+  chat-service:
+    build: services/chat-service
+    depends_on: [nacos, postgres]
+
+  datasource-service:
+    build: services/datasource-service
+    depends_on: [nacos, postgres]
+
+  env-service:
+    build: services/env-service
+    depends_on: [nacos]
+
+  automation-service:
+    build: services/automation-service
+    depends_on: [nacos, postgres, rocketmq-broker]
+
+volumes:
+  pgdata:
+```
+
+---
+
+## 10. 父 POM 依赖管理（核心 BOM）
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-dependencies</artifactId>
+      <version>3.3.4</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.alibaba.cloud</groupId>
+      <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+      <version>2023.0.1.2</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-bom</artifactId>
+      <version>1.0.1</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.dubbo</groupId>
+      <artifactId>dubbo-bom</artifactId>
+      <version>3.3.0</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+---
+
+## 11. LangChain4j 与前端契约对齐
+
+| 前端字段 | LangChain4j 生成方式 |
+|---------|---------------------|
+| `ChatStep(type=think)` | `TokenStream` 的 `onPartialResponse` 前自定义阶段事件 |
+| `ChatStep(type=tool)` | `TokenStream.onToolExecution`（需 1.x 监听器扩展） |
+| `sources[]` | `ContentRetriever` 检索结果 → `EmbeddingMatch.metadata()` |
+| `isTyping` | SSE `delta` 事件持续推送 |
+| `ModelProvider.protocol` | `ModelRouter.route(protocol, model)` |
+
+SSE 事件保持与 v1 文档第 6 章完全一致（step/delta/sources/done）。
+
+---
+
+## 12. 实施阶段（微服务版）
+
+### Phase 0 · 基础设施（1 周）
+
+| # | 任务 |
+|---|------|
+| 0.1 | Maven 多模块骨架（父 POM + common + api 模块） |
+| 0.2 | docker-compose 起 PG/Nacos/RocketMQ/Redis |
+| 0.3 | gateway-service 骨架 + 路由通 |
+| 0.4 | CI：每模块 `mvn verify` |
+
+### Phase 1 · RAG 链路（2 周）
+
+| # | 任务 |
+|---|------|
+| 1.1 | file-service：上传 + Tika 解析 |
+| 1.2 | file-service → MQ → rag-service 消费 |
+| 1.3 | rag-service：LangChain4j Chunk + Embedding |
+| 1.4 | rag-service：pgvector 存储 + 检索 |
+| 1.5 | gateway 路由 `/api/rag/**` 通 |
+| 1.6 | 前端 `ragService.ts` 切换 fetch |
+
+### Phase 2 · 对话链路（2 周）
+
+| # | 任务 |
+|---|------|
+| 2.1 | chat-service：LangChain4j AiServices + ModelRouter |
+| 2.2 | SSE：step/delta/sources/done 四类事件 |
+| 2.3 | Tools：SQL 查询、日志读取、创建任务（Dubbo） |
+| 2.4 | ChatMemory（MessageWindowChatMemory 20 条） |
+| 2.5 | 会话持久化 |
+
+### Phase 3 · 数据源 + 任务 + 通知（2 周）
+
+| # | 任务 |
+|---|------|
+| 3.1 | datasource-service：连接 CRUD + 测试 |
+| 3.3 | Schema 浏览 + 只读 SQL 执行 |
+| 3.4 | automation-service：Quartz + 事件触发 |
+| 3.5 | 通知 SSE + 未读角标 |
+
+### Phase 4 · 环境控制台（2 周）
+
+| # | 任务 |
+|---|------|
+| 4.1 | env-service：docker-java 容器列表/启停 |
+| 4.2 | 日志流 SSE（gateway 透传） |
+| 4.3 | AI 诊断：日志 → chat-service（LangChain4j）→ 建议 |
+| 4.4 | 诊断 → 创建自动化修复任务 |
+
+---
+
+## 13. 风险与对策
+
+| 风险 | 对策 |
+|------|------|
+| 7 个服务本地开发启动慢 | docker-compose profiles：`dev-basic`（PG+Nacos）+ `dev-all` |
+| RocketMQ 运维成本 | 个人部署降级为 Redis Stream（抽象 EventBus 接口） |
+| LangChain4j 版本演进快 | 锁定 BOM 1.x，升级走独立 PR + 回归 |
+| SSE 过 Gateway 透传问题 | 自定义 `SseTimeoutFilter` + 集成测试覆盖 |
+| Dubbo 接口 jar 同步 | `api/` 模块版本化（1.0.0-SNAPSHOT → 1.0.0） |
+| 单实例多 schema 迁移 | Flyway 每服务独立 `migration` 目录 |
+
+---
+
+## 14. 与 v1 单体方案的关系
+
+v1 文档保留以下内容作为**领域需求与 API 契约的事实来源**：
+
+- 第 2 章：前端契约反推清单（7 域映射）
+- 第 5 章：REST API 契约（38 端点）
+- 第 6 章：SSE 事件协议
+
+v2 覆盖以下内容：
+
+- 架构：单体 → 微服务
+- LLM：Spring AI → **LangChain4j**
+- 部署：单 jar → Docker Compose / K8s
+- 通信：进程内 → Dubbo + RocketMQ
+
+**后续以本文档为实施基准。**
