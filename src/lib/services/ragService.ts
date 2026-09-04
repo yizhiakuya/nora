@@ -36,18 +36,21 @@ function docText(doc: KnowledgeDoc): string {
 function scoreDoc(doc: KnowledgeDoc, tokens: string[]): number {
   if (!tokens.length) return 0;
   const text = docText(doc);
-  let score = 0;
+  let matched = 0;
   for (const token of tokens) {
+    const isEnglish = /[a-z0-9]/.test(token[0]);
     if (text.includes(token)) {
-      // 文件名命中权重高
-      score += token.length >= 2 ? 0.85 : 0.6;
-    } else if (token.length > 1 && text.startsWith(token[0])) {
-      score += 0.15;
+      // 英文/数字关键词（如 redis、orders）是强信号，命中即接近满分；
+      // 中文字符按弱信号累计，避免单字误匹配拉高整体分数。
+      matched += isEnglish ? 1 : 0.5;
     }
   }
-  // 归一化到 0-1，保证结果分数有区分度
-  const normalized = Math.min(0.97, score / Math.max(tokens.length, 1));
-  return Number(normalized.toFixed(2));
+  if (matched === 0) return 0;
+  const base = matched / tokens.length;
+  // 任一英文关键词完整命中时给予召回保底分，模拟向量语义召回
+  const englishHit = tokens.some((t) => /[a-z0-9]/.test(t[0]) && text.includes(t));
+  const score = englishHit ? Math.max(0.62, base) : base;
+  return Number(Math.min(0.97, score).toFixed(2));
 }
 
 function snippetFor(doc: KnowledgeDoc, query: string): string {
@@ -128,4 +131,5 @@ export function generateCitations(query: string, docs: KnowledgeDoc[], topK = 2)
     snippet: r.snippet,
   }));
 }
+
 
