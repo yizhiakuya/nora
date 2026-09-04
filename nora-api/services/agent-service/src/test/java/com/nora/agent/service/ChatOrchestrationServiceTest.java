@@ -1,5 +1,6 @@
 package com.nora.agent.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nora.agent.config.LlmProperties;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
@@ -11,7 +12,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,14 +23,18 @@ class ChatOrchestrationServiceTest {
     @Mock
     private RagRetrievalClient ragRetrievalClient;
 
+    @Mock
+    private SqlToolClient sqlToolClient;
+
     private ChatOrchestrationService service;
 
     @BeforeEach
     void setUp() {
-        // No API key configured: the service must still build prompts and
-        // run retrieval steps; the LLM call itself is what fails downstream.
+        // No API key: the service must still run retrieval steps;
+        // the LLM call itself fails downstream (wire client hits a bad URL).
         LlmProperties properties = new LlmProperties("", "http://localhost:9/v1", "test-model");
-        service = new ChatOrchestrationService(properties, ragRetrievalClient);
+        service = new ChatOrchestrationService(properties, ragRetrievalClient,
+                sqlToolClient, new ObjectMapper());
     }
 
     @Test
@@ -41,7 +45,6 @@ class ChatOrchestrationServiceTest {
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<List<CitationDto>> sourcesEvents = new java.util.ArrayList<>();
-        List<String> deltas = new java.util.ArrayList<>();
 
         CompletableFuture<ChatOrchestrationService.ChatTurn> future = service.chat("向量检索", List.of(),
                 new ChatOrchestrationService.ChatEventConsumer() {
@@ -52,7 +55,6 @@ class ChatOrchestrationServiceTest {
 
                     @Override
                     public void delta(String token) {
-                        deltas.add(token);
                     }
 
                     @Override
@@ -62,8 +64,9 @@ class ChatOrchestrationServiceTest {
                 });
 
         assertTrue(future.isCompletedExceptionally() || !future.isDone(), "LLM call must fail fast without key");
-        assertEquals(2, steps.size(), "retrieval step + think step");
+        // 检索 step 一定先发;后续是工具轮失败 step + 回答失败 step(键未配置)
         assertEquals("tool", steps.get(0).type());
+        assertEquals("检索知识库", steps.get(0).title());
         assertEquals("completed", steps.get(0).status());
         assertEquals(1, sourcesEvents.size());
         assertEquals("arch.md", sourcesEvents.get(0).get(0).docName());
@@ -71,7 +74,8 @@ class ChatOrchestrationServiceTest {
 
     @Test
     void emptyRagYieldsStepWithoutSourcesEvent() {
-        when(ragRetrievalClient.search(anyQuery(), org.mockito.ArgumentMatchers.anyInt()))
+        when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(List.of());
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();
@@ -94,23 +98,20 @@ class ChatOrchestrationServiceTest {
                     }
                 });
 
-        assertEquals(2, steps.size(), "retrieval step + think step");
-        assertEquals("检索知识库", steps.get(0).title());
+        assertTrue(steps.size() >= 1, "retrieval step emitted");
         assertTrue(sourcesEvents.isEmpty(), "no sources event without hits");
     }
 
     @Test
     void notConfiguredFlagMirrorsProperties() {
         LlmProperties unconfigured = new LlmProperties("", "http://localhost:9/v1", "m");
-        ChatOrchestrationService s = new ChatOrchestrationService(unconfigured, ragRetrievalClient);
+        ChatOrchestrationService s = new ChatOrchestrationService(unconfigured, ragRetrievalClient,
+                sqlToolClient, new ObjectMapper());
         org.junit.jupiter.api.Assertions.assertFalse(s.configured());
 
         LlmProperties configured = new LlmProperties("key", "http://localhost:9/v1", "m");
-        ChatOrchestrationService s2 = new ChatOrchestrationService(configured, ragRetrievalClient);
+        ChatOrchestrationService s2 = new ChatOrchestrationService(configured, ragRetrievalClient,
+                sqlToolClient, new ObjectMapper());
         assertTrue(s2.configured());
-    }
-
-    private static String anyQuery() {
-        return org.mockito.ArgumentMatchers.anyString();
     }
 }

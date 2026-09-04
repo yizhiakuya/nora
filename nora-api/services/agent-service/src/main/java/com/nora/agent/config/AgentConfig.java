@@ -10,7 +10,10 @@ import org.springframework.web.client.RestClient;
  * used to call rag-service.
  */
 @Configuration
-@EnableConfigurationProperties({LlmProperties.class, RagServiceProperties.class})
+@EnableConfigurationProperties({
+        LlmProperties.class,
+        RagServiceProperties.class,
+        DatasourceServiceProperties.class})
 public class AgentConfig {
 
     /**
@@ -23,6 +26,19 @@ public class AgentConfig {
     public RestClient ragServiceRestClient(RagServiceProperties ragServiceProperties) {
         return RestClient.builder()
                 .baseUrl(ragServiceProperties.baseUrl())
+                .build();
+    }
+
+    /**
+     * HTTP client for datasource-service calls (guarded SQL execution).
+     *
+     * @param properties datasource-service settings
+     * @return RestClient bound to datasource-service base URL
+     */
+    @Bean
+    public RestClient datasourceServiceRestClient(DatasourceServiceProperties properties) {
+        return RestClient.builder()
+                .baseUrl(properties.baseUrl())
                 .build();
     }
 }
