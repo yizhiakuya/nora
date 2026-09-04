@@ -6,7 +6,7 @@ settings:
 
 importers:
 
-  nora-web:
+  .:
     dependencies:
       '@radix-ui/react-dropdown-menu':
         specifier: ^2.1.24
