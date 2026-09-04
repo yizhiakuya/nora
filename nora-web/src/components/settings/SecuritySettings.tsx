@@ -1,10 +1,10 @@
 'use client';
 
 import { ShieldCheck, Cpu, ArrowRight } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 
 export function SecuritySettings() {
-  const router = useRouter();
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-6">
@@ -29,7 +29,7 @@ export function SecuritySettings() {
 
       <button
         type="button"
-        onClick={() => router.push("/settings?tab=" + encodeURIComponent("模型管理"))}
+        onClick={() => navigate("/settings?tab=" + encodeURIComponent("模型管理"))}
         className="w-full bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5 flex items-center justify-between cursor-pointer hover:border-primary/40 transition-colors text-left"
       >
         <div className="flex items-center gap-3">

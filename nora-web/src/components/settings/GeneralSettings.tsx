@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { Cpu, ArrowRight } from "lucide-react";
 
 export function GeneralSettings() {
@@ -13,7 +13,7 @@ export function GeneralSettings() {
   const { schedule, cancelAll } = useTimedSequence();
   const { setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  const router = useRouter();
+  const navigate = useNavigate();
 
   // Avoid hydration mismatch
   useEffect(() => setMounted(true), []);
@@ -35,7 +35,7 @@ export function GeneralSettings() {
       <div className="p-6 space-y-6">
         <button
           type="button"
-          onClick={() => router.push("/settings?tab=" + encodeURIComponent("模型管理"))}
+          onClick={() => navigate("/settings?tab=" + encodeURIComponent("模型管理"))}
           className="w-full flex items-center justify-between px-4 py-3 rounded-lg bg-muted/40 border border-border cursor-pointer hover:border-primary/40 transition-colors text-left"
         >
           <div className="flex items-center gap-3">

@@ -31,40 +31,46 @@ export default function SettingsPage() {
         ]}
       />
 
-      <div className="flex-1 flex flex-col overflow-hidden bg-background dark:bg-background">
-
-        {/* 顶部横向 Tab 切换（紧凑，不占侧栏） */}
-        <div className="shrink-0 border-b border-border bg-card dark:bg-card px-4 sm:px-8 pt-3">
-          <div className="max-w-3xl mx-auto flex gap-1 overflow-x-auto no-scrollbar" role="tablist" aria-label="设置分类">
-            {TABS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === t}
-                onClick={() => setActiveTab(t)}
-                className={`px-4 py-2 text-xs font-medium rounded-t-lg cursor-pointer transition-colors whitespace-nowrap border-b-2 -mb-px ${activeTab === t ? "border-primary text-primary bg-primary/5" : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
-
+      <div className="flex-1 flex flex-col overflow-hidden bg-background">
         <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scroll relative">
-          <div className="max-w-3xl space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="max-w-3xl mx-auto space-y-6 pb-20">
+
+            {/* Header & Description */}
             <div>
-              <h1 className="text-2xl font-bold text-foreground mb-1">{activeTab}设置</h1>
+              <h1 className="text-2xl font-bold text-foreground mb-1.5">设置中心</h1>
               <p className="text-sm text-muted-foreground">管理您的账号、模型接入、凭据与本地安全偏好。</p>
             </div>
 
-            {activeTab === "通用" && <GeneralSettings />}
-            {activeTab === "模型管理" && <ModelSettings />}
-            {activeTab === "知识库与 AI" && <KnowledgeAISettings />}
-            {activeTab === "环境变量" && <EnvVarsSettings />}
-            {activeTab === "账号" && <AccountSettings />}
-            {activeTab === "安全" && <SecuritySettings />}
-            {activeTab === "通知" && <NotificationSettings />}
+            {/* Pill-style Tabs */}
+            <div className="flex flex-wrap gap-2 pb-2">
+              {TABS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === t}
+                  onClick={() => setActiveTab(t)}
+                  className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-all ${
+                    activeTab === t
+                      ? "bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200/60 dark:border-gray-700"
+                      : "text-gray-600 dark:text-gray-400 hover:bg-gray-200/50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-gray-100 border border-transparent"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+              {activeTab === "通用" && <GeneralSettings />}
+              {activeTab === "模型管理" && <ModelSettings />}
+              {activeTab === "知识库与 AI" && <KnowledgeAISettings />}
+              {activeTab === "环境变量" && <EnvVarsSettings />}
+              {activeTab === "账号" && <AccountSettings />}
+              {activeTab === "安全" && <SecuritySettings />}
+              {activeTab === "通知" && <NotificationSettings />}
+            </div>
+
           </div>
         </div>
       </div>

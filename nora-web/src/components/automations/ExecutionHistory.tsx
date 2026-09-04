@@ -4,7 +4,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { RotateCw, CheckCircle2, XCircle, Loader2, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MOCK_EXECUTIONS, ExecutionRecord } from "@/lib/devData";
+import { ExecutionRecord } from "@/lib/devData";
+import { useAutomations } from "@/hooks/useAutomations";
 import { useNotifications } from "@/hooks/useNotifications";
 
 const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; cls: string; label: string }> = {
@@ -15,20 +16,15 @@ const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; 
 
 export function ExecutionHistory() {
   const [retrying, setRetrying] = useState<number | null>(null);
-  const [records, setRecords] = useState<ExecutionRecord[]>(MOCK_EXECUTIONS);
+  const records = useAutomations((s) => s.executions);
+  const retryExecution = useAutomations((s) => s.retryExecution);
   const addNotification = useNotifications((s) => s.addNotification);
 
   const retry = (record: ExecutionRecord) => {
     setRetrying(record.id);
     setTimeout(() => {
       setRetrying(null);
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.id === record.id
-            ? { ...r, status: "success" as const, time: "刚刚", duration: "1.4s", detail: `${r.detail} → 重试成功` }
-            : r
-        )
-      );
+      retryExecution(record.id);
       addNotification(
         "任务执行完成",
         `自动任务「${record.ruleName}」重试成功，耗时 1.4s。`,
@@ -39,11 +35,11 @@ export function ExecutionHistory() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
-        <History className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
-        <span className="text-xs font-bold text-gray-700 dark:text-gray-200">执行历史</span>
-        <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{records.length} 条 · 最近 24h</span>
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
+        <History className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-xs font-bold text-foreground">执行历史</span>
+        <span className="text-[10px] text-muted-foreground ml-auto">{records.length} 条 · 最近 24h</span>
       </div>
       <div className="divide-y divide-gray-100 dark:divide-gray-800">
         {records.map((rec) => {
@@ -54,14 +50,14 @@ export function ExecutionHistory() {
               <Icon className={`w-4 h-4 shrink-0 ${meta.cls} ${rec.status === "running" ? "animate-spin" : ""}`} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-gray-800 dark:text-gray-100">{rec.ruleName}</span>
+                  <span className="text-xs font-bold text-foreground">{rec.ruleName}</span>
                   <span className={`text-[9px] font-bold ${meta.cls}`}>{meta.label}</span>
                 </div>
-                <div className="text-[11px] text-gray-500 dark:text-gray-400 truncate mt-0.5">{rec.detail}</div>
+                <div className="text-[11px] text-muted-foreground truncate mt-0.5">{rec.detail}</div>
               </div>
               <div className="text-right shrink-0">
-                <div className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{rec.time}</div>
-                <div className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{rec.duration}</div>
+                <div className="text-[10px] text-muted-foreground tabular-nums">{rec.time}</div>
+                <div className="text-[10px] text-muted-foreground tabular-nums">{rec.duration}</div>
               </div>
               {rec.status === "failed" && (
                 <Button variant="outline" size="sm" className="h-6 text-[10px] px-2 shrink-0" onClick={() => retry(rec)} disabled={retrying === rec.id}>

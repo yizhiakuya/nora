@@ -14,19 +14,19 @@ export default function EnvironmentsPage() {
     <>
       <Header
         breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "环境控制台", isCurrent: true }]}
-        actions={<span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline">本地开发环境</span>}
+        actions={<span className="text-xs text-muted-foreground hidden sm:inline">本地开发环境</span>}
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] dark:bg-gray-950">
+      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
-            <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
               <Server className="w-5 h-5 text-green-600 dark:text-green-400" /> 环境控制台
             </h1>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               管理本地/测试环境服务，查看日志流，AI 自动诊断错误并给出修复建议。
             </p>
-            <div role="tablist" aria-label="环境视图" className="flex gap-1 p-1 bg-gray-200/50 dark:bg-gray-800/50 rounded-lg w-fit">
+            <div role="tablist" aria-label="环境视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
               {TABS.map((t) => (
                 <button
                   key={t}
@@ -34,7 +34,7 @@ export default function EnvironmentsPage() {
                   role="tab"
                   aria-selected={tab === t}
                   onClick={() => setTab(t)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${tab === t ? "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}
+                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${tab === t ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {t}
                 </button>

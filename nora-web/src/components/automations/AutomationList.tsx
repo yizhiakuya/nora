@@ -7,7 +7,7 @@ import { useAutomations } from "@/hooks/useAutomations";
 
 const STATUS_MAP = {
   active: { label: "运行中", cls: "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300" },
-  paused: { label: "已暂停", cls: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400" },
+  paused: { label: "已暂停", cls: "bg-muted text-muted-foreground" },
   error:  { label: "异常",   cls: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300" },
 };
 
@@ -32,11 +32,11 @@ export function AutomationList() {
       {rules.map((rule) => {
         const s = STATUS_MAP[rule.status];
         return (
-          <div key={rule.id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+          <div key={rule.id} className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Zap className={`w-4 h-4 ${rule.enabled ? "text-yellow-500" : "text-gray-300 dark:text-gray-600"}`} />
-                <span className={`text-sm font-bold ${rule.enabled ? "text-gray-800 dark:text-gray-100" : "text-gray-400 dark:text-gray-500"}`}>
+                <Zap className={`w-4 h-4 ${rule.enabled ? "text-yellow-500" : "text-muted-foreground/60"}`} />
+                <span className={`text-sm font-bold ${rule.enabled ? "text-foreground" : "text-muted-foreground"}`}>
                   {rule.name}
                 </span>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
@@ -45,24 +45,24 @@ export function AutomationList() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs mb-3">
-              <div className="flex items-start gap-1.5 p-2 bg-gray-50 dark:bg-gray-950 rounded-lg">
+              <div className="flex items-start gap-1.5 p-2 bg-muted rounded-lg">
                 <Repeat className="w-3 h-3 text-blue-500 mt-0.5 shrink-0" />
                 <div>
-                  <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase tracking-wide">触发条件</div>
-                  <div className="text-gray-700 dark:text-gray-200">{rule.trigger}</div>
+                  <div className="text-[9px] text-muted-foreground uppercase tracking-wide">触发条件</div>
+                  <div className="text-foreground">{rule.trigger}</div>
                 </div>
               </div>
-              <div className="flex items-start gap-1.5 p-2 bg-gray-50 dark:bg-gray-950 rounded-lg">
+              <div className="flex items-start gap-1.5 p-2 bg-muted rounded-lg">
                 <Play className="w-3 h-3 text-purple-500 mt-0.5 shrink-0" />
                 <div>
-                  <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase tracking-wide">执行动作</div>
-                  <div className="text-gray-700 dark:text-gray-200 font-mono">{rule.action}</div>
+                  <div className="text-[9px] text-muted-foreground uppercase tracking-wide">执行动作</div>
+                  <div className="text-foreground font-mono">{rule.action}</div>
                 </div>
               </div>
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 text-[10px] text-gray-400 dark:text-gray-500">
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 上次: {rule.lastRun}</span>
                 {rule.nextRun && <span>下次: {rule.nextRun}</span>}
               </div>

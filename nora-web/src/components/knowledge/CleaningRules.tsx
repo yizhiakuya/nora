@@ -26,25 +26,25 @@ export function CleaningRules() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
-      <div className="p-4 border-b border-gray-100 dark:border-gray-800">
-        <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">清洗规则</h3>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <div className="p-4 border-b border-border">
+        <h3 className="text-sm font-bold text-foreground">清洗规则</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
           数据进入索引前的自动化预处理流程，确保 chunk 质量。
         </p>
       </div>
       <div className="divide-y divide-gray-100 dark:divide-gray-800">
         {rules.map((rule) => (
-          <div key={rule.id} className="flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+          <div key={rule.id} className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors">
             <div className="flex items-center gap-3 min-w-0">
               <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0 ${CATEGORY_COLORS[rule.category]}`}>
                 {rule.category}
               </span>
               <div className="min-w-0">
-                <div className={`text-sm font-medium ${rule.enabled ? "text-gray-800 dark:text-gray-100" : "text-gray-400 dark:text-gray-500 line-through"}`}>
+                <div className={`text-sm font-medium ${rule.enabled ? "text-foreground" : "text-muted-foreground line-through"}`}>
                   {rule.name}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{rule.description}</div>
+                <div className="text-xs text-muted-foreground truncate">{rule.description}</div>
               </div>
             </div>
             <Switch checked={rule.enabled} onCheckedChange={() => toggle(rule.id)} />

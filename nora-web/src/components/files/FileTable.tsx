@@ -3,11 +3,11 @@
 import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
-import { useSelection } from "@/hooks/useSelection";
+import { SelectionResult } from "@/hooks/useSelection";
 import { FileItem } from "@/types";
 import { toast } from "sonner";
 
-type FileSelection = ReturnType<typeof useSelection<FileItem>>;
+type FileSelection = SelectionResult<number>;
 
 interface FileTableProps {
   files: FileItem[];
@@ -28,10 +28,10 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
             已选择 {selection.selectedIds.length} 个文件
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-7 text-xs bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200" onClick={() => toast.success("开始打包下载...")}>
+            <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={() => toast.success("开始打包下载...")}>
               <Download className="w-3.5 h-3.5 mr-1" /> 下载
             </Button>
-            <Button variant="outline" size="sm" className="h-7 text-xs bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={onDeleteSelected}>
+            <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={onDeleteSelected}>
               <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
             </Button>
             <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50" onClick={selection.clearSelection}>取消选择</Button>
@@ -39,10 +39,10 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
         </div>
       )}
 
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden overflow-x-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="bg-card border border-border rounded-xl overflow-hidden overflow-x-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
         <table className="w-full text-left border-collapse min-w-[600px]">
           <thead>
-            <tr className="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400 font-medium select-none">
+            <tr className="bg-muted border-b border-border text-xs text-muted-foreground font-medium select-none">
               <th className="p-3 pl-4 w-10">
                 <input
                   type="checkbox"
@@ -71,7 +71,7 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
               return (
                 <tr
                   key={file.id}
-                  className={`border-b border-gray-100 dark:border-gray-800 transition-colors group cursor-pointer ${isSelected ? "bg-blue-50/50 dark:bg-blue-950/30" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+                  className={`border-b border-border transition-colors group cursor-pointer ${isSelected ? "bg-blue-50/50 dark:bg-blue-950/30" : "hover:bg-muted"}`}
                   onClick={() => selection.toggleSelect(file.id)}
                 >
                   <td className="p-3 pl-4 w-10" onClick={(e) => e.stopPropagation()}>
@@ -86,7 +86,7 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
                     <div className="flex items-center gap-3">
                       <Icon className={`${file.color} w-5 h-5 shrink-0`} />
                       <span
-                        className="font-medium text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate cursor-pointer hover:underline underline-offset-2"
+                        className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate cursor-pointer hover:underline underline-offset-2"
                         title="点击预览"
                         onClick={(e) => { e.stopPropagation(); onOpen(file); }}
                       >
@@ -108,18 +108,18 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
                       )}
                     </div>
                   </td>
-                  <td className="p-3 text-gray-500 dark:text-gray-400 text-xs whitespace-nowrap">{file.type}</td>
-                  <td className="p-3 text-gray-500 dark:text-gray-400 text-xs whitespace-nowrap">{file.size}</td>
-                  <td className="p-3 text-gray-500 dark:text-gray-400 text-xs whitespace-nowrap">{file.date}</td>
+                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{file.type}</td>
+                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{file.size}</td>
+                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{file.date}</td>
                   <td className="p-3 text-right pr-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" title="预览" onClick={() => onOpen(file)}>
+                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" title="预览" onClick={() => onOpen(file)}>
                         <Eye className="w-4 h-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" onClick={() => toast.success(`已开始下载 ${file.name}`)}>
+                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" onClick={() => toast.success(`已开始下载 ${file.name}`)}>
                         <Download className="w-4 h-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-gray-400 dark:text-gray-500 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted/80">
                         <MoreHorizontal className="w-4 h-4" />
                       </Button>
                     </div>

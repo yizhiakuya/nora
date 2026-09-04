@@ -22,11 +22,18 @@ export function AccountSettings() {
     schedule(() => setSaved(false), 2000);
   };
 
+  const initials = account.name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
     <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="p-6 space-y-6">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold flex items-center justify-center shadow-sm shrink-0">NC</div>
+          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold flex items-center justify-center shadow-sm shrink-0">{initials}</div>
           <div>
             <div className="text-sm font-bold text-foreground">{account.name}</div>
             <div className="text-xs text-muted-foreground mt-0.5">{account.email} · 自部署</div>

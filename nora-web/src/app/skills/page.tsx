@@ -76,14 +76,14 @@ export default function SkillsPage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-6 bg-[#f4f5f7] dark:bg-gray-950">
+      <div className="flex-1 overflow-y-auto custom-scroll p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="flex flex-col mb-6 space-y-4 animate-in fade-in slide-in-from-top-4">
             <div>
-              <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+              <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
                 <Zap className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> AI 能力 (Tools)
               </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">定义 AI 在本工作台能做什么：启停内置能力，或通过 OpenAPI 注册自定义工具。</p>
+              <p className="text-xs text-muted-foreground mt-1">定义 AI 在本工作台能做什么：启停内置能力，或通过 OpenAPI 注册自定义工具。</p>
             </div>
 
             <SkillTabs
@@ -101,7 +101,7 @@ export default function SkillsPage() {
           </div>
 
           {filteredSkills.length === 0 && (
-            <div className="py-20 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 animate-in fade-in">
+            <div className="py-20 flex flex-col items-center justify-center text-muted-foreground animate-in fade-in">
               <Search className="w-10 h-10 mb-4 opacity-20" />
               <div className="text-sm">没有找到匹配的工具</div>
             </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Play, History, Loader2, Download, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
@@ -29,14 +29,25 @@ function downloadCsv() {
   URL.revokeObjectURL(url);
 }
 
-export function QueryConsole({ database }: { database: string }) {
-  const [sql, setSql] = useState("");
+interface QueryConsoleProps {
+  database: string;
+  initialSql?: string;
+}
+
+export function QueryConsole({ database, initialSql }: QueryConsoleProps) {
+  const [sql, setSql] = useState(initialSql ?? "");
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [history, setHistory] = useState<QueryHistory[]>(MOCK_QUERIES);
   const addRule = useAutomations((s) => s.addRule);
   const [aiGenerating, setAiGenerating] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
+
+  useEffect(() => {
+    if (initialSql) {
+      setSql(initialSql);
+    }
+  }, [initialSql]);
 
   const handleRun = () => {
     if (!sql.trim() || isRunning) return;
@@ -82,9 +93,9 @@ export function QueryConsole({ database }: { database: string }) {
   return (
     <div className="space-y-4">
       {/* SQL Editor */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50">
-          <span className="text-xs font-bold text-gray-700 dark:text-gray-200 font-mono">{database} › SQL</span>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50">
+          <span className="text-xs font-bold text-foreground font-mono">{database} › SQL</span>
           <Button
             size="sm"
             className="h-7 text-xs bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600"
@@ -105,7 +116,7 @@ export function QueryConsole({ database }: { database: string }) {
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleRun(); }}
           />
         </div>
-        <div className="px-4 py-2 border-t border-gray-100 dark:border-gray-800 flex items-center gap-2">
+        <div className="px-4 py-2 border-t border-border flex items-center gap-2">
           <button
             type="button"
             onClick={generateWithAI}
@@ -114,28 +125,28 @@ export function QueryConsole({ database }: { database: string }) {
           >
             {aiGenerating ? "✨ AI 正在分析表结构并生成…" : "✨ AI 生成：按状态统计订单数"}
           </button>
-          <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">⌘+Enter 运行</span>
+          <span className="text-[10px] text-muted-foreground ml-auto">⌘+Enter 运行</span>
         </div>
       </div>
 
       {/* Result */}
       {isRunning && (
-        <div className="py-8 flex items-center justify-center gap-2 text-gray-400 dark:text-gray-500">
+        <div className="py-8 flex items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-xs">执行中…</span>
         </div>
       )}
 
       {!isRunning && hasRun && (
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50 flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-700 dark:text-gray-200">结果</span>
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center justify-between">
+            <span className="text-xs font-bold text-foreground">结果</span>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-green-600 dark:text-green-400">✓ 3 rows · 8ms</span>
               <button
                 type="button"
                 onClick={downloadCsv}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
               >
                 <Download className="w-2.5 h-2.5" /> 导出 CSV
               </button>
@@ -150,14 +161,14 @@ export function QueryConsole({ database }: { database: string }) {
           </div>
           <table className="w-full text-xs">
             <thead>
-              <tr className="bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800 text-gray-500 dark:text-gray-400">
+              <tr className="bg-muted border-b border-border text-muted-foreground">
                 <th className="p-2.5 text-left font-medium">status</th>
                 <th className="p-2.5 text-left font-medium">count</th>
               </tr>
             </thead>
             <tbody>
               {RESULT_ROWS.map(([a, b]) => (
-                <tr key={a} className="border-b border-gray-100 dark:border-gray-800 last:border-0 text-gray-800 dark:text-gray-100">
+                <tr key={a} className="border-b border-border last:border-0 text-foreground">
                   <td className="p-2.5 font-mono">{a}</td>
                   <td className="p-2.5 tabular-nums">{b}</td>
                 </tr>
@@ -168,11 +179,11 @@ export function QueryConsole({ database }: { database: string }) {
       )}
 
       {/* History */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
-          <History className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
-          <span className="text-xs font-bold text-gray-700 dark:text-gray-200">查询历史</span>
-          <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{history.length} 条</span>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
+          <History className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-bold text-foreground">查询历史</span>
+          <span className="text-[10px] text-muted-foreground ml-auto">{history.length} 条</span>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-48 overflow-y-auto custom-scroll">
           {history.map((q) => (
@@ -180,15 +191,15 @@ export function QueryConsole({ database }: { database: string }) {
               key={q.id}
               type="button"
               onClick={() => setSql(q.sql)}
-              className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer group"
+              className="w-full px-4 py-2 text-left hover:bg-muted/50 transition-colors cursor-pointer group"
             >
               <div className="flex items-center justify-between mb-0.5">
                 <span className={`text-[10px] font-medium ${q.status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                   {q.status === "success" ? `✓ ${q.rowsAffected} rows · ${q.duration}` : "✗ ERROR"}
                 </span>
-                <span className="text-[10px] text-gray-400 dark:text-gray-500">{q.time}</span>
+                <span className="text-[10px] text-muted-foreground">{q.time}</span>
               </div>
-              <code className="text-[11px] font-mono text-gray-600 dark:text-gray-300 truncate block group-hover:text-blue-600 dark:group-hover:text-blue-400">
+              <code className="text-[11px] font-mono text-muted-foreground truncate block group-hover:text-blue-600 dark:group-hover:text-blue-400">
                 {q.sql}
               </code>
             </button>

@@ -27,7 +27,7 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 custom-scroll">
         <div className="max-w-3xl mx-auto space-y-8 pb-32">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-2 pt-20">
+            <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 pt-20">
               <MessageSquareOpen className="w-8 h-8 opacity-20" />
               <span className="text-xs">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
             </div>

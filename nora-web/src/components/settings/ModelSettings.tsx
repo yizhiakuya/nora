@@ -19,7 +19,7 @@ export function ModelSettings() {
 
   // 支持 ?tab=models 深链
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get("models");
+    const t = new URLSearchParams(window.location.search).get("tab");
     if (t === "models") setTab("models");
   }, []);
 

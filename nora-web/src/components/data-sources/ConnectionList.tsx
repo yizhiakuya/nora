@@ -38,14 +38,14 @@ export function ConnectionList({ selectedId, onSelect }: ConnectionListProps) {
             key={conn.id}
             type="button"
             onClick={() => onSelect(conn.id)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors cursor-pointer ${active ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800" : "bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors cursor-pointer ${active ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800" : "bg-card border border-border hover:bg-muted"}`}
           >
             <Icon className={`w-4 h-4 shrink-0 ${meta.color}`} />
             <div className="min-w-0 flex-1">
-              <div className={`text-xs font-medium truncate ${active ? "text-blue-700 dark:text-blue-300" : "text-gray-800 dark:text-gray-100"}`}>
+              <div className={`text-xs font-medium truncate ${active ? "text-blue-700 dark:text-blue-300" : "text-foreground"}`}>
                 {conn.name}
               </div>
-              <div className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate">
+              <div className="text-[10px] text-muted-foreground font-mono truncate">
                 {conn.host !== "—" ? `${conn.host}:${conn.port}` : conn.database}
               </div>
             </div>

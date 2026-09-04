@@ -25,16 +25,16 @@ export default function AutomationsPage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] dark:bg-gray-950">
+      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
-            <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
               <Zap className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> 自动任务
             </h1>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               设置触发条件和执行动作，让 AI 自动处理重复性工作。
             </p>
-            <div role="tablist" aria-label="自动任务视图" className="flex gap-1 p-1 bg-gray-200/50 dark:bg-gray-800/50 rounded-lg w-fit">
+            <div role="tablist" aria-label="自动任务视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
               {TABS.map((t) => (
                 <button
                   key={t}
@@ -42,7 +42,7 @@ export default function AutomationsPage() {
                   role="tab"
                   aria-selected={tab === t}
                   onClick={() => setTab(t)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${tab === t ? "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"}`}
+                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${tab === t ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {t}
                 </button>

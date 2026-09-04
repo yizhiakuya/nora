@@ -1,7 +1,17 @@
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap } from "lucide-react";
+import { useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap, Check, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
 import { useModelProviders } from "@/hooks/useModelProviders";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
 interface ChatInputAreaProps {
@@ -12,21 +22,36 @@ interface ChatInputAreaProps {
 }
 
 export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputAreaProps) {
+  const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
+  const providers = useModelProviders((s) => s.providers);
   const defaultModel = useModelProviders((s) => s.defaultModel);
+  const setDefaultModel = useModelProviders((s) => s.setDefaultModel);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleToggle = (id: number, name: string, enabled: boolean) => {
     toggleSkill(id);
     toast.success(`能力「${name}」已${enabled ? "停用" : "启用"}，AI ${enabled ? "不再" : "现在"}可以使用它`);
   };
 
+  // 监听 input 变化，动态调整 textarea 高度
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // 强制先重置为 auto 以便在删除文字时能缩回
+    textarea.style.height = 'auto';
+    // 设置为滚动高度，最大限制交给 CSS maxHeight
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [input]);
+
   return (
     <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
       <div className="max-w-3xl mx-auto pointer-events-auto">
           {/* AI 能力状态条：启用=高亮，停用=置灰；点击切换 */}
           <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-            <span className="inline-flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500 mr-1">
+            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground mr-1">
               <Zap className="w-3 h-3" /> AI 能力
             </span>
             {skills.map((skill) => (
@@ -35,7 +60,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputA
                 type="button"
                 onClick={() => handleToggle(skill.id, skill.name, skill.enabled)}
                 title={skill.desc}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border cursor-pointer transition-colors ${skill.enabled ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800" : "bg-gray-100 dark:bg-gray-900 text-gray-400 dark:text-gray-600 border-gray-200 dark:border-gray-800 line-through opacity-60"}`}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border cursor-pointer transition-colors ${skill.enabled ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800" : "bg-muted text-muted-foreground border-border line-through opacity-60"}`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${skill.enabled ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-700"}`} />
                 {skill.name}
@@ -43,46 +68,81 @@ export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputA
             ))}
           </div>
 
-          <div className="border border-gray-200 dark:border-gray-800 rounded-2xl bg-white dark:bg-gray-900 shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all flex flex-col overflow-hidden relative group">
-              <textarea 
-                rows={2} 
-                placeholder="给“AI 助理”发送消息..." 
-                className="w-full bg-transparent resize-none outline-none text-sm p-4 pb-0 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
+          <div className="border border-border rounded-2xl bg-card shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all flex flex-col overflow-hidden relative group">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                style={{ minHeight: '52px', maxHeight: '240px' }}
+                placeholder="给“AI 助理”发送消息..."
+                className="w-full bg-transparent resize-none outline-none text-sm px-4 pt-4 pb-2 text-foreground placeholder:text-muted-foreground overflow-y-auto custom-scroll"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                     if (e.nativeEvent.isComposing) return;
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        onSend();
+                        if (input.trim() && !isSending) {
+                            onSend();
+                        }
                     }
                 }}
               ></textarea>
-              
+
               <div className="flex justify-between items-end p-2.5 pt-1">
                   <div className="flex gap-0.5">
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400"><Paperclip className="w-4 h-4" /></Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400"><FileText className="w-4 h-4" /></Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400"><AtSign className="w-4 h-4" /></Button>
+                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><Paperclip className="w-4 h-4" /></Button>
+                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><FileText className="w-4 h-4" /></Button>
+                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><AtSign className="w-4 h-4" /></Button>
                   </div>
-                  
+
                   <div className="flex gap-2 items-center">
-                      <div className="flex items-center gap-2 px-2 py-1 rounded-md text-[10px] text-gray-500 dark:text-gray-400 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                          <Layers className="w-3 h-3 text-gray-400 dark:text-gray-500" />
-                          <div className="w-16 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden flex">
+                      <div className="flex items-center gap-2 px-2 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer">
+                          <Layers className="w-3 h-3 text-muted-foreground" />
+                          <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex">
                               <div className="h-full bg-blue-500" style={{width: '25%'}}></div>
                           </div>
                           <span className="font-mono">33k/128k</span>
                       </div>
-                      
+
                       <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
 
-                      <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-gray-600 dark:text-gray-300">
-                          {defaultModel} <ChevronDown className="w-3 h-3 ml-1 text-gray-400 dark:text-gray-500" />
-                      </Button>
-                      
-                      <Button 
-                        size="icon" 
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground">
+                            {defaultModel} <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52 rounded-xl">
+                          <DropdownMenuLabel className="text-xs text-muted-foreground">切换当前模型</DropdownMenuLabel>
+                          {providers
+                            .filter((p) => p.enabled)
+                            .flatMap((p) =>
+                              p.models.map((m) => (
+                                <DropdownMenuItem
+                                  key={`${p.id}-${m}`}
+                                  className="flex items-center justify-between cursor-pointer text-xs"
+                                  onClick={() => {
+                                    setDefaultModel(m);
+                                    toast.success(`已切换默认模型为 ${m}`);
+                                  }}
+                                >
+                                  <span>{m}</span>
+                                  {m === defaultModel && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+                                </DropdownMenuItem>
+                              ))
+                            )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer flex items-center gap-1.5"
+                            onClick={() => navigate("/settings?tab=模型管理")}
+                          >
+                            <Settings className="w-3 h-3" /> 管理模型服务商...
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
+                      <Button
+                        size="icon"
                         className="w-8 h-8 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white rounded-lg ml-1 transition-colors disabled:opacity-50"
                         onClick={onSend}
                         disabled={!input.trim() || isSending}

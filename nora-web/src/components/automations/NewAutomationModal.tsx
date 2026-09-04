@@ -68,7 +68,7 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
     >
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">任务名称</label>
+          <label className="text-xs font-bold text-foreground">任务名称</label>
           <Input
             placeholder="例如：每日巡检报告生成"
             className="h-9 text-sm"
@@ -78,7 +78,7 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">触发条件</label>
+          <label className="text-xs font-bold text-foreground">触发条件</label>
           <Select value={trigger} onValueChange={setTrigger}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="选择触发方式" />
@@ -92,11 +92,11 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">执行动作</label>
+          <label className="text-xs font-bold text-foreground">执行动作</label>
           <textarea
             rows={3}
             placeholder="描述 AI 要执行的操作，如：运行巡检查询并生成 Markdown 报告"
-            className="w-full bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500 resize-none"
+            className="w-full bg-muted border border-border rounded-lg p-3 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500 resize-none"
             value={action}
             onChange={(e) => { setAction(e.target.value); setError(null); }}
           />

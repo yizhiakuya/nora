@@ -44,14 +44,14 @@ export default function KnowledgePage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-[#f4f5f7] dark:bg-gray-950">
+      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
             <div>
-              <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+              <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" /> 知识库 (Context Pipeline)
               </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 文件、数据库、代码、环境配置统一摄入 → 清洗 → 索引，为 AI 提供准确上下文。
               </p>
             </div>

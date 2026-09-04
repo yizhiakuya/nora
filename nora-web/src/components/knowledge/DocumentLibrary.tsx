@@ -25,14 +25,14 @@ function StatusBadge({ status }: { status: KnowledgeDoc["status"] }) {
 }
 
 function QualityBar({ score }: { score: number }) {
-  if (score === 0) return <span className="text-[10px] text-gray-400 dark:text-gray-500">—</span>;
+  if (score === 0) return <span className="text-[10px] text-muted-foreground">—</span>;
   const color = score >= 90 ? "bg-green-500" : score >= 80 ? "bg-yellow-500" : "bg-red-500";
   return (
     <div className="flex items-center gap-1.5">
       <div className="w-12 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
         <div className={`h-full ${color} rounded-full`} style={{ width: `${score}%` }} />
       </div>
-      <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">{score}</span>
+      <span className="text-[10px] text-muted-foreground tabular-nums">{score}</span>
     </div>
   );
 }
@@ -59,13 +59,13 @@ export function DocumentLibrary() {
           <div key={src}>
             <div className="flex items-center gap-2 mb-3">
               <Icon className={`w-4 h-4 ${meta.color}`} />
-              <span className="text-sm font-bold text-gray-800 dark:text-gray-100">{meta.label}</span>
-              <span className="text-xs text-gray-400 dark:text-gray-500">({docs.length})</span>
+              <span className="text-sm font-bold text-foreground">{meta.label}</span>
+              <span className="text-xs text-muted-foreground">({docs.length})</span>
             </div>
-            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
               <table className="w-full text-left">
                 <thead>
-                  <tr className="bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
+                  <tr className="bg-muted border-b border-border text-xs text-muted-foreground">
                     <th className="p-3 pl-4 font-medium">文档名</th>
                     <th className="p-3 font-medium">Chunks</th>
                     <th className="p-3 font-medium">大小</th>
@@ -76,18 +76,18 @@ export function DocumentLibrary() {
                 </thead>
                 <tbody>
                   {docs.map((doc) => (
-                    <tr key={doc.id} className="border-b border-gray-100 dark:border-gray-800 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-sm">
+                    <tr key={doc.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors text-sm">
                       <td className="p-3 pl-4">
                         <div className="flex items-center gap-2.5">
                           <DocIcon source={doc.source} />
-                          <span className="font-medium text-gray-800 dark:text-gray-100">{doc.name}</span>
+                          <span className="font-medium text-foreground">{doc.name}</span>
                         </div>
                       </td>
-                      <td className="p-3 text-gray-500 dark:text-gray-400 text-xs tabular-nums">{doc.chunks}</td>
-                      <td className="p-3 text-gray-500 dark:text-gray-400 text-xs">{doc.size}</td>
+                      <td className="p-3 text-muted-foreground text-xs tabular-nums">{doc.chunks}</td>
+                      <td className="p-3 text-muted-foreground text-xs">{doc.size}</td>
                       <td className="p-3"><QualityBar score={doc.quality} /></td>
                       <td className="p-3"><StatusBadge status={doc.status} /></td>
-                      <td className="p-3 text-right pr-4 text-gray-400 dark:text-gray-500 text-xs whitespace-nowrap">{doc.updatedAt}</td>
+                      <td className="p-3 text-right pr-4 text-muted-foreground text-xs whitespace-nowrap">{doc.updatedAt}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -98,7 +98,7 @@ export function DocumentLibrary() {
       })}
 
       {allDocs.length === 0 && (
-        <div className="py-16 flex flex-col items-center text-gray-400 dark:text-gray-500">
+        <div className="py-16 flex flex-col items-center text-muted-foreground">
           <Search className="w-10 h-10 mb-3 opacity-20" />
           <div className="text-sm">没有已摄入的文档</div>
         </div>

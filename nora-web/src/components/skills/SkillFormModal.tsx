@@ -37,7 +37,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
     >
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">工具名称</label>
+          <label className="text-xs font-bold text-foreground">工具名称</label>
           <Input
             placeholder="例如：查询外部实时汇率"
             className={`h-9 text-sm ${errors.name ? "border-red-400 focus-visible:ring-red-400" : ""}`}
@@ -48,7 +48,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">技能分类</label>
+          <label className="text-xs font-bold text-foreground">技能分类</label>
           <Select value={category} onValueChange={setCategory}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="选择分类" />
@@ -63,7 +63,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
 
         <div className="space-y-1.5">
           <div className="flex justify-between items-end">
-            <label className="text-xs font-bold text-gray-700 dark:text-gray-200">OpenAPI Schema</label>
+            <label className="text-xs font-bold text-foreground">OpenAPI Schema</label>
             <span className="text-[10px] text-blue-600 dark:text-blue-400 cursor-pointer hover:underline flex items-center gap-1">
               <Code className="w-3 h-3" /> AI 辅助生成
             </span>
@@ -81,7 +81,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1">
             <Key className="w-3 h-3" /> 鉴权设置 (可选)
           </label>
           <div className="flex gap-2">

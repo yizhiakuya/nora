@@ -91,7 +91,7 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
     >
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">数据库类型</label>
+          <label className="text-xs font-bold text-foreground">数据库类型</label>
           <Select value={engine} onValueChange={handleEngineChange}>
             <SelectTrigger className="w-full">
               <SelectValue />
@@ -105,23 +105,23 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">连接名称</label>
+          <label className="text-xs font-bold text-foreground">连接名称</label>
           <Input placeholder="例如：本地开发库 / 测试环境" className="h-9 text-sm" value={name} onChange={(e) => { setName(e.target.value); setError(null); }} />
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1.5 col-span-2">
-            <label className="text-xs font-bold text-gray-700 dark:text-gray-200">主机</label>
+            <label className="text-xs font-bold text-foreground">主机</label>
             <Input placeholder="localhost" className="h-9 text-sm font-mono" value={host} disabled={engine === "sqlite"} onChange={(e) => setHost(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-700 dark:text-gray-200">端口</label>
+            <label className="text-xs font-bold text-foreground">端口</label>
             <Input placeholder="5432" className="h-9 text-sm font-mono" value={engine === "sqlite" ? "—" : port} disabled={engine === "sqlite"} onChange={(e) => setPort(e.target.value)} />
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 dark:text-gray-200">
+          <label className="text-xs font-bold text-foreground">
             {engine === "sqlite" ? "数据库文件路径" : "数据库名"}
           </label>
           <Input

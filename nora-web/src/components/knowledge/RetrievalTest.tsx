@@ -20,7 +20,7 @@ const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
 function ScoreColor({ score }: { score: number }) {
   if (score >= 0.9) return "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800";
   if (score >= 0.8) return "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800";
-  return "bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700";
+  return "bg-gray-50 dark:bg-gray-800 text-muted-foreground border-border";
 }
 
 function HighlightSnippet({ text, query }: { text: string; query: string }) {
@@ -66,16 +66,16 @@ export function RetrievalTest() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">检索测试</h3>
-          <span className="text-[10px] text-gray-400 dark:text-gray-500">模拟向量 + 关键词混合检索</span>
+          <h3 className="text-sm font-bold text-foreground">检索测试</h3>
+          <span className="text-[10px] text-muted-foreground">模拟向量 + 关键词混合检索</span>
         </div>
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <SearchCode className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
+            <SearchCode className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <input
-              className="w-full pl-9 pr-3 py-2 h-9 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-xs focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500"
+              className="w-full pl-9 pr-3 py-2 h-9 bg-muted border border-border rounded-lg text-xs focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500"
               placeholder="输入问题，如：Redis 连接失败怎么排查？"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -90,14 +90,14 @@ export function RetrievalTest() {
       </div>
 
       {isSearching && (
-        <div className="py-12 flex flex-col items-center text-gray-400 dark:text-gray-500 gap-3">
+        <div className="py-12 flex flex-col items-center text-muted-foreground gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500 dark:text-blue-400" />
           <span className="text-xs animate-pulse">正在向量检索…</span>
         </div>
       )}
 
       {!isSearching && !hasSearched && (
-        <div className="py-12 flex flex-col items-center text-gray-400 dark:text-gray-500 gap-2">
+        <div className="py-12 flex flex-col items-center text-muted-foreground gap-2">
           <SearchCode className="w-8 h-8 opacity-20" />
           <span className="text-xs">输入问题测试知识库召回效果</span>
         </div>
@@ -105,8 +105,8 @@ export function RetrievalTest() {
 
       {!isSearching && hasSearched && (
         <div className="space-y-3">
-          <div className="text-xs text-gray-500 dark:text-gray-400">
-            召回结果 <span className="font-bold text-gray-800 dark:text-gray-100">{searchResults.length}</span> 条 ·
+          <div className="text-xs text-muted-foreground">
+            召回结果 <span className="font-bold text-foreground">{searchResults.length}</span> 条 ·
             耗时 <span className="tabular-nums">34ms</span>
           </div>
           {searchResults.map((r, i) => {
@@ -115,21 +115,21 @@ export function RetrievalTest() {
             return (
               <div
                 key={i}
-                className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 relative overflow-hidden animate-in fade-in slide-in-from-bottom-2"
+                className="bg-card border border-border rounded-xl p-4 relative overflow-hidden animate-in fade-in slide-in-from-bottom-2"
                 style={{ animationDelay: `${i * 80}ms`, animationFillMode: "backwards" }}
               >
                 <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" style={{ opacity: r.score }} />
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <Icon className={`w-3.5 h-3.5 ${meta.color}`} />
-                    <span className="text-xs font-medium text-gray-800 dark:text-gray-100">{r.docName}</span>
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500">chunk #{r.chunkIndex}</span>
+                    <span className="text-xs font-medium text-foreground">{r.docName}</span>
+                    <span className="text-[10px] text-muted-foreground">chunk #{r.chunkIndex}</span>
                   </div>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border tabular-nums ${ScoreColor({ score: r.score })}`}>
                     {(r.score * 100).toFixed(0)}%
                   </span>
                 </div>
-                <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   <HighlightSnippet text={r.snippet} query={lastQuery} />
                 </p>
               </div>

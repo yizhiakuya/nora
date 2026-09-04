@@ -34,14 +34,14 @@ export default function Home() {
   const headerActions = (
     <>
       <div className="relative w-full max-w-[12rem] md:w-64 hidden sm:block" onClick={() => setIsCmdKOpen(true)}>
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-4 h-4" />
-        <Input readOnly placeholder="搜索..." className="pl-9 pr-4 py-1.5 h-8 bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-xs focus-visible:ring-1 focus-visible:ring-blue-500 cursor-pointer w-full" />
+        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+        <Input readOnly placeholder="搜索..." className="pl-9 pr-4 py-1.5 h-8 bg-muted border-border text-xs focus-visible:ring-1 focus-visible:ring-blue-500 cursor-pointer w-full" />
         <div className="absolute right-2 top-1/2 transform -translate-y-1/2 hidden md:flex items-center gap-1 cursor-pointer">
-          <kbd className="border border-gray-200 dark:border-gray-800 rounded px-1 text-[9px] text-gray-400 dark:text-gray-500 bg-white dark:bg-gray-900">⌘K</kbd>
+          <kbd className="border border-border rounded px-1 text-[9px] text-muted-foreground bg-card">⌘K</kbd>
         </div>
       </div>
 
-      <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8 text-gray-500 dark:text-gray-400" onClick={() => setIsCmdKOpen(true)}>
+      <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={() => setIsCmdKOpen(true)}>
         <Search className="w-4 h-4" />
       </Button>
 
@@ -68,8 +68,8 @@ export default function Home() {
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="flex items-center justify-between mb-2 animate-in fade-in slide-in-from-bottom-2">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-gray-100">早上好，Nora！</h1>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">管理文件、查数据库、控制环境——AI 都能帮你。</p>
+              <h1 className="text-xl sm:text-2xl font-bold text-foreground">早上好，Nora！</h1>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-1">管理文件、查数据库、控制环境——AI 都能帮你。</p>
             </div>
           </div>
 
