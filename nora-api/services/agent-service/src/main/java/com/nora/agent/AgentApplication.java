@@ -2,12 +2,14 @@ package com.nora.agent;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.ComponentScan;
 
 /**
- * Entry point of agent-service (port 8083).
- * LangChain4j agent orchestration (ReAct loop, tools, SSE streaming) lands in Phase 2.
+ * Scans {@code com.nora} so the shared nora-common advice
+ * ({@code GlobalExceptionHandler} → ApiResponse envelope) applies here too.
  */
 @SpringBootApplication
+@ComponentScan(basePackages = "com.nora")
 public class AgentApplication {
 
     public static void main(String[] args) {

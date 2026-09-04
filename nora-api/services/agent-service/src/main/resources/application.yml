@@ -4,6 +4,27 @@ server:
 spring:
   application:
     name: agent-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_agent
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_agent
+    default-schema: schema_agent
+    create-schemas: true
+  cloud:
+    nacos:
+      discovery:
+        enabled: true
+
+nora:
+  llm:
+    api-key: ${NORA_LLM_API_KEY:}
+    base-url: ${NORA_LLM_BASE_URL:http://192.168.0.109:28765/v1}
+    model: ${NORA_LLM_MODEL:gpt-5.4-mini}
+  rag:
+    base-url: http://localhost:8082
 
 management:
   endpoints:
