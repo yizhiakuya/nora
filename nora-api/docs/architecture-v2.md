@@ -235,6 +235,169 @@ public class ModelRouter {
 
 ---
 
+
+---
+
+### 4.8 调研驱动的 Agent 设计（2026-09-04）
+
+> 完整调研来源见 [agent-design-research.md](agent-design-research.md)（ReAct / Reflexion / ReWOO / Voyager / SWE-agent / LATS 论文 + Anthropic / Cognition / LangGraph / OpenAI Agents SDK 实践）。
+
+#### 4.8.1 执行模式：ReAct 基础 + ReWOO 优化
+
+| 场景 | 模式 | 理由 |
+|------|------|------|
+| 开放式对话（`/chat`） | **ReAct** | Thought→Action→Observation 交错，天然对齐前端 `ChatStep`（think/tool） |
+| 多独立工具请求 | **ReWOO** | Planner 一次规划 → Worker 并行执行 → Solver 汇总，省 5× token |
+| 固定管线（文件索引/环境诊断） | **Workflow（非 Agent）** | 预定义代码路径，不让 LLM 决定流程 |
+
+**判断标准**：用户请求涉及 >3 个独立工具调用且相互无依赖 → ReWOO；否则 ReAct。
+
+#### 4.8.2 多 Agent 决策：不引入
+
+依据 Cognition《Don't Build Multi-Agents》三原则：
+
+1. Share full context, not individual messages
+2. Actions carry implicit decisions
+3. Single-threaded > multi-agent
+
+Nora 的 agent-service 保持**单线程执行循环**。若未来需要 subagent，仅用于只读检索类任务（不产生副作用），且必须共享完整父上下文。
+
+#### 4.8.3 工具接口：Agent-Computer Interface (ACI)
+
+依据 SWE-agent 论文——LLM 是新的最终用户，需要专门设计接口：
+
+| NoraTools 方法 | ACI 设计 |
+|---------------|----------|
+| `executeSql` | 结果截断 50 行 + 列类型标注 + 空值标注 |
+| `readServiceLogs` | 去噪（过滤 DEBUG）+ ERROR 行高亮 + 最近 N 条 |
+| `searchKnowledge` | 返回 doc name + score + chunk index，不返回全文 |
+| `createAutomation` | 返回结构化确认（ruleId + name），不返回执行细节 |
+
+**原则**：工具返回值是"为 LLM 设计的信息"，不是原始 API 输出。
+
+#### 4.8.4 记忆：三层
+
+| 层 | 实现 | 依据 |
+|----|------|------|
+| 短期会话 | `MessageWindowChatMemory`（20 条） | LangChain4j 内置 |
+| 反思记忆 | 失败轨迹 → 自然语言 critique → episodic 存储 | Reflexion 论文 |
+| 技能库 | 成功 tool-call 链 → 按 embedding 索引 → 相似请求复用 | Voyager 论文 |
+
+#### 4.8.5 安全：四层 Guardrail
+
+参考 OpenAI Agents SDK 分层：
+
+```
+Input Guardrail      → 检查用户输入（prompt injection / 越权请求）
+    ↓
+Tool Input Guardrail → SQL 只读校验 / 文件路径白名单 / Docker 命令白名单
+    ↓
+Tool Output Guardrail→ 敏感信息脱敏（API key / 密码 / IP）
+    ↓
+Output Guardrail     → 最终回答安全检查
+```
+
+每层触发 tripwire → 中断执行 → 返回结构化错误 → 前端 `ChatStep(status=failed)`。
+
+#### 4.8.6 状态：逐 step Checkpoint
+
+参考 LangGraph Checkpointer：
+
+- 每个 agent step（think / tool call / observation）执行后立即持久化到 `agent_step` 表
+- 不等整轮结束才写入
+- 支持断点恢复、时间旅行调试、轨迹审计
+- 高风险工具调用前 interrupt → 等待用户批准 → 继续执行
+
+#### 4.8.7 LangChain4j AgenticServices 映射
+
+LangChain4j 已提供声明式 Agentic 原语（`AgenticServices` 类），与 Nora 需求映射：
+
+| LangChain4j API | Nora 用途 |
+|-----------------|----------|
+| `AgenticServices.agentBuilder()` | 构建 NoraAgent |
+| `AgenticServices.loopBuilder()` + `@ExitCondition` | ReAct 循环（条件退出） |
+| `AgenticServices.sequenceBuilder()` | 固定 Workflow 管线 |
+| `AgenticServices.parallelBuilder()` | ReWOO 并行 Worker |
+| `AgenticServices.humanInTheLoopBuilder()` | 高风险工具审批 |
+| `AgentListener` / `AgentMonitor` | 逐 step 观测 → SSE 推送 |
+| `AgenticScope` | 跨 step 共享状态 |
+
+---
+
+### 4.9 Agent 状态表（新增）
+
+```sql
+-- 逐 step 轨迹持久化（参考 LangGraph checkpointing）
+CREATE TABLE agent_step (
+    id          BIGSERIAL PRIMARY KEY,
+    session_id  UUID NOT NULL,
+    step_index  INTEGER NOT NULL,
+    step_type   VARCHAR(20) NOT NULL,      -- think / tool_call / observation / reflection
+    content     TEXT,
+    tool_name   VARCHAR(100),
+    tool_input  JSONB,
+    tool_output JSONB,
+    status      VARCHAR(20),
+    duration_ms BIGINT,
+    created_at  TIMESTAMP DEFAULT now()
+);
+CREATE INDEX idx_agent_step_session ON agent_step(session_id, step_index);
+
+-- Reflexion 反思记忆
+CREATE TABLE agent_reflection (
+    id          BIGSERIAL PRIMARY KEY,
+    session_id  UUID NOT NULL,
+    task_signature VARCHAR(255),
+    reflection  TEXT NOT NULL,
+    created_at  TIMESTAMP DEFAULT now()
+);
+
+-- Voyager 式技能库
+CREATE TABLE agent_skill (
+    id          BIGSERIAL PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    description TEXT,
+    tool_chain  JSONB NOT NULL,
+    embedding   vector(1536),
+    success_count INTEGER DEFAULT 0,
+    created_at  TIMESTAMP DEFAULT now()
+);
+CREATE INDEX idx_skill_embedding ON agent_skill USING hnsw (embedding vector_cosine_ops);
+```
+
+---
+
+### 4.10 修订后的 Phase 2 实施计划
+
+| # | 任务 | 依据 |
+|---|------|------|
+| 2.1 | `AgenticServices.agentBuilder()` + `loopBuilder()` ReAct 循环 | LangChain4j AgenticServices |
+| 2.2 | SSE：step/delta/sources/done 四类事件，逐 step 持久化 | LangGraph checkpoint |
+| 2.3 | Tools + ACI 格式化（截断/摘要/去噪） | SWE-agent |
+| 2.4 | 四层 Guardrail（input/tool-in/tool-out/output） | OpenAI Agents SDK |
+| 2.5 | ChatMemory + `agent_reflection` 失败反思 | Reflexion |
+| 2.6 | ReWOO 并行模式（>3 独立工具时自动切换） | ReWOO 论文 |
+| 2.7 | `agent_skill` 技能沉淀（成功调用链入库） | Voyager |
+| 2.8 | 会话与消息持久化 | — |
+
+---
+
+### 4.11 参考文献
+
+| 类型 | 来源 |
+|------|------|
+| 论文 | ReAct (Yao et al., 2022, arXiv:2210.03629) |
+| 论文 | Reflexion (Shinn et al., 2023, arXiv:2303.11366) |
+| 论文 | ReWOO (Xu et al., 2023, arXiv:2305.18323) |
+| 论文 | Voyager (Wang et al., 2023) |
+| 论文 | SWE-agent (Yang et al., 2024, arXiv:2405.15793) |
+| 论文 | LATS (Xie et al., 2023, arXiv:2310.04406) |
+| 实践 | Anthropic: Building Effective Agents (2024-12) |
+| 实践 | Cognition: Don't Build Multi-Agents (2025-06) |
+| 实践 | LangGraph Checkpointers 文档 |
+| 实践 | OpenAI Agents SDK 文档 |
+| 实践 | LangChain4j AgenticServices 文档 |
+
 ## 5. 服务间通信
 
 ### 5.1 Dubbo（同步 RPC）
@@ -603,7 +766,7 @@ SSE 事件保持与 v1 文档第 6 章完全一致（step/delta/sources/done）�
 | 1.5 | gateway 路由 `/api/rag/**` 通 |
 | 1.6 | 前端 `ragService.ts` 切换 fetch |
 
-### Phase 2 · Agent 链路（2 周）
+### Phase 2 · Agent 链路（2-3 周，依据调研修订）
 
 | # | 任务 |
 |---|------|
