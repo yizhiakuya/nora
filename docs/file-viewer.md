@@ -95,4 +95,6 @@ preview/Unsupported.tsx  不支持提示
 - [ ] 文件名点击不触发行选中；行空白处点击仍可选中
 - [ ] ESC / 遮罩 / 关闭按钮均可关闭，关闭后再开另一文件状态干净
 - [ ] 首页最近使用文件可打开同一预览
-- [ ] `pnpm typecheck` / `next lint` / `pnpm test` / `next build` 全绿
+- [ ] `pnpm typecheck` / `pnpm lint` / `pnpm test` / `pnpm build` 全绿
+
+

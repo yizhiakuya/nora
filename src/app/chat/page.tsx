@@ -4,7 +4,6 @@ import { Header } from "@/components/layout/Header";
 import { Sparkles, Star, Share2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatSessions } from "@/hooks/useChatSessions";
-import { ChatSessionList } from "@/components/chat/ChatSessionList";
 import { ChatConversation } from "@/components/chat/ChatConversation";
 import { useModelProviders } from "@/hooks/useModelProviders";
 import { toast } from "sonner";
@@ -49,7 +48,6 @@ export default function ChatPage() {
         }
       />
       <div className="flex-1 flex overflow-hidden">
-        <ChatSessionList />
         <div key={active?.id} className="flex-1 relative flex flex-col min-w-0">
           <ChatConversation sessionId={active.id} initialMessages={active.messages} />
         </div>
@@ -57,3 +55,4 @@ export default function ChatPage() {
     </>
   );
 }
+

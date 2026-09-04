@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export type ProviderProtocol = "openai" | "ollama" | "anthropic";
+
+export const PROTOCOL_META: Record<ProviderProtocol, { label: string; desc: string }> = {
+  openai:    { label: "OpenAI 兼容",  desc: "标准 /v1/chat/completions 协议，适用于 OpenAI、DeepSeek、中转站等" },
+  anthropic: { label: "Anthropic",      desc: "Anthropic Messages API（/v1/messages）" },
+  ollama:    { label: "Ollama",          desc: "本地 Ollama 原生协议（/api/chat）" },
+};
+
 export interface ModelProvider {
   id: number;
   name: string;
@@ -10,19 +18,21 @@ export interface ModelProvider {
   models: string[];
   /** 测试连通状态 */
   status: "untested" | "ok" | "fail";
+  /** API 协议类型 */
+  protocol: ProviderProtocol;
 }
 
 const SEED: ModelProvider[] = [
   {
-    id: 1, name: "OpenAI", url: "https://api.openai.com/v1", masked: "sk-demo-••••••••4821",
+    id: 1, name: "OpenAI", url: "https://api.openai.com/v1", masked: "sk-demo-••••••••4821", protocol: "openai" as const,
     enabled: true, status: "ok", models: ["GPT-4o", "GPT-4o mini", "o3-mini"],
   },
   {
-    id: 2, name: "DeepSeek", url: "https://api.deepseek.com/v1", masked: "sk-ds-••••••••1a9b",
+    id: 2, name: "DeepSeek", url: "https://api.deepseek.com/v1", masked: "sk-ds-••••••••1a9b", protocol: "openai" as const,
     enabled: false, status: "untested", models: ["deepseek-chat", "deepseek-reasoner"],
   },
   {
-    id: 3, name: "Ollama（本地）", url: "http://localhost:11434/v1", masked: "ollama-••••••••",
+    id: 3, name: "Ollama（本地）", url: "http://localhost:11434/v1", masked: "ollama-••••••••", protocol: "ollama" as const,
     enabled: false, status: "untested", models: ["qwen2.5:7b", "llama3.1:8b"],
   },
 ];
@@ -30,7 +40,7 @@ const SEED: ModelProvider[] = [
 interface ModelProvidersState {
   providers: ModelProvider[];
   defaultModel: string;
-  addProvider: (p: { name: string; url: string; key: string; models?: string[] }) => void;
+  addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }) => void;
   removeProvider: (id: number) => void;
   toggleEnabled: (id: number) => void;
   setDefaultModel: (m: string) => void;
@@ -46,7 +56,7 @@ export const useModelProviders = create<ModelProvidersState>()(
     (set, get) => ({
       providers: SEED,
       defaultModel: "GPT-4o",
-      addProvider: ({ name, url, key, models }) => {
+      addProvider: ({ name, url, key, protocol = "openai", models }) => {
         const provider: ModelProvider = {
           id: Date.now(),
           name: name.trim(),
@@ -54,6 +64,7 @@ export const useModelProviders = create<ModelProvidersState>()(
           masked: key.slice(0, 4) + "••••••••" + key.slice(-4),
           enabled: true,
           status: "untested",
+          protocol,
           models: models?.length ? models : ["默认模型"],
         };
         set((state) => ({ providers: [...state.providers, provider] }));
@@ -79,3 +90,5 @@ export const useModelProviders = create<ModelProvidersState>()(
     { name: "model-providers" }
   )
 );
+
+

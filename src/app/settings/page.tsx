@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
-import { SettingsNav } from "@/components/settings/SettingsNav";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
 import { ModelSettings } from "@/components/settings/ModelSettings";
 import { KnowledgeAISettings } from "@/components/settings/KnowledgeAISettings";
@@ -10,6 +9,8 @@ import { AccountSettings } from "@/components/settings/AccountSettings";
 import { SecuritySettings } from "@/components/settings/SecuritySettings";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 import { EnvVarsSettings } from "@/components/settings/EnvVarsSettings";
+
+const TABS = ["通用", "模型管理", "知识库与 AI", "环境变量", "账号", "安全", "通知"];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("通用");
@@ -30,8 +31,25 @@ export default function SettingsPage() {
         ]}
       />
 
-      <div className="flex-1 flex overflow-hidden bg-background dark:bg-background">
-        <SettingsNav activeTab={activeTab} onSelect={setActiveTab} />
+      <div className="flex-1 flex flex-col overflow-hidden bg-background dark:bg-background">
+
+        {/* 顶部横向 Tab 切换（紧凑，不占侧栏） */}
+        <div className="shrink-0 border-b border-border bg-card dark:bg-card px-4 sm:px-8 pt-3">
+          <div className="max-w-3xl mx-auto flex gap-1 overflow-x-auto no-scrollbar" role="tablist" aria-label="设置分类">
+            {TABS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === t}
+                onClick={() => setActiveTab(t)}
+                className={`px-4 py-2 text-xs font-medium rounded-t-lg cursor-pointer transition-colors whitespace-nowrap border-b-2 -mb-px ${activeTab === t ? "border-primary text-primary bg-primary/5" : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scroll relative">
           <div className="max-w-3xl space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">

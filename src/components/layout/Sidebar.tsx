@@ -89,7 +89,7 @@ export function Sidebar() {
           </div>
           <div className="flex-1 overflow-y-auto custom-scroll px-2 sm:px-3 py-2">
             <nav className="space-y-1">
-              {NAV_ITEMS.map((item) => {
+                            {NAV_ITEMS.map((item) => {
                 const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
                 return (
                     <div key={item.name} className="mb-0.5">
@@ -103,8 +103,7 @@ export function Sidebar() {
                     </Link>
                   </div>
                 );
-              })}
-            </nav>
+              })}</nav>
           </div>
         </div>
         <div className={cn("border-t border-gray-200 dark:border-gray-800 shrink-0", collapsed ? "p-2" : "p-3 sm:p-4")}>
@@ -117,3 +116,8 @@ export function Sidebar() {
     </>
   );
 }
+
+
+
+
+

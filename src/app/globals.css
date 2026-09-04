@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
   :root {
     --background: 224 71% 97%; /* matches #f4f5f7 roughly */
     --foreground: 222.2 84% 4.9%;
@@ -67,6 +71,10 @@
 }
 
 @layer base {
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
   * {
     @apply border-border;
   }
@@ -99,3 +107,4 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
