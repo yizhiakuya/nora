@@ -43,6 +43,8 @@ interface FilesState {
   addFile: (name: string, size?: string) => FileItem;
   deleteFiles: (ids: number[]) => void;
   markIndexed: (id: number) => void;
+  /** 后端模式:用服务端 FileItem 覆盖同 id 行(或插入到头部) */
+  syncFile: (file: FileItem) => void;
 }
 
 /**
@@ -73,6 +75,15 @@ export const useFiles = create<FilesState>()(
         set((state) => ({
           files: state.files.map((f) => (f.id === id ? { ...f, indexed: true } : f)),
         })),
+      syncFile: (file) =>
+        set((state) => {
+          const exists = state.files.some((f) => f.id === file.id);
+          return {
+            files: exists
+              ? state.files.map((f) => (f.id === file.id ? file : f))
+              : [file, ...state.files],
+          };
+        }),
     }),
     {
       name: "nora-files",

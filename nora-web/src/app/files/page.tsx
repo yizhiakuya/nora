@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Search, FolderPlus, CloudUpload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
+import { filesApi } from "@/lib/services/filesApi";
+import { USE_BACKEND } from "@/lib/api/client";
 
 export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -26,6 +28,7 @@ export default function FilesPage() {
   const addFile = useFiles((s) => s.addFile);
   const deleteFiles = useFiles((s) => s.deleteFiles);
   const markIndexed = useFiles((s) => s.markIndexed);
+  const syncFile = useFiles((s) => s.syncFile);
 
   const upload = useSimulatedUpload();
   const viewer = useFileViewer();
@@ -33,17 +36,37 @@ export default function FilesPage() {
   const addNotification = useNotifications((s) => s.addNotification);
   const addRecent = useRecentFiles((s) => s.addRecent);
 
+  // 后端模式:进入页面拉一次真实文件列表
+  useEffect(() => {
+    if (!USE_BACKEND) return;
+    filesApi.listFiles()
+      .then((items) => items.forEach((item) => syncFile(item)))
+      .catch(() => { /* 后端不可用时沿用本地缓存 */ });
+  }, [syncFile]);
+
   const filteredFiles = files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const selection = useSelection(filteredFiles, "id");
 
   const handleDeleteSelected = () => {
     const count = selection.selectedIds.length;
+    if (USE_BACKEND) {
+      filesApi.deleteFiles(selection.selectedIds)
+        .then(() => toast.success(`已删除 ${count} 个文件`))
+        .catch((e: Error) => toast.error(`删除失败：${e.message}`));
+    } else {
+      toast.success(`已删除 ${count} 个文件`);
+    }
     deleteFiles(selection.selectedIds);
     selection.clearSelection();
-    toast.success(`已删除 ${count} 个文件`);
   };
 
-  const handleUploadComplete = (fileName?: string) => {
+  const handleUploadComplete = (fileName?: string, uploadedFile?: FileItem) => {
+    if (uploadedFile) {
+      syncFile(uploadedFile);
+      addRecent(uploadedFile.name, uploadedFile.type);
+      addNotification("上传完成", `「${uploadedFile.name}」已保存到文件中心，可在列表中查看。`);
+      return;
+    }
     const defaultName = `上传文档_${Date.now().toString().slice(-4)}.pdf`;
     const newFile = addFile(fileName ?? defaultName);
     addRecent(newFile.name, newFile.type);
@@ -51,6 +74,21 @@ export default function FilesPage() {
   };
 
   const handleIndexFile = (file: FileItem) => {
+    if (USE_BACKEND) {
+      filesApi.indexFile(file.id)
+        .then(() => {
+          // 索引是异步的:file-service 触发 rag-service,完成后回调置位;这里先乐观标记
+          markIndexed(file.id);
+          addNotification(
+            "文件索引入库",
+            `「${file.name}」已开始解析与向量化，完成后 AI 即可检索其内容。`,
+            "indexed"
+          );
+          toast.success(`「${file.name}」索引任务已提交`);
+        })
+        .catch((e: Error) => toast.error(`索引失败：${e.message}`));
+      return;
+    }
     indexFile(file.name);
     markIndexed(file.id);
     addNotification(

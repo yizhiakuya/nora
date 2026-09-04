@@ -1,21 +1,31 @@
 import { useState, useCallback, useRef, DragEvent } from 'react';
 import { toast } from 'sonner';
 import { useTimedSequence } from './useTimedSequence';
+import { filesApi } from '@/lib/services/filesApi';
+import { USE_BACKEND } from '@/lib/api/client';
+import { FileItem } from '@/types';
 
 type UploadStatus = 'idle' | 'uploading' | 'success';
 
+/**
+ * 上传状态机:USE_BACKEND=true 时真实上传到 file-service,否则本地模拟。
+ * 后端模式下 onUploadComplete 收到完整的 FileItem(含服务端 id);
+ * Mock 模式保持旧行为(只回传文件名)。
+ */
 export function useSimulatedUpload(durationMs: number = 2000, successDurationMs: number = 1500) {
   const [isOpen, setIsOpen] = useState(false);
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [isDragging, setIsDragging] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
-  /** 拖拽上传时的真实文件名（点击上传无文件则保持 null） */
+  /** 拖拽上传时的真实文件(后端模式上传它;点击上传无文件保持 null) */
+  const fileRef = useRef<globalThis.File | null>(null);
   const fileNameRef = useRef<string | null>(null);
 
   const open = useCallback(() => {
     setIsOpen(true);
     setStatus('idle');
     setIsDragging(false);
+    fileRef.current = null;
     fileNameRef.current = null;
   }, []);
 
@@ -25,25 +35,35 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setIsDragging(false);
   }, [cancelAll]);
 
-  const startUpload = useCallback((onSuccess?: (fileName?: string) => void) => {
+  const startUpload = useCallback((onSuccess?: (fileName?: string, file?: FileItem) => void) => {
     if (status !== 'idle') return;
     setStatus('uploading');
-    
-    // Simulate real upload promise for Sonner toast
+
+    const uploadPromise = USE_BACKEND && fileRef.current
+      ? filesApi.uploadFile(fileRef.current)
+          .then((item) => {
+            fileNameRef.current = item.name;
+            return item;
+          })
+      : new Promise<FileItem | null>((resolve) => setTimeout(() => resolve(null), durationMs));
+
     toast.promise(
-      new Promise((resolve) => setTimeout(resolve, durationMs)),
+      uploadPromise,
       {
         loading: '正在上传处理文件...',
-        success: () => {
+        success: (item) => {
           setStatus('success');
           schedule(() => {
             close();
             setStatus('idle');
-            if (onSuccess) onSuccess(fileNameRef.current ?? undefined);
+            if (onSuccess) onSuccess(fileNameRef.current ?? undefined, item ?? undefined);
           }, successDurationMs);
           return '文件上传成功！';
         },
-        error: '文件上传失败',
+        error: (err: Error) => {
+          setStatus('idle');
+          return err?.message ? `上传失败：${err.message}` : '文件上传失败';
+        },
       }
     );
   }, [status, close, durationMs, successDurationMs, schedule]);
@@ -61,12 +81,13 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, onSuccess?: (fileName?: string) => void) => {
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>, onSuccess?: (fileName?: string, file?: FileItem) => void) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      fileRef.current = e.dataTransfer.files[0];
       fileNameRef.current = e.dataTransfer.files[0].name;
       startUpload(onSuccess);
     }
