@@ -25,7 +25,8 @@ export interface ChatMessage {
 
 export type ChatResponder = (
   message: string,
-  onUpdate: (partial: Partial<ChatMessage>) => void
+  onUpdate: (partial: Partial<ChatMessage>) => void,
+  sessionId?: string
 ) => Promise<void>;
 
 interface IntentResponse {
@@ -151,6 +152,3 @@ export const MockChatAPI: { sendMessage: ChatResponder } = {
     });
   },
 };
-
-
-

@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatMessage, ChatResponder, MockChatAPI } from "@/lib/api/chatApi";
+import { AgentAPI } from "@/lib/api/agentApi";
+import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
 
 interface UseChatOptions {
@@ -13,7 +15,7 @@ interface UseChatOptions {
 const formatTime = () =>
   new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function useChat({ initialMessages = [], responder = MockChatAPI.sendMessage, sessionId }: UseChatOptions = {}) {
+export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentAPI.sendMessage : MockChatAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -75,13 +77,13 @@ export function useChat({ initialMessages = [], responder = MockChatAPI.sendMess
     setIsSending(true);
 
     try {
-      await responder(content, (partial) => updateMessage(assistantMsgId, partial));
+      await responder(content, (partial) => updateMessage(assistantMsgId, partial), sessionId);
     } catch (error) {
       console.error("Failed to send message:", error);
     } finally {
       if (mountedRef.current) setIsSending(false);
     }
-  }, [input, isSending, responder, updateMessage]);
+  }, [input, isSending, responder, sessionId, updateMessage]);
 
   const clear = useCallback(() => {
     setMessages([]);
