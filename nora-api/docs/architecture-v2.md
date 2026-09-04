@@ -34,7 +34,7 @@
                     └──────┬──────┬──────┬─────┘
                            │      │      │
         ┌──────────────────▼┐  ┌──▼───────────┐  ┌▼────────────────┐
-        │ file-service      │  │ rag-service  │  │ chat-service    │
+        │ file-service      │  │ rag-service  │  │ agent-service   │
         │ :8081             │  │ :8082        │  │ :8083           │
         │ 文件/上传/解析     │  │ 切块/嵌入/检索 │  │ LangChain4j编排  │
         └────┬──────────────┘  └──┬───────────┘  └┬────────────────┘
@@ -69,7 +69,7 @@
 | gateway-service | 8080 | 统一入口、JWT 鉴权、路由、限流、SSE 透传 | 全部 |
 | file-service | 8081 | 文件上传、Tika 解析、预览生成 | /files |
 | rag-service | 8082 | 文档切块、Embedding、pgvector 检索 | /knowledge |
-| chat-service | 8083 | LangChain4j 对话编排、SSE 流式 | /chat |
+| agent-service | 8083 | LangChain4j Agent 编排（感知→规划→工具→反思）、SSE 流式 | /chat |
 | datasource-service | 8084 | JDBC 连接管理、Schema 浏览、SQL 执行 | /data-sources |
 | env-service | 8085 | Docker 探活、日志采集、AI 诊断 | /environments |
 | automation-service | 8086 | Quartz 调度、触发器、执行器 | /automations |
@@ -105,14 +105,14 @@
 
 ---
 
-## 4. LangChain4j 设计（核心）
+## 4. LangChain4j Agent 设计（核心）
 
 LangChain4j 是 Java 生态最成熟的 LLM 编排框架，四个核心能力全部用上：
 
 ### 4.1 依赖
 
 ```kotlin
-// chat-service build.gradle.kts
+// agent-service pom.xml
 dependencies {
     implementation("dev.langchain4j:langchain4j:1.0.1")
     implementation("dev.langchain4j:langchain4j-open-ai:1.0.1")
@@ -123,10 +123,10 @@ dependencies {
 }
 ```
 
-### 4.2 AiServices（声明式对话接口）
+### 4.2 AiServices（声明式 Agent 接口）
 
 ```java
-public interface NoraAssistant {
+public interface NoraAgent {
 
     @SystemMessage("""
         你是 Nora 个人工作台的助手。回答必须：
@@ -138,7 +138,7 @@ public interface NoraAssistant {
 }
 ```
 
-### 4.3 Tools（工具调用 = 前端"AI 能力"）
+### 4.3 Tools（Agent 工具 = 前端"AI 能力"）
 
 ```java
 public class NoraTools {
@@ -193,8 +193,8 @@ ContentRetriever retriever = EmbeddingStoreContentRetriever.builder()
     .minScore(0.5)
     .build();
 
-// 注入 chat-service 的 Assistant
-Assistant assistant = AiServices.builder(NoraAssistant.class)
+// 注入 agent-service 的 NoraAgent
+NoraAgent agent = AiServices.builder(NoraAgent.class)
     .chatLanguageModel(model)
     .contentRetriever(retriever)
     .tools(new NoraTools())
@@ -224,14 +224,14 @@ public class ModelRouter {
 
 | 模块 | 所在服务 | 说明 |
 |------|---------|------|
-| ChatModel / StreamingChatModel | chat-service | 对话生成 |
+| ChatModel / StreamingChatModel | agent-service | 对话生成 |
 | EmbeddingModel | rag-service | 文档向量化 |
 | EmbeddingStore（pgvector） | rag-service | 向量存储 |
 | ContentRetriever | rag-service | 检索管道 |
-| Tools | chat-service | 工具调用（跨服务走 Dubbo） |
-| ChatMemoryProvider | chat-service | 会话记忆 |
+| Tools | agent-service | 工具调用（跨服务走 Dubbo） |
+| ChatMemoryProvider | agent-service | 会话记忆 |
 
-**注意**：`ContentRetriever` 在 rag-service，chat-service 通过 Dubbo 接口调用检索，把检索结果注入 prompt，不直接读 pgvector。
+**注意**：`ContentRetriever` 在 rag-service，agent-service 通过 Dubbo 接口调用检索，把检索结果注入 prompt，不直接读 pgvector。
 
 ---
 
@@ -262,7 +262,7 @@ public interface FileService {
 | Topic | 生产者 | 消费者 | 事件 |
 |-------|--------|--------|------|
 | `file.uploaded` | file-service | rag-service | 文件上传完成 → 触发索引 |
-| `doc.indexed` | rag-service | chat-service、automation-service | 文档可检索 |
+| `doc.indexed` | rag-service | agent-service、automation-service | 文档可检索 |
 | `sql.executed` | datasource-service | automation-service | 查询完成 |
 | `log.error` | env-service | automation-service | 触发告警任务 |
 | `task.executed` | automation-service | notification | 任务完成通知 |
@@ -278,7 +278,7 @@ public interface FileService {
 file-service: INSERT file_item + INSERT outbox(file.uploaded)
     → MQ → rag-service: 插入 knowledge_doc(processing) + 异步嵌入
     → rag-service: 更新 indexed + MQ(doc.indexed)
-    → chat-service / automation-service 消费（仅更新缓存/计数）
+    → agent-service / automation-service 消费（仅更新缓存/计数）
 ```
 
 补偿：嵌入失败 → knowledge_doc.status = failed → 发 `doc.index.failed` → notification 推送。
@@ -321,16 +321,16 @@ nora-api/
 │   │       ├── store/PgVectorStore.java                # LangChain4j pgvector
 │   │       └── mq/DocIndexConsumer.java                # 消费 file.uploaded
 │   │
-│   ├── chat-service/
+│   ├── agent-service/
 │   │   ├── pom.xml
-│   │   └── src/main/java/com/nora/chat/
-│   │       ├── ChatApplication.java
-│   │       ├── controller/ChatController.java          # SSE
-│   │       ├── assistant/NoraAssistant.java           # LangChain4j AiServices
-│   │       ├── assistant/ModelRouter.java
+│   │   └── src/main/java/com/nora/agent/
+│   │       ├── AgentApplication.java
+│   │       ├── controller/AgentController.java          # SSE
+│   │       ├── agent/NoraAgent.java                   # LangChain4j AiServices
+│   │       ├── agent/ModelRouter.java
 │   │       ├── tools/NoraTools.java                   # @Tool
 │   │       ├── memory/ChatMemoryProvider.java
-│   │       └── service/ChatOrchestrationService.java
+│   │       └── service/AgentOrchestrationService.java
 │   │
 │   ├── datasource-service/
 │   │   ├── pom.xml
@@ -349,7 +349,7 @@ nora-api/
 │   │       ├── controller/ServiceController.java
 │   │       ├── controller/LogStreamController.java    # SSE
 │   │       ├── docker/DockerClientFactory.java
-│   │       └── service/DiagnosisService.java          # 调 chat-service
+│   │       └── service/DiagnosisService.java          # 调 agent-service
 │   │
 │   └── automation-service/
 │       ├── pom.xml
@@ -389,7 +389,7 @@ nora-api/
 postgres (single instance)
 ├── schema_file      → file-service
 ├── schema_rag       → rag-service
-├── schema_chat      → chat-service
+├── schema_agent      → agent-service
 ├── schema_datasource→ datasource-service
 ├── schema_env       → env-service
 └── schema_automation→ automation-service
@@ -403,8 +403,8 @@ postgres (single instance)
 |----|---------|----------------|
 | `file_item` | file-service | Dubbo `FileService.getById()` |
 | `knowledge_doc/chunk` | rag-service | Dubbo `RagService.search()` |
-| `model_provider` | chat-service | Dubbo `ModelService.list()` |
-| `chat_session/message` | chat-service | 直接 REST |
+| `model_provider` | agent-service | Dubbo `ModelService.list()` |
+| `chat_session/message` | agent-service | 直接 REST |
 | `db_connection` | datasource-service | Dubbo `DatasourceService.test()` |
 | `service_instance/log` | env-service | Dubbo `EnvService.tail()` |
 | `automation_rule/execution` | automation-service | 直接 REST |
@@ -436,7 +436,7 @@ spring:
           predicates:
             - Path=/api/rag/**
         - id: chat-sse
-          uri: lb://chat-service
+          uri: lb://agent-service
           predicates:
             - Path=/api/chat/**
           filters:
@@ -506,8 +506,8 @@ services:
     build: services/rag-service
     depends_on: [nacos, postgres]
 
-  chat-service:
-    build: services/chat-service
+  agent-service:
+    build: services/agent-service
     depends_on: [nacos, postgres]
 
   datasource-service:
@@ -603,14 +603,14 @@ SSE 事件保持与 v1 文档第 6 章完全一致（step/delta/sources/done）�
 | 1.5 | gateway 路由 `/api/rag/**` 通 |
 | 1.6 | 前端 `ragService.ts` 切换 fetch |
 
-### Phase 2 · 对话链路（2 周）
+### Phase 2 · Agent 链路（2 周）
 
 | # | 任务 |
 |---|------|
-| 2.1 | chat-service：LangChain4j AiServices + ModelRouter |
+| 2.1 | agent-service：LangChain4j AiServices + ModelRouter + Agent 循环 |
 | 2.2 | SSE：step/delta/sources/done 四类事件 |
-| 2.3 | Tools：SQL 查询、日志读取、创建任务（Dubbo） |
-| 2.4 | ChatMemory（MessageWindowChatMemory 20 条） |
+| 2.3 | Tools：SQL 查询、日志读取、创建任务（Dubbo）→ 实现 ReAct 循环 |
+| 2.4 | ChatMemory（MessageWindowChatMemory 20 条）+ Agent 轨迹持久化 |
 | 2.5 | 会话持久化 |
 
 ### Phase 3 · 数据源 + 任务 + 通知（2 周）
@@ -628,7 +628,7 @@ SSE 事件保持与 v1 文档第 6 章完全一致（step/delta/sources/done）�
 |---|------|
 | 4.1 | env-service：docker-java 容器列表/启停 |
 | 4.2 | 日志流 SSE（gateway 透传） |
-| 4.3 | AI 诊断：日志 → chat-service（LangChain4j）→ 建议 |
+| 4.3 | AI 诊断：日志 → agent-service（LangChain4j ReAct）→ 建议 |
 | 4.4 | 诊断 → 创建自动化修复任务 |
 
 ---
