@@ -1,7 +1,8 @@
 'use client';
 
 import { Database, Layers, Boxes, Clock, CheckCircle2, AlertCircle } from "lucide-react";
-import { MOCK_INDEX_STATS } from "@/lib/knowledgeData";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { computeIndexStats } from "@/lib/services/ragService";
 
 function StatCard({ icon: Icon, label, value, sub, color }: {
   icon: React.ElementType; label: string; value: string | number; sub?: string; color: string;
@@ -19,7 +20,8 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
 }
 
 export function IndexStatus() {
-  const s = MOCK_INDEX_STATS;
+  const docs = useKnowledgeDocs((state) => state.docs);
+  const s = computeIndexStats(docs);
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -76,3 +78,4 @@ export function IndexStatus() {
     </div>
   );
 }
+

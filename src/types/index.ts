@@ -87,6 +87,15 @@ export interface PipelineRule {
   category: "格式" | "去噪" | "分块" | "安全" | "质量";
 }
 
+/** 对话引用来源 */
+export interface Citation {
+  docName: string;
+  source: KnowledgeSource;
+  chunkIndex: number;
+  score: number;
+  snippet: string;
+}
+
 /** 检索测试结果 */
 export interface RetrievalResult {
   docName: string;
@@ -148,3 +157,4 @@ export interface QueryHistory {
   time: string;
   status: "success" | "error";
 }
+

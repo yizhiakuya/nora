@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { SearchCode, Loader2, Database, FileCode, Server, MessageSquare, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
-import { MOCK_RETRIEVAL, SOURCE_META } from "@/lib/knowledgeData";
+import { SOURCE_META } from "@/lib/knowledgeData";
+import { searchDocs } from "@/lib/services/ragService";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeSource, RetrievalResult } from "@/types";
 
@@ -48,19 +49,7 @@ export function RetrievalTest() {
   const [query, setQuery] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const { schedule, cancelAll } = useTimedSequence();
-  const chatDocs = useKnowledgeDocs((s) => s.docs.filter((d) => d.source === "chat"));
-
-  /** 静态召回 + 动态对话产出（保存到知识库后立即可检索） */
-  const results = useMemo(() => [
-    ...chatDocs.slice(0, 2).map((d): RetrievalResult => ({
-      docName: d.name,
-      source: "chat" as const,
-      chunkIndex: 0,
-      score: 0.9,
-      snippet: "（来自对话产出的结论摘要，完整内容已入库）",
-    })),
-    ...MOCK_RETRIEVAL,
-  ], [chatDocs]);
+  const [searchResults, setSearchResults] = useState<RetrievalResult[]>([]);
 
   const handleSearch = () => {
     if (!query.trim()) return;
@@ -71,7 +60,8 @@ export function RetrievalTest() {
       setIsSearching(false);
       setLastQuery(query);
       setHasSearched(true);
-    }, 1000);
+      setSearchResults(searchDocs(query, useKnowledgeDocs.getState().docs));
+    }, 800);
   };
 
   return (
@@ -116,10 +106,10 @@ export function RetrievalTest() {
       {!isSearching && hasSearched && (
         <div className="space-y-3">
           <div className="text-xs text-gray-500 dark:text-gray-400">
-            召回结果 <span className="font-bold text-gray-800 dark:text-gray-100">{results.length}</span> 条 ·
+            召回结果 <span className="font-bold text-gray-800 dark:text-gray-100">{searchResults.length}</span> 条 ·
             耗时 <span className="tabular-nums">34ms</span>
           </div>
-          {results.map((r, i) => {
+          {searchResults.map((r, i) => {
             const Icon = SOURCE_ICONS[r.source];
             const meta = SOURCE_META[r.source];
             return (
@@ -150,3 +140,5 @@ export function RetrievalTest() {
     </div>
   );
 }
+
+

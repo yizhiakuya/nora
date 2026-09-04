@@ -1,4 +1,7 @@
 import { delay } from "./delay";
+import type { Citation } from "@/types";
+import { generateCitations } from "@/lib/services/ragService";
+import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 
 export interface ChatStep {
   id: string;
@@ -18,15 +21,6 @@ export interface ChatMessage {
   steps?: ChatStep[];
   /** RAG 引用来源（回答基于哪些知识库片段） */
   sources?: Citation[];
-}
-
-export interface Citation {
-  docName: string;
-  /** 摄入来源：file/database/repo/environment/chat */
-  source: "file" | "database" | "repo" | "environment" | "chat";
-  chunkIndex: number;
-  score: number;
-  snippet: string;
 }
 
 export type ChatResponder = (
@@ -105,11 +99,11 @@ export const MockChatAPI: { sendMessage: ChatResponder } = {
     await delay(400);
     await streamText(CHAT_RESPONSE_TEXT, onUpdate);
     onUpdate({
-      sources: [
-        { docName: "orders 表结构", source: "database", chunkIndex: 2, score: 0.93, snippet: "…status VARCHAR NOT NULL — 取值 pending/paid/shipped…" },
-        { docName: "服务器巡检记录.xlsx", source: "file", chunkIndex: 4, score: 0.85, snippet: "…06-02 redis 0% / 0 MB 离线；06-03 恢复健康…" },
-      ],
+      sources: generateCitations(_message, useKnowledgeDocs.getState().docs),
       isTyping: false,
     });
   },
 };
+
+
+
