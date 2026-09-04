@@ -5,6 +5,7 @@ import { CheckCircle2, Bell, FileSearch, AlertTriangle, Monitor } from "lucide-r
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
+import { usePreferences } from "@/hooks/usePreferences";
 import { toast } from "sonner";
 
 const EVENTS = [
@@ -17,9 +18,8 @@ const EVENTS = [
 export function NotificationSettings() {
   const [saved, setSaved] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
-  const [events, setEvents] = useState<Record<string, boolean>>({ taskDone: true, taskFail: true, indexed: true, svcError: true });
-  const [inApp, setInApp] = useState(true);
-  const [browser, setBrowser] = useState(false);
+  const notifications = usePreferences((s) => s.notifications);
+  const setNotifications = usePreferences((s) => s.setNotifications);
 
   const handleSave = () => {
     cancelAll();
@@ -45,7 +45,12 @@ export function NotificationSettings() {
                   <div className="text-xs text-muted-foreground mt-0.5">{desc}</div>
                 </div>
               </div>
-              <Switch checked={events[key]} onCheckedChange={(v) => setEvents((p) => ({ ...p, [key]: v }))} />
+              <Switch
+                checked={notifications.events[key]}
+                onCheckedChange={(v) =>
+                  setNotifications({ events: { ...notifications.events, [key]: v } })
+                }
+              />
             </div>
           ))}
         </div>
@@ -62,14 +67,23 @@ export function NotificationSettings() {
               <div className="text-sm font-medium text-foreground">站内通知</div>
               <div className="text-xs text-muted-foreground mt-0.5">顶栏铃铛中心，未读角标提醒</div>
             </div>
-            <Switch checked={inApp} onCheckedChange={setInApp} />
+            <Switch
+              checked={notifications.inApp}
+              onCheckedChange={(v) => setNotifications({ inApp: v })}
+            />
           </div>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-foreground">浏览器通知</div>
               <div className="text-xs text-muted-foreground mt-0.5">系统级推送（需授权）</div>
             </div>
-            <Switch checked={browser} onCheckedChange={(v) => { setBrowser(v); if (v) toast.info("演示环境不申请系统通知权限"); }} />
+            <Switch
+              checked={notifications.browser}
+              onCheckedChange={(v) => {
+                setNotifications({ browser: v });
+                if (v) toast.info("演示环境不申请系统通知权限");
+              }}
+            />
           </div>
         </div>
       </div>

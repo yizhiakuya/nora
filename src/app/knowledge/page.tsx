@@ -25,7 +25,11 @@ export default function KnowledgePage() {
   const handleImport = (fileName?: string) => {
     const name = fileName ?? `导入文档_${Date.now().toString().slice(-4)}.pdf`;
     indexFile(name);
-    addNotification("文档索引入库", `「${name}」已完成清洗与向量化，AI 现在可以检索其内容。`);
+    addNotification(
+      "文档索引入库",
+      `「${name}」已完成清洗与向量化，AI 现在可以检索其内容。`,
+      "indexed"
+    );
     toast.success(`「${name}」已导入知识库`);
   };
 

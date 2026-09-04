@@ -1,7 +1,7 @@
 import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { useChat } from "./useChat";
-import { MockAgentChatAPI, SEED_CONVERSATION } from "@/lib/api/chatApi";
+import { SEED_CONVERSATION } from "@/lib/api/chatApi";
 
 describe("useChat", () => {
   afterEach(() => {
@@ -37,7 +37,7 @@ describe("useChat", () => {
 
   it("clear 清空消息", async () => {
     vi.useFakeTimers();
-    const { result } = renderHook(() => useChat({ responder: MockAgentChatAPI.sendMessage }));
+    const { result } = renderHook(() => useChat());
     act(() => result.current.setInput("hi"));
     act(() => {
       void result.current.sendMessage();

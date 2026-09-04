@@ -5,6 +5,7 @@ import { Sparkles, Terminal, Zap, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MOCK_LOGS, LogEntry } from "@/lib/devData";
 import { useAutomations } from "@/hooks/useAutomations";
+import { useNotifications } from "@/hooks/useNotifications";
 import { toast } from "sonner";
 
 const LEVEL_CLS: Record<LogEntry["level"], string> = {
@@ -17,7 +18,22 @@ export function LogStream() {
   const [filter, setFilter] = useState<"all" | LogEntry["level"]>("all");
   const [selected, setSelected] = useState<LogEntry | null>(null);
   const [taskCreated, setTaskCreated] = useState(false);
+  const [notifiedError, setNotifiedError] = useState(false);
   const addRule = useAutomations((s) => s.addRule);
+  const addNotification = useNotifications((s) => s.addNotification);
+
+  const handleSelect = (log: LogEntry) => {
+    setSelected(log);
+    // 服务异常告警事件：选中 ERROR 级日志时产生，受「通知偏好 → 事件开关」过滤。
+    if (log.level === "error" && !notifiedError) {
+      setNotifiedError(true);
+      addNotification(
+        "服务异常告警",
+        `${log.service} 出现 ERROR 级日志：${log.message}`,
+        "svcError"
+      );
+    }
+  };
 
   const createFixTask = () => {
     if (taskCreated) return;
@@ -57,7 +73,7 @@ export function LogStream() {
         {filtered.map((log, i) => (
           <div
             key={i}
-            onClick={() => setSelected(log)}
+            onClick={() => handleSelect(log)}
             className={`flex gap-2 px-1 py-0.5 rounded cursor-pointer transition-colors ${selected?.message === log.message ? "bg-blue-900/30" : "hover:bg-white/5"}`}
           >
             <span className="text-gray-500 shrink-0 tabular-nums">{log.time}</span>
@@ -94,7 +110,7 @@ export function LogStream() {
       {!selected && (
         <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-2 flex items-center justify-between">
           <span className="text-[10px] text-gray-400 dark:text-gray-500">点击日志行获取 AI 诊断</span>
-          <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setSelected(MOCK_LOGS[0])}>
+          <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => handleSelect(MOCK_LOGS[0])}>
             <Sparkles className="w-2.5 h-2.5 mr-0.5" /> 诊断最新错误
           </Button>
         </div>

@@ -35,7 +35,7 @@ export default function FilesPage() {
     const count = selection.selectedIds.length;
     setFiles(files.filter((f) => !selection.selectedIds.includes(f.id)));
     selection.clearSelection();
-    toast.success(`已成功移入回收站 (${count}个文件)`);
+    toast.success(`已删除 ${count} 个文件`);
   };
 
   const handleUploadComplete = (fileName?: string) => {
@@ -61,7 +61,11 @@ export default function FilesPage() {
   const handleIndexFile = (file: FileItem) => {
     indexFile(file.name);
     setFiles(files.map((f) => (f.id === file.id ? { ...f, indexed: true } : f)));
-    addNotification("文件索引入库", `「${file.name}」已完成解析与向量化，AI 现在可以检索其内容。`);
+    addNotification(
+      "文件索引入库",
+      `「${file.name}」已完成解析与向量化，AI 现在可以检索其内容。`,
+      "indexed"
+    );
     toast.success(`「${file.name}」已加入知识库`);
   };
 

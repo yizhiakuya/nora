@@ -6,15 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
+import { usePreferences } from "@/hooks/usePreferences";
 import { toast } from "sonner";
 
 export function AccountSettings() {
   const [saved, setSaved] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
-  const [name, setName] = useState("Nora Clark");
-  const [email, setEmail] = useState("nora.clark@example.com");
-  const [timezone, setTimezone] = useState("Asia/Shanghai (UTC+8)");
-  const [lang, setLang] = useState("简体中文");
+  const account = usePreferences((s) => s.account);
+  const setAccount = usePreferences((s) => s.setAccount);
 
   const handleSave = () => {
     cancelAll();
@@ -29,8 +28,8 @@ export function AccountSettings() {
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold flex items-center justify-center shadow-sm shrink-0">NC</div>
           <div>
-            <div className="text-sm font-bold text-foreground">{name}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">{email} · 自部署</div>
+            <div className="text-sm font-bold text-foreground">{account.name}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{account.email} · 自部署</div>
             <button type="button" className="text-xs text-primary hover:underline mt-1 cursor-pointer" onClick={() => toast.info("头像上传为演示功能")}>更换头像</button>
           </div>
         </div>
@@ -40,15 +39,15 @@ export function AccountSettings() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">昵称</label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} className="h-10" />
+            <Input value={account.name} onChange={(e) => setAccount({ name: e.target.value })} className="h-10" />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">邮箱</label>
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
+            <Input value={account.email} onChange={(e) => setAccount({ email: e.target.value })} className="h-10" />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">时区</label>
-            <Select value={timezone} onValueChange={setTimezone}>
+            <Select value={account.timezone} onValueChange={(v) => setAccount({ timezone: v })}>
               <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="Asia/Shanghai (UTC+8)">Asia/Shanghai (UTC+8)</SelectItem>
@@ -59,7 +58,7 @@ export function AccountSettings() {
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">界面语言</label>
-            <Select value={lang} onValueChange={setLang}>
+            <Select value={account.lang} onValueChange={(v) => setAccount({ lang: v })}>
               <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="简体中文">简体中文</SelectItem>

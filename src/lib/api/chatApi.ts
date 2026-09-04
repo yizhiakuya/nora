@@ -37,9 +37,6 @@ export type ChatResponder = (
 const CHAT_RESPONSE_TEXT =
   "根据 orders 表的查询结果，订单状态分布如下：\n\n- **paid** 5,214 单（62%）\n- **shipped** 2,380 单（28%）\n- **pending** 826 单（10%）\n\npending 占比 10% 略高于上周（6%），建议检查支付回调是否有延迟。";
 
-const AGENT_RESPONSE_TEXT =
-  "根据巡检记录，api-gateway 平均响应时间 **128ms**，相比上周上涨了 4.2%，仍在健康阈值内。\n\n建议持续关注 Redis 连接池使用率，当前峰值已达 80%。";
-
 /** Chat 页初始演示对话 */
 export const SEED_CONVERSATION: ChatMessage[] = [
   {
@@ -114,14 +111,5 @@ export const MockChatAPI: { sendMessage: ChatResponder } = {
       ],
       isTyping: false,
     });
-  },
-};
-
-/** 调试预览使用的模拟响应 */
-export const MockAgentChatAPI: { sendMessage: ChatResponder } = {
-  async sendMessage(_message, onUpdate) {
-    await delay(1000);
-    await streamText(AGENT_RESPONSE_TEXT, onUpdate);
-    onUpdate({ isTyping: false });
   },
 };

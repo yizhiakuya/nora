@@ -25,6 +25,11 @@ export function GeneralSettings() {
     schedule(() => setSaved(false), 2000);
   };
 
+  const handleReset = () => {
+    setTheme("system");
+    toast.success("已恢复默认外观（跟随系统）");
+  };
+
   return (
     <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="p-6 space-y-6">
@@ -78,7 +83,7 @@ export function GeneralSettings() {
       </div>
 
       <div className="bg-muted/30 p-4 border-t border-border flex justify-end gap-3">
-        <Button variant="outline" size="sm" className="bg-background">还原默认</Button>
+        <Button variant="outline" size="sm" className="bg-background" onClick={handleReset}>还原默认</Button>
         <Button
           size="sm"
           className={`transition-colors ${saved ? "bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white" : "bg-primary hover:bg-primary/90 text-primary-foreground"}`}

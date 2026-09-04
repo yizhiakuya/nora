@@ -44,7 +44,11 @@ export const useAutomations = create<AutomationsState>()(
         set((state) => {
           const rule = state.rules.find((r) => r.id === id);
           if (rule) {
-            useNotifications.getState().addNotification("任务执行完成", `自动任务「${rule.name}」已成功触发，耗时 1.2s。`);
+            useNotifications.getState().addNotification(
+              "任务执行完成",
+              `自动任务「${rule.name}」已成功触发，耗时 1.2s。`,
+              "taskDone"
+            );
           }
           return { rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)) };
         }),

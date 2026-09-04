@@ -18,15 +18,6 @@ export interface Skill {
   authType?: string;
 }
 
-export interface Task {
-  id: string;
-  name: string;
-  agent: string;
-  status: 'completed' | 'running' | 'scheduled' | 'failed';
-  time: string;
-  duration: string;
-}
-
 export interface FileItem {
   id: number;
   name: string;

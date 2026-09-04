@@ -59,7 +59,9 @@ export default function DataSourcesPage() {
                 <div>
                   <div className="text-sm font-bold text-gray-800 dark:text-gray-100">{selected.name}</div>
                   <div className="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-0.5">
-                    {selected.engine}://{selected.host !== "—" ? `${selected.host}:${selected.port}` : selected.database}/{selected.database}
+                    {selected.host !== "—"
+                      ? `${selected.engine}://${selected.host}:${selected.port}/${selected.database}`
+                      : selected.database}
                   </div>
                 </div>
                 <div className="flex items-center gap-3 text-[10px] text-gray-400 dark:text-gray-500">

@@ -20,10 +20,9 @@ export const useSidebarStore = create<SidebarState>()(
       setCollapsed: (isCollapsed) => set({ isCollapsed }),
       toggleCollapsed: () => set((s) => ({ isCollapsed: !s.isCollapsed })),
     }),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    { name: "sidebar-storage", partialize: (s) => ({ isCollapsed: s.isCollapsed }) as any }
+    {
+      name: "sidebar-storage",
+      partialize: (s) => ({ isCollapsed: s.isCollapsed }),
+    }
   )
 );
-
-// 兼容旧命名，Header/Sidebar 仍可用 useMobileMenu
-export const useMobileMenu = useSidebarStore;

@@ -1,10 +1,9 @@
 'use client';
 
-import { useState } from "react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
-import { MOCK_RULES } from "@/lib/knowledgeData";
 import { PipelineRule } from "@/types";
+import { usePreferences } from "@/hooks/usePreferences";
 
 const CATEGORY_COLORS: Record<PipelineRule["category"], string> = {
   "格式": "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300",
@@ -15,12 +14,11 @@ const CATEGORY_COLORS: Record<PipelineRule["category"], string> = {
 };
 
 export function CleaningRules() {
-  const [rules, setRules] = useState<PipelineRule[]>(MOCK_RULES);
+  const rules = usePreferences((s) => s.cleaningRules);
+  const toggleRule = usePreferences((s) => s.toggleRule);
 
   const toggle = (id: number) => {
-    setRules((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
-    );
+    toggleRule(id);
     const rule = rules.find((r) => r.id === id);
     if (rule) {
       toast.success(`规则「${rule.name}」已${rule.enabled ? "停用" : "启用"}`);

@@ -3,7 +3,7 @@
 import { ChevronRight, Menu, Server } from "lucide-react";
 import React from "react";
 import { useRouter } from "next/navigation";
-import { useMobileMenu } from "@/hooks/useMobileMenu";
+import { useSidebarStore } from "@/hooks/useSidebar";
 import { NotificationBell } from "./NotificationBell";
 import { MOCK_SERVICES } from "@/lib/devData";
 interface Breadcrumb {
@@ -19,7 +19,7 @@ interface HeaderProps {
 
 export function Header({ breadcrumbs, actions }: HeaderProps) {
   const router = useRouter();
-  const toggleMenu = useMobileMenu((state) => state.toggle);
+  const toggleMenu = useSidebarStore((state) => state.toggle);
   const runningServices = MOCK_SERVICES.filter(s => s.status === "running");
 
   return (

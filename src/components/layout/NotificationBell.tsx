@@ -8,11 +8,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useNotifications } from "@/hooks/useNotifications";
+import { usePreferences } from "@/hooks/usePreferences";
 
 export function NotificationBell() {
   const notifications = useNotifications((s) => s.notifications);
   const markAllRead = useNotifications((s) => s.markAllRead);
+  const inApp = usePreferences((s) => s.notifications.inApp);
   const unread = notifications.filter((n) => !n.read).length;
+
+  if (!inApp) return null;
 
   return (
     <DropdownMenu>

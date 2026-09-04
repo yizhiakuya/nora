@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSkills } from "@/hooks/useSkills";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
+import { usePreferences } from "@/hooks/usePreferences";
 import { toast } from "sonner";
 
 export function KnowledgeAISettings() {
@@ -15,9 +16,8 @@ export function KnowledgeAISettings() {
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
 
-  const [embedding, setEmbedding] = useState("text-embedding-3-small (1536维)");
-  const [chunkSize, setChunkSize] = useState("512 token（推荐）");
-  const [autoIndex, setAutoIndex] = useState(true);
+  const knowledgeAI = usePreferences((s) => s.knowledgeAI);
+  const setKnowledgeAI = usePreferences((s) => s.setKnowledgeAI);
 
   const handleSave = () => {
     cancelAll();
@@ -32,7 +32,10 @@ export function KnowledgeAISettings() {
         <div className="space-y-1.5">
           <label className="text-sm font-bold text-foreground">嵌入模型</label>
           <p className="text-xs text-muted-foreground mb-2">文档向量化所用模型，切换后需重新索引全部文档。</p>
-          <Select value={embedding} onValueChange={setEmbedding}>
+          <Select
+            value={knowledgeAI.embedding}
+            onValueChange={(v) => setKnowledgeAI({ embedding: v })}
+          >
             <SelectTrigger className="w-full max-w-sm h-10 rounded-lg"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="text-embedding-3-small (1536维)">text-embedding-3-small (1536维)</SelectItem>
@@ -45,7 +48,10 @@ export function KnowledgeAISettings() {
         <div className="space-y-1.5">
           <label className="text-sm font-bold text-foreground">分块策略</label>
           <p className="text-xs text-muted-foreground mb-2">文档切分的最大块大小，按语义边界切分，不超过该值。</p>
-          <Select value={chunkSize} onValueChange={setChunkSize}>
+          <Select
+            value={knowledgeAI.chunkSize}
+            onValueChange={(v) => setKnowledgeAI({ chunkSize: v })}
+          >
             <SelectTrigger className="w-full max-w-sm h-10 rounded-lg"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="256 token">256 token（更精细）</SelectItem>
@@ -62,7 +68,10 @@ export function KnowledgeAISettings() {
             <div className="text-sm font-medium text-foreground">上传后自动加入知识库</div>
             <div className="text-xs text-muted-foreground mt-0.5">新文件完成上传后自动解析、清洗并索引入库</div>
           </div>
-          <Switch checked={autoIndex} onCheckedChange={setAutoIndex} />
+          <Switch
+            checked={knowledgeAI.autoIndex}
+            onCheckedChange={(v) => setKnowledgeAI({ autoIndex: v })}
+          />
         </div>
 
         <div className="w-full h-px bg-border"></div>

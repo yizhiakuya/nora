@@ -6,10 +6,13 @@ import { Plus, Trash2, Eye, EyeOff, Copy, Check, KeyRound, Braces } from "lucide
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { MOCK_ENV_VARS, EnvVar } from "@/lib/devData";
+import { EnvVar } from "@/lib/devData";
+import { usePreferences } from "@/hooks/usePreferences";
 
 export function EnvVarsSettings() {
-  const [vars, setVars] = useState<EnvVar[]>(MOCK_ENV_VARS);
+  const vars = usePreferences((s) => s.envVars);
+  const addEnvVar = usePreferences((s) => s.addEnvVar);
+  const removeEnvVar = usePreferences((s) => s.removeEnvVar);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -34,13 +37,13 @@ export function EnvVarsSettings() {
       toast.error(`「${key}」已存在，请直接编辑或先删除`);
       return;
     }
-    setVars((prev) => [...prev, { key, value: newValue.trim(), secret: newSecret, note: newNote.trim() || undefined }]);
+    addEnvVar({ key, value: newValue.trim(), secret: newSecret, note: newNote.trim() || undefined });
     setNewKey(""); setNewValue(""); setNewNote(""); setNewSecret(true);
     toast.success(`变量「${key}」已添加`);
   };
 
   const remove = (key: string) => {
-    setVars((prev) => prev.filter((v) => v.key !== key));
+    removeEnvVar(key);
     toast.success(`变量「${key}」已删除`);
   };
 

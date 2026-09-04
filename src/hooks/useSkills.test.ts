@@ -49,4 +49,18 @@ describe("useSkills", () => {
     act(() => result.current.removeSkill(991));
     expect(result.current.skills.find((s) => s.id === 991)).toBeUndefined();
   });
+
+  it("persist 不序列化组件引用（icon/color/bg 被剔除，防水合崩溃）", () => {
+    const options = useSkills.persist.getOptions();
+    const persisted = options.partialize?.(useSkills.getState()) as {
+      skills: Record<string, unknown>[];
+    };
+
+    expect(persisted.skills.length).toBe(useSkills.getState().skills.length);
+    for (const skill of persisted.skills) {
+      expect(skill.icon).toBeUndefined();
+      expect(skill.color).toBeUndefined();
+      expect(skill.bg).toBeUndefined();
+    }
+  });
 });
