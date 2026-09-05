@@ -13,7 +13,8 @@ import org.springframework.web.client.RestClient;
 @EnableConfigurationProperties({
         LlmProperties.class,
         RagServiceProperties.class,
-        DatasourceServiceProperties.class})
+        DatasourceServiceProperties.class,
+        EnvServiceProperties.class})
 public class AgentConfig {
 
     /**
@@ -37,6 +38,19 @@ public class AgentConfig {
      */
     @Bean
     public RestClient datasourceServiceRestClient(DatasourceServiceProperties properties) {
+        return RestClient.builder()
+                .baseUrl(properties.baseUrl())
+                .build();
+    }
+
+    /**
+     * HTTP client for env-service calls (service logs).
+     *
+     * @param properties env-service settings
+     * @return RestClient bound to env-service base URL
+     */
+    @Bean
+    public RestClient envServiceRestClient(EnvServiceProperties properties) {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .build();

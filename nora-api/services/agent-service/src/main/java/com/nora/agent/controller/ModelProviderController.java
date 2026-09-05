@@ -78,7 +78,9 @@ public class ModelProviderController {
 
     /**
      * Connectivity test: GETs {@code {endpoint}/models} with the stored key
-     * (OpenAI-compatible /v1/models). Marks the provider ok/fail.
+     * (OpenAI-compatible /v1/models). Marks the provider ok/fail and — when
+     * the upstream returns a model list — replaces the stored models so the
+     * UI's 模型列表 always reflects what the relay actually serves.
      */
     @PostMapping("/{id}/test")
     public ApiResponse<TestResult> test(@PathVariable long id) {
@@ -95,21 +97,50 @@ public class ModelProviderController {
                 spec = ((RestClient.RequestHeadersSpec<?>) spec)
                         .header("Authorization", "Bearer " + credentials.apiKey());
             }
-            spec.retrieve()
+            String body = spec.retrieve()
                     .onStatus(HttpStatusCode::isError, (req, res) -> {
-                        String body = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                        String errBody = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8);
                         throw new BusinessException(502, "endpoint returned " + res.getStatusCode() + ": "
-                                + body.substring(0, Math.min(body.length(), 200)));
+                                + errBody.substring(0, Math.min(errBody.length(), 200)));
                     })
-                    .toEntity(String.class);
+                    .toEntity(String.class)
+                    .getBody();
+            List<String> models = parseModelIds(body);
+            if (!models.isEmpty()) {
+                providerService.updateModels(id, models);
+            }
             providerService.markStatus(id, "ok");
-            return ApiResponse.ok(new TestResult("ok", null));
+            return ApiResponse.ok(new TestResult("ok", null, models.size()));
         } catch (BusinessException e) {
             providerService.markStatus(id, "fail");
             throw e;
         } catch (Exception e) {
             providerService.markStatus(id, "fail");
             throw new BusinessException(502, "connection failed: " + e.getMessage());
+        }
+    }
+
+    /** Extracts model ids from an OpenAI-compatible /v1/models response. */
+    private static List<String> parseModelIds(String body) {
+        if (body == null || body.isBlank()) {
+            return List.of();
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode root =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+            com.fasterxml.jackson.databind.JsonNode data = root.path("data");
+            List<String> ids = new java.util.ArrayList<>();
+            if (data.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode item : data) {
+                    String id = item.path("id").asText(null);
+                    if (id != null && !id.isBlank()) {
+                        ids.add(id);
+                    }
+                }
+            }
+            return ids;
+        } catch (Exception e) {
+            return List.of();
         }
     }
 
@@ -123,6 +154,6 @@ public class ModelProviderController {
     }
 
     /** POST /test response. */
-    public record TestResult(String status, String error) {
+    public record TestResult(String status, String error, Integer modelCount) {
     }
 }

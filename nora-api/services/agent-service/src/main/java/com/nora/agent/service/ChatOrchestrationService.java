@@ -42,7 +42,8 @@ public class ChatOrchestrationService {
             1. 优先使用检索到的知识库内容
             2. 引用来源时使用 [[docName]] 标记
             3. 涉及数据库统计/查询时,先用 execute_sql 工具查询真实数据再回答
-            4. 工具返回错误时如实说明,不要编造数据
+            4. 诊断服务异常/报错时,先用 read_service_logs 工具读取相关容器日志,基于真实日志分析原因并给出修复建议
+            5. 工具返回错误时如实说明,不要编造数据
             """;
 
     /** Max tool rounds per chat turn (ReAct depth guard). */
@@ -51,19 +52,29 @@ public class ChatOrchestrationService {
     private final LlmProperties llmProperties;
     private final RagRetrievalClient ragRetrievalClient;
     private final SqlToolClient sqlToolClient;
+    private final ServiceLogClient serviceLogClient;
     private final ObjectMapper objectMapper;
     private final RestClient llmClient;
 
     public ChatOrchestrationService(LlmProperties llmProperties,
                                     RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
+                                    ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
+        this.serviceLogClient = serviceLogClient;
         this.objectMapper = objectMapper;
+        // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
+        // 默认无超时的 RestClient 会永远挂起整轮对话
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(120_000);
         this.llmClient = RestClient.builder()
                 .baseUrl(llmProperties.baseUrl())
+                .requestFactory(factory)
                 .build();
     }
 
@@ -197,9 +208,37 @@ public class ChatOrchestrationService {
     private String executeTool(String name, String args) {
         if ("execute_sql".equals(name)) {
             String sql = extractStringArg(args, "sql");
-            return sqlToolClient.executeSql(sql);
+            return bounded(sqlToolClient.executeSql(sql));
+        }
+        if ("read_service_logs".equals(name)) {
+            String service = extractStringArg(args, "service");
+            int limit = 50;
+            try {
+                JsonNode node = parseArgs(args);
+                if (node.has("limit") && node.get("limit").isNumber()) {
+                    limit = Math.min(node.get("limit").asInt(50), 100);
+                }
+            } catch (Exception ignored) {
+                // keep default limit
+            }
+            return bounded(serviceLogClient.readLogs(service, limit));
         }
         return "ERROR: unknown tool " + name;
+    }
+
+    /** 工具结果上限 8KB:长日志会拖慢上游模型且占上下文(ACI 有界负载原则) */
+    private static String bounded(String result) {
+        if (result == null) {
+            return "(empty)";
+        }
+        if (result.length() <= 8192) {
+            return result;
+        }
+        return result.substring(0, 8192) + "\n…(结果已截断)";
+    }
+
+    private JsonNode parseArgs(String argsJson) throws Exception {
+        return objectMapper.readTree(argsJson);
     }
 
     private String extractStringArg(String argsJson, String field) {
@@ -303,22 +342,44 @@ public class ChatOrchestrationService {
         return array;
     }
 
-    /** OpenAI tools array: the guarded SQL tool. */
+    /** OpenAI tools array: guarded SQL + service log reading. */
     private ArrayNode toolsSpec() {
-        ObjectNode tool = objectMapper.createObjectNode();
-        tool.put("type", "function");
-        ObjectNode fn = tool.putObject("function");
-        fn.put("name", "execute_sql");
-        fn.put("description", "在已连接的数据库上执行只读 SQL 查询(仅 SELECT/SHOW/EXPLAIN),返回真实结果。需要数据库统计、表数据时必须使用此工具");
-        ObjectNode params = fn.putObject("parameters");
-        params.put("type", "object");
-        ObjectNode props = params.putObject("properties");
-        ObjectNode sqlProp = props.putObject("sql");
+        ArrayNode tools = objectMapper.createArrayNode();
+
+        ObjectNode sqlTool = objectMapper.createObjectNode();
+        sqlTool.put("type", "function");
+        ObjectNode sqlFn = sqlTool.putObject("function");
+        sqlFn.put("name", "execute_sql");
+        sqlFn.put("description", "在已连接的数据库上执行只读 SQL 查询(仅 SELECT/SHOW/EXPLAIN),返回真实结果。需要数据库统计、表数据时必须使用此工具");
+        ObjectNode sqlParams = sqlFn.putObject("parameters");
+        sqlParams.put("type", "object");
+        ObjectNode sqlProps = sqlParams.putObject("properties");
+        ObjectNode sqlProp = sqlProps.putObject("sql");
         sqlProp.put("type", "string");
         sqlProp.put("description", "要执行的只读 SQL 语句");
-        ArrayNode required = params.putArray("required");
-        required.add("sql");
-        return objectMapper.createArrayNode().add(tool);
+        ArrayNode sqlRequired = sqlParams.putArray("required");
+        sqlRequired.add("sql");
+        tools.add(sqlTool);
+
+        ObjectNode logTool = objectMapper.createObjectNode();
+        logTool.put("type", "function");
+        ObjectNode logFn = logTool.putObject("function");
+        logFn.put("name", "read_service_logs");
+        logFn.put("description", "读取本地 Docker 容器服务的最近日志。诊断服务异常/报错时使用;可用服务可先不带参数理解,或从用户上下文推断");
+        ObjectNode logParams = logFn.putObject("parameters");
+        logParams.put("type", "object");
+        ObjectNode logProps = logParams.putObject("properties");
+        ObjectNode serviceProp = logProps.putObject("service");
+        serviceProp.put("type", "string");
+        serviceProp.put("description", "容器名,如 nora-postgres / nora-redis / nora-nacos");
+        ObjectNode limitProp = logProps.putObject("limit");
+        limitProp.put("type", "integer");
+        limitProp.put("description", "返回的最近日志行数,默认 50,最大 100");
+        ArrayNode logRequired = logParams.putArray("required");
+        logRequired.add("service");
+        tools.add(logTool);
+
+        return tools;
     }
 
     private List<WireMessage> buildMessages(String userMessage,

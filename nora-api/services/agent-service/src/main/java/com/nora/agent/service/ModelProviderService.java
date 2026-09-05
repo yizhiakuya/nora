@@ -74,6 +74,12 @@ public class ModelProviderService {
         jdbcTemplate.update("UPDATE model_provider SET status = ? WHERE id = ?", status, id);
     }
 
+    /** Replaces the model list of a provider (auto-discovered from upstream). */
+    public void updateModels(long id, List<String> models) {
+        jdbcTemplate.update("UPDATE model_provider SET models = ? WHERE id = ?",
+                models.toArray(new String[0]), id);
+    }
+
     /** Loads the raw endpoint+key pair for a provider (connectivity test / chat use). */
     public StoredCredentials credentials(long id) {
         List<StoredCredentials> rows = jdbcTemplate.query(

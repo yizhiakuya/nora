@@ -149,19 +149,33 @@ public class DockerClientService {
         pb.environment().putAll(System.getenv());
         pb.redirectErrorStream(false);
         Process process = pb.start();
-        String output = new String(process.getInputStream().readAllBytes(),
-                java.nio.charset.StandardCharsets.UTF_8);
+        // stdout/stderr 必须并发排空:同步 readAllBytes 会因管道不关闭而永久阻塞
+        // (Windows docker CLI 常见),让 30s 超时保护完全失效
+        java.util.concurrent.CompletableFuture<String> stdout =
+                java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> readStream(process.getInputStream()));
+        java.util.concurrent.CompletableFuture<String> stderr =
+                java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> readStream(process.getErrorStream()));
         boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
             throw new IllegalStateException("docker command timed out");
         }
+        String output = stdout.get(5, java.util.concurrent.TimeUnit.SECONDS);
         if (process.exitValue() != 0) {
-            String err = new String(process.getErrorStream().readAllBytes(),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            String err = stderr.get(5, java.util.concurrent.TimeUnit.SECONDS);
             throw new IllegalStateException(err.isBlank() ? "exit " + process.exitValue() : err.strip());
         }
         return output;
+    }
+
+    private static String readStream(java.io.InputStream in) {
+        try (in) {
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private String execIgnoringError(String... command) {

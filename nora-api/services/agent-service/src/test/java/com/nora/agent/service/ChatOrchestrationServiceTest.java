@@ -26,6 +26,9 @@ class ChatOrchestrationServiceTest {
     @Mock
     private SqlToolClient sqlToolClient;
 
+    @Mock
+    private ServiceLogClient serviceLogClient;
+
     private ChatOrchestrationService service;
 
     @BeforeEach
@@ -34,7 +37,7 @@ class ChatOrchestrationServiceTest {
         // the LLM call itself fails downstream (wire client hits a bad URL).
         LlmProperties properties = new LlmProperties("", "http://localhost:9/v1", "test-model");
         service = new ChatOrchestrationService(properties, ragRetrievalClient,
-                sqlToolClient, new ObjectMapper());
+                sqlToolClient, serviceLogClient, new ObjectMapper());
     }
 
     @Test
@@ -106,12 +109,12 @@ class ChatOrchestrationServiceTest {
     void notConfiguredFlagMirrorsProperties() {
         LlmProperties unconfigured = new LlmProperties("", "http://localhost:9/v1", "m");
         ChatOrchestrationService s = new ChatOrchestrationService(unconfigured, ragRetrievalClient,
-                sqlToolClient, new ObjectMapper());
+                sqlToolClient, serviceLogClient, new ObjectMapper());
         org.junit.jupiter.api.Assertions.assertFalse(s.configured());
 
         LlmProperties configured = new LlmProperties("key", "http://localhost:9/v1", "m");
         ChatOrchestrationService s2 = new ChatOrchestrationService(configured, ragRetrievalClient,
-                sqlToolClient, new ObjectMapper());
+                sqlToolClient, serviceLogClient, new ObjectMapper());
         assertTrue(s2.configured());
     }
 }

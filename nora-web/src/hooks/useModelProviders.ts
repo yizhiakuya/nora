@@ -142,7 +142,12 @@ export const useModelProviders = create<ModelProvidersState>()(
         if (!USE_BACKEND) {
           throw new Error("mock mode: caller simulates the test");
         }
-        const result = await modelsApi.testProvider(id);
+        // 测试成功时后端会自动用上游 /v1/models 覆盖模型列表,这里取回刷新后的 provider
+        const result = await modelsApi.testAndRefresh(id, (updated) => {
+          set((state) => ({
+            providers: state.providers.map((p) => (p.id === id ? updated : p)),
+          }));
+        });
         set((state) => ({
           providers: state.providers.map((p) => (p.id === id ? { ...p, status: result.status } : p)),
         }));

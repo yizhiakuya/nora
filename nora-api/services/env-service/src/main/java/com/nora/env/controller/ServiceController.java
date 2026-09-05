@@ -63,6 +63,21 @@ public class ServiceController {
     }
 
     /**
+     * Log tail (non-streaming): returns the last {@code tail} lines at once.
+     * Used by the agent tool path, which needs an immediate bounded answer
+     * rather than a live stream.
+     *
+     * @param service container name or id
+     * @param tail    number of recent lines
+     * @return log lines, newest last
+     */
+    @GetMapping("/logs")
+    public ApiResponse<List<String>> logs(@RequestParam("service") String service,
+                                          @RequestParam(value = "tail", defaultValue = "50") int tail) {
+        return ApiResponse.ok(docker.logs(service, Math.min(Math.max(tail, 1), 200)));
+    }
+
+    /**
      * Log stream: tails {@code tail} recent lines once, then polls every few
      * seconds and pushes new content as SSE {@code log} events.
      *

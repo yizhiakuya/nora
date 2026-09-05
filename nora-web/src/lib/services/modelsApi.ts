@@ -70,10 +70,26 @@ export const modelsApi = {
     await requestJson<void>(`/models/providers/${id}`, { method: "DELETE" });
   },
 
-  async testProvider(id: number): Promise<{ status: "ok" | "fail"; error?: string | null }> {
-    return requestJson<{ status: "ok" | "fail"; error?: string | null }>(
+  async testProvider(
+    id: number
+  ): Promise<{ status: "ok" | "fail"; error?: string | null; modelCount?: number }> {
+    return requestJson<{ status: "ok" | "fail"; error?: string | null; modelCount?: number }>(
       `/models/providers/${id}/test`,
       { method: "POST" }
     );
+  },
+
+  /** 测试连通并返回刷新后的 provider(模型列表已被后端自动更新为上游模型) */
+  async testAndRefresh(
+    id: number,
+    applyProvider: (p: ModelProvider) => void
+  ): Promise<{ status: "ok" | "fail"; modelCount?: number }> {
+    const result = await this.testProvider(id);
+    if (result.status === "ok") {
+      const items = await requestJson<BackendProvider[]>("/models/providers");
+      const updated = items.find((p) => p.id === id);
+      if (updated) applyProvider(toProvider(updated));
+    }
+    return result;
   },
 };

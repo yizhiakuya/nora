@@ -5,9 +5,11 @@ import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
+import com.nora.common.response.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -76,6 +78,21 @@ public class AgentController {
     @GetMapping("/sessions/{sessionId}/messages")
     public List<ChatStoreService.StoredMessage> messages(@PathVariable String sessionId) {
         return chatStoreService.loadMessages(sessionId);
+    }
+
+    /** All sessions, most recently active first (frontend sidebar list). */
+    @GetMapping("/sessions")
+    public ApiResponse<List<ChatStoreService.SessionSummary>> sessions() {
+        return ApiResponse.ok(chatStoreService.listSessions());
+    }
+
+    /** Deletes a session with its messages. */
+    @DeleteMapping("/sessions/{sessionId}")
+    public ApiResponse<Void> deleteSession(@PathVariable String sessionId) {
+        if (!chatStoreService.deleteSession(sessionId)) {
+            throw new IllegalArgumentException("session not found: " + sessionId);
+        }
+        return ApiResponse.ok();
     }
 
     private void runChatTurn(String sessionId, String content, SseEmitter emitter) {

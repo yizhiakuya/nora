@@ -59,6 +59,37 @@ public class ChatStoreService {
                 sessionId);
     }
 
+    /** Lists sessions with message counts, most recently active first. */
+    public List<SessionSummary> listSessions() {
+        return jdbcTemplate.query(
+                """
+                SELECT s.id, s.title, s.created_at, count(m.id) AS message_count,
+                       max(m.created_at) AS last_activity
+                FROM chat_session s
+                LEFT JOIN chat_message m ON m.session_id = s.id
+                GROUP BY s.id, s.title, s.created_at
+                ORDER BY max(m.created_at) DESC NULLS LAST, s.created_at DESC
+                """,
+                (rs, rowNum) -> new SessionSummary(
+                        rs.getString("id"),
+                        rs.getString("title"),
+                        rs.getInt("message_count"),
+                        rs.getTimestamp("created_at")));
+    }
+
+    /** Deletes a session and its messages (cascade). Returns false when unknown. */
+    public boolean deleteSession(String sessionId) {
+        return jdbcTemplate.update("DELETE FROM chat_session WHERE id = ?", sessionId) > 0;
+    }
+
+    /** One session row for the sidebar list. */
+    public record SessionSummary(
+            String id,
+            String title,
+            int messageCount,
+            java.sql.Timestamp createdAt) {
+    }
+
     private String toJson(Object value) {
         if (value == null) {
             return null;
