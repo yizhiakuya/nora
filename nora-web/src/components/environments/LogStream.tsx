@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sparkles, Terminal, Zap, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LogEntry, MOCK_LOGS } from "@/lib/devData";
 import { useServices } from "@/hooks/useServices";
 import { useAutomations } from "@/hooks/useAutomations";
 import { useNotifications } from "@/hooks/useNotifications";
+import { subscribeLogs } from "@/lib/services/environmentApi";
+import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 
 const LEVEL_CLS: Record<LogEntry["level"], string> = {
@@ -22,6 +24,23 @@ export function LogStream() {
   const [notifiedError, setNotifiedError] = useState(false);
   const addRule = useAutomations((s) => s.addRule);
   const addNotification = useNotifications((s) => s.addNotification);
+  const ingestDockerLog = useServices((s) => s.ingestDockerLog);
+  const services = useServices((s) => s.services);
+
+  // 后端模式:订阅第一个运行中容器的真实日志 SSE
+  useEffect(() => {
+    if (!USE_BACKEND) return;
+    const target = services.find((s) => s.status === "running");
+    if (!target) return;
+    const cancel = subscribeLogs(
+      target.name,
+      (line) => {
+        if (line.trim()) ingestDockerLog(target.name, line);
+      },
+      () => { /* 后端不可用,沿用本地日志 */ }
+    );
+    return cancel;
+  }, [services, ingestDockerLog]);
 
   const handleSelect = (log: LogEntry) => {
     setSelected(log);

@@ -34,6 +34,10 @@ spring:
           uri: lb://automation-service
           predicates:
             - Path=/api/automations/**
+        - id: environment
+          uri: lb://env-service
+          predicates:
+            - Path=/api/environment/**
 
 management:
   endpoints:

@@ -1,14 +1,22 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Server } from "lucide-react";
 import { ServiceCards } from "@/components/environments/ServiceCards";
 import { LogStream } from "@/components/environments/LogStream";
+import { useServices } from "@/hooks/useServices";
+
 const TABS = ["服务", "日志"] as const;
 
 export default function EnvironmentsPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("服务");
+  const syncFromBackend = useServices((s) => s.syncFromBackend);
+
+  // 后端模式:进入页面拉一次真实 Docker 容器列表
+  useEffect(() => {
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
   return (
     <>
