@@ -195,10 +195,12 @@ function roundGroups(steps: ChatStep[]): Array<{ index: number; steps: ChatStep[
 export function AgentThoughtBlock({
   steps,
   durationMs,
+  usage,
   expanded,
 }: {
   steps: ChatStep[];
   durationMs?: number;
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
   expanded?: boolean;
 }) {
   const runningCount = steps.filter((s) => s.status === "running").length;
@@ -210,6 +212,14 @@ export function AgentThoughtBlock({
   const [open, setOpen] = useState(defaultOpen);
   const [userTouched, setUserTouched] = useState(false);
   const effectiveOpen = userTouched ? open : defaultOpen;
+
+  const stats: string[] = [];
+  if (toolCount > 0) stats.push(`${toolCount} 次工具调用`);
+  if (failedCount > 0) stats.push(`${failedCount} 失败`);
+  if (declinedCount > 0) stats.push(`${declinedCount} 拦截`);
+  if (usage?.totalTokens != null) stats.push(`${usage.totalTokens} tokens`);
+  else if (usage?.outputTokens != null) stats.push(`${usage.outputTokens} tokens`);
+  if (durationMs != null) stats.push(`${(durationMs / 1000).toFixed(1)}s`);
 
   return (
     <div className="rounded-xl border border-border bg-muted/25 animate-in fade-in slide-in-from-top-1 overflow-hidden">
@@ -229,10 +239,7 @@ export function AgentThoughtBlock({
         )}
         <span className="text-sm font-medium text-foreground">{isWorking ? "思考中" : "思考完成"}</span>
         <span className="text-[11px] text-muted-foreground truncate flex-1">
-          {toolCount > 0 && `${toolCount} 次工具调用`}
-          {failedCount > 0 && `${toolCount > 0 ? " · " : ""}${failedCount} 失败`}
-          {declinedCount > 0 && `${toolCount > 0 || failedCount > 0 ? " · " : ""}${declinedCount} 拦截`}
-          {durationMs != null && `${toolCount > 0 || failedCount > 0 || declinedCount > 0 ? " · " : ""}${(durationMs / 1000).toFixed(1)}s`}
+          {stats.join(" · ")}
         </span>
         <ChevronDown className={`w-4 h-4 text-muted-foreground/60 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />
       </button>

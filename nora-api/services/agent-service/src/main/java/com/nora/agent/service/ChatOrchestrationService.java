@@ -187,7 +187,7 @@ public class ChatOrchestrationService {
                     "请先在设置中心配置 LLM API Key 和端点", 0L, "failed"));
             String message = "当前尚未配置可用的模型。请到设置中心配置 LLM 服务商、端点和 API Key 后重试。";
             eventConsumer.delta(message);
-            return CompletableFuture.completedFuture(new ChatTurn(message, List.of()));
+            return CompletableFuture.completedFuture(new ChatTurn(message, List.of(), null));
         }
         // 请求级等级优先,其次设置页为该模型配置的默认等级(在 resolveLlm 内合并)
         // Step 1: knowledge retrieval (best-effort, before the LLM call)
@@ -217,6 +217,7 @@ public class ChatOrchestrationService {
         final String reasoningLevel = resolved.effectiveReasoningLevel();
         String toolOutcome = null;
         final int[] roundsUsed = {0};
+        TokenUsage totalUsage = null;
         // loop breaker state: (toolName + normalized args) → consecutive repeat count
         Map<String, Integer> callFingerprints = new HashMap<>();
         try {
@@ -224,6 +225,9 @@ public class ChatOrchestrationService {
                 roundsUsed[0] = round + 1;
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
                         round + 1, eventConsumer);
+                if (result.usage() != null) {
+                    totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
+                }
                 if (result.failed) {
                     eventConsumer.step(new ChatStepDto("s-error", "think", "模型返回空响应",
                             result.errorMessage != null ? result.errorMessage : "上游未返回内容,请重试",
@@ -232,7 +236,7 @@ public class ChatOrchestrationService {
                 }
                 if (result.toolCalls.isEmpty()) {
                     // 回答(与推理)已随流逐 token 转发完毕
-                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations));
+                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage));
                 }
                 messages.add(new WireMessage(result.assistantMessage));
                 for (JsonNode call : result.toolCalls) {
@@ -261,8 +265,11 @@ public class ChatOrchestrationService {
                 reasoningRound, eventConsumer);
         if (!finalResult.failed) {
             String answerText = finalResult.content;
+            if (finalResult.usage() != null) {
+                totalUsage = totalUsage == null ? finalResult.usage() : totalUsage.add(finalResult.usage());
+            }
             if (!answerText.isBlank()) {
-                return CompletableFuture.completedFuture(new ChatTurn(answerText, citations));
+                return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage));
             }
         }
         // 流式最终回答失败:回落到最后一次工具结果作为回答,而不是死流
@@ -271,7 +278,7 @@ public class ChatOrchestrationService {
                 : "";
         if (!fallback.isBlank()) {
             eventConsumer.delta(fallback);
-            return CompletableFuture.completedFuture(new ChatTurn(fallback, citations));
+            return CompletableFuture.completedFuture(new ChatTurn(fallback, citations, totalUsage));
         }
         eventConsumer.step(new ChatStepDto("s-error", "think", "模型调用失败",
                 finalResult.errorMessage, System.currentTimeMillis() - answerStart, "failed",
@@ -570,7 +577,26 @@ public class ChatOrchestrationService {
 
     /** One streamed model turn: forwarded content/reasoning plus accumulated tool_calls. */
     record StreamTurnResult(boolean failed, String errorMessage, String content,
-                            String reasoning, ObjectNode assistantMessage, List<JsonNode> toolCalls) {
+                            String reasoning, ObjectNode assistantMessage, List<JsonNode> toolCalls,
+                            TokenUsage usage) {
+    }
+
+    /** Provider token accounting from one streamed turn (null fields when relay omits usage). */
+    public record TokenUsage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {
+
+        TokenUsage add(TokenUsage other) {
+            if (other == null) return this;
+            return new TokenUsage(
+                    plus(inputTokens, other.inputTokens),
+                    plus(outputTokens, other.outputTokens),
+                    plus(totalTokens, other.totalTokens));
+        }
+
+        private static Integer plus(Integer a, Integer b) {
+            if (a == null) return b;
+            if (b == null) return a;
+            return a + b;
+        }
     }
 
     /**
@@ -631,6 +657,7 @@ public class ChatOrchestrationService {
         Map<Integer, String> callNames = new HashMap<>();
         Map<Integer, StringBuilder> callArgs = new HashMap<>();
         List<JsonNode> orderedCalls = new ArrayList<>();
+        TokenUsage usage = null;
 
         try {
             java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
@@ -650,7 +677,7 @@ public class ChatOrchestrationService {
             if (response.statusCode() >= 400) {
                 String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 return new StreamTurnResult(true, "上游 " + response.statusCode() + ": "
-                        + abbreviate(err, 300), "", "", null, List.of());
+                        + abbreviate(err, 300), "", "", null, List.of(), null);
             }
             boolean done = false;
             try (java.io.BufferedReader reader = new java.io.BufferedReader(
@@ -660,12 +687,21 @@ public class ChatOrchestrationService {
                     if (!line.startsWith("data:")) continue;
                     String payload = line.substring(5).trim();
                     if ("[DONE]".equals(payload)) { done = true; break; }
-                    JsonNode delta;
+                    JsonNode chunkRoot;
                     try {
-                        delta = objectMapper.readTree(payload).path("choices").path(0).path("delta");
+                        chunkRoot = objectMapper.readTree(payload);
                     } catch (Exception parseError) {
                         continue; // keep-alive comments / partial lines
                     }
+                    // usage rides the last chunk with an empty choices array (relay-verified)
+                    JsonNode usageNode = chunkRoot.path("usage");
+                    if (usageNode.isObject() && !usageNode.isEmpty()) {
+                        usage = new TokenUsage(
+                                usageNode.path("prompt_tokens").isInt() ? usageNode.path("prompt_tokens").asInt() : null,
+                                usageNode.path("completion_tokens").isInt() ? usageNode.path("completion_tokens").asInt() : null,
+                                usageNode.path("total_tokens").isInt() ? usageNode.path("total_tokens").asInt() : null);
+                    }
+                    JsonNode delta = chunkRoot.path("choices").path(0).path("delta");
                     JsonNode rc = delta.path("reasoning_content");
                     if (!rc.isTextual()) rc = delta.path("reasoning");
                     if (rc.isTextual() && !rc.asText().isEmpty()) {
@@ -695,7 +731,7 @@ public class ChatOrchestrationService {
                 }
             }
             if (!done && content.isEmpty() && reasoning.isEmpty() && callArgs.isEmpty()) {
-                return new StreamTurnResult(true, "empty stream", "", "", null, List.of());
+                return new StreamTurnResult(true, "empty stream", "", "", null, List.of(), usage);
             }
             // rebuild tool_calls in index order with accumulated ids/names/args
             for (Integer idx : new java.util.TreeSet<>(callArgs.isEmpty() ? callIds.keySet() : unionKeys(callIds, callArgs))) {
@@ -714,10 +750,10 @@ public class ChatOrchestrationService {
                 orderedCalls.forEach(arr::add);
             }
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
-                    assistant, orderedCalls);
+                    assistant, orderedCalls, usage);
         } catch (Exception e) {
             return new StreamTurnResult(true, e.getMessage(), content.toString(), reasoning.toString(),
-                    null, List.of());
+                    null, List.of(), usage);
         }
     }
 
@@ -939,7 +975,7 @@ public class ChatOrchestrationService {
     }
 
     /** Result of one chat turn. */
-    public record ChatTurn(String answer, List<CitationDto> citations) {
+    public record ChatTurn(String answer, List<CitationDto> citations, TokenUsage usage) {
     }
 
     /** Wire-format message wrapper (JsonNode so tool messages mix in). */

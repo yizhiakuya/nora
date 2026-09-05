@@ -12,6 +12,26 @@ interface ChatConversationProps {
 }
 
 /**
+ * 上下文用量:优先累计服务端真实 usage(done 事件下发,覆盖工具轮);
+ * 任一消息缺 usage 时整段退回字符估算(÷4),避免真伪混计。
+ */
+function estimateContextTokens(messages: ChatMessage[], input: string): number {
+  const allMeasured = messages
+    .filter((m) => m.role === "assistant")
+    .every((m) => m.turnMetrics?.usage?.totalTokens != null);
+  if (allMeasured && messages.some((m) => m.role === "assistant")) {
+    const assistantTokens = messages
+      .filter((m) => m.role === "assistant")
+      .reduce((sum, m) => sum + (m.turnMetrics?.usage?.totalTokens ?? 0), 0);
+    const userChars = messages
+      .filter((m) => m.role === "user")
+      .reduce((sum, m) => sum + m.content.length, 0);
+    return assistantTokens + Math.ceil(userChars / 4) + Math.ceil(input.length / 4);
+  }
+  return messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0) + Math.ceil(input.length / 4);
+}
+
+/**
  * 单个会话的对话区：以 sessionId 为 React key 挂载，
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  */
@@ -39,7 +59,7 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
 
       <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage}
         reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
-        contextTokens={messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0) + Math.ceil(input.length / 4)} />
+        contextTokens={estimateContextTokens(messages, input)} />
     </>
   );
 }

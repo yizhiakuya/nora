@@ -117,6 +117,7 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
                     <AgentThoughtBlock
                       steps={msg.steps}
                       durationMs={msg.turnMetrics?.durationMs}
+                      usage={msg.turnMetrics?.usage}
                       expanded={msg.isTyping}
                     />
                   )}

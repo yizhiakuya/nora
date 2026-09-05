@@ -148,6 +148,7 @@ public class AgentController {
             turnFuture.whenComplete((turn, error) -> {
                         String answerText = turn != null ? turn.answer() : answer.toString();
                         long durationMs = System.currentTimeMillis() - turnStart;
+                        var usage = turn != null ? turn.usage() : null;
                         if (error != null) {
                             try {
                                 chatStoreService.saveReflection(sessionId, "chat-turn",
@@ -181,10 +182,12 @@ public class AgentController {
                                     sessionId, e.getMessage());
                         }
                         // done carries turn metrics (harness pattern: server stamps timing so
-                        // the client never recomputes); usage stays null until the relay
-                        // returns token accounting
+                        // the client never recomputes); usage is the provider's real token
+                        // accounting summed across tool rounds (null when relay omits it)
                         send(emitter, "done", new DonePayload(UUID.randomUUID().toString(),
-                                durationMs, null, answerText.length()));
+                                durationMs,
+                                usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
+                                answerText.length()));
                         emitter.complete();
                     });
         } catch (Exception e) {
