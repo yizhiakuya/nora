@@ -16,12 +16,21 @@ import java.util.List;
  * @param rows      result rows aligned with {@code columns}; each cell is the string-rendered value or {@code null}
  * @param rowCount  number of returned rows (after provider-side truncation)
  * @param durationMs query execution wall-clock duration in milliseconds
+ * @param truncated whether the provider row cap cut the result set; callers
+ *                  must surface this — a silent cap makes the model present a
+ *                  partial result as complete (browser E2E finding 2026-09-05)
  */
 public record QueryResult(
         List<String> columns,
         List<List<String>> rows,
         int rowCount,
-        long durationMs) implements Serializable {
+        long durationMs,
+        boolean truncated) implements Serializable {
 
     private static final long serialVersionUID = 1L;
+
+    /** Backward-compatible constructor for callers written before {@code truncated}. */
+    public QueryResult(List<String> columns, List<List<String>> rows, int rowCount, long durationMs) {
+        this(columns, rows, rowCount, durationMs, false);
+    }
 }

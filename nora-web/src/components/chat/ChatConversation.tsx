@@ -16,7 +16,7 @@ interface ChatConversationProps {
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  */
 export function ChatConversation({ sessionId, initialMessages }: ChatConversationProps) {
-  const { messages, input, setInput, isSending, sendMessage, scrollRef } = useChat({
+  const { messages, input, setInput, isSending, sendMessage, scrollRef, reasoningLevel, setReasoningLevel } = useChat({
     initialMessages,
     sessionId,
   });
@@ -37,7 +37,9 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
         </div>
       </div>
 
-      <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage} />
+      <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage}
+        reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
+        contextTokens={messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0) + Math.ceil(input.length / 4)} />
     </>
   );
 }

@@ -136,12 +136,33 @@ public class DockerClientService {
         try {
             String raw = exec("docker", "logs", "--tail", String.valueOf(tail), idOrName);
             if (raw.isBlank()) {
+                // 很多官方镜像(postgres 等)把日志全部写 stderr,stdout 为空时合并读取
+                raw = execMergeStderr("docker", "logs", "--tail", String.valueOf(tail), idOrName);
+            }
+            if (raw.isBlank()) {
                 return List.of();
             }
             return List.of(raw.stripTrailing().split("\n"));
         } catch (Exception e) {
             return List.of("ERROR: " + e.getMessage());
         }
+    }
+
+    /** Like {@link #exec} but merges stderr into stdout (docker logs writes there for most images). */
+    private String execMergeStderr(String... command) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.environment().putAll(System.getenv());
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        java.util.concurrent.CompletableFuture<String> merged =
+                java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> readStream(process.getInputStream()));
+        boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IllegalStateException("docker command timed out");
+        }
+        return merged.get(5, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     private String exec(String... command) throws Exception {

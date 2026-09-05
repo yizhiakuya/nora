@@ -165,7 +165,10 @@ public class DatasourceServiceImpl {
                 long duration = System.currentTimeMillis() - start;
                 saveHistory(id, sql, duration, rows.size(), "success");
                 jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);
-                return new QueryResult(columns, rows, rows.size(), duration);
+                // 截断判定:maxRows 顶满即视为可能被截断(setMaxRows 让驱动在 200 行后停止拉取,
+                // 无法区分"恰好 200 行"与"更多行被砍掉",保守标记,由展示层注明)
+                boolean truncated = rows.size() >= MAX_ROWS;
+                return new QueryResult(columns, rows, rows.size(), duration, truncated);
             }
         } catch (SQLException e) {
             saveHistory(id, sql, System.currentTimeMillis() - start, 0, "error");

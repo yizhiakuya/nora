@@ -70,7 +70,8 @@ public class AgentController {
             throw new IllegalArgumentException("content is required");
         }
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
-        chatExecutor.execute(() -> runChatTurn(sessionId, request.content().trim(), emitter));
+        chatExecutor.execute(() -> runChatTurn(sessionId, request.content().trim(),
+                request.model(), request.reasoningLevel(), emitter));
         return emitter;
     }
 
@@ -95,22 +96,30 @@ public class AgentController {
         return ApiResponse.ok();
     }
 
-    private void runChatTurn(String sessionId, String content, SseEmitter emitter) {
+    private void runChatTurn(String sessionId, String content, String model, String reasoningLevel, SseEmitter emitter) {
         try {
             chatStoreService.ensureSession(sessionId, content);
             chatStoreService.saveMessage(sessionId, "user", content, null, null);
 
             List<ChatStepDto> steps = new java.util.ArrayList<>();
             List<CitationDto> citations = new java.util.ArrayList<>();
+            java.util.Map<Integer, StringBuilder> reasoningBuffers = new java.util.LinkedHashMap<>();
             StringBuilder answer = new StringBuilder();
+            int[] stepIndex = {0};
+            long turnStart = System.currentTimeMillis();
 
-            orchestrationService.chat(
+            var turnFuture = orchestrationService.chat(
                     content,
                     chatStoreService.loadMessages(sessionId),
+                    chatStoreService.loadRecentReflections(sessionId, "chat-turn", 3),
+                    model,
+                    reasoningLevel,
                     new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {
                             steps.add(step);
+                            try { chatStoreService.saveStep(sessionId, stepIndex[0]++, step); }
+                            catch (Exception e) { log.warn("failed to persist agent step: {}", e.getMessage()); }
                             send(emitter, "step", step);
                         }
 
@@ -120,14 +129,32 @@ public class AgentController {
                         }
 
                         @Override
+                        public void reasoningDelta(Integer roundIndex, String token) {
+                            if (token == null || token.isEmpty()) return;
+                            int key = roundIndex == null ? Integer.MAX_VALUE : roundIndex;
+                            reasoningBuffers.computeIfAbsent(key, k -> new StringBuilder()).append(token);
+                            send(emitter, "reasoning_delta", new ReasoningDeltaPayload(roundIndex, token));
+                        }
+
+                        @Override
                         public void sources(List<CitationDto> found) {
                             citations.addAll(found);
                             send(emitter, "sources", found);
                         }
-                    })
-                    .whenComplete((turn, error) -> {
+                    });
+            if (turnFuture == null) {
+                throw new IllegalStateException("agent orchestration returned no future");
+            }
+            turnFuture.whenComplete((turn, error) -> {
                         String answerText = turn != null ? turn.answer() : answer.toString();
+                        long durationMs = System.currentTimeMillis() - turnStart;
                         if (error != null) {
+                            try {
+                                chatStoreService.saveReflection(sessionId, "chat-turn",
+                                        "本轮 Agent 执行失败：" + (error.getMessage() == null ? "unknown error" : error.getMessage()));
+                            } catch (Exception reflectionError) {
+                                log.warn("failed to persist agent reflection for {}: {}", sessionId, reflectionError.getMessage());
+                            }
                             try {
                                 emitter.send(SseEmitter.event()
                                         .name("error")
@@ -137,12 +164,27 @@ public class AgentController {
                             }
                         }
                         try {
+                            for (var entry : reasoningBuffers.entrySet()) {
+                                if (entry.getValue().isEmpty()) continue;
+                                Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
+                                ChatStepDto reasoningStep = new ChatStepDto(
+                                        "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
+                                        "think", "推理过程", entry.getValue().toString(), durationMs,
+                                        "completed", null, null, null, roundIndex);
+                                steps.add(reasoningStep);
+                                try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
+                                catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
+                            }
                             chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations);
                         } catch (Exception e) {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());
                         }
-                        send(emitter, "done", new DonePayload(UUID.randomUUID().toString()));
+                        // done carries turn metrics (harness pattern: server stamps timing so
+                        // the client never recomputes); usage stays null until the relay
+                        // returns token accounting
+                        send(emitter, "done", new DonePayload(UUID.randomUUID().toString(),
+                                durationMs, null, answerText.length()));
                         emitter.complete();
                     });
         } catch (Exception e) {
@@ -169,15 +211,27 @@ public class AgentController {
     }
 
     /** POST /api/chat/sessions/{id}/messages body. */
-    public record MessageRequest(String content) {
+    public record MessageRequest(String content, String model, String reasoningLevel) {
     }
 
     /** SSE delta payload. */
     public record DeltaPayload(String content) {
     }
 
-    /** SSE done payload. */
-    public record DonePayload(String messageId) {
+    /** SSE reasoning delta payload; roundIndex is null for the final answer round. */
+    public record ReasoningDeltaPayload(Integer roundIndex, String content) {
+    }
+
+    /**
+     * SSE done payload with turn metrics. {@code usage} stays null until the
+     * model gateway returns token accounting; the frontend falls back to its
+     * local estimate while it is null.
+     */
+    public record DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars) {
+
+        /** Token accounting from the provider (harness: usage is a first-class done field). */
+        public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {
+        }
     }
 
     /** SSE error payload. */

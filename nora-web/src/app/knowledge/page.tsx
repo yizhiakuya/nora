@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { BookOpen, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,6 @@ import { RetrievalTest } from "@/components/knowledge/RetrievalTest";
 import { IndexStatus } from "@/components/knowledge/IndexStatus";
 import { DataGraphView } from "@/components/knowledge/DataGraphView";
 import { CleaningRules } from "@/components/knowledge/CleaningRules";
-import { filesApi } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { FileItem } from "@/types";
 
@@ -23,12 +22,16 @@ export default function KnowledgePage() {
   const [activeTab, setActiveTab] = useState("文档库");
   const upload = useSimulatedUpload();
   const indexFile = useKnowledgeDocs((s) => s.indexFile);
+  const indexFileFromBackend = useKnowledgeDocs((s) => s.indexFileFromBackend);
+  const syncFromBackend = useKnowledgeDocs((s) => s.syncFromBackend);
   const addNotification = useNotifications((s) => s.addNotification);
+
+  useEffect(() => { if (USE_BACKEND) void syncFromBackend().catch(() => undefined); }, [syncFromBackend]);
 
   const handleImport = (fileName?: string, uploadedFile?: FileItem) => {
     if (USE_BACKEND && uploadedFile) {
       // 上传已完成,再触发 rag-service 索引(异步)
-      filesApi.indexFile(uploadedFile.id)
+      indexFileFromBackend(uploadedFile.id, uploadedFile.name)
         .then(() => {
           addNotification(
             "文档索引入库",

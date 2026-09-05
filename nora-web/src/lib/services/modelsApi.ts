@@ -1,5 +1,5 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import type { ModelProvider, ProviderProtocol } from "@/hooks/useModelProviders";
+import type { ModelProvider, ProviderProtocol, ModelSettings } from "@/hooks/useModelProviders";
 
 /** 后端 model_provider 行(ProviderView,camelCase) */
 export interface BackendProvider {
@@ -11,6 +11,7 @@ export interface BackendProvider {
   enabled: boolean;
   models: string[];
   status: "untested" | "ok" | "fail";
+  modelSettings?: ModelSettings | null;
 }
 
 function toProvider(p: BackendProvider): ModelProvider {
@@ -23,6 +24,7 @@ function toProvider(p: BackendProvider): ModelProvider {
     models: p.models ?? [],
     status: p.status ?? "untested",
     protocol: p.protocol ?? "openai",
+    modelSettings: p.modelSettings ?? {},
   };
 }
 
@@ -57,7 +59,7 @@ export const modelsApi = {
 
   async updateProvider(
     id: number,
-    patch: { name?: string; enabled?: boolean; models?: string[] }
+    patch: { name?: string; enabled?: boolean; models?: string[]; modelSettings?: ModelSettings }
   ): Promise<ModelProvider> {
     const item = await requestJson<BackendProvider>(`/models/providers/${id}`, {
       method: "PUT",

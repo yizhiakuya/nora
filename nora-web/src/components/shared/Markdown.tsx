@@ -6,6 +6,6 @@ import dynamic from "next/dynamic";
  */
 const MarkdownContent = dynamic(() => import("./MarkdownContent"));
 
-export function Markdown({ children }: { children: string }) {
-  return <MarkdownContent>{children}</MarkdownContent>;
+export function Markdown({ children, className }: { children: string; className?: string }) {
+  return <MarkdownContent className={className}>{children}</MarkdownContent>;
 }

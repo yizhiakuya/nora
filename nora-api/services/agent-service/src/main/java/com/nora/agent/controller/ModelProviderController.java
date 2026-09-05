@@ -52,7 +52,7 @@ public class ModelProviderController {
         String protocol = request.protocol() == null ? "openai" : request.protocol();
         return ApiResponse.ok(providerService.create(
                 request.name().trim(), protocol, request.endpoint(),
-                request.apiKey(), request.models()));
+                request.apiKey(), request.models(), request.modelSettings()));
     }
 
     /** Updates name/enabled/models; other fields keep their stored values. */
@@ -60,7 +60,7 @@ public class ModelProviderController {
     public ApiResponse<ModelProviderService.ProviderView> update(@PathVariable long id,
                                                                  @RequestBody UpdateRequest request) {
         ModelProviderService.ProviderView updated = providerService.update(
-                id, request.name(), request.enabled(), request.models());
+                id, request.name(), request.enabled(), request.models(), request.modelSettings());
         if (updated == null) {
             throw new BusinessException(404, "provider not found: " + id);
         }
@@ -146,11 +146,13 @@ public class ModelProviderController {
 
     /** POST body for provider creation. */
     public record CreateRequest(
-            String name, String protocol, String endpoint, String apiKey, List<String> models) {
+            String name, String protocol, String endpoint, String apiKey, List<String> models,
+            ModelProviderService.ModelSettings modelSettings) {
     }
 
     /** PUT body for provider updates (partial). */
-    public record UpdateRequest(String name, Boolean enabled, List<String> models) {
+    public record UpdateRequest(String name, Boolean enabled, List<String> models,
+                                ModelProviderService.ModelSettings modelSettings) {
     }
 
     /** POST /test response. */

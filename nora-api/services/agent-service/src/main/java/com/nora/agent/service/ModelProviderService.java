@@ -1,5 +1,8 @@
 package com.nora.agent.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -15,15 +18,17 @@ import java.util.List;
 public class ModelProviderService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
-    public ModelProviderService(JdbcTemplate jdbcTemplate) {
+    public ModelProviderService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
     }
 
     /** Lists providers with masked keys (frontend ModelProvider[]). */
     public List<ProviderView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, protocol, endpoint, api_key, enabled, models, status FROM model_provider ORDER BY id",
+                "SELECT id, name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider ORDER BY id",
                 (rs, rowNum) -> new ProviderView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -32,23 +37,85 @@ public class ModelProviderService {
                         mask(rs.getString("api_key")),
                         rs.getBoolean("enabled"),
                         Arrays.asList((String[]) rs.getArray("models").getArray()),
-                        rs.getString("status")));
+                        rs.getString("status"),
+                        parseModelSettings(rs.getString("model_settings"))));
+    }
+
+    /** Parses the per-model settings JSONB column; corrupt JSON is treated as absent. */
+    private ModelSettings parseModelSettings(String raw) {
+        return parseModelSettingsStatic(raw);
+    }
+
+    /** Static variant used by the orchestration layer to read a provider's settings JSON. */
+    static ModelSettings parseModelSettingsStatic(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return new ModelSettings(java.util.Map.of());
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = new ObjectMapper().readTree(raw);
+            java.util.Map<String, PerModelSettings> out = new java.util.LinkedHashMap<>();
+            java.util.Iterator<String> it = root.fieldNames();
+            while (it.hasNext()) {
+                String model = it.next();
+                JsonNode node = root.get(model);
+                List<String> levels = new java.util.ArrayList<>();
+                JsonNode levelsNode = node.get("reasoningLevels");
+                if (levelsNode != null && levelsNode.isArray()) {
+                    for (JsonNode level : levelsNode) {
+                        if (level.isTextual()) levels.add(level.asText());
+                    }
+                }
+                Long contextWindow = node.has("contextWindow") && node.get("contextWindow").canConvertToLong()
+                        ? node.get("contextWindow").asLong() : null;
+                out.put(model, new PerModelSettings(contextWindow, levels,
+                        node.has("defaultReasoningLevel") ? node.get("defaultReasoningLevel").asText(null) : null));
+            }
+            return new ModelSettings(out);
+        } catch (Exception e) {
+            return new ModelSettings(java.util.Map.of());
+        }
+    }
+
+    /** Serializes per-model settings into the JSONB column value. */
+    private String writeModelSettings(ModelSettings settings) {
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            for (var entry : settings.models().entrySet()) {
+                ObjectNode node = root.putObject(entry.getKey());
+                PerModelSettings value = entry.getValue();
+                if (value.contextWindow() != null) node.put("contextWindow", value.contextWindow());
+                if (!value.reasoningLevels().isEmpty()) {
+                    node.put("reasoningLevels", String.join(",", value.reasoningLevels()));
+                    // put("reasoningLevels", array) — 保留数组形式
+                    node.remove("reasoningLevels");
+                    var arr = node.putArray("reasoningLevels");
+                    value.reasoningLevels().forEach(arr::add);
+                }
+                if (value.defaultReasoningLevel() != null) node.put("defaultReasoningLevel", value.defaultReasoningLevel());
+            }
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Creates a provider; key is stored as given (encryption is a later step). */
     public ProviderView create(String name, String protocol, String endpoint,
-                               String apiKey, List<String> models) {
-        return upsert(null, name, protocol, endpoint, apiKey, true, models, "untested");
+                               String apiKey, List<String> models,
+                               ModelSettings modelSettings) {
+        return upsert(null, name, protocol, endpoint, apiKey, true, models, "untested", modelSettings);
     }
 
     /** Updates any subset of fields; null fields keep their stored value. */
-    public ProviderView update(long id, String name, Boolean enabled, List<String> models) {
+    public ProviderView update(long id, String name, Boolean enabled, List<String> models,
+                               ModelSettings modelSettings) {
         List<StoredProvider> existing = jdbcTemplate.query(
-                "SELECT name, protocol, endpoint, api_key, enabled, models, status FROM model_provider WHERE id = ?",
+                "SELECT name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider WHERE id = ?",
                 (rs, rowNum) -> new StoredProvider(
                         rs.getString("name"), rs.getString("protocol"), rs.getString("endpoint"),
                         rs.getString("api_key"), rs.getBoolean("enabled"),
-                        Arrays.asList((String[]) rs.getArray("models").getArray()), rs.getString("status")),
+                        Arrays.asList((String[]) rs.getArray("models").getArray()), rs.getString("status"),
+                        parseModelSettings(rs.getString("model_settings"))),
                 id);
         if (existing.isEmpty()) {
             return null;
@@ -61,7 +128,8 @@ public class ModelProviderService {
                 current.apiKey(),
                 enabled != null ? enabled : current.enabled(),
                 models != null ? models : current.models(),
-                current.status());
+                current.status(),
+                modelSettings != null ? modelSettings : current.modelSettings());
     }
 
     /** Deletes by id. */
@@ -87,22 +155,60 @@ public class ModelProviderService {
                 (rs, rowNum) -> new StoredCredentials(rs.getString("endpoint"), rs.getString("api_key")),
                 id);
         return rows.isEmpty() ? null : rows.get(0);
-    }    private ProviderView upsert(Long id, String name, String protocol, String endpoint,
-                                String apiKey, Boolean enabled, List<String> models, String status) {
+    }
+
+    /** Returns the first enabled provider with a usable key for chat execution. */
+    public ActiveProvider activeProvider() {
+        List<ActiveProvider> rows = jdbcTemplate.query(
+                "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider WHERE enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' ORDER BY id",
+                SETTINGS_ROW_MAPPER);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** Returns the first enabled provider that actually serves the requested model. */
+    public ActiveProvider activeProvider(String requestedModel) {
+        if (requestedModel == null || requestedModel.isBlank()) {
+            return activeProvider();
+        }
+        List<ActiveProvider> rows = jdbcTemplate.query(
+                "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider "
+                        + "WHERE enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' "
+                        + "AND ?::text = ANY(models) ORDER BY id",
+                SETTINGS_ROW_MAPPER,
+                requestedModel);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private static final org.springframework.jdbc.core.RowMapper<ActiveProvider> SETTINGS_ROW_MAPPER =
+            (rs, rowNum) -> {
+                String raw = rs.getString("model_settings");
+                // 直接存原始 JSON,编排层按模型取;避免二次解析开销
+                return new ActiveProvider(rs.getString("endpoint"), rs.getString("api_key"),
+                        Arrays.asList((String[]) rs.getArray("models").getArray()), rs.getString("protocol"),
+                        raw == null || raw.isBlank() ? "{}" : raw);
+            };
+
+    private ProviderView upsert(Long id, String name, String protocol, String endpoint,
+                                String apiKey, Boolean enabled, List<String> models, String status,
+                                ModelSettings modelSettings) {
+        String settingsJson = writeModelSettings(modelSettings == null
+                ? new ModelSettings(java.util.Map.of()) : modelSettings);
         if (id == null) {
             Long newId = jdbcTemplate.queryForObject(
-                    "INSERT INTO model_provider (name, protocol, endpoint, api_key, enabled, models, status) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                    "INSERT INTO model_provider (name, protocol, endpoint, api_key, enabled, models, status, model_settings) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id",
                     Long.class, name, protocol, endpoint, apiKey, enabled,
-                    models == null ? null : models.toArray(new String[0]), status);
+                    models == null ? null : models.toArray(new String[0]), status, settingsJson);
             id = newId;
         } else {
             jdbcTemplate.update(
-                    "UPDATE model_provider SET name = ?, enabled = ?, models = ?, status = ? WHERE id = ?",
-                    name, enabled, models == null ? null : models.toArray(new String[0]), status, id);
+                    "UPDATE model_provider SET name = ?, enabled = ?, models = ?, status = ?, "
+                            + "model_settings = ?::jsonb WHERE id = ?",
+                    name, enabled, models == null ? null : models.toArray(new String[0]), status,
+                    settingsJson, id);
         }
         return new ProviderView(id, name, protocol, endpoint, mask(apiKey), enabled,
-                models == null ? List.of() : models, status);
+                models == null ? List.of() : models, status, modelSettings);
     }
 
     static String mask(String key) {
@@ -124,15 +230,64 @@ public class ModelProviderService {
             String masked,
             boolean enabled,
             List<String> models,
-            String status
+            String status,
+            ModelSettings modelSettings
     ) {
     }
 
+    /**
+     * Per-model overrides: context window + reasoning level config.
+     * Serialized flat ({@code {"<model>": {...}}}) via @JsonAnyGetter so the
+     * JSONB column and the REST payload share one shape.
+     */
+    public static class ModelSettings {
+
+        private final java.util.Map<String, PerModelSettings> models;
+
+        public ModelSettings(java.util.Map<String, PerModelSettings> models) {
+            this.models = models == null ? java.util.Map.of() : models;
+        }
+
+        public java.util.Map<String, PerModelSettings> models() {
+            return models;
+        }
+
+        /** Returns settings for one model, or empty defaults. */
+        public PerModelSettings forModel(String model) {
+            PerModelSettings s = model == null ? null : models.get(model);
+            return s != null ? s : new PerModelSettings(null, List.of(), null);
+        }
+
+        @com.fasterxml.jackson.annotation.JsonAnyGetter
+        public java.util.Map<String, PerModelSettings> any() {
+            return models;
+        }
+
+        /** Deserializes the flat {@code {model: settings}} shape. */
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public static ModelSettings fromJson(java.util.Map<String, PerModelSettings> models) {
+            return new ModelSettings(models);
+        }
+    }
+
+    /**
+     * One model's settings. {@code reasoningLevels} empty = no restriction;
+     * {@code defaultReasoningLevel} null/"auto" = family default applies.
+     */
+    public record PerModelSettings(Long contextWindow, List<String> reasoningLevels,
+                                   String defaultReasoningLevel) {
+    }
+
     record StoredProvider(String name, String protocol, String endpoint, String apiKey,
-                          boolean enabled, List<String> models, String status) {
+                          boolean enabled, List<String> models, String status,
+                          ModelSettings modelSettings) {
     }
 
     /** Raw endpoint+key pair (never returned to clients). */
     public record StoredCredentials(String endpoint, String apiKey) {
+    }
+
+    public record ActiveProvider(String endpoint, String apiKey, List<String> models, String protocol,
+                                 String modelSettingsJson) {
     }
 }

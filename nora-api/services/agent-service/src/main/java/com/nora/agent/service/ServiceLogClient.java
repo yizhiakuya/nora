@@ -63,13 +63,14 @@ public class ServiceLogClient {
      */
     public String readLogs(String service, int limit) {
         try {
+            int safeLimit = Math.max(1, Math.min(limit, 100));
             List<String> names = listServices();
             if (!names.contains(service)) {
                 return "ERROR: unknown service " + service + ". Available: " + names;
             }
             // 非流式 /logs 端点:立即返回 tail 行(流式 /logs/stream 会保持连接数分钟,工具路径不能调)
             Envelope<List<String>> envelope = restClient.get()
-                    .uri("/api/environment/logs?service={s}&tail={n}", service, Math.min(limit, 200))
+                    .uri("/api/environment/logs?service={s}&tail={n}", service, safeLimit)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {

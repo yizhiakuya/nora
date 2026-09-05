@@ -49,7 +49,7 @@ public class ChatStoreService {
 
     /** Loads all messages of a session in chronological order. */
     public List<StoredMessage> loadMessages(String sessionId) {
-        return jdbcTemplate.query(
+        List<StoredMessage> loaded = jdbcTemplate.query(
                 "SELECT role, content, steps, sources, created_at FROM chat_message WHERE session_id = ? ORDER BY created_at, id",
                 (rs, rowNum) -> new StoredMessage(
                         rs.getString("role"),
@@ -57,6 +57,30 @@ public class ChatStoreService {
                         fromJson(rs.getString("steps"), STEP_LIST),
                         fromJson(rs.getString("sources"), SOURCE_LIST)),
                 sessionId);
+        // steps 按 (id → 状态) 追加式存储(running 先行、终态覆盖),恢复时合并去重,
+        // 并丢弃没有终态的悬挂 running(会话中断残留)
+        for (int i = 0; i < loaded.size(); i++) {
+            List<ChatStepDto> steps = loaded.get(i).steps();
+            if (steps == null || steps.isEmpty()) continue;
+            loaded.set(i, new StoredMessage(loaded.get(i).role(), loaded.get(i).content(),
+                    mergeSteps(steps), loaded.get(i).sources()));
+        }
+        return loaded;
+    }
+
+    /** Collapses append-only step rows: terminal status wins; dangling running steps are dropped. */
+    static List<ChatStepDto> mergeSteps(List<ChatStepDto> steps) {
+        java.util.LinkedHashMap<String, ChatStepDto> byId = new java.util.LinkedHashMap<>();
+        for (ChatStepDto step : steps) {
+            ChatStepDto prev = byId.get(step.id());
+            boolean terminal = !"running".equals(step.status()) && !"pending".equals(step.status());
+            if (prev == null || terminal) {
+                byId.put(step.id(), step);
+            }
+        }
+        return byId.values().stream()
+                .filter(s -> !"running".equals(s.status()) && !"pending".equals(s.status()))
+                .toList();
     }
 
     /** Lists sessions with message counts, most recently active first. */
@@ -80,6 +104,27 @@ public class ChatStoreService {
     /** Deletes a session and its messages (cascade). Returns false when unknown. */
     public boolean deleteSession(String sessionId) {
         return jdbcTemplate.update("DELETE FROM chat_session WHERE id = ?", sessionId) > 0;
+    }
+
+    public void saveReflection(String sessionId, String taskSignature, String reflection) {
+        jdbcTemplate.update("INSERT INTO agent_reflection (session_id, task_signature, reflection) VALUES (?, ?, ?)",
+                sessionId, taskSignature, reflection);
+    }
+
+    public void saveStep(String sessionId, int stepIndex, ChatStepDto step) {
+        jdbcTemplate.update("""
+                INSERT INTO agent_step (session_id, step_index, step_type, title, detail, status, duration_ms,
+                                        tool_name, tool_input, tool_result, round_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::json, ?::json, ?)
+                """,
+                sessionId, stepIndex, step.type(), step.title(), step.detail(), step.status(), step.duration(),
+                step.toolName(), toJson(step.input()), toJson(step.result()), step.roundIndex());
+    }
+
+
+    public List<String> loadRecentReflections(String sessionId, String taskSignature, int limit) {
+        return jdbcTemplate.query("SELECT reflection FROM agent_reflection WHERE session_id = ? AND task_signature = ? ORDER BY created_at DESC LIMIT ?",
+                (rs, rowNum) -> rs.getString("reflection"), sessionId, taskSignature, Math.max(1, Math.min(limit, 10)));
     }
 
     /** One session row for the sidebar list. */

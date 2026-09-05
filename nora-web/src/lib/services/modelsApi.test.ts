@@ -37,6 +37,9 @@ describe("modelsApi", () => {
           enabled: true,
           models: ["gpt-5.4-mini"],
           status: "ok",
+          modelSettings: {
+            "gpt-5.4-mini": { contextWindow: 200000, reasoningLevels: ["low", "high"], defaultReasoningLevel: "high" },
+          },
         },
       ])
     );
@@ -49,6 +52,21 @@ describe("modelsApi", () => {
     expect(p.masked).toBe("sk-6••••••••e7a4");
     expect(p.status).toBe("ok");
     expect(p.models).toEqual(["gpt-5.4-mini"]);
+    // per-model 设置映射:contextWindow/等级白名单/默认等级
+    expect(p.modelSettings?.["gpt-5.4-mini"]?.contextWindow).toBe(200000);
+    expect(p.modelSettings?.["gpt-5.4-mini"]?.reasoningLevels).toEqual(["low", "high"]);
+    expect(p.modelSettings?.["gpt-5.4-mini"]?.defaultReasoningLevel).toBe("high");
+  });
+
+  it("listProviders tolerates missing modelSettings", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse([
+        { id: 1, name: "P", protocol: "openai", endpoint: "http://e", masked: "—", enabled: true, models: [], status: "ok" },
+      ])
+    );
+
+    const providers = await modelsApi.listProviders();
+    expect(providers[0].modelSettings).toEqual({});
   });
 
   it("createProvider posts full payload", async () => {
@@ -99,6 +117,22 @@ describe("modelsApi", () => {
     expect(url).toBe("/api/models/providers/3");
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body)).toEqual({ enabled: false });
+  });
+
+  it("updateProvider forwards modelSettings patch", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        id: 3, name: "X", protocol: "openai", endpoint: "http://e",
+        masked: "—", enabled: true, models: ["m1"], status: "untested",
+        modelSettings: { m1: { reasoningLevels: ["low"] } },
+      })
+    );
+
+    await modelsApi.updateProvider(3, { modelSettings: { m1: { reasoningLevels: ["low"] } } });
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ modelSettings: { m1: { reasoningLevels: ["low"] } } });
   });
 
   it("deleteProvider issues DELETE", async () => {

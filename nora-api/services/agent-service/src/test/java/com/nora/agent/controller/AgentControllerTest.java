@@ -49,9 +49,9 @@ class AgentControllerTest {
     @Test
     void sendMessageRejectsBlankContent() {
         assertThrows(IllegalArgumentException.class,
-                () -> controller.sendMessage("s1", new AgentController.MessageRequest("  ")));
+                () -> controller.sendMessage("s1", new AgentController.MessageRequest("  ", null, null)));
         assertThrows(IllegalArgumentException.class,
-                () -> controller.sendMessage("s1", new AgentController.MessageRequest(null)));
+                () -> controller.sendMessage("s1", new AgentController.MessageRequest(null, null, null)));
         verify(chatStoreService, never()).ensureSession(anyString(), anyString());
     }
 
@@ -67,7 +67,7 @@ class AgentControllerTest {
         // The chat turn runs on the controller's executor; the HTTP thread
         // must get the emitter back immediately, not block on the LLM.
         SseEmitter emitter = controller.sendMessage("s1",
-                new AgentController.MessageRequest("hello"));
+                new AgentController.MessageRequest("hello", "test-model", null));
 
         assertEquals(SseEmitter.class, emitter.getClass());
     }

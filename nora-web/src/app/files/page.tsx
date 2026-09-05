@@ -33,6 +33,7 @@ export default function FilesPage() {
   const upload = useSimulatedUpload();
   const viewer = useFileViewer();
   const indexFile = useKnowledgeDocs((s) => s.indexFile);
+  const indexFileFromBackend = useKnowledgeDocs((s) => s.indexFileFromBackend);
   const addNotification = useNotifications((s) => s.addNotification);
   const addRecent = useRecentFiles((s) => s.addRecent);
 
@@ -75,7 +76,7 @@ export default function FilesPage() {
 
   const handleIndexFile = (file: FileItem) => {
     if (USE_BACKEND) {
-      filesApi.indexFile(file.id)
+      indexFileFromBackend(file.id, file.name)
         .then(() => {
           // 索引是异步的:file-service 触发 rag-service,完成后回调置位;这里先乐观标记
           markIndexed(file.id);

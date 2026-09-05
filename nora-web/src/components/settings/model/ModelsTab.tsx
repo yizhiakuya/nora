@@ -1,16 +1,21 @@
 'use client';
 
-import { toast } from "sonner";
-import { Zap, Check, Plus } from "lucide-react";
+import { Zap, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
-import { useModelProviders } from "@/hooks/useModelProviders";
+import { useModelProviders, type PerModelSettings } from "@/hooks/useModelProviders";
+import { ReasoningLevelPicker } from "@/components/settings/model/ReasoningLevelConfig";
 
+/**
+ * 模型列表 tab:按服务商分组的表格(实际请求模型 / 上下文窗口 / 思考等级)。
+ * 每行的上下文窗口与思考等级即时保存(乐观更新 + PUT model_provider.modelSettings)。
+ */
 export function ModelsTab({ onAdd }: { onAdd: () => void }) {
   const providers = useModelProviders((s) => s.providers);
+  const updateModelSettings = useModelProviders((s) => s.updateModelSettings);
   const defaultModel = useModelProviders((s) => s.defaultModel);
-  const setDefaultModel = useModelProviders((s) => s.setDefaultModel);
-  const enabledModels = providers.filter((p) => p.enabled).flatMap((p) => p.models);
+  const enabledProviders = providers.filter((p) => p.enabled);
+  const enabledModels = enabledProviders.flatMap((p) => p.models);
 
   if (enabledModels.length === 0) {
     return (
@@ -43,32 +48,47 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
         <span className="text-[10px] text-muted-foreground">对话页与自动任务未单独指定时使用</span>
       </div>
 
-      {/* 按服务商分组列出模型 */}
-      {providers.filter((p) => p.enabled).map((p) => (
+      {enabledProviders.map((p) => (
         <div key={p.id} className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
           <div className="px-4 py-2.5 border-b border-border/60 bg-muted/30">
             <span className="text-xs font-bold text-foreground">{p.name}</span>
             <span className="text-[10px] text-muted-foreground ml-2">{p.models.length} 个模型</span>
           </div>
+          {/* 表头 */}
+          <div className="grid grid-cols-[1fr_120px_230px] gap-3 px-4 py-2 border-b border-border/40 text-[10px] text-muted-foreground">
+            <span>实际请求模型</span>
+            <span>上下文窗口</span>
+            <span>思考等级</span>
+          </div>
           <div className="divide-y divide-border/40">
             {p.models.map((m) => {
-              const isDefault = defaultModel === m;
+              const settings: PerModelSettings = p.modelSettings?.[m] ?? {};
+              const levels = settings.reasoningLevels ?? [];
+              const defaultLevel = settings.defaultReasoningLevel ?? null;
+              const setPatch = (patch: Partial<PerModelSettings>) => updateModelSettings(p.id, m, patch);
               return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setDefaultModel(m); toast.success(`默认模型已切换为 ${m}`); }}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-muted/40 transition-colors group"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${isDefault ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`}>
-                      {isDefault && <Check className="w-3 h-3 text-primary-foreground" />}
-                    </div>
-                    <span className="text-xs font-medium text-foreground truncate">{m}</span>
-                    {isDefault && <span className="text-[10px] text-primary font-medium">默认</span>}
+                <div key={m} className="grid grid-cols-[1fr_120px_230px] gap-3 px-4 py-2 items-center hover:bg-muted/20 transition-colors">
+                  <div className="min-w-0">
+                    <span className="text-xs font-mono font-medium text-foreground truncate block" title={m}>{m}</span>
+                    {m === defaultModel && <span className="text-[10px] text-primary">默认</span>}
                   </div>
-                  {!isDefault && <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">设为默认</span>}
-                </button>
+                  <input
+                    type="number"
+                    value={settings.contextWindow ?? ""}
+                    placeholder="自动"
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setPatch({ contextWindow: raw === "" ? null : Number(raw) });
+                    }}
+                    className="h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500 transition-colors"
+                  />
+                  <ReasoningLevelPicker
+                    levels={levels}
+                    defaultLevel={defaultLevel}
+                    onLevelsChange={(next) => setPatch({ reasoningLevels: next })}
+                    onDefaultChange={(next) => setPatch({ defaultReasoningLevel: next })}
+                  />
+                </div>
               );
             })}
           </div>

@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { KnowledgeDoc } from "@/types";
 import { ALL_DOCS } from "@/lib/knowledgeData";
+import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import type { KnowledgeDoc as BackendKnowledgeDoc } from "@/types";
 
 interface KnowledgeDocsState {
   docs: KnowledgeDoc[];
@@ -9,6 +11,8 @@ interface KnowledgeDocsState {
   addChatDoc: (name: string, snippet: string) => KnowledgeDoc;
   /** 文件加入知识库（来源 = file） */
   indexFile: (name: string) => KnowledgeDoc;
+  syncFromBackend: () => Promise<void>;
+  indexFileFromBackend: (fileId: number, name: string) => Promise<KnowledgeDoc>;
 }
 
 /**
@@ -17,8 +21,22 @@ interface KnowledgeDocsState {
  */
 export const useKnowledgeDocs = create<KnowledgeDocsState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       docs: ALL_DOCS,
+      syncFromBackend: async () => {
+        if (!USE_BACKEND) return;
+        const docs = await requestJson<BackendKnowledgeDoc[]>("/rag/docs");
+        set({ docs });
+      },
+      indexFileFromBackend: async (fileId, name) => {
+        if (!USE_BACKEND) return get().indexFile(name);
+        const doc = await requestJson<BackendKnowledgeDoc>("/rag/index", {
+          method: "POST",
+          body: JSON.stringify({ fileId, name }),
+        });
+        set((state) => ({ docs: [doc, ...state.docs.filter((d) => d.id !== doc.id && d.name !== doc.name)] }));
+        return doc;
+      },
       addChatDoc: (name, snippet) => {
         const doc: KnowledgeDoc = {
           id: Date.now(),

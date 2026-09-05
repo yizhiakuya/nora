@@ -3,6 +3,7 @@ import { ChatMessage, ChatResponder, MockChatAPI } from "@/lib/api/chatApi";
 import { AgentAPI } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
+import { useModelProviders } from "./useModelProviders";
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
@@ -19,6 +20,9 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const model = useModelProviders((s) => s.defaultModel);
+  /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
+  const [reasoningLevel, setReasoningLevel] = useState<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
 
@@ -77,13 +81,20 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
     setIsSending(true);
 
     try {
-      await responder(content, (partial) => updateMessage(assistantMsgId, partial), sessionId);
+      await responder(
+        content,
+        (partial) => updateMessage(assistantMsgId, partial),
+        sessionId,
+        model === "未配置" ? undefined : model,
+        reasoningLevel
+      );
     } catch (error) {
       console.error("Failed to send message:", error);
+      updateMessage(assistantMsgId, { error: (error as Error).message || "发送失败", isTyping: false });
     } finally {
       if (mountedRef.current) setIsSending(false);
     }
-  }, [input, isSending, responder, sessionId, updateMessage]);
+  }, [input, isSending, responder, sessionId, model, reasoningLevel, updateMessage]);
 
   const clear = useCallback(() => {
     setMessages([]);
@@ -97,5 +108,7 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
     sendMessage,
     scrollRef,
     clear,
+    reasoningLevel,
+    setReasoningLevel,
   };
 }

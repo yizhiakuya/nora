@@ -3,13 +3,44 @@ import type { Citation } from "@/types";
 import { generateCitations } from "@/lib/services/ragService";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 
+/** 结构化工具入参(execute_sql → sql;read_service_logs → service/limit) */
+export interface ChatStepInput {
+  sql?: string;
+  service?: string;
+  limit?: number;
+}
+
+/** 结构化工具结果:content 是喂给模型的完整(有界)输出 */
+export interface ChatStepResult {
+  content?: string;
+  summary?: string;
+  rowCount?: number;
+  lineCount?: number;
+  truncated?: boolean;
+  error?: string;
+}
+
 export interface ChatStep {
   id: string;
   type: "think" | "tool";
   title: string;
   detail?: string;
   duration?: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "declined";
+  /** 工具名(如 execute_sql),tool 类型步骤才有 */
+  toolName?: string;
+  /** 解析后的结构化入参 */
+  input?: ChatStepInput;
+  /** 结构化结果:输出内容、行数、截断标记、失败原因 */
+  result?: ChatStepResult;
+  /** ReAct 轮次;0 表示 RAG 检索,1+ 表示模型工具轮 */
+  roundIndex?: number;
+}
+
+/** 一轮对话的服务端计量(done 事件下发) */
+export interface ChatTurnMetrics {
+  durationMs: number;
+  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
 }
 
 export interface ChatMessage {
@@ -18,15 +49,20 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   isTyping?: boolean;
+  error?: string;
   steps?: ChatStep[];
   /** RAG 引用来源（回答基于哪些知识库片段） */
   sources?: Citation[];
+  /** 本轮执行计量(done 事件带) */
+  turnMetrics?: ChatTurnMetrics;
 }
 
 export type ChatResponder = (
   message: string,
   onUpdate: (partial: Partial<ChatMessage>) => void,
-  sessionId?: string
+  sessionId?: string,
+  model?: string,
+  reasoningLevel?: string
 ) => Promise<void>;
 
 interface IntentResponse {

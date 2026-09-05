@@ -1,9 +1,9 @@
 import { useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap, Check, Settings } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap, Check, Settings, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
-import { useModelProviders } from "@/hooks/useModelProviders";
+import { useModelProviders, REASONING_LEVELS } from "@/hooks/useModelProviders";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,9 +19,14 @@ interface ChatInputAreaProps {
   setInput: (value: string) => void;
   isSending: boolean;
   onSend: () => void;
+  contextTokens?: number;
+  contextLimit?: number;
+  /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
+  reasoningLevel?: string;
+  onReasoningLevelChange?: (level: string | undefined) => void;
 }
 
-export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputAreaProps) {
+export function ChatInputArea({ input, setInput, isSending, onSend, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange }: ChatInputAreaProps) {
   const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
@@ -29,6 +34,14 @@ export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputA
   const defaultModel = useModelProviders((s) => s.defaultModel);
   const setDefaultModel = useModelProviders((s) => s.setDefaultModel);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const contextPercent = Math.min(100, Math.round((contextTokens / contextLimit) * 100));
+
+  // 当前模型在设置页配置的思考等级白名单;空 = 全部等级
+  const activeProvider = providers.find((p) => p.enabled && p.models.includes(defaultModel));
+  const configuredLevels = activeProvider?.modelSettings?.[defaultModel]?.reasoningLevels ?? [];
+  const availableLevels = configuredLevels.length
+    ? REASONING_LEVELS.filter((l) => configuredLevels.includes(l))
+    : REASONING_LEVELS;
 
   const handleToggle = (id: number, name: string, enabled: boolean) => {
     toggleSkill(id);
@@ -99,10 +112,50 @@ export function ChatInputArea({ input, setInput, isSending, onSend }: ChatInputA
                       <div className="flex items-center gap-2 px-2 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer">
                           <Layers className="w-3 h-3 text-muted-foreground" />
                           <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex">
-                              <div className="h-full bg-blue-500" style={{width: '25%'}}></div>
+                              <div className={`h-full ${contextPercent >= 90 ? "bg-red-500" : contextPercent >= 75 ? "bg-amber-500" : "bg-blue-500"}`} style={{width: `${contextPercent}%`}}></div>
                           </div>
-                          <span className="font-mono">33k/128k</span>
+                          <span className="font-mono">{Math.round(contextTokens / 1000)}k/{Math.round(contextLimit / 1000)}k</span>
                       </div>
+
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
+
+                      {/* 思考等级:仅列出设置页为当前模型启用的等级 */}
+                      {onReasoningLevelChange && availableLevels.length > 0 && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground" title="思考等级">
+                              <Brain className="w-3 h-3 mr-1" />
+                              {reasoningLevel ?? "自动"} <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40 rounded-xl">
+                            <DropdownMenuLabel className="text-xs text-muted-foreground">思考等级</DropdownMenuLabel>
+                            <DropdownMenuItem
+                              className="flex items-center justify-between cursor-pointer text-xs"
+                              onClick={() => {
+                                onReasoningLevelChange(undefined);
+                                toast.success("思考等级已设为自动（跟随模型默认）");
+                              }}
+                            >
+                              <span>自动</span>
+                              {reasoningLevel === undefined && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+                            </DropdownMenuItem>
+                            {availableLevels.map((level) => (
+                              <DropdownMenuItem
+                                key={level}
+                                className="flex items-center justify-between cursor-pointer text-xs font-mono"
+                                onClick={() => {
+                                  onReasoningLevelChange(level);
+                                  toast.success(`思考等级已设为 ${level}`);
+                                }}
+                              >
+                                <span>{level}</span>
+                                {reasoningLevel === level && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
 
                       <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
 

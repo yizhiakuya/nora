@@ -41,11 +41,21 @@ public class SqlToolClient {
      * @return LLM-friendly rendering: header + aligned rows, or an error line
      */
     public String executeSql(String sql) {
+        return executeSqlDetailed(sql).content();
+    }
+
+    /**
+     * Like {@link #executeSql(String)} but also reports the provider-side row
+     * cap so the orchestrator can mark the step {@code truncated} — a silent
+     * cap makes the model present partial rows as the full answer.
+     */
+    public SqlOutcome executeSqlDetailed(String sql) {
         try {
             // Phase 3: single-connection workbench — use the first connection row
             Long connectionId = firstConnectionId();
             if (connectionId == null) {
-                return "ERROR: no database connection is configured in the datasource service";
+                return new SqlOutcome("ERROR: no database connection is configured in the datasource service",
+                        null, false);
             }
             Envelope<QueryBody> envelope = restClient.post()
                     .uri("/api/datasources/{id}/query", connectionId)
@@ -57,13 +67,41 @@ public class SqlToolClient {
             if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
                 String message = envelope == null ? "empty response" : envelope.message();
                 log.warn("datasource query rejected: {}", message);
-                return "ERROR: " + message;
+                return new SqlOutcome("ERROR: " + hint(message), null, false);
             }
-            return render(envelope.data());
+            String rendered = render(envelope.data());
+            int rowCount = envelope.data().rowCount();
+            return new SqlOutcome(rendered,
+                    rowCount + " rows, " + envelope.data().durationMs() + "ms",
+                    Boolean.TRUE.equals(envelope.data().truncated()));
         } catch (Exception e) {
             log.warn("datasource query failed: {}", e.getMessage());
-            return "ERROR: " + e.getMessage();
+            return new SqlOutcome("ERROR: " + hint(e.getMessage() == null ? "unknown error" : e.getMessage()),
+                    null, false);
         }
+    }
+
+    /** Rendered SQL result plus UI-facing metadata. */
+    public record SqlOutcome(String content, String summary, boolean truncated) {
+    }
+
+    /**
+     * Enriches common DB errors with the correct alternative syntax so the
+     * model can self-correct on the next round (harness: errors teach).
+     */
+    private String hint(String message) {
+        if (message != null && message.contains("unrecognized configuration parameter")) {
+            // MySQL SHOW TABLES / USE db etc. don't exist on PostgreSQL
+            return message + "（提示:目标数据库是 PostgreSQL,不支持 MySQL 的 SHOW 语法。"
+                    + "查表用 SELECT tablename FROM pg_tables WHERE schemaname = 'public';"
+                    + "查库用 SELECT datname FROM pg_database;查列用 SELECT column_name, data_type "
+                    + "FROM information_schema.columns WHERE table_name = '表名'）";
+        }
+        if (message != null && message.contains("does not exist") && message.contains("relation")) {
+            return message + "（提示:表不存在或不在默认 schema。"
+                    + "先用 SELECT tablename FROM pg_tables 确认表名,跨 schema 时用 schema.table 限定）";
+        }
+        return message;
     }
 
     private Long firstConnectionId() {
@@ -108,7 +146,8 @@ public class SqlToolClient {
             java.util.List<String> columns,
             java.util.List<java.util.List<String>> rows,
             int rowCount,
-            long durationMs) {
+            long durationMs,
+            Boolean truncated) {
     }
 
     /** ApiResponse envelope. */

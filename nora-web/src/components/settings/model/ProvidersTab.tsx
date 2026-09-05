@@ -106,6 +106,9 @@ function ProviderCard({ p }: { p: ModelProvider }) {
             {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
             {testing ? "测试中…" : "测试连通"}
           </Button>
+          <span className="text-[10px] text-muted-foreground ml-auto">
+            思考等级与上下文窗口在「模型列表」页按模型配置
+          </span>
           {confirmRemove ? (
             <>
               <Button
@@ -124,7 +127,7 @@ function ProviderCard({ p }: { p: ModelProvider }) {
             <Button
               variant="ghost"
               size="icon"
-              className="w-7 h-7 text-muted-foreground hover:text-destructive ml-auto"
+              className={`w-7 h-7 text-muted-foreground hover:text-destructive ${confirmRemove ? "" : "shrink-0"}`}
               onClick={() => setConfirmRemove(true)}
               title="移除服务商"
             >

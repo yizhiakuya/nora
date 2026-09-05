@@ -19,6 +19,9 @@ spring:
         enabled: true
 
 nora:
+  agent:
+    # ReAct depth guard: max tool rounds per chat turn (harness convention 10-25)
+    max-tool-rounds: 10
   llm:
     api-key: ${NORA_LLM_API_KEY:}
     base-url: ${NORA_LLM_BASE_URL:http://192.168.0.109:28765/v1}
