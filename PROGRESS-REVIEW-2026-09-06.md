@@ -10,7 +10,9 @@
 >
 > **同日风险处置**：R1 已解决（修复 Maven 的 Git Bash 启动脚本，`mvn install` 全绿，
 > 16 模块 / 106 测试 0 失败）；R2 已解决（审批流与文档修复已提交至 main：
-> `9c346a0` + `a7dd3f6`）。当前最高优先级为 R3（审批流端到端拦截验证）。
+> `9c346a0` + `a7dd3f6`）。**R3 已完成端到端拦截验证**（拒绝路径 DB 零副作用、
+> 批准路径真实执行、token 防伪与一次性语义通过），遗留项见风险表 R3 备注。
+> 另：codebase-memory MCP 已为本项目建索引（项目名 `D-claude-Nora`，2917 节点 / 8246 边）。
 
 ---
 
@@ -133,7 +135,7 @@
 |---|------|------|-----------|
 | R1 | ~~后端构建链路不可用~~ | 🟢 已解决 | 根因：`D:/tools/apache-maven-3.9.16/bin/mvn` 官方脚本不识别 Git Bash 的 `MINGW64_NT` uname，未把路径转回 Windows 格式。已在脚本 case 分支补 `MSYS*)` 并让 `MINGW*` 启用 cygpath 转换（原脚本备份为 `mvn.bak-20260906`）。修复后 `mvn -B install` 直接可用：16 模块 SUCCESS，**106 个测试 0 失败**，审批流代码编译与测试全通过 |
 | R2 | ~~975 行改动裸奔在 main~~ | 🟢 已解决 | 2026-09-06 已按单线历史在 main 提交：`9c346a0`（feat 审批流）+ `a7dd3f6`（docs），工作区干净 |
-| R3 | **写能力扩大但审批未验证** | 🔴 高 | 新增 `WriteSqlClient` / `ContainerControlClient` 打开了破坏性操作面，审批流是唯一护栏，尚未跑通一次真实请求。上线前必须做"DROP TABLE / 停容器"的端到端拦截验证 |
+| R3 | **写能力扩大但审批未验证** | 🟢 核心已验证 | 2026-09-06 端到端实测（经网关 + 真实模型）：① DDL 请求（CREATE TABLE）在 assist 档正确触发 `approval_required` SSE 事件，工具挂起等待；② **拒绝**路径：token 决策 `approved=false` → 数据库零副作用（表未创建），agent 回答如实说明被拒，未谎称成功；③ **批准**路径：`approved=true` → `WriteSqlClient` 真实执行，表成功创建（结构核对一致）；④ **token 防伪**：假 token、已消费 token 重放均被拒绝（`approval not found / already resolved`），一次性语义成立；⑤ 模型文本"同意"不算批准——approval gate 由服务端 `RiskClassifier`（harness 层）判定，与模型输出无关。**遗留**：a) "授权话术下模型仍发起工具调用"场景因上游中转 503 波动未完成实弹复测（机制上已由 ④⑤ 覆盖）；b) 审批决策对无效 token 返回 HTTP 500，建议改为 4xx 业务错误码；c) token 120s 超时自动拒绝已实现但未单独实测 |
 | R4 | ~~文档与实现脱节~~ | 🟢 已缓解 | 2026-09-06 已修复：`AGENTS.md`（新增「后端接入现状」表与契约层约束）、`nora-api/README.md`（Phase 状态 + 服务端点 + 已知偏差）、根 `README.md`、`nora-web/README.md`，并清理 `ragService.ts` 过时 TODO。剩余项已一并处理，文档口径现已统一 |
 | R5 | 前端双轨运行 | 🟡 中 | 知识库/技能/设置/首页仍读 `MOCK_*`，`USE_BACKEND` 开关两侧行为可能分叉，长期维护成本上升 |
 | R6 | 测试以单测为主 | 🟡 中 | 后端 23 个测试类、前端 70 个用例均为单元测试；SSE 透传、多服务链路无集成测试 |
