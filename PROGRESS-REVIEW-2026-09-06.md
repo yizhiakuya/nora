@@ -7,6 +7,10 @@
 > 涉及 `AGENTS.md`、`nora-api/README.md`、根 `README.md`、`nora-web/README.md`、
 > `nora-web/docs/rag-service.md` 与 `ragService.ts` 注释。前端质量门已回归验证：
 > typecheck ✅ · lint ✅ · test 70/70 ✅。风险 R4 降级为已缓解。
+>
+> **同日风险处置**：R1 已解决（修复 Maven 的 Git Bash 启动脚本，`mvn install` 全绿，
+> 16 模块 / 106 测试 0 失败）；R2 已解决（审批流与文档修复已提交至 main：
+> `9c346a0` + `a7dd3f6`）。当前最高优先级为 R3（审批流端到端拦截验证）。
 
 ---
 
@@ -127,9 +131,9 @@
 
 | # | 风险 | 等级 | 说明与建议 |
 |---|------|------|-----------|
-| R1 | **后端构建链路不可用** | 🔴 高 | `M2_HOME` 为空，`mvn` 报 `ClassNotFoundException: plexus.classworlds.launcher`（Maven 装在 `D:/tools/apache-maven-3.9.16`，jar 存在但启动失败）。后果：975 行审批流代码零编译/测试保护，Phase 0.4 要求的每模块 `mvn verify` 无法执行。**先修环境再推进** |
-| R2 | **975 行改动裸奔在 main** | 🔴 高 | 未建特性分支、未提交。任何 `git checkout` / 回滚都会丢失。建议立即建分支提交 |
-| R3 | **写能力扩大但审批未验证** | 🔴 高 | 新增 `WriteSqlClient` / `ContainerControlClient` 打开了破坏性操作面，审批流是唯一护栏，却尚未跑通一次真实请求。上线前必须做"DROP TABLE / 停容器"的端到端拦截验证 |
+| R1 | ~~后端构建链路不可用~~ | 🟢 已解决 | 根因：`D:/tools/apache-maven-3.9.16/bin/mvn` 官方脚本不识别 Git Bash 的 `MINGW64_NT` uname，未把路径转回 Windows 格式。已在脚本 case 分支补 `MSYS*)` 并让 `MINGW*` 启用 cygpath 转换（原脚本备份为 `mvn.bak-20260906`）。修复后 `mvn -B install` 直接可用：16 模块 SUCCESS，**106 个测试 0 失败**，审批流代码编译与测试全通过 |
+| R2 | ~~975 行改动裸奔在 main~~ | 🟢 已解决 | 2026-09-06 已按单线历史在 main 提交：`9c346a0`（feat 审批流）+ `a7dd3f6`（docs），工作区干净 |
+| R3 | **写能力扩大但审批未验证** | 🔴 高 | 新增 `WriteSqlClient` / `ContainerControlClient` 打开了破坏性操作面，审批流是唯一护栏，尚未跑通一次真实请求。上线前必须做"DROP TABLE / 停容器"的端到端拦截验证 |
 | R4 | ~~文档与实现脱节~~ | 🟢 已缓解 | 2026-09-06 已修复：`AGENTS.md`（新增「后端接入现状」表与契约层约束）、`nora-api/README.md`（Phase 状态 + 服务端点 + 已知偏差）、根 `README.md`、`nora-web/README.md`，并清理 `ragService.ts` 过时 TODO。剩余项已一并处理，文档口径现已统一 |
 | R5 | 前端双轨运行 | 🟡 中 | 知识库/技能/设置/首页仍读 `MOCK_*`，`USE_BACKEND` 开关两侧行为可能分叉，长期维护成本上升 |
 | R6 | 测试以单测为主 | 🟡 中 | 后端 23 个测试类、前端 70 个用例均为单元测试；SSE 透传、多服务链路无集成测试 |
@@ -140,10 +144,10 @@
 
 ## 六、建议的下一步顺序
 
-1. **修复 Maven 环境** → 跑通 `mvn install`，先把审批流代码纳入编译与测试保护
-2. **建分支提交审批流**（`feat/agent-approval-flow`），并补审批相关单测
-3. **端到端验证审批拦截**：构造 DDL / 批量删除 / 停容器请求，确认全部进入 `approval_required` 且未执行
+1. ~~修复 Maven 环境~~ ✅ 已完成（脚本已修，`mvn install` 全绿：16 模块 / 106 测试）
+2. ~~提交审批流~~ ✅ 已完成（main 单线提交：`9c346a0`）
+3. **端到端验证审批拦截**（当前最高优先级）：起服务后构造 DDL / 批量删除 / 停容器请求，确认全部进入 `approval_required` 且未执行；补审批相关单测
 4. 补 traceId + 三类集成测试（未配置模型、上游超时、SSE 中断）
 5. 打通 Phase 4.4 诊断 → 自动修复任务（先定义结构化动作协议）
 6. 补齐后端缺口：通知 SSE、图谱 API、设置持久化
-7. 同步更新 AGENTS.md / README，清理过时 TODO
+7. ~~同步更新 AGENTS.md / README，清理过时 TODO~~ ✅ 已完成

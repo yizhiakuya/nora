@@ -61,10 +61,12 @@ java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
 Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local` 的 `NORA_EMBEDDING_API_KEY`
 （**禁止提交、禁止回显**）。未配置时检索类端点降级为业务异常，文档列表仍可用。
 
-> ⚠️ **已知环境问题（2026-09-06）**：本机 `mvn` 启动失败
-> （`ClassNotFoundException: org.codehaus.plexus.classworlds.launcher`，`M2_HOME` 未设置，
-> Maven 位于 `D:/tools/apache-maven-3.9.16`）。修复前无法执行构建与测试，
-> Java 改动请确保在可用环境中编译验证后再提交。
+> ✅ **环境说明（2026-09-06 已修复）**：本机 Git Bash 下 `mvn` 曾启动失败
+> （`ClassNotFoundException: plexus.classworlds.launcher`）。根因是 Maven 官方 `bin/mvn`
+> 脚本不识别 Git Bash 的 `MINGW64_NT` uname、未把路径转回 Windows 格式；
+> 已在 `D:/tools/apache-maven-3.9.16/bin/mvn` 中补 `MSYS*)` 分支并让 `MINGW*` 启用
+> cygpath 转换（原脚本备份为 `mvn.bak-20260906`）。**升级 Maven 后需重新打此补丁。**
+> 当前 `mvn -B install` 全绿：16 模块 SUCCESS，106 测试 0 失败。
 
 ## 已知设计偏差
 
