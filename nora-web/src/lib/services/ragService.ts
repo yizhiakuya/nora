@@ -71,7 +71,9 @@ const SOURCE_LABEL: Record<KnowledgeSource, string> = {
 
 /**
  * 根据查询在文档列表中检索，返回按分数降序的召回结果。
- * TODO: 后端接入后替换为 fetch("/api/rag/search", { method: "POST", body: JSON.stringify({ query, topK }) })
+ *
+ * 这是**本地回退实现**（USE_BACKEND=false 时使用），基于关键词打分而非向量检索。
+ * 后端已接入，USE_BACKEND=true 时调用方应改用 {@link searchDocsAsync}（POST /api/rag/search）。
  */
 export function searchDocs(query: string, docs: KnowledgeDoc[], topK = 8): RetrievalResult[] {
   const tokens = tokenizeQuery(query);
@@ -95,7 +97,10 @@ export function searchDocs(query: string, docs: KnowledgeDoc[], topK = 8): Retri
 
 /**
  * 从真实文档列表推导索引统计，替代静态 MOCK_INDEX_STATS。
- * TODO: 后端接入后替换为 fetch("/api/rag/index/stats") → IndexStats
+ *
+ * 这是**本地回退实现**（USE_BACKEND=false 时使用），vectorDim/model 为前端占位值。
+ * 后端已接入，USE_BACKEND=true 时调用方应改用 {@link fetchIndexStats}（GET /api/rag/index/stats），
+ * 后者返回后端真实的向量维度与 embedding 模型名。
  */
 export function computeIndexStats(docs: KnowledgeDoc[]): IndexStats {
   const totalDocs = docs.length;
@@ -122,7 +127,9 @@ export function computeIndexStats(docs: KnowledgeDoc[]): IndexStats {
 
 /**
  * 生成对话引用来源（取 top-2 相关文档）。
- * TODO: 后端接入后替换为 fetch("/api/rag/citations", { method: "POST", body: JSON.stringify({ query, topK: 2 }) })
+ *
+ * 这是**本地回退实现**（USE_BACKEND=false 时使用），复用 searchDocs 的打分。
+ * 后端已接入，USE_BACKEND=true 时调用方应改用 {@link generateCitationsAsync}（POST /api/rag/citations）。
  */
 export function generateCitations(query: string, docs: KnowledgeDoc[], topK = 2): Citation[] {
   return searchDocs(query, docs, topK).map((r) => ({

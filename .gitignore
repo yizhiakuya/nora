@@ -4,6 +4,9 @@ node_modules/
 # IDE-specific
 .claude/
 
+# assistant workspace memory (local only)
+.workbuddy/
+
 # misc
 .DS_Store
 *.pem

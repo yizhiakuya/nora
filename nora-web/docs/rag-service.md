@@ -31,13 +31,18 @@
 - 英文关键词（如 `redis`、`orders`）完整命中给保底分 0.62（模拟向量语义召回）
 - 结果按分数降序，取 top-K
 
-## 5. 后端接入步骤
+## 5. 后端接入方式（已于 2026-09 完成）
 
-1. 实现 `POST /api/rag/search` 等三个端点（响应结构对齐 `RetrievalResult` / `IndexStats` / `Citation`）
-2. 修改 `src/lib/services/ragService.ts` 三个函数体为 `fetch` 调用（保留函数签名不变）
-3. 删除函数体内的 `TODO: 后端接入后替换为...` 注释
+后端三个端点已实现并接入，接入方式不是替换原函数体，而是**新增异步版本、保留同步 Mock 作为回退**：
 
-调用方组件无需任何改动。
+| 能力 | Mock 回退（`USE_BACKEND=false`） | 后端实现（`USE_BACKEND=true`） |
+|------|------------------------------|---------------------------|
+| 检索 | `searchDocs(query, docs, topK)` | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
+| 索引统计 | `computeIndexStats(docs)` | `fetchIndexStats()` → `GET /api/rag/index/stats` |
+| 引用来源 | `generateCitations(query, docs, topK)` | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
+
+同步函数保留供 `USE_BACKEND=false` 与离线演示使用，其 JSDoc 已注明为回退实现。
+各调用方按 `USE_BACKEND` 分流选择同步或异步版本，组件层无侵入。
 
 ## 6. 验收记录（2026-09-04）
 

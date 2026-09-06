@@ -1,6 +1,9 @@
 # Nora 个人工作台
 
-AI 驱动的个人文件管理与开发者工作台——纯前端（Frontend-Only）仓库。
+AI 驱动的个人文件管理与开发者工作台——前端仓库。
+
+> 后端 `nora-api` 已上线，本仓库通过 `VITE_USE_BACKEND` 开关接入真实 API；
+> 7 个域已完成对接，未接入的域仍走本地 Mock。详见下方[「后端接入现状」](#后端接入现状)。
 
 ## 技术栈
 
@@ -51,8 +54,8 @@ nora-web/
 │   │   └── shared/         # Markdown 等跨域组件
 │   ├── hooks/              # 业务逻辑 Hooks（Zustand store + persist）
 │   ├── lib/
-│   │   ├── api/            # Mock API（延迟模拟、文件预览工厂）
-│   │   ├── services/       # 后端 API 契约层（ragService.ts，后端接入只改这里）
+│   │   ├── api/            # HTTP 客户端 / SSE / Mock API（client.ts、sse.ts、agentApi.ts、chatApi.ts）
+│   │   ├── services/       # 后端 API 契约层（filesApi / ragService / datasourcesApi / environmentApi / automationsApi / modelsApi）
 │   │   ├── next-shims/     # Next.js → React Router 兼容层
 │   │   ├── mockData.ts     # 静态种子数据（文件/技能）
 │   │   ├── devData.ts      # 开发者场景数据（数据库/服务/日志/自动任务）
@@ -71,17 +74,29 @@ nora-web/
 | 环境 → 诊断 → 修复 | 服务异常 → AI 诊断 → 创建修复任务 → 自动任务执行 → 通知 |
 | 模型管理 | 设置 → 模型管理：接入 OpenAI 兼容 / Anthropic / Ollama 服务商（协议类型 + 端点 + 密钥），多模型切换默认 |
 
-## 后端接入预留
+## 后端接入现状
 
-`src/lib/services/ragService.ts` 提供三个 API 契约函数，当前为前端 Mock 实现：
+开关在 `src/lib/api/client.ts`：`USE_BACKEND` 读取 `VITE_USE_BACKEND`（`.env.local` 当前为 `true`），
+开发时 Vite 把 `/api` 代理到 gateway `http://localhost:8080`。所有请求经 `requestJson` 统一解开
+`{code,data,message}` 信封，`code != 0` 直接抛错。
 
-| 函数 | 后端端点 |
-|------|---------|
-| `searchDocs(query, docs, topK)` | `POST /api/rag/search` |
-| `computeIndexStats(docs)` | `GET /api/rag/index/stats` |
-| `generateCitations(query, docs, topK)` | `POST /api/rag/citations` |
+以 `ragService.ts` 为例，同一能力提供**同步 Mock**与**异步后端**两套函数：
 
-后端就绪后只需修改这一个文件的函数体为 `fetch` 调用，所有调用方（知识库检索测试 / 索引状态 / 对话引用来源）零改动。
+| 能力 | Mock 回退（USE_BACKEND=false） | 后端实现（USE_BACKEND=true） |
+|------|------------------------------|---------------------------|
+| 检索 | `searchDocs(query, docs, topK)` | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
+| 索引统计 | `computeIndexStats(docs)` | `fetchIndexStats()` → `GET /api/rag/index/stats` |
+| 引用来源 | `generateCitations(query, docs, topK)` | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
+
+其余域同样按「`lib/services/xxxApi.ts` + Hook 内 `USE_BACKEND` 分流」的模式接入。
+
+| 域 | 状态 |
+|----|------|
+| 文件 / 知识库 / 对话 / 数据源 / 环境 / 自动任务 / 模型管理 | ✅ 已接入后端 |
+| 知识图谱 | ⬜ 后端未提供，仍读 `MOCK_GRAPH` |
+| AI 能力 / 设置 / 环境变量 / 通知 | ⬜ 后端未提供，仍为本地 Zustand + localStorage |
+
+接入新域或改契约后，请同步更新 [AGENTS.md](AGENTS.md) 的「后端接入现状」表。
 
 ## 设计文档索引
 
@@ -107,7 +122,8 @@ nora-web/
 
 - **只用 pnpm**——npm/npx 会破坏 pnpm 结构的 node_modules
 - **页面仅胶水**——`src/app/*/page.tsx` ≤150 行，业务在 `components/{domain}`，逻辑在 `hooks`
-- **数据全 Mock**——始终基于 `src/lib/mockData.ts` / `devData.ts` / `knowledgeData.ts`
+- **Mock 只作回退**——`src/lib/mockData.ts` / `devData.ts` / `knowledgeData.ts` 仅用于 `USE_BACKEND=false`
+  或后端尚未提供的域，已接后端的域不得用 Mock 覆盖真实返回值
 - **dev 固定 3001**——HMR 即时生效，改代码不刷新页面
 - **路由集中**——`src/App.tsx` 统一注册，`/src/app` 下只放页面胶水组件
 
