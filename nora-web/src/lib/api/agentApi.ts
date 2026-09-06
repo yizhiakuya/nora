@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResponder, ChatStep } from "./chatApi";
+import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, PermissionMode } from "./chatApi";
 import { API_BASE } from "./client";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
@@ -95,8 +95,28 @@ function normalizeSources(sources: Citation[] | undefined): Citation[] | undefin
   }));
 }
 
+export async function resolveApproval(
+  sessionId: string,
+  approvalToken: string,
+  approved: boolean
+): Promise<boolean> {
+  const response = await fetch(
+    `${API_BASE}/chat/approvals/${encodeURIComponent(approvalToken)}?sessionId=${encodeURIComponent(sessionId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved }),
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `审批请求失败(HTTP ${response.status})`);
+  }
+  return approved;
+}
+
 export const AgentAPI: { sendMessage: ChatResponder } = {
-  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel) {
+  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode) {
     if (!sessionId) {
       throw new Error("Agent API requires a sessionId");
     }
@@ -106,7 +126,12 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
       response = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: message, model, reasoningLevel: reasoningLevel || null }),
+        body: JSON.stringify({
+          content: message,
+          model,
+          reasoningLevel: reasoningLevel || null,
+          permissionMode: permissionMode ?? "assist",
+        }),
       });
     } catch (error) {
       throw new Error("Cannot connect to agent-service", { cause: error });
@@ -134,7 +159,12 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     };
 
     await parseSSEStream(response.body.getReader(), ({ event, data }) => {
-      if (event === "step") {
+      if (event === "approval_required") {
+        const approval = parseData<ApprovalRequest>(data);
+        if (approval?.approvalToken) {
+          onUpdate({ approval });
+        }
+      } else if (event === "step") {
         const payload = parseData<StepPayload>(data);
         if (!payload) return;
         const normalized = normalizeStep(payload, steps.length);
@@ -192,6 +222,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         }
         onUpdate({
           isTyping: false,
+          approval: undefined,
           steps: [...steps],
           turnMetrics: donePayload?.durationMs != null
             ? { durationMs: donePayload.durationMs, usage: donePayload.usage ?? null }

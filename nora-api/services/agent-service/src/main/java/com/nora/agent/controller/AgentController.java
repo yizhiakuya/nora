@@ -3,8 +3,11 @@ package com.nora.agent.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
+import com.nora.agent.dto.ApprovalRequestDto;
+import com.nora.agent.service.ApprovalService;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
+import com.nora.agent.service.PermissionMode;
 import com.nora.common.response.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,14 +42,24 @@ public class AgentController {
 
     private final ChatOrchestrationService orchestrationService;
     private final ChatStoreService chatStoreService;
+    private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
     private final ExecutorService chatExecutor = Executors.newCachedThreadPool();
 
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
                            ObjectMapper objectMapper) {
+        this(orchestrationService, chatStoreService, null, objectMapper);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AgentController(ChatOrchestrationService orchestrationService,
+                           ChatStoreService chatStoreService,
+                           ApprovalService approvalService,
+                           ObjectMapper objectMapper) {
         this.orchestrationService = orchestrationService;
         this.chatStoreService = chatStoreService;
+        this.approvalService = approvalService;
         this.objectMapper = objectMapper;
     }
 
@@ -57,10 +70,12 @@ public class AgentController {
 
     /**
      * Sends one user message and streams the agent answer as SSE events:
-     * {@code step}, {@code delta}, {@code sources}, {@code done}.
+     * {@code step}, {@code delta}, {@code sources}, {@code done},
+     * plus {@code approval_required} when a high-risk tool call needs
+     * the user's decision (three-mode permission: ask/assist/full).
      *
      * @param sessionId chat session id
-     * @param request   {@code {content}}
+     * @param request   {@code {content, model, reasoningLevel, permissionMode}}
      * @return SSE stream
      */
     @PostMapping(value = "/sessions/{sessionId}/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -71,8 +86,32 @@ public class AgentController {
         }
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         chatExecutor.execute(() -> runChatTurn(sessionId, request.content().trim(),
-                request.model(), request.reasoningLevel(), emitter));
+                request.model(), request.reasoningLevel(),
+                PermissionMode.parse(request.permissionMode()), emitter));
         return emitter;
+    }
+
+    /**
+     * Approves or declines a pending high-risk operation. The one-shot token
+     * comes from the approval_required SSE event; unknown/consumed tokens 404
+     * (never a silent success).
+     */
+    @PostMapping("/approvals/{approvalToken}")
+    public ApiResponse<Boolean> resolveApproval(@PathVariable String approvalToken,
+                                                @RequestBody ApprovalDecision decision,
+                                                @org.springframework.web.bind.annotation.RequestParam("sessionId") String sessionId) {
+        boolean approved = Boolean.TRUE.equals(decision.approved());
+        boolean resolved = approvalService.resolve(sessionId, approvalToken, approved);
+        if (!resolved) {
+            throw new IllegalArgumentException("approval not found, session mismatch, or already resolved");
+        }
+        return ApiResponse.ok(approved);
+    }
+
+    /** Pending approvals of one session (reconnect fallback). */
+    @GetMapping("/sessions/{sessionId}/approvals")
+    public ApiResponse<List<ApprovalRequestDto>> pendingApprovals(@PathVariable String sessionId) {
+        return ApiResponse.ok(approvalService.pendingFor(sessionId));
     }
 
     /** Chat history of one session, oldest first (frontend ChatMessage[]). */
@@ -96,7 +135,8 @@ public class AgentController {
         return ApiResponse.ok();
     }
 
-    private void runChatTurn(String sessionId, String content, String model, String reasoningLevel, SseEmitter emitter) {
+    private void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
+                             com.nora.agent.service.PermissionMode permissionMode, SseEmitter emitter) {
         try {
             chatStoreService.ensureSession(sessionId, content);
             chatStoreService.saveMessage(sessionId, "user", content, null, null);
@@ -114,6 +154,8 @@ public class AgentController {
                     chatStoreService.loadRecentReflections(sessionId, "chat-turn", 3),
                     model,
                     reasoningLevel,
+                    permissionMode,
+                    sessionId,
                     new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {
@@ -134,6 +176,11 @@ public class AgentController {
                             int key = roundIndex == null ? Integer.MAX_VALUE : roundIndex;
                             reasoningBuffers.computeIfAbsent(key, k -> new StringBuilder()).append(token);
                             send(emitter, "reasoning_delta", new ReasoningDeltaPayload(roundIndex, token));
+                        }
+
+                        @Override
+                        public void approvalRequired(com.nora.agent.dto.ApprovalRequestDto request) {
+                            send(emitter, "approval_required", request);
                         }
 
                         @Override
@@ -214,7 +261,14 @@ public class AgentController {
     }
 
     /** POST /api/chat/sessions/{id}/messages body. */
-    public record MessageRequest(String content, String model, String reasoningLevel) {
+    public record MessageRequest(String content, String model, String reasoningLevel, String permissionMode) {
+        public MessageRequest(String content, String model, String reasoningLevel) {
+            this(content, model, reasoningLevel, null);
+        }
+    }
+
+    /** POST /api/chat/approvals/{token} body. */
+    public record ApprovalDecision(Boolean approved) {
     }
 
     /** SSE delta payload. */

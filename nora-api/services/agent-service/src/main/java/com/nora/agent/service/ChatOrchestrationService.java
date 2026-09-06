@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nora.agent.config.LlmProperties;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
+import com.nora.agent.dto.ApprovalRequestDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -79,6 +80,9 @@ public class ChatOrchestrationService {
     private final ObjectMapper objectMapper;
     private final RestClient llmClient;
     private final ModelProviderService modelProviderService;
+    private final ApprovalService approvalService;
+    private final WriteSqlClient writeSqlClient;
+    private final ContainerControlClient containerControlClient;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -88,6 +92,9 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper,
                                     ModelProviderService modelProviderService,
+                                    ApprovalService approvalService,
+                                    WriteSqlClient writeSqlClient,
+                                    ContainerControlClient containerControlClient,
                                     @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
@@ -95,6 +102,9 @@ public class ChatOrchestrationService {
         this.serviceLogClient = serviceLogClient;
         this.objectMapper = objectMapper;
         this.modelProviderService = modelProviderService;
+        this.approvalService = approvalService;
+        this.writeSqlClient = writeSqlClient;
+        this.containerControlClient = containerControlClient;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
         // 默认无超时的 RestClient 会永远挂起整轮对话
@@ -114,7 +124,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                DEFAULT_MAX_TOOL_ROUNDS);
+                null, null, null, DEFAULT_MAX_TOOL_ROUNDS);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -124,18 +134,8 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
-        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null, maxToolRounds);
-    }
-
-    private ChatOrchestrationService(LlmProperties llmProperties,
-                                     RagRetrievalClient ragRetrievalClient,
-                                     SqlToolClient sqlToolClient,
-                                     ServiceLogClient serviceLogService,
-                                     ObjectMapper objectMapper,
-                                     ModelProviderService modelProviderService,
-                                     boolean ignored) {
-        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogService, objectMapper, modelProviderService,
-                DEFAULT_MAX_TOOL_ROUNDS);
+        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
+                null, null, null, maxToolRounds);
     }
 
     /**
@@ -175,6 +175,35 @@ public class ChatOrchestrationService {
                                             List<String> reflections,
                                             String requestedModel,
                                             String requestedReasoningLevel,
+                                            ChatEventConsumer eventConsumer) {
+        return chat(userMessage, history, reflections, requestedModel, requestedReasoningLevel,
+                PermissionMode.ASSIST, eventConsumer);
+    }
+
+    /**
+     * @param permissionMode 审批档位(ASK 每次询问 / ASSIST 高风险询问 / FULL 全放行)
+     */
+    public CompletableFuture<ChatTurn> chat(String userMessage,
+                                            List<ChatStoreService.StoredMessage> history,
+                                            List<String> reflections,
+                                            String requestedModel,
+                                            String requestedReasoningLevel,
+                                            PermissionMode permissionMode,
+                                            ChatEventConsumer eventConsumer) {
+        return chat(userMessage, history, reflections, requestedModel, requestedReasoningLevel,
+                permissionMode, null, eventConsumer);
+    }
+
+    /**
+     * @param sessionId 会话 ID(审批请求绑定用;null = 不启用审批门,全部自动执行)
+     */
+    public CompletableFuture<ChatTurn> chat(String userMessage,
+                                            List<ChatStoreService.StoredMessage> history,
+                                            List<String> reflections,
+                                            String requestedModel,
+                                            String requestedReasoningLevel,
+                                            PermissionMode permissionMode,
+                                            String sessionId,
                                             ChatEventConsumer eventConsumer) {
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
@@ -245,7 +274,7 @@ public class ChatOrchestrationService {
                     String args = call.path("function").path("arguments").asText("{}");
                     String toolStepId = "s-call-" + callFingerprints.size() + "-" + callId;
                     emitToolStep(toolStepId, name, args, callFingerprints, messages, callId,
-                            round + 1, eventConsumer);
+                            round + 1, permissionMode, sessionId, eventConsumer);
                     String lastResult = lastToolResult(messages);
                     if (lastResult != null) {
                         toolOutcome = lastResult;
@@ -292,11 +321,25 @@ public class ChatOrchestrationService {
      * (running → terminal). Terminal status is {@code declined} when a
      * guardrail refuses the input (rule refusal, not an execution error),
      * {@code failed} when execution throws, {@code completed} otherwise.
+     * ASK 档每次都请求批准;ASSIST 档仅高风险(RiskClassifier)请求批准;
+     * FULL 档不询问。等待批准期间 step 保持 running,批准事件由 SSE 下发。
      */
+    /** Legacy test/helper entry: no session means approval is bypassed. */
     private void emitToolStep(String toolStepId, String name, String args,
                               Map<String, Integer> fingerprints,
                               List<WireMessage> messages, String callId,
                               int roundIndex,
+                              ChatEventConsumer eventConsumer) {
+        emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
+                PermissionMode.FULL, null, eventConsumer);
+    }
+
+    private void emitToolStep(String toolStepId, String name, String args,
+                              Map<String, Integer> fingerprints,
+                              List<WireMessage> messages, String callId,
+                              int roundIndex,
+                              PermissionMode permissionMode,
+                              String sessionId,
                               ChatEventConsumer eventConsumer) {
         ParsedArgs parsed = parseArgs(args);
         ChatStepDto.StepInput input = parsed.input();
@@ -323,6 +366,30 @@ public class ChatOrchestrationService {
         }
         if (repeats == LOOP_WARN_THRESHOLD) {
             log.info("loop warning: {} called {} times with identical args", name, repeats);
+        }
+
+        // 审批门:ASK 全问,ASSIST 只问高风险。审批状态保存在服务端(ApprovalService),
+        // 模型文本中的"同意"不构成批准
+        if (approvalService != null && sessionId != null) {
+            boolean highRisk = RiskClassifier.classify(name, args) == RiskClassifier.Risk.HIGH;
+            if (permissionMode == PermissionMode.ASK || (permissionMode == PermissionMode.ASSIST && highRisk)) {
+                ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, parsed, permissionMode);
+                ApprovalRequestDto ticket = approvalService.register(sessionId, toolStepId, request);
+                eventConsumer.approvalRequired(ticket);
+                boolean approved = approvalService.await(ticket.approvalToken());
+                if (!approved) {
+                    finishToolStep(toolStepId, name, title, input, toolStart,
+                            new ChatStepDto.StepResult(null, "用户未批准", null, null, false,
+                                    "用户未批准该操作,Agent 已跳过执行。如需执行请调整方案或让用户切换权限档位"),
+                            "declined", roundIndex, eventConsumer);
+                    backfillToolMessage(messages, callId,
+                            "ERROR: 用户拒绝批准该操作。请说明操作目的,或改用无需写权限的方式回答");
+                    return;
+                }
+                // 批准后重新发出 running(用户等待期间 step 可能显示为等待批准态)
+                eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+                        null, null, "running", name, input, null, roundIndex));
+            }
         }
 
         ToolOutcome outcome = executeTool(name, args, parsed);
@@ -378,7 +445,7 @@ public class ChatOrchestrationService {
     }
 
     /** Parsed tool call: typed input plus the model-written display title. */
-    record ParsedArgs(ChatStepDto.StepInput input, String description) {
+    record ParsedArgs(ChatStepDto.StepInput input, String description, String containerAction) {
     }
 
     /** Parses tool arguments into the typed input shown by the frontend + the display title. */
@@ -390,16 +457,22 @@ public class ChatOrchestrationService {
                 description = description.substring(0, 120);
             }
             if (node.has("sql")) {
-                return new ParsedArgs(new ChatStepDto.StepInput(node.path("sql").asText(null), null, null), description);
+                return new ParsedArgs(new ChatStepDto.StepInput(node.path("sql").asText(null), null, null),
+                        description, null);
+            }
+            if (node.has("action") && node.has("service")) {
+                return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
+                        description, node.path("action").asText(null));
             }
             if (node.has("service") || node.has("limit")) {
                 Integer limit = node.has("limit") && node.get("limit").isNumber()
                         ? node.get("limit").asInt() : null;
-                return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), limit), description);
+                return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), limit),
+                        description, null);
             }
-            return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), description);
+            return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), description, null);
         } catch (Exception e) {
-            return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), null);
+            return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), null, null);
         }
     }
 
@@ -407,16 +480,49 @@ public class ChatOrchestrationService {
     private String defaultTitle(String name) {
         return switch (name) {
             case "execute_sql" -> "查询数据库";
+            case "execute_write_sql" -> "写入数据库";
             case "read_service_logs" -> "读取服务日志";
+            case "manage_container" -> "容器操作";
             default -> name;
         };
     }
 
     /** Stable string for loop detection: the meaningful part of the args. */
     private String normalizeArgs(String name, ChatStepDto.StepInput input) {
-        if ("execute_sql".equals(name)) return input.sql() == null ? "" : input.sql().trim().toLowerCase();
+        if ("execute_sql".equals(name) || "execute_write_sql".equals(name)) {
+            return input.sql() == null ? "" : input.sql().trim().toLowerCase();
+        }
         if ("read_service_logs".equals(name)) return (input.service() == null ? "" : input.service()) + "#" + input.limit();
+        if ("manage_container".equals(name)) return input.service() == null ? "" : input.service();
         return "";
+    }
+
+    /** approval_required 事件载荷:操作类型、目标、参数摘要、风险说明。 */
+    private ApprovalRequestDto buildApprovalRequest(String stepId, String toolName, ParsedArgs parsed,
+                                                    PermissionMode mode) {
+        String actionType;
+        String target;
+        String risk;
+        switch (toolName) {
+            case "execute_write_sql" -> {
+                actionType = "sql_write";
+                target = "数据库(首个连接)";
+                risk = "将修改真实数据(" + abbreviate(parsed.input().sql() == null ? "" : parsed.input().sql(), 40) + "…),不可自动撤销";
+            }
+            case "manage_container" -> {
+                actionType = "container_control";
+                target = parsed.input().service() == null ? "未知容器" : parsed.input().service();
+                risk = "停止/重启容器会导致该服务短暂不可用";
+            }
+            default -> {
+                actionType = toolName;
+                target = parsed.input().service() != null ? parsed.input().service()
+                        : (parsed.input().sql() != null ? abbreviate(parsed.input().sql(), 40) : "—");
+                risk = "该档位下每次工具调用都需要确认";
+            }
+        }
+        return new ApprovalRequestDto(null, stepId, actionType, target,
+                defaultTitle(toolName) + " · " + target, risk);
     }
 
     /** Whether an LLM API key is configured. */
@@ -504,8 +610,42 @@ public class ChatOrchestrationService {
             }
             return bounded(serviceLogClient.readLogs(service, limit), null);
         }
+        if ("execute_write_sql".equals(name)) {
+            String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
+            String guard = RiskClassifier.validateWriteSql(sql);
+            if (guard != null) {
+                return new ToolOutcome("ERROR: " + guard, null, null, false);
+            }
+            if (writeSqlClient == null) {
+                return new ToolOutcome("ERROR: 写入能力未启用(服务未配置)", null, null, false);
+            }
+            String content = writeSqlClient.executeWrite(sql);
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : content, null, false);
+        }
+        if ("manage_container".equals(name)) {
+            String service = parsed.input().service() == null ? "" : parsed.input().service();
+            String guard = RiskClassifier.validateContainerAction(parsed.containerAction());
+            if (guard != null) {
+                return new ToolOutcome("ERROR: " + guard, null, null, false);
+            }
+            String guardService = guardService(service);
+            if (guardService != null) {
+                return new ToolOutcome("ERROR: " + guardService, null, null, false);
+            }
+            if (!serviceLogClient.listServices().contains(service)) {
+                return new ToolOutcome("ERROR: unknown service " + service + ". 可用服务必须来自环境服务注册表", null, null, false);
+            }
+            if (containerControlClient == null) {
+                return new ToolOutcome("ERROR: 容器控制能力未启用(服务未配置)", null, null, false);
+            }
+            String content = containerControlClient.control(service, parsed.containerAction());
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : content, null, false);
+        }
         return new ToolOutcome("ERROR: unknown tool " + name
-                + ". 可用工具：execute_sql（只读 SQL）、read_service_logs（容器日志）", null, null, false);
+                + ". 可用工具：execute_sql（只读 SQL）、execute_write_sql（写 SQL,需批准）、"
+                + "read_service_logs（容器日志）、manage_container（容器启停,需批准）", null, null, false);
     }
 
     /**
@@ -676,8 +816,8 @@ public class ChatOrchestrationService {
                     request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                return new StreamTurnResult(true, "上游 " + response.statusCode() + ": "
-                        + abbreviate(err, 300), "", "", null, List.of(), null);
+                return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
+                        "", "", null, List.of(), null);
             }
             boolean done = false;
             try (java.io.BufferedReader reader = new java.io.BufferedReader(
@@ -719,8 +859,10 @@ public class ChatOrchestrationService {
                             int idx = tc.path("index").asInt(callIds.size());
                             callIds.computeIfAbsent(idx, k -> tc.path("id").asText(""));
                             JsonNode fn = tc.path("function");
-                            if (fn.has("name") && fn.path("name").asText().length() > 0) {
-                                callNames.merge(idx, fn.path("name").asText(), String::concat);
+                            if (fn.has("name") && fn.path("name").isTextual() && !fn.path("name").asText().isEmpty()) {
+                                // 工具名只完整出现一次;若中转把 name 分片/重复发送(含 JSON null),
+                                // 直接覆盖而非拼串,避免拼成 "execute_sqlnullnull…"
+                                callNames.put(idx, fn.path("name").asText());
                             }
                             JsonNode args = fn.path("arguments");
                             if (args.isTextual() && !args.asText().isEmpty()) {
@@ -911,6 +1053,57 @@ public class ChatOrchestrationService {
         logRequired.add("service");
         tools.add(logTool);
 
+        // 写 SQL:仅在用户批准后执行(ASK/ASSIST 档)。描述必须让模型明白这会真的改数据
+        ObjectNode writeTool = objectMapper.createObjectNode();
+        writeTool.put("type", "function");
+        ObjectNode writeFn = writeTool.putObject("function");
+        writeFn.put("name", "execute_write_sql");
+        writeFn.put("description", "在已连接的数据库上执行一条写语句(INSERT/UPDATE/DELETE/DDL),会真实修改数据。"
+                + "仅当用户明确要求修改/删除/新增数据时使用;只读查询必须用 execute_sql。"
+                + "限制:一次只允许一条写语句;执行前用户会收到审批请求,未批准则不会执行。"
+                + "示例:{\"sql\": \"UPDATE orders SET status='paid' WHERE id=42\"}");
+        ObjectNode writeParams = writeFn.putObject("parameters");
+        writeParams.put("type", "object");
+        writeParams.put("additionalProperties", false);
+        ObjectNode writeProps = writeParams.putObject("properties");
+        ObjectNode writeSqlProp = writeProps.putObject("sql");
+        writeSqlProp.put("type", "string");
+        writeSqlProp.put("description", "要执行的单条写 SQL(INSERT/UPDATE/DELETE/DDL),不要带 WHERE 以外的子查询副作用");
+        ObjectNode writeDescProp = writeProps.putObject("description");
+        writeDescProp.put("type", "string");
+        writeDescProp.put("description", "一句话描述这次写操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
+                + "正例:「更新订单 42 状态」;反例:不要出现「危险」「风险」等主观词");
+        ArrayNode writeRequired = writeParams.putArray("required");
+        writeRequired.add("sql");
+        tools.add(writeTool);
+
+        // 容器控制:仅在用户批准后执行(ASK/ASSIST 档)
+        ObjectNode containerTool = objectMapper.createObjectNode();
+        containerTool.put("type", "function");
+        ObjectNode containerFn = containerTool.putObject("function");
+        containerFn.put("name", "manage_container");
+        containerFn.put("description", "启动/停止/重启本地 Docker 容器服务。仅在诊断确认服务异常且需要重启才能恢复时使用;"
+                + "只看日志用 read_service_logs。限制:service 必须是已注册容器名;action 只允许 start/stop/restart;"
+                + "执行前用户会收到审批请求,未批准则不会执行。示例:{\"service\": \"nora-redis\", \"action\": \"restart\"}");
+        ObjectNode containerParams = containerFn.putObject("parameters");
+        containerParams.put("type", "object");
+        containerParams.put("additionalProperties", false);
+        ObjectNode containerProps = containerParams.putObject("properties");
+        ObjectNode containerServiceProp = containerProps.putObject("service");
+        containerServiceProp.put("type", "string");
+        containerServiceProp.put("description", "容器名,如 nora-postgres / nora-redis / nora-nacos");
+        ObjectNode containerActionProp = containerProps.putObject("action");
+        containerActionProp.put("type", "string");
+        containerActionProp.put("description", "要执行的动作:start / stop / restart");
+        ObjectNode containerDescProp = containerProps.putObject("description");
+        containerDescProp.put("type", "string");
+        containerDescProp.put("description", "一句话描述这次容器操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
+                + "正例:「重启 Redis 恢复连接」;反例:不要用「操作容器」这类泛化描述");
+        ArrayNode containerRequired = containerParams.putArray("required");
+        containerRequired.add("service");
+        containerRequired.add("action");
+        tools.add(containerTool);
+
         return tools;
     }
 
@@ -961,6 +1154,38 @@ public class ChatOrchestrationService {
         return abbreviate(text, max);
     }
 
+    /**
+     * 把上游返回的错误体转成一行可读信息:能解析出 {@code error.message} 就取它,
+     * 否则退化为 HTTP 状态码短语——避免把整段 {@code {"error":{...}}} JSON 甩给前端/用户。
+     */
+    private static String friendlyUpstreamError(String body) {
+        if (body == null || body.isBlank()) {
+            return "无返回信息";
+        }
+        final String trimmed = body.trim();
+        // 常见错误体形如 {"error":{"message":"...","type":"..."}}
+        final int msgIdx = trimmed.indexOf("\"message\"");
+        if (msgIdx >= 0) {
+            int start = trimmed.indexOf(':', msgIdx) + 1;
+            while (start < trimmed.length() && (trimmed.charAt(start) == ' ' || trimmed.charAt(start) == '"')) {
+                start++;
+            }
+            int end = start;
+            while (end < trimmed.length() && trimmed.charAt(end) != '"') {
+                end++;
+            }
+            String message = end > start ? trimmed.substring(start, end) : null;
+            if (message != null && !message.isBlank()) {
+                // 中转站透传的 "Upstream error: N" 无信息量,补一句状态码语义
+                if (message.matches("(?i)upstream (error|unavailable).*")) {
+                    return message + "（上游模型服务暂不可用,稍后重试）";
+                }
+                return abbreviate(message, 160);
+            }
+        }
+        return abbreviate(trimmed, 160);
+    }
+
     /** Callbacks for the SSE events of one chat turn. */
     public interface ChatEventConsumer {
 
@@ -969,6 +1194,9 @@ public class ChatOrchestrationService {
         void delta(String token);
 
         default void reasoningDelta(Integer roundIndex, String token) {
+        }
+
+        default void approvalRequired(ApprovalRequestDto request) {
         }
 
         void sources(List<CitationDto> citations);

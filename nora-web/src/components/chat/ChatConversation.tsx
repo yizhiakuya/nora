@@ -4,7 +4,7 @@ import { MessageSquare as MessageSquareOpen } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { ChatInputArea } from "./ChatInputArea";
-import { ChatMessage } from "@/lib/api/chatApi";
+import { ChatMessage, PermissionMode } from "@/lib/api/chatApi";
 
 interface ChatConversationProps {
   sessionId: string;
@@ -36,7 +36,7 @@ function estimateContextTokens(messages: ChatMessage[], input: string): number {
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  */
 export function ChatConversation({ sessionId, initialMessages }: ChatConversationProps) {
-  const { messages, input, setInput, isSending, sendMessage, scrollRef, reasoningLevel, setReasoningLevel } = useChat({
+  const { messages, input, setInput, isSending, sendMessage, scrollRef, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode } = useChat({
     initialMessages,
     sessionId,
   });
@@ -59,6 +59,7 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
 
       <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage}
         reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
+        permissionMode={permissionMode} onPermissionModeChange={setPermissionMode}
         contextTokens={estimateContextTokens(messages, input)} />
     </>
   );

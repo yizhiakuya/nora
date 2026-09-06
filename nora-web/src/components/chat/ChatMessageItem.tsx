@@ -1,6 +1,7 @@
 import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check } from "lucide-react";
 import { useState } from "react";
 import { AgentThoughtBlock } from "./AgentThoughtBlock";
+import { ApprovalCard } from "./ApprovalCard";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
@@ -122,7 +123,17 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
                     />
                   )}
 
-                  {msg.error && <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{msg.error}{sessionId && <button type="button" onClick={copyId} className="ml-2 inline-flex items-center gap-1 font-mono text-[10px] text-red-600/70 dark:text-red-400/70 hover:text-red-700 dark:hover:text-red-300 underline underline-dotted cursor-pointer" title="复制会话 ID 用于排障">{copied ? <Check className="w-3 h-3" /> : null}{copied ? "已复制" : `会话 ${sessionId}`}</button>}</div>}
+                  {msg.approval && (
+                    <ApprovalCard
+                      approval={msg.approval}
+                      onResolved={() => undefined}
+                    />
+                  )}
+
+                  {msg.error && <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                    <div className="break-words">{msg.error}</div>
+                    {sessionId && <button type="button" onClick={copyId} className="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-red-600/70 dark:text-red-400/70 hover:text-red-700 dark:hover:text-red-300 underline underline-dotted cursor-pointer" title="复制会话 ID 用于排障">{copied ? <Check className="w-3 h-3" /> : null}{copied ? "已复制" : `复制会话 ID：${sessionId}`}</button>}
+                  </div>}
                   {(msg.content || msg.isTyping) && (
                     <div className="relative animate-in fade-in">
                         <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)]">

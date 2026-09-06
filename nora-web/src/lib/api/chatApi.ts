@@ -55,6 +55,25 @@ export interface ChatMessage {
   sources?: Citation[];
   /** 本轮执行计量(done 事件带) */
   turnMetrics?: ChatTurnMetrics;
+  /** 当前轮等待用户处理的高风险审批 */
+  approval?: ApprovalRequest;
+}
+
+export type PermissionMode = "ask" | "assist" | "full";
+
+export const PERMISSION_MODE_META: Record<PermissionMode, { label: string; description: string }> = {
+  ask: { label: "请求批准", description: "编辑外部文件和使用互联网时始终询问" },
+  assist: { label: "帮我批准", description: "仅对检测到的风险操作请求批准" },
+  full: { label: "完全访问权限", description: "不受限制地访问互联网和你的电脑上的任何文件" },
+};
+
+export interface ApprovalRequest {
+  approvalToken: string;
+  stepId: string;
+  actionType: string;
+  target: string;
+  summary: string;
+  risk: string;
 }
 
 export type ChatResponder = (
@@ -62,7 +81,8 @@ export type ChatResponder = (
   onUpdate: (partial: Partial<ChatMessage>) => void,
   sessionId?: string,
   model?: string,
-  reasoningLevel?: string
+  reasoningLevel?: string,
+  permissionMode?: PermissionMode
 ) => Promise<void>;
 
 interface IntentResponse {

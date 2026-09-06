@@ -1,9 +1,10 @@
 import { useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap, Check, Settings, Brain } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap, Check, Settings, Brain, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
 import { useModelProviders, REASONING_LEVELS } from "@/hooks/useModelProviders";
+import { PERMISSION_MODE_META, type PermissionMode } from "@/lib/api/chatApi";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,9 +25,12 @@ interface ChatInputAreaProps {
   /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
   reasoningLevel?: string;
   onReasoningLevelChange?: (level: string | undefined) => void;
+  /** 权限模式:请求批准 / 帮我批准 / 完全访问权限 */
+  permissionMode?: PermissionMode;
+  onPermissionModeChange?: (mode: PermissionMode) => void;
 }
 
-export function ChatInputArea({ input, setInput, isSending, onSend, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange }: ChatInputAreaProps) {
+export function ChatInputArea({ input, setInput, isSending, onSend, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange }: ChatInputAreaProps) {
   const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
@@ -102,13 +106,13 @@ export function ChatInputArea({ input, setInput, isSending, onSend, contextToken
               ></textarea>
 
               <div className="flex justify-between items-end p-2.5 pt-1">
-                  <div className="flex gap-0.5">
+                  <div className="flex shrink-0 gap-0.5">
                       <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><Paperclip className="w-4 h-4" /></Button>
                       <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><FileText className="w-4 h-4" /></Button>
                       <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><AtSign className="w-4 h-4" /></Button>
                   </div>
 
-                  <div className="flex gap-2 items-center">
+                  <div className="flex min-w-0 flex-1 justify-end gap-2 items-center">
                       <div className="flex items-center gap-2 px-2 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer">
                           <Layers className="w-3 h-3 text-muted-foreground" />
                           <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex">
@@ -159,10 +163,54 @@ export function ChatInputArea({ input, setInput, isSending, onSend, contextToken
 
                       <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
 
+                      {/* 三档权限模式 */}
+                      {onPermissionModeChange && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={`h-7 text-xs px-2 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
+                              title="权限模式"
+                            >
+                              <ShieldAlert className="w-3 h-3 mr-1" />
+                              {PERMISSION_MODE_META[permissionMode].label}
+                              <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-72 rounded-xl p-1.5">
+                            <DropdownMenuLabel className="px-2 py-1.5 text-xs text-muted-foreground">权限模式</DropdownMenuLabel>
+                            {(Object.keys(PERMISSION_MODE_META) as PermissionMode[]).map((mode) => {
+                              const meta = PERMISSION_MODE_META[mode];
+                              const active = permissionMode === mode;
+                              return (
+                                <DropdownMenuItem
+                                  key={mode}
+                                  className={`items-start gap-2.5 rounded-lg py-2.5 cursor-pointer ${mode === "full" ? "text-orange-600 dark:text-orange-400 focus:text-orange-600 dark:focus:text-orange-400" : ""}`}
+                                  onClick={() => {
+                                    onPermissionModeChange(mode);
+                                    toast.success(`权限模式已切换为「${meta.label}」`);
+                                  }}
+                                >
+                                  <ShieldAlert className={`w-4 h-4 mt-0.5 shrink-0 ${mode === "full" ? "text-orange-500" : "text-muted-foreground"}`} />
+                                  <span className="flex-1 min-w-0">
+                                    <span className="block text-xs font-medium">{meta.label}</span>
+                                    <span className="block text-[10px] leading-relaxed text-muted-foreground mt-0.5 whitespace-normal">{meta.description}</span>
+                                  </span>
+                                  {active && <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                                </DropdownMenuItem>
+                              );
+                            })}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
+
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground">
-                            {defaultModel} <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                            <span className="max-w-[160px] truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-52 rounded-xl">
@@ -196,7 +244,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, contextToken
 
                       <Button
                         size="icon"
-                        className="w-8 h-8 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white rounded-lg ml-1 transition-colors disabled:opacity-50"
+                        className="shrink-0 w-8 h-8 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white rounded-lg ml-1 transition-colors disabled:opacity-50"
                         onClick={onSend}
                         disabled={!input.trim() || isSending}
                       >

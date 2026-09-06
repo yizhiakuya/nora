@@ -76,6 +76,17 @@ public class DatasourceController {
         return ApiResponse.ok(service.executeReadOnly(id, request.sql()));
     }
 
+    /**
+     * Executes a single write statement (INSERT/UPDATE/DELETE/DDL) after the
+     * agent's approval flow. Guarded: one statement, write verb only, capped
+     * row mutation count via the driver's max-rows equivalent (statement
+     * timeout 30s). Only call after explicit user approval.
+     */
+    @PostMapping("/{id}/execute")
+    public ApiResponse<QueryResult> execute(@PathVariable long id, @RequestBody QueryRequest request) {
+        return ApiResponse.ok(service.executeWrite(id, request.sql()));
+    }
+
     /** Query history of a connection, newest first. */
     @GetMapping("/{id}/history")
     public ApiResponse<List<DatasourceServiceImpl.HistoryView>> history(

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChatMessage, ChatResponder, MockChatAPI } from "@/lib/api/chatApi";
+import { ChatMessage, ChatResponder, MockChatAPI, type PermissionMode } from "@/lib/api/chatApi";
 import { AgentAPI } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
@@ -23,6 +23,8 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
   const model = useModelProviders((s) => s.defaultModel);
   /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
   const [reasoningLevel, setReasoningLevel] = useState<string | undefined>(undefined);
+  /** 权限模式:默认仅对高风险操作请求批准 */
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("assist");
   const scrollRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
 
@@ -86,7 +88,8 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
         (partial) => updateMessage(assistantMsgId, partial),
         sessionId,
         model === "未配置" ? undefined : model,
-        reasoningLevel
+        reasoningLevel,
+        permissionMode
       );
     } catch (error) {
       console.error("Failed to send message:", error);
@@ -94,7 +97,7 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
     } finally {
       if (mountedRef.current) setIsSending(false);
     }
-  }, [input, isSending, responder, sessionId, model, reasoningLevel, updateMessage]);
+  }, [input, isSending, responder, sessionId, model, reasoningLevel, permissionMode, updateMessage]);
 
   const clear = useCallback(() => {
     setMessages([]);
@@ -110,5 +113,7 @@ export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentA
     clear,
     reasoningLevel,
     setReasoningLevel,
+    permissionMode,
+    setPermissionMode,
   };
 }

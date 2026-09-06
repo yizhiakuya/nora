@@ -194,6 +194,36 @@ public class DatasourceServiceImpl {
                 id, limit);
     }
 
+    /**
+     * Executes a single write statement after the agent's approval flow.
+     * Guarded: write verb only (agent-side RiskClassifier is advisory; this is
+     * the enforcing layer), one statement, 30s timeout. Returns the affected
+     * row count as a single-cell result. Persisted to query_history.
+     */
+    public QueryResult executeWrite(long id, String sql) {
+        WriteGuard.requireWrite(sql);
+        JdbcConnections.Params params = params(id);
+        long start = System.currentTimeMillis();
+        try (Connection conn = JdbcConnections.open(params);
+             Statement stmt = conn.createStatement()) {
+            stmt.setQueryTimeout(30);
+            int affected = stmt.executeUpdate(sql);
+            long duration = System.currentTimeMillis() - start;
+            saveHistory(id, sql, duration, affected, "success");
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);
+            return new QueryResult(
+                    List.of("rows_affected"),
+                    List.of(List.of(String.valueOf(affected))),
+                    affected, duration, false);
+        } catch (SQLException e) {
+            saveHistory(id, sql, System.currentTimeMillis() - start, 0, "error");
+            throw new BusinessException(502, "execute failed: " + shorten(e.getMessage()));
+        } catch (Exception e) {
+            saveHistory(id, sql, System.currentTimeMillis() - start, 0, "error");
+            throw new BusinessException(502, "execute failed: " + shorten(e.getMessage()));
+        }
+    }
+
     private void saveHistory(long connectionId, String sql, long durationMs, int rows, String status) {
         try {
             jdbcTemplate.update(
