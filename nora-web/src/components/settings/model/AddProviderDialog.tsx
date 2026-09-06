@@ -27,6 +27,30 @@ interface AddProviderDialogProps {
 }
 
 /**
+ * 模糊匹配:query 的字符按序出现在 target 中即命中(子序列)。
+ * 忽略大小写与常见分隔符(-_./@ :),「dsflash」能命中「DeepSeek-V4-Flash」。
+ */
+export function fuzzyMatch(target: string, query: string): boolean {
+  if (!query) return true;
+  const clean = (s: string) => s.toLowerCase().replace(/[-_./@:\s]/g, "");
+  const t = clean(target);
+  const q = clean(query);
+  if (!q) return true;
+  let ti = 0;
+  for (const ch of q) {
+    ti = t.indexOf(ch, ti);
+    if (ti === -1) return false;
+    ti += 1;
+  }
+  return true;
+}
+
+function fuzzyFilter(models: string[], query: string): string[] {
+  if (!query.trim()) return models;
+  return models.filter((m) => fuzzyMatch(m, query));
+}
+
+/**
  * 服务商接入/编辑弹窗。
  * 新增模式三步:基本信息 → 获取模型列表(连通测试顺便拉取) → 勾选要启用的模型并可逐个覆盖协议。
  * 编辑模式:改名称/协议/端点/密钥;密钥留空保持原值。
@@ -46,6 +70,8 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [modelProtocols, setModelProtocols] = useState<Record<string, ProviderProtocol>>({});
   const [fetching, setFetching] = useState(false);
+  /** 模型搜索框输入(模糊筛选,不影响已勾选集合) */
+  const [modelFilter, setModelFilter] = useState("");
 
   // 编辑模式：打开时回填；新增模式：重置
   useEffect(() => {
@@ -269,8 +295,14 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
                 <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer" onClick={() => setAllModels(false)}>清空</button>
               </div>
             </div>
+            <Input
+              placeholder="搜索筛选模型（支持模糊匹配）"
+              className="h-8 text-xs"
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value)}
+            />
             <div className="max-h-56 overflow-auto custom-scroll space-y-0.5">
-              {discovered.map((m) => {
+              {fuzzyFilter(discovered, modelFilter).map((m) => {
                 const checked = selected.has(m);
                 const mp = modelProtocols[m] ?? protocol;
                 return (
@@ -290,6 +322,11 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
                   </div>
                 );
               })}
+              {fuzzyFilter(discovered, modelFilter).length === 0 && (
+                <p className="text-[11px] text-muted-foreground text-center py-4">
+                  无匹配「{modelFilter}」的模型
+                </p>
+              )}
             </div>
             {selected.size === 0 && (
               <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
