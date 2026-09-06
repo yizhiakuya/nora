@@ -1,16 +1,24 @@
 import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, beforeEach } from "vitest";
 import { useFiles } from "./useFiles";
-import { MOCK_FILES } from "@/lib/mockData";
+import { FileText } from "lucide-react";
+import type { FileItem } from "@/types";
+
+/** 测试夹具:替代已删除的 MOCK_FILES(store 初始为空,后端是唯一数据源) */
+const FIXTURE_FILES: FileItem[] = [
+  { id: 1, name: "测试开发报告.docx", type: "Word 文档", size: "2.1 MB", date: "2026-09-06 10:00", icon: FileText, color: "text-blue-500", indexed: false },
+  { id: 2, name: "sales.xlsx", type: "Excel 表格", size: "88 KB", date: "2026-09-06 11:00", icon: FileText, color: "text-green-600", indexed: true },
+];
 
 describe("useFiles", () => {
   beforeEach(() => {
-    useFiles.setState({ files: MOCK_FILES });
+    useFiles.setState({ files: FIXTURE_FILES });
   });
 
-  it("初始状态包含 MOCK_FILES", () => {
+  it("初始状态为空(后端是唯一数据源)", () => {
+    useFiles.setState({ files: [] });
     const { result } = renderHook(() => useFiles());
-    expect(result.current.files.length).toBe(MOCK_FILES.length);
+    expect(result.current.files).toEqual([]);
   });
 
   it("addFile 能够正确新增文件并推入列表顶部", () => {
@@ -18,7 +26,6 @@ describe("useFiles", () => {
     act(() => {
       result.current.addFile("测试开发报告.docx", "2.1 MB");
     });
-    expect(result.current.files.length).toBe(MOCK_FILES.length + 1);
     expect(result.current.files[0].name).toBe("测试开发报告.docx");
     expect(result.current.files[0].type).toBe("Word 文档");
     expect(result.current.files[0].indexed).toBe(false);

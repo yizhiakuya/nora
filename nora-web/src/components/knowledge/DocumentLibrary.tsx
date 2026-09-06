@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { Search } from "lucide-react";
-import { SOURCE_META } from "@/lib/knowledgeData";
+import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeDoc, KnowledgeSource } from "@/types";
 

@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { BackendOfflineBanner } from "@/components/layout/BackendOfflineBanner";
+import { useBackendHealth } from "@/hooks/useBackendHealth";
 
 import HomePage from "@/app/page";
 import FilesPage from "@/app/files/page";
@@ -26,6 +28,11 @@ const TITLES: Record<string, string> = {
 
 function RouteShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const startPolling = useBackendHealth((s) => s.startPolling);
+  // 全局后端健康探测:离线时各页渲染正规空态,横幅提示可重试
+  useEffect(() => {
+    startPolling();
+  }, [startPolling]);
   useEffect(() => {
     const title = TITLES[location.pathname];
     document.title = title ? `${title} · Nora 个人工作台` : "Nora 个人工作台";
@@ -33,7 +40,10 @@ function RouteShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-screen flex overflow-hidden text-gray-800 dark:text-gray-100 bg-background dark:bg-background">
       <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden bg-background relative">{children}</main>
+      <main className="flex-1 flex flex-col overflow-hidden bg-background relative">
+        <BackendOfflineBanner />
+        {children}
+      </main>
     </div>
   );
 }

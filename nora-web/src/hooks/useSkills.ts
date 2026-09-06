@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { Braces } from "lucide-react";
 import { Skill } from "@/types";
-import { MOCK_SKILLS } from "@/lib/mockData";
 
 interface SkillsState {
   skills: Skill[];
@@ -12,7 +11,7 @@ interface SkillsState {
   toggleSkill: (id: number) => void;
 }
 
-/** 自定义技能的固定视觉样式（官方技能以 MOCK_SKILLS 为准）。 */
+/** 自定义技能的统一视觉样式。 */
 const CUSTOM_VISUAL = {
   icon: Braces,
   color: "text-blue-500 dark:text-blue-400",
@@ -38,12 +37,11 @@ function stripVisual(s: Skill): PersistedSkill {
 }
 
 function restoreVisual(s: Skill | PersistedSkill): Skill {
-  const seed = s.isOfficial ? MOCK_SKILLS.find((m) => m.id === s.id) : undefined;
   return {
     ...s,
-    icon: seed?.icon ?? CUSTOM_VISUAL.icon,
-    color: seed?.color ?? CUSTOM_VISUAL.color,
-    bg: seed?.bg ?? CUSTOM_VISUAL.bg,
+    icon: CUSTOM_VISUAL.icon,
+    color: CUSTOM_VISUAL.color,
+    bg: CUSTOM_VISUAL.bg,
   } as Skill;
 }
 
@@ -58,7 +56,7 @@ function restoreVisual(s: Skill | PersistedSkill): Skill {
 export const useSkills = create<SkillsState>()(
   persist<SkillsState, [], [], PersistedSkillsState>(
     (set) => ({
-      skills: MOCK_SKILLS,
+      skills: [],
       addSkill: (skill) => set((state) => ({ skills: [...state.skills, skill] })),
       updateSkill: (id, patch) =>
         set((state) => ({ skills: state.skills.map((s) => (s.id === id ? { ...s, ...patch } : s)) })),

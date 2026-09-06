@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { MOCK_AUTOMATIONS, AutomationRule, MOCK_EXECUTIONS, ExecutionRecord } from "@/lib/devData";
+import type { AutomationRule, ExecutionRecord } from "@/types";
 import { useNotifications } from "./useNotifications";
 import { automationsApi } from "@/lib/services/automationsApi";
 import { USE_BACKEND } from "@/lib/api/client";
@@ -41,8 +41,8 @@ function looksLikeSql(action: string): boolean {
 export const useAutomations = create<AutomationsState>()(
   persist(
     (set, get) => ({
-      rules: MOCK_AUTOMATIONS,
-      executions: MOCK_EXECUTIONS,
+      rules: [],
+      executions: [],
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         try {

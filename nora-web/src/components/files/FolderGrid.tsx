@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { FolderItem } from "@/types";
 
 export function FolderGrid({ folders }: { folders: FolderItem[] }) {
+  if (folders.length === 0) return null;
   return (
     <div className="animate-in fade-in slide-in-from-top-4 duration-500">
       <h2 className="text-sm font-bold text-foreground mb-4">文件夹</h2>

@@ -1,7 +1,8 @@
 'use client';
 
-import { Folder, Database, Server, ArrowRight } from "lucide-react";
-import { MOCK_GRAPH } from "@/lib/knowledgeData";
+import { Folder, Database, Server, Network, ArrowRight } from "lucide-react";
+import { EmptyState } from "@/components/ui/custom/States";
+import { Button } from "@/components/ui/button";
 
 function NodeGroup({ icon: Icon, label, items, color }: {
   icon: React.ElementType; label: string; items: string[]; color: string;
@@ -26,10 +27,36 @@ function NodeGroup({ icon: Icon, label, items, color }: {
   );
 }
 
-export function DataGraphView() {
+interface GraphProject {
+  id: number;
+  name: string;
+  files: string[];
+  tables: string[];
+  services: string[];
+}
+
+/**
+ * 知识图谱视图:后端图谱索引尚未建设(架构 v2 Phase 5)。
+ * 后端提供图谱 API 后由此组件渲染真实数据;当前显示正规空态。
+ */
+export function DataGraphView({ projects }: { projects?: GraphProject[] }) {
+  if (!projects || projects.length === 0) {
+    return (
+      <EmptyState
+        icon={Network}
+        title="知识图谱尚未建设"
+        description="图谱索引在架构路线图 Phase 5 实现。届时文档、数据表与服务之间的关联将在此可视化。"
+        action={
+          <Button variant="outline" size="sm" className="h-8 text-xs" disabled>
+            敬请期待
+          </Button>
+        }
+      />
+    );
+  }
   return (
     <div className="space-y-4">
-      {MOCK_GRAPH.map((project) => (
+      {projects.map((project) => (
         <div
           key={project.id}
           className="bg-card border border-border rounded-xl p-5"

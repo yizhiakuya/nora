@@ -1,5 +1,5 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import type { AutomationRule, ExecutionRecord } from "@/lib/devData";
+import type { AutomationRule, ExecutionRecord } from "@/types";
 
 /** 后端 automation_rule 行 */
 export interface BackendRule {

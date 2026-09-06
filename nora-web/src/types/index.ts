@@ -158,3 +158,91 @@ export interface QueryHistory {
   status: "success" | "error";
 }
 
+// ===== 环境控制台 / 自动任务 / 环境变量(原 devData 类型,后端契约层) =====
+
+export interface ServiceInstance {
+  id: number;
+  name: string;
+  image: string;
+  port: number;
+  status: "running" | "stopped" | "error";
+  health: "healthy" | "degraded" | "down";
+  uptime: string;
+  cpu: string;
+  memory: string;
+}
+
+export const MOCK_SERVICES: ServiceInstance[] = [
+  { id: 1, name: "api-gateway",   image: "node:20-alpine",   port: 3000, status: "running", health: "healthy", uptime: "3d 4h",   cpu: "12%",  memory: "245 MB" },
+  { id: 2, name: "worker-service", image: "node:20-alpine",  port: 3001, status: "running", health: "healthy", uptime: "3d 4h",   cpu: "8%",   memory: "180 MB" },
+  { id: 3, name: "postgres",       image: "postgres:16",     port: 5432, status: "running", health: "healthy", uptime: "7d 12h",  cpu: "4%",   memory: "420 MB" },
+  { id: 4, name: "redis",          image: "redis:7-alpine",  port: 6379, status: "stopped", health: "down",    uptime: "—",       cpu: "0%",   memory: "0 MB" },
+];
+
+export interface LogEntry {
+  time: string;
+  level: "info" | "warn" | "error";
+  service: string;
+  message: string;
+}
+
+export const MOCK_LOGS: LogEntry[] = [
+  { time: "14:02:31", level: "error", service: "api-gateway",   message: "Connection refused: redis://localhost:6379 (ECONNREFUSED)" },
+  { time: "14:02:32", level: "warn",  service: "api-gateway",   message: "Retrying Redis connection in 5s... (attempt 3/10)" },
+  { time: "14:02:30", level: "info",  service: "worker-service", message: "Job queue idle, waiting for tasks..." },
+  { time: "14:02:28", level: "info",  service: "postgres",       message: "Checkpoint complete: wrote 842 buffers" },
+  { time: "14:02:25", level: "error", service: "worker-service", message: "Failed to publish event: cache_unavailable" },
+  { time: "14:02:20", level: "info",  service: "api-gateway",   message: "GET /api/v2/products 200 12ms" },
+  { time: "14:02:15", level: "warn",  service: "postgres",       message: "Connection pool usage at 80% (16/20)" },
+];
+
+// ==========================================
+// 自动任务
+// ==========================================
+
+export interface AutomationRule {
+  id: number;
+  name: string;
+  trigger: string;
+  action: string;
+  enabled: boolean;
+  lastRun: string;
+  nextRun?: string;
+  status: "active" | "paused" | "error";
+}
+
+export const MOCK_AUTOMATIONS: AutomationRule[] = [
+  { id: 1, name: "每日数据备份",    trigger: "每日 02:00",         action: "pg_dump → S3",           enabled: true,  lastRun: "今天 02:00", nextRun: "明天 02:00", status: "active" },
+  { id: 2, name: "CSV 上传入库",    trigger: "文件上传 (.csv)",    action: "解析 → 批量插入 orders",  enabled: true,  lastRun: "1 小时前",   status: "active" },
+  { id: 3, name: "服务异常告警",    trigger: "日志 ERROR ≥ 5/min", action: "AI 诊断 → 发通知",       enabled: true,  lastRun: "3 分钟前",   status: "active" },
+  { id: 4, name: "周报生成",        trigger: "每周五 17:00",       action: "查询汇总 → Markdown 报告", enabled: true,  lastRun: "3 天前",    nextRun: "周五 17:00", status: "active" },
+  { id: 5, name: "缓存预热",        trigger: "服务启动后",         action: "刷新热点数据到 Redis",    enabled: false, lastRun: "—",        status: "paused" },
+];
+
+/** 自动任务执行记录 */
+export interface ExecutionRecord {
+  id: number;
+  ruleName: string;
+  time: string;
+  duration: string;
+  status: "success" | "failed" | "running";
+  detail: string;
+}
+
+export const MOCK_EXECUTIONS: ExecutionRecord[] = [
+  { id: 1, ruleName: "服务异常告警",     time: "14:02", duration: "1.2s",  status: "success", detail: "AI 诊断 ECONNREFUSED → 已生成修复建议" },
+  { id: 2, ruleName: "每日数据备份",     time: "02:00", duration: "42s",   status: "success", detail: "pg_dump → S3 (myapp_dev, 128 MB)" },
+  { id: 3, ruleName: "CSV 上传入库",     time: "13:05", duration: "3.8s",  status: "success", detail: "orders_export.csv → 826 行已插入" },
+  { id: 4, ruleName: "周报生成",         time: "周五 17:00", duration: "12s", status: "failed", detail: "查询超时（>10s）：analytics_events 表锁等待" },
+];
+
+export interface EnvVar {
+  key: string;
+  value: string;
+  secret: boolean;
+  /** 用途说明（显示在变量名下方） */
+  note?: string;
+}
+
+/** 用户自定义凭据与环境变量（设置 → 环境变量）：
+ *  在自定义技能、自动任务配置中以 {{KEY}} 引用；secret 值对 AI 自动脱敏。 */

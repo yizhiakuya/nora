@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Play, History, Loader2, Download, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
-import { MOCK_QUERIES } from "@/lib/devData";
 import { useAutomations } from "@/hooks/useAutomations";
 import { QueryHistory } from "@/types";
 import { toast } from "sonner";
@@ -49,7 +48,7 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
   const [hasRun, setHasRun] = useState(false);
   const [result, setResult] = useState<BackendQueryResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
-  const [history, setHistory] = useState<QueryHistory[]>(MOCK_QUERIES);
+  const [history, setHistory] = useState<QueryHistory[]>([]);
   const addRule = useAutomations((s) => s.addRule);
   const [aiGenerating, setAiGenerating] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();

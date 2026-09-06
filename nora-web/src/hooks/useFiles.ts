@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { FileItem } from "@/types";
-import { MOCK_FILES } from "@/lib/mockData";
+import { filesApi } from "@/lib/services/filesApi";
 import { FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
 
 type PersistedFile = Omit<FileItem, "icon">;
@@ -45,6 +45,8 @@ interface FilesState {
   markIndexed: (id: number) => void;
   /** 后端模式:用服务端 FileItem 覆盖同 id 行(或插入到头部) */
   syncFile: (file: FileItem) => void;
+  /** 以服务端列表为准整体刷新(后端恢复在线时调用) */
+  syncFromBackend: () => Promise<void>;
 }
 
 /**
@@ -53,7 +55,15 @@ interface FilesState {
 export const useFiles = create<FilesState>()(
   persist<FilesState, [], [], PersistedFilesState>(
     (set) => ({
-      files: MOCK_FILES,
+      files: [],
+      syncFromBackend: async () => {
+        try {
+          const files = await filesApi.listFiles();
+          set({ files });
+        } catch {
+          /* 后端不可用时保留现状(横幅已提示) */
+        }
+      },
       addFile: (name, size = "1.5 MB") => {
         const meta = getFileMeta(name);
         const newFile: FileItem = {

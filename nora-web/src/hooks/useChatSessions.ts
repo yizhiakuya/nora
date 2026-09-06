@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ChatMessage } from "@/lib/api/chatApi";
-import { SEED_CONVERSATION } from "@/lib/api/chatApi";
 
 export interface ChatSession {
   id: string;
@@ -22,13 +21,6 @@ interface ChatSessionsState {
 
 const DEFAULT_TITLE = "新对话";
 
-const seedSession = (): ChatSession => ({
-  id: "seed-session",
-  title: "查询订单状态分布",
-  updatedAt: Date.now(),
-  messages: SEED_CONVERSATION,
-});
-
 /**
  * 对话会话唯一数据源：会话列表、切换、删除、消息持久化
  * （localStorage persist，刷新不丢）。
@@ -36,7 +28,7 @@ const seedSession = (): ChatSession => ({
 export const useChatSessions = create<ChatSessionsState>()(
   persist(
     (set, get) => ({
-      sessions: [seedSession()],
+      sessions: [],
       activeId: "seed-session",
       createSession: () => {
         const id = `sess-${Date.now()}`;
@@ -47,7 +39,7 @@ export const useChatSessions = create<ChatSessionsState>()(
       deleteSession: (id) => {
         const { sessions, activeId } = get();
         const remaining = sessions.filter((s) => s.id !== id);
-        const next = remaining.length > 0 ? remaining : [seedSession()];
+        const next = remaining;
         set({
           sessions: next,
           activeId: activeId === id ? next[0].id : activeId,

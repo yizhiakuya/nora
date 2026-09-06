@@ -6,7 +6,7 @@ import { Plus, Trash2, Eye, EyeOff, Copy, Check, KeyRound, Braces } from "lucide
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { EnvVar } from "@/lib/devData";
+import type { EnvVar } from "@/types";
 import { usePreferences } from "@/hooks/usePreferences";
 
 export function EnvVarsSettings() {

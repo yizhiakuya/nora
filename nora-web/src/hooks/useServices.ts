@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { ServiceInstance, MOCK_SERVICES, LogEntry, MOCK_LOGS } from "@/lib/devData";
+import type { ServiceInstance, LogEntry } from "@/types";
 import { environmentApi } from "@/lib/services/environmentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -35,8 +35,8 @@ function levelOf(line: string): LogEntry["level"] {
 export const useServices = create<ServicesState>()(
   persist(
     (set, get) => ({
-      services: MOCK_SERVICES,
-      logs: MOCK_LOGS,
+      services: [],
+      logs: [],
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         try {

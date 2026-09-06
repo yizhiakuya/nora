@@ -1,17 +1,27 @@
 import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, beforeEach } from "vitest";
 import { useServices } from "./useServices";
-import { MOCK_SERVICES, MOCK_LOGS } from "@/lib/devData";
+import type { ServiceInstance, LogEntry } from "@/types";
+
+/** 测试夹具:替代已删除的 MOCK_SERVICES/MOCK_LOGS(store 初始为空,后端是唯一数据源) */
+const FIXTURE_SERVICES: ServiceInstance[] = [
+  { id: 1, name: "api-gateway", image: "node:20-alpine", port: 3000, status: "running", health: "healthy", uptime: "3d 4h", cpu: "12%", memory: "245 MB" },
+  { id: 2, name: "redis", image: "redis:7-alpine", port: 6379, status: "stopped", health: "down", uptime: "—", cpu: "0%", memory: "0 MB" },
+];
+const FIXTURE_LOGS: LogEntry[] = [
+  { time: "14:02:31", level: "error", service: "api-gateway", message: "Connection refused" },
+];
 
 describe("useServices", () => {
   beforeEach(() => {
-    useServices.setState({ services: MOCK_SERVICES, logs: MOCK_LOGS });
+    useServices.setState({ services: FIXTURE_SERVICES, logs: FIXTURE_LOGS });
   });
 
-  it("初始化包含预置服务与日志列表", () => {
+  it("初始状态为空(后端是唯一数据源)", () => {
+    useServices.setState({ services: [], logs: [] });
     const { result } = renderHook(() => useServices());
-    expect(result.current.services.length).toBe(MOCK_SERVICES.length);
-    expect(result.current.logs.length).toBe(MOCK_LOGS.length);
+    expect(result.current.services).toEqual([]);
+    expect(result.current.logs).toEqual([]);
   });
 
   it("toggleService 可以切换服务运行与停止状态并追加实时日志", () => {

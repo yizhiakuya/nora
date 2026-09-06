@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, Terminal, Zap, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { LogEntry, MOCK_LOGS } from "@/lib/devData";
+import type { LogEntry } from "@/types";
 import { useServices } from "@/hooks/useServices";
 import { useAutomations } from "@/hooks/useAutomations";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -131,7 +131,7 @@ export function LogStream() {
       {!selected && (
         <div className="border-t border-border px-4 py-2 flex items-center justify-between">
           <span className="text-[10px] text-muted-foreground">点击日志行获取 AI 诊断</span>
-          <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => handleSelect(MOCK_LOGS[0])}>
+          <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" disabled>
             <Sparkles className="w-2.5 h-2.5 mr-0.5" /> 诊断最新错误
           </Button>
         </div>

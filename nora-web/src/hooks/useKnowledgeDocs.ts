@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { KnowledgeDoc } from "@/types";
-import { ALL_DOCS } from "@/lib/knowledgeData";
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
 import type { KnowledgeDoc as BackendKnowledgeDoc } from "@/types";
 
@@ -22,7 +21,7 @@ interface KnowledgeDocsState {
 export const useKnowledgeDocs = create<KnowledgeDocsState>()(
   persist(
     (set, get) => ({
-      docs: ALL_DOCS,
+      docs: [],
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         const docs = await requestJson<BackendKnowledgeDoc[]>("/rag/docs");

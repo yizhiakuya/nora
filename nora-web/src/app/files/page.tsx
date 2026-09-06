@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { FolderGrid } from "@/components/files/FolderGrid";
 import { FileTable } from "@/components/files/FileTable";
 import { UploadModal } from "@/components/ui/custom/UploadModal";
-import { MOCK_FOLDERS } from "@/lib/mockData";
 import { useSelection } from "@/hooks/useSelection";
 import { useSimulatedUpload } from "@/hooks/useUpload";
 import { useFileViewer } from "@/hooks/useFileViewer";
@@ -132,8 +131,6 @@ export default function FilesPage() {
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          <FolderGrid folders={MOCK_FOLDERS} />
-
           <div className="flex items-center justify-between mb-4 animate-in fade-in">
             <h2 className="text-sm font-bold text-foreground">所有文件</h2>
             <div className="text-xs text-muted-foreground">共 {files.length} 个文件</div>

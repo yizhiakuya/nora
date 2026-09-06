@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { EnvVar, MOCK_ENV_VARS } from "@/lib/devData";
-import { MOCK_RULES } from "@/lib/knowledgeData";
+import type { EnvVar } from "@/types";
 import { PipelineRule } from "@/types";
 
 export interface AccountPrefs {
@@ -66,8 +65,8 @@ export const usePreferences = create<PreferencesState>()(
       account: DEFAULT_ACCOUNT,
       notifications: DEFAULT_NOTIFICATIONS,
       knowledgeAI: DEFAULT_KNOWLEDGE_AI,
-      envVars: MOCK_ENV_VARS,
-      cleaningRules: MOCK_RULES,
+      envVars: [],
+      cleaningRules: [],
       setAccount: (patch) => set((s) => ({ account: { ...s.account, ...patch } })),
       setNotifications: (patch) =>
         set((s) => ({ notifications: { ...s.notifications, ...patch } })),

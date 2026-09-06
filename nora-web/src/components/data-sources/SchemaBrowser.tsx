@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ChevronRight, Table2, RefreshCw, Loader2, Database, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MOCK_TABLES } from "@/lib/devData";
+
 import { datasourcesApi, type BackendTable } from "@/lib/services/datasourcesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -17,9 +17,9 @@ interface SchemaBrowserProps {
 
 /**
  * Schema 浏览:USE_BACKEND 时走 datasource-service 的 DatabaseMetaData
- * 真实表结构;Mock 模式沿用 devData。
  */
 export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBrowserProps) {
+  // 未选连接时显示空态(不提供假 schema 数据)
   const backendMode = USE_BACKEND && connectionId !== undefined;
   const [serverTables, setServerTables] = useState<BackendTable[] | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -48,11 +48,8 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendMode, connectionId]);
 
-  const builtin = backendMode ? [] : (MOCK_TABLES[database] ?? []);
   const tables: { name: string; columns: { name: string; type: string }[] }[] =
-    backendMode
-      ? (serverTables ?? []).map((t) => ({ name: t.name, columns: t.columns }))
-      : builtin.map((t) => ({ name: t.name, columns: t.columns }));
+    (serverTables ?? []).map((t) => ({ name: t.name, columns: t.columns }));
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">

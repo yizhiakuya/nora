@@ -1,5 +1,5 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import type { ServiceInstance } from "@/lib/devData";
+import type { ServiceInstance } from "@/types";
 
 /** 后端 ContainerView 行 */
 export interface BackendContainer {

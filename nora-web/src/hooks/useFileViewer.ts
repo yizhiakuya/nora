@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import { FileItem, FilePreview } from "@/types";
-import { MockAPI } from "@/lib/api/mockApi";
 import { filesApi } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -24,9 +23,7 @@ export function useFileViewer() {
     setPreview(null);
     setStatus("loading");
     try {
-      const data = USE_BACKEND
-        ? await filesApi.fetchPreview(file.id, file.name)
-        : await MockAPI.files.getPreview(file);
+      const data = await filesApi.fetchPreview(file.id, file.name);
       if (seq !== requestSeq.current) return; // 过期响应，丢弃
       setPreview(data);
       setStatus("ready");

@@ -5,7 +5,6 @@ import { Database, Server, BookOpen } from "lucide-react";
 import { useConnections } from "@/hooks/useConnections";
 import { useServices } from "@/hooks/useServices";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
-import { MOCK_INDEX_STATS } from "@/lib/knowledgeData";
 
 export function HomeSidePanel() {
   const navigate = useNavigate();
@@ -83,7 +82,7 @@ export function HomeSidePanel() {
       </div>
       <div className="bg-card border border-border rounded-xl shadow-sm p-4">
         <div className="text-2xl font-bold text-foreground tabular-nums">{totalChunks.toLocaleString()} <span className="text-sm text-muted-foreground font-normal">chunks</span></div>
-        <div className="text-[10px] text-muted-foreground mt-0.5">{indexedDocsCount} 个文档已索引 · {MOCK_INDEX_STATS.model}</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">{indexedDocsCount} 个文档已索引</div>
       </div>
     </div>
   );

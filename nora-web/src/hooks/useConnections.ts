@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DbConnection } from "@/types";
-import { MOCK_CONNECTIONS } from "@/lib/devData";
 import { datasourcesApi } from "@/lib/services/datasourcesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -21,7 +20,7 @@ interface ConnectionsState {
 export const useConnections = create<ConnectionsState>()(
   persist(
     (set, get) => ({
-      connections: MOCK_CONNECTIONS,
+      connections: [],
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         try {

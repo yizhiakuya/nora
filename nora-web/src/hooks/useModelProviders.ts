@@ -45,20 +45,7 @@ export interface ModelProvider {
   modelSettings?: ModelSettings;
 }
 
-const SEED: ModelProvider[] = [
-  {
-    id: 1, name: "OpenAI", url: "https://api.openai.com/v1", masked: "sk-demo-••••••••4821", protocol: "openai" as const,
-    enabled: true, status: "ok", models: ["GPT-4o", "GPT-4o mini", "o3-mini"],
-  },
-  {
-    id: 2, name: "DeepSeek", url: "https://api.deepseek.com/v1", masked: "sk-ds-••••••••1a9b", protocol: "openai" as const,
-    enabled: false, status: "untested", models: ["deepseek-chat", "deepseek-reasoner"],
-  },
-  {
-    id: 3, name: "Ollama（本地）", url: "http://localhost:11434/v1", masked: "ollama-••••••••", protocol: "ollama" as const,
-    enabled: false, status: "untested", models: ["qwen2.5:7b", "llama3.1:8b"],
-  },
-];
+
 
 interface ModelProvidersState {
   providers: ModelProvider[];
@@ -100,8 +87,8 @@ function localProvider(input: { name: string; url: string; key: string; protocol
 export const useModelProviders = create<ModelProvidersState>()(
   persist(
     (set, get) => ({
-      providers: SEED,
-      defaultModel: "GPT-4o",
+      providers: [],
+      defaultModel: "未配置",
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         try {

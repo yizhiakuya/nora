@@ -4,7 +4,7 @@ import { useState } from "react";
 import { SearchCode, Loader2, Database, FileCode, Server, MessageSquare, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
-import { SOURCE_META } from "@/lib/knowledgeData";
+import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { searchDocsAsync } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
 import { KnowledgeSource, RetrievalResult } from "@/types";

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { RotateCw, CheckCircle2, XCircle, Loader2, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ExecutionRecord } from "@/lib/devData";
+import type { ExecutionRecord } from "@/types";
 import { useAutomations } from "@/hooks/useAutomations";
 import { useNotifications } from "@/hooks/useNotifications";
 

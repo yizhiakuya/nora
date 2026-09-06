@@ -2,7 +2,7 @@ import { toast } from "sonner";
 import { Play, Zap, Clock, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { AutomationRule } from "@/lib/devData";
+import type { AutomationRule } from "@/types";
 import { useAutomations } from "@/hooks/useAutomations";
 
 const STATUS_MAP = {

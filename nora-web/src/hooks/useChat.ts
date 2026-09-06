@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChatMessage, ChatResponder, MockChatAPI, type PermissionMode } from "@/lib/api/chatApi";
+import { ChatMessage, type ChatResponder, type PermissionMode } from "@/lib/api/chatApi";
 import { AgentAPI } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
@@ -16,7 +16,7 @@ interface UseChatOptions {
 const formatTime = () =>
   new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function useChat({ initialMessages = [], responder = USE_BACKEND ? AgentAPI.sendMessage : MockChatAPI.sendMessage, sessionId }: UseChatOptions = {}) {
+export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
