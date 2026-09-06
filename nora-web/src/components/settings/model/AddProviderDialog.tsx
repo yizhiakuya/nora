@@ -72,6 +72,8 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
   const [fetching, setFetching] = useState(false);
   /** 模型搜索框输入(模糊筛选,不影响已勾选集合) */
   const [modelFilter, setModelFilter] = useState("");
+  /** 提交中(防重复点击,等待后端落库后才关弹窗) */
+  const [saving, setSaving] = useState(false);
 
   // 编辑模式：打开时回填；新增模式：重置
   useEffect(() => {
@@ -164,7 +166,8 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
     if (discovered) setSelected(on ? new Set(discovered) : new Set());
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (saving) return;
     if (!name.trim() || !url.trim() || (!isEdit && !key.trim())) {
       toast.error(isEdit ? "请填写名称和端点 URL" : "请填写名称、端点 URL 和密钥");
       return;
@@ -179,50 +182,49 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
       ? Object.fromEntries(withProto.map((m) => [m, { protocol: modelProtocols[m] }]))
       : undefined;
 
-    if (isEdit && editing) {
-      editProvider(editing.id, { name, url, key: key.trim() || undefined, protocol });
-      if (chosenModels || modelSettings) {
-        void (async () => {
-          try {
-            const { modelsApi } = await import("@/lib/services/modelsApi");
-            await modelsApi.updateProvider(editing.id, {
-              ...(chosenModels ? { models: chosenModels } : {}),
-              ...(modelSettings ? { modelSettings: modelSettings as never } : {}),
-            });
-          } catch { /* 乐观更新已生效 */ }
-        })();
+    setSaving(true);
+    try {
+      if (isEdit && editing) {
+        // 单次 PUT 携带全部字段,避免多请求竞态;等落库后再关弹窗
+        const saved = await modelsApi.updateProvider(editing.id, {
+          name: name.trim(),
+          protocol,
+          endpoint: url.trim(),
+          ...(key.trim() ? { apiKey: key.trim() } : {}),
+          ...(chosenModels ? { models: chosenModels } : {}),
+          ...(modelSettings ? { modelSettings: modelSettings as never } : {}),
+        });
+        useModelProviders.setState((state) => ({
+          providers: state.providers.map((p) => (p.id === editing.id ? saved : p)),
+        }));
+        toast.success(`已更新「${name.trim()}」，重新测试连通后生效`);
+      } else if (tempSavedIdRef.current != null && discovered) {
+        // 已临时落库并测通:补名称/勾选/协议,不再重复 create
+        const id = tempSavedIdRef.current;
+        const saved = await modelsApi.updateProvider(id, {
+          name: name.trim(),
+          models: chosenModels ?? [],
+          ...(modelSettings ? { modelSettings: modelSettings as never } : {}),
+        });
+        useModelProviders.setState((state) => ({
+          providers: state.providers.map((p) => (p.id === id ? saved : p)),
+        }));
+        toast.success(`已接入「${name.trim()}」，${chosenModels?.length ?? 0} 个模型可用`);
+      } else {
+        const hit = PROVIDER_PRESETS.find((p) => p.url === url.trim());
+        addProvider({
+          name, url, key, protocol,
+          models: chosenModels ?? hit?.models,
+          ...(modelSettings ? { modelSettings: modelSettings as never } : {}),
+        });
+        toast.success(`已接入「${name.trim()}」，测试连通后即可使用`);
       }
-      toast.success(`已更新「${name.trim()}」，重新测试连通后生效`);
-    } else if (tempSavedIdRef.current != null && discovered) {
-      // 已经临时落库并测通:补名称/勾选/协议,不再重复 create
-      const id = tempSavedIdRef.current;
-      void (async () => {
-        try {
-          await modelsApi.updateProvider(id, {
-            name: name.trim(),
-            models: chosenModels ?? [],
-            ...(modelSettings ? { modelSettings: modelSettings as never } : {}),
-          });
-          const items = await modelsApi.listProviders();
-          const saved = items.find((p) => p.id === id);
-          if (saved) {
-            useModelProviders.setState((state) => ({
-              providers: state.providers.map((p) => (p.id === id ? saved : p)),
-            }));
-          }
-        } catch { /* 保留本地状态 */ }
-      })();
-      toast.success(`已接入「${name.trim()}」，${chosenModels?.length ?? 0} 个模型可用`);
-    } else {
-      const hit = PROVIDER_PRESETS.find((p) => p.url === url.trim());
-      addProvider({
-        name, url, key, protocol,
-        models: chosenModels ?? hit?.models,
-        ...(modelSettings ? { modelSettings: modelSettings as never } : {}),
-      });
-      toast.success(`已接入「${name.trim()}」，测试连通后即可使用`);
+      onClose();
+    } catch (e) {
+      toast.error(`保存失败: ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
     }
-    onClose();
   };
 
   return (
@@ -230,9 +232,9 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
       footer={
         <>
           <Button variant="outline" size="sm" className="h-9" onClick={onClose}>取消</Button>
-          <Button size="sm" className="h-9" onClick={handleSubmit}>
+          <Button size="sm" className="h-9" onClick={handleSubmit} disabled={saving}>
             {isEdit ? <Pencil className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
-            {isEdit ? "保存修改" : discovered ? `接入（${selected.size} 个模型）` : "接入"}
+            {saving ? "保存中…" : isEdit ? "保存修改" : discovered ? `接入（${selected.size} 个模型）` : "接入"}
           </Button>
         </>
       }
