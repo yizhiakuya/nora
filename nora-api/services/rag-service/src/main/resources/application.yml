@@ -25,6 +25,11 @@ nora:
     base-url: https://api.jina.ai/v1
     model: jina-embeddings-v3
     dimensions: 1024
+  proxy:
+    # 外网 embedding 提供方走代理;内网服务互调直连。env: NORA_PROXY_ENABLED/HOST/PORT
+    enabled: ${NORA_PROXY_ENABLED:false}
+    host: ${NORA_PROXY_HOST:127.0.0.1}
+    port: ${NORA_PROXY_PORT:7897}
   file-service:
     base-url: http://localhost:8081
 

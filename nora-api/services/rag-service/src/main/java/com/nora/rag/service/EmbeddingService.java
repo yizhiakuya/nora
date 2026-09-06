@@ -26,9 +26,13 @@ public class EmbeddingService {
     private static final Logger log = LoggerFactory.getLogger(EmbeddingService.class);
 
     private final EmbeddingProperties properties;
+    private final com.nora.common.http.ProxyProperties proxyProperties;
 
-    public EmbeddingService(EmbeddingProperties properties) {
+    public EmbeddingService(EmbeddingProperties properties,
+                            @org.springframework.beans.factory.annotation.Autowired(required = false)
+                            com.nora.common.http.ProxyProperties proxyProperties) {
         this.properties = properties;
+        this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
     }
 
     /**
@@ -70,11 +74,21 @@ public class EmbeddingService {
     }
 
     private EmbeddingModel model() {
+        dev.langchain4j.http.client.jdk.JdkHttpClientBuilder httpClientBuilder =
+                new dev.langchain4j.http.client.jdk.JdkHttpClientBuilder();
+        // 出站代理:Jina 等外网 embedding 提供方需要时挂到底层 JDK HttpClient
+        java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
+                .addressFor(proxyProperties, properties.baseUrl());
+        if (proxyAddr != null) {
+            httpClientBuilder.httpClientBuilder(java.net.http.HttpClient.newBuilder()
+                    .proxy(java.net.ProxySelector.of(proxyAddr)));
+        }
         return OpenAiEmbeddingModel.builder()
                 .baseUrl(properties.baseUrl())
                 .apiKey(properties.apiKey())
                 .modelName(properties.model())
                 .dimensions(properties.dimensions())
+                .httpClientBuilder(httpClientBuilder)
                 .build();
     }
 }

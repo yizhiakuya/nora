@@ -22,6 +22,12 @@ nora:
   agent:
     # ReAct depth guard: max tool rounds per chat turn (harness convention 10-25)
     max-tool-rounds: 10
+  proxy:
+    # 出站代理:外网目标(LLM 上游/Jina embedding)经此转发,内网服务互调始终直连。
+    # 环境变量覆盖:NORA_PROXY_ENABLED / NORA_PROXY_HOST / NORA_PROXY_PORT
+    enabled: ${NORA_PROXY_ENABLED:false}
+    host: ${NORA_PROXY_HOST:127.0.0.1}
+    port: ${NORA_PROXY_PORT:7897}
   llm:
     api-key: ${NORA_LLM_API_KEY:}
     base-url: ${NORA_LLM_BASE_URL:http://192.168.0.109:28765/v1}

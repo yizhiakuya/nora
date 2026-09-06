@@ -29,12 +29,14 @@ public class ModelProviderController {
 
     private final ModelProviderService providerService;
     private final RestClient testClient;
+    private final com.nora.common.http.ProxyProperties proxyProperties;
 
-    public ModelProviderController(ModelProviderService providerService) {
+    public ModelProviderController(ModelProviderService providerService,
+                                   org.springframework.beans.factory.ObjectProvider<com.nora.common.http.ProxyProperties> proxyProperties) {
         this.providerService = providerService;
-        this.testClient = RestClient.builder()
-                // no baseUrl: each provider has its own endpoint
-                .build();
+        this.proxyProperties = proxyProperties.getIfAvailable();
+        // no baseUrl: each provider has its own endpoint
+        this.testClient = RestClient.builder().build();
     }
 
     /** Lists all providers (keys masked). */
@@ -91,7 +93,18 @@ public class ModelProviderController {
         }
         String base = credentials.endpoint() == null ? "" : credentials.endpoint().replaceAll("/+$", "");
         try {
-            RestClient.RequestHeadersSpec<?> spec = testClient.get()
+            // 外网端点走配置的出站代理(内网/直连目标不受影响)
+            org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                    new org.springframework.http.client.SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(10_000);
+            factory.setReadTimeout(30_000);
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
+                    .addressFor(proxyProperties, base);
+            if (proxyAddr != null) {
+                factory.setProxy(new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr));
+            }
+            RestClient perCallClient = RestClient.builder().requestFactory(factory).build();
+            RestClient.RequestHeadersSpec<?> spec = perCallClient.get()
                     .uri(base + "/models")
                     .accept(MediaType.APPLICATION_JSON);
             if (credentials.apiKey() != null && !credentials.apiKey().isBlank()) {

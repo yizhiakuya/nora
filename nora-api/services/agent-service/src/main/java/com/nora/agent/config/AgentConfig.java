@@ -1,5 +1,6 @@
 package com.nora.agent.config;
 
+import com.nora.common.http.ProxyProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,7 +15,8 @@ import org.springframework.web.client.RestClient;
         LlmProperties.class,
         RagServiceProperties.class,
         DatasourceServiceProperties.class,
-        EnvServiceProperties.class})
+        EnvServiceProperties.class,
+        ProxyProperties.class})
 public class AgentConfig {
 
     /**

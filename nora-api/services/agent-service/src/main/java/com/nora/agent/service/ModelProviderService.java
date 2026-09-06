@@ -67,8 +67,11 @@ public class ModelProviderService {
                 }
                 Long contextWindow = node.has("contextWindow") && node.get("contextWindow").canConvertToLong()
                         ? node.get("contextWindow").asLong() : null;
+                String protocol = node.has("protocol") && node.get("protocol").isTextual()
+                        ? node.get("protocol").asText() : null;
                 out.put(model, new PerModelSettings(contextWindow, levels,
-                        node.has("defaultReasoningLevel") ? node.get("defaultReasoningLevel").asText(null) : null));
+                        node.has("defaultReasoningLevel") ? node.get("defaultReasoningLevel").asText(null) : null,
+                        protocol));
             }
             return new ModelSettings(out);
         } catch (Exception e) {
@@ -84,14 +87,13 @@ public class ModelProviderService {
                 ObjectNode node = root.putObject(entry.getKey());
                 PerModelSettings value = entry.getValue();
                 if (value.contextWindow() != null) node.put("contextWindow", value.contextWindow());
-                if (!value.reasoningLevels().isEmpty()) {
-                    node.put("reasoningLevels", String.join(",", value.reasoningLevels()));
-                    // put("reasoningLevels", array) — 保留数组形式
-                    node.remove("reasoningLevels");
+                if (value.reasoningLevels() != null && !value.reasoningLevels().isEmpty()) {
                     var arr = node.putArray("reasoningLevels");
                     value.reasoningLevels().forEach(arr::add);
                 }
                 if (value.defaultReasoningLevel() != null) node.put("defaultReasoningLevel", value.defaultReasoningLevel());
+                // 每模型协议覆盖(openai/responses/...);null = 继承服务商协议
+                if (value.protocol() != null && !value.protocol().isBlank()) node.put("protocol", value.protocol());
             }
             return objectMapper.writeValueAsString(root);
         } catch (Exception e) {
@@ -286,6 +288,11 @@ public class ModelProviderService {
      */
     public record PerModelSettings(Long contextWindow, List<String> reasoningLevels,
                                    String defaultReasoningLevel, String protocol) {
+
+        public PerModelSettings {
+            // Jackson 对缺失字段给 null;规范化为空列表,避免调用方 NPE
+            if (reasoningLevels == null) reasoningLevels = List.of();
+        }
 
         /** Jackson-compatible constructor: protocol is optional in payloads. */
         public PerModelSettings(Long contextWindow, List<String> reasoningLevels,

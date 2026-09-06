@@ -57,6 +57,11 @@
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
         </dependency>
+        <!-- Explicit JDK http client for proxy-aware embedding transport -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-http-client-jdk</artifactId>
+        </dependency>
 
         <!-- Internal modules -->
         <dependency>

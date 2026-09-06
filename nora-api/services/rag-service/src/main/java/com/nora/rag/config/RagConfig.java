@@ -1,5 +1,6 @@
 package com.nora.rag.config;
 
+import com.nora.common.http.ProxyProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,7 +11,7 @@ import org.springframework.web.client.RestClient;
  * and the RestClient used to call file-service.
  */
 @Configuration
-@EnableConfigurationProperties({EmbeddingProperties.class, FileServiceProperties.class})
+@EnableConfigurationProperties({EmbeddingProperties.class, FileServiceProperties.class, ProxyProperties.class})
 public class RagConfig {
 
     /**

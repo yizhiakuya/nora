@@ -18,6 +18,10 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/models/**
+        - id: network
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/network/**
         - id: file
           uri: lb://file-service
           predicates:

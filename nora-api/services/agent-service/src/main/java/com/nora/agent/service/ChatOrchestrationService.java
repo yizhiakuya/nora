@@ -80,6 +80,8 @@ public class ChatOrchestrationService {
     private final ServiceLogClient serviceLogClient;
     private final ObjectMapper objectMapper;
     private final RestClient llmClient;
+    /** 出站代理配置(可为 disabled):外网 LLM 上游走代理,内网服务互调直连 */
+    private final com.nora.common.http.ProxyProperties proxyProperties;
     private final ModelProviderService modelProviderService;
     private final ApprovalService approvalService;
     private final WriteSqlClient writeSqlClient;
@@ -96,7 +98,9 @@ public class ChatOrchestrationService {
                                     ApprovalService approvalService,
                                     WriteSqlClient writeSqlClient,
                                     ContainerControlClient containerControlClient,
-                                    @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds) {
+                                    @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    com.nora.common.http.ProxyProperties proxyProperties) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
@@ -107,6 +111,7 @@ public class ChatOrchestrationService {
         this.writeSqlClient = writeSqlClient;
         this.containerControlClient = containerControlClient;
         this.maxToolRounds = Math.max(1, maxToolRounds);
+        this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
         // 默认无超时的 RestClient 会永远挂起整轮对话
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
@@ -125,7 +130,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, DEFAULT_MAX_TOOL_ROUNDS);
+                null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -136,7 +141,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, maxToolRounds);
+                null, null, null, maxToolRounds, null);
     }
 
     /**
@@ -832,9 +837,14 @@ public class ChatOrchestrationService {
         TokenUsage usage = null;
 
         try {
-            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
+            java.net.http.HttpClient.Builder clientBuilder = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10));
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
+                    .addressFor(proxyProperties, llm.baseUrl());
+            if (proxyAddr != null) {
+                clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
+            }
+            java.net.http.HttpClient client = clientBuilder.build();
             java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/chat/completions"))
                     .timeout(Duration.ofSeconds(120))
@@ -1013,9 +1023,14 @@ public class ChatOrchestrationService {
                 body.put("instructions", instructions.toString());
             }
 
-            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
+            java.net.http.HttpClient.Builder clientBuilder = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10));
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
+                    .addressFor(proxyProperties, llm.baseUrl());
+            if (proxyAddr != null) {
+                clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
+            }
+            java.net.http.HttpClient client = clientBuilder.build();
             java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/responses"))
                     .timeout(Duration.ofSeconds(120))
