@@ -281,10 +281,17 @@ public class ModelProviderService {
 
     /**
      * One model's settings. {@code reasoningLevels} empty = no restriction;
-     * {@code defaultReasoningLevel} null/"auto" = family default applies.
+     * {@code defaultReasoningLevel} null/"auto" = family default applies;
+     * {@code protocol} null = inherit the provider-level protocol.
      */
     public record PerModelSettings(Long contextWindow, List<String> reasoningLevels,
-                                   String defaultReasoningLevel) {
+                                   String defaultReasoningLevel, String protocol) {
+
+        /** Jackson-compatible constructor: protocol is optional in payloads. */
+        public PerModelSettings(Long contextWindow, List<String> reasoningLevels,
+                                String defaultReasoningLevel) {
+            this(contextWindow, reasoningLevels, defaultReasoningLevel, null);
+        }
     }
 
     record StoredProvider(String name, String protocol, String endpoint, String apiKey,

@@ -1,6 +1,6 @@
 import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check } from "lucide-react";
 import { useState } from "react";
-import { AgentThoughtBlock } from "./AgentThoughtBlock";
+import { AgentThoughtBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { Markdown } from "@/components/shared/Markdown";
@@ -115,12 +115,7 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
               
               <div className="relative pl-6 space-y-3 before:absolute before:inset-y-2 before:left-2.5 before:w-px before:bg-gray-200 dark:before:bg-gray-700">
                   {msg.steps && msg.steps.length > 0 && (
-                    <AgentThoughtBlock
-                      steps={msg.steps}
-                      durationMs={msg.turnMetrics?.durationMs}
-                      usage={msg.turnMetrics?.usage}
-                      expanded={msg.isTyping}
-                    />
+                    <AgentThoughtBlock steps={msg.steps} />
                   )}
 
                   {msg.approval && (
@@ -140,9 +135,23 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
                             <MessageSquare className="w-[10px] h-[10px] text-blue-500 dark:text-blue-400" />
                         </div>
                         <div className="text-sm text-foreground leading-relaxed pt-0.5">
-                            <Markdown className="chat-markdown">{msg.content}</Markdown>
-                            {msg.isTyping && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
+                            {msg.content ? (
+                              <Markdown className="chat-markdown">{msg.content}</Markdown>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">正在思考…</span>
+                            )}
+                            {msg.isTyping && msg.content && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
                         </div>
+                        {/* 回答结束后的元信息行:工具次数 · tokens · 耗时 */}
+                        {!msg.isTyping && (
+                          <div className="mt-1.5">
+                            <TurnMeta
+                              steps={msg.steps}
+                              durationMs={msg.turnMetrics?.durationMs}
+                              usage={msg.turnMetrics?.usage}
+                            />
+                          </div>
+                        )}
                     </div>
                   )}
 

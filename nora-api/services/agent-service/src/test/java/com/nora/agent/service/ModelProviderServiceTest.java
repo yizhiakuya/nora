@@ -143,6 +143,18 @@ class ModelProviderServiceTest {
         assertEquals("high", back.forModel("m1").defaultReasoningLevel());
     }
 
+    @Test
+    void perModelProtocolRoundTripsAndDefaultsToNull() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        String json = mapper.writeValueAsString(new ModelProviderService.ModelSettings(java.util.Map.of(
+                "gpt-x", new ModelProviderService.PerModelSettings(null, List.of(), null, "responses"),
+                "ds-y", new ModelProviderService.PerModelSettings(null, List.of(), null))));
+        ModelProviderService.ModelSettings back = mapper.readValue(json, ModelProviderService.ModelSettings.class);
+        assertEquals("responses", back.forModel("gpt-x").protocol());
+        assertNull(back.forModel("ds-y").protocol());
+        assertNull(back.forModel("unknown").protocol());
+    }
+
     private static java.sql.ResultSet newFakeRs(String name, String protocol, String endpoint,
                                                 String apiKey, boolean enabled, java.sql.Array models,
                                                 String status) {

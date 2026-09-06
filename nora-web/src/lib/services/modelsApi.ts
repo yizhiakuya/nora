@@ -49,6 +49,7 @@ export const modelsApi = {
     endpoint: string;
     apiKey: string;
     models?: string[];
+    modelSettings?: ModelSettings;
   }): Promise<ModelProvider> {
     const item = await requestJson<BackendProvider>("/models/providers", {
       method: "POST",
@@ -74,8 +75,8 @@ export const modelsApi = {
 
   async testProvider(
     id: number
-  ): Promise<{ status: "ok" | "fail"; error?: string | null; modelCount?: number }> {
-    return requestJson<{ status: "ok" | "fail"; error?: string | null; modelCount?: number }>(
+  ): Promise<{ status: "ok" | "fail"; error?: string | null; modelCount?: number; models?: string[] }> {
+    return requestJson<{ status: "ok" | "fail"; error?: string | null; modelCount?: number; models?: string[] }>(
       `/models/providers/${id}/test`,
       { method: "POST" }
     );
@@ -85,7 +86,7 @@ export const modelsApi = {
   async testAndRefresh(
     id: number,
     applyProvider: (p: ModelProvider) => void
-  ): Promise<{ status: "ok" | "fail"; modelCount?: number }> {
+  ): Promise<{ status: "ok" | "fail"; modelCount?: number; models?: string[] }> {
     const result = await this.testProvider(id);
     if (result.status === "ok") {
       const items = await requestJson<BackendProvider[]>("/models/providers");

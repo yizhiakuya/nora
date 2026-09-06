@@ -17,6 +17,7 @@ import org.springframework.web.client.RestClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -258,6 +259,22 @@ public class ChatOrchestrationService {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
                 if (result.failed) {
+                    // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
+                    // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
+                    boolean transientFailure = result.content().isEmpty() && result.toolCalls().isEmpty();
+                    StreamTurnResult retry = transientFailure
+                            ? streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer)
+                            : null;
+                    if (retry != null) {
+                        if (retry.usage() != null) {
+                            totalUsage = totalUsage == null ? retry.usage() : totalUsage.add(retry.usage());
+                        }
+                        if (!retry.failed) {
+                            result = retry;
+                        }
+                    }
+                }
+                if (result.failed) {
                     eventConsumer.step(new ChatStepDto("s-error", "think", "模型返回空响应",
                             result.errorMessage != null ? result.errorMessage : "上游未返回内容,请重试",
                             null, "failed", null, null, null, round + 1));
@@ -292,6 +309,11 @@ public class ChatOrchestrationService {
         final int reasoningRound = roundsUsed[0] + 1;
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                 reasoningRound, eventConsumer);
+        // 瞬时上游错误(空内容失败)自动重试一次
+        if (finalResult.failed && finalResult.content().isBlank()) {
+            finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
+                    reasoningRound, eventConsumer);
+        }
         if (!finalResult.failed) {
             String answerText = finalResult.content;
             if (finalResult.usage() != null) {
@@ -553,7 +575,12 @@ public class ChatOrchestrationService {
         String model = provider.models() == null || provider.models().isEmpty()
                 ? LlmProperties.DEFAULT_MODEL : provider.models().get(0);
         String effectiveLevel = effectiveReasoningLevel(provider, model, requestedReasoningLevel);
-        return new ResolvedLlm(provider.endpoint(), provider.apiKey(), model, provider.protocol(), effectiveLevel);
+        // 协议按模型覆盖:modelSettings[model].protocol 优先,否则继承 provider 级协议
+        ModelProviderService.PerModelSettings perModel =
+                ModelProviderService.parseModelSettingsStatic(provider.modelSettingsJson()).forModel(model);
+        String protocol = perModel.protocol() != null && !perModel.protocol().isBlank()
+                ? perModel.protocol() : provider.protocol();
+        return new ResolvedLlm(provider.endpoint(), provider.apiKey(), model, protocol, effectiveLevel);
     }
 
     /** Merges the per-request level with the per-model default from settings. */
@@ -788,8 +815,13 @@ public class ChatOrchestrationService {
      * Uses raw byte reading with incremental UTF-8 decoding (the relay can split
      * multi-byte characters across chunks — RestClient's string converter also
      * mangles text/event-stream to ISO-8859-1, browser-verified 2026-09-05).
+     * Protocol dispatch: openai → POST /chat/completions (stream),
+     * responses → POST /responses (stream) with event-name mapping.
      */
     private StreamTurnResult streamUpstream(ResolvedLlm llm, ObjectNode body, TokenSink sink) {
+        if ("responses".equalsIgnoreCase(llm.protocol())) {
+            return streamUpstreamResponses(llm, body, sink);
+        }
         StringBuilder content = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
         // tool_calls accumulation: index → {id, name, args-builder} (fragments arrive out of order)
@@ -899,6 +931,190 @@ public class ChatOrchestrationService {
         }
     }
 
+    /**
+     * Responses API (POST {base}/responses, SSE) variant of {@link #streamUpstream}.
+     * Body conversion (chat.completions shape → responses shape):
+     * - messages → input[] with type: message(role/content)
+     * - assistant tool_calls → output_item message with type: function_call + call_id
+     * - tool results → input item type: function_call_output
+     * - tools[] flatten function → {type:"function", name, description, parameters}
+     * - reasoning_effort passes through; stream_options dropped
+     * Event mapping (SSE `event:` lines):
+     * - response.output_text.delta            → content token
+     * - response.reasoning_summary_text.delta → reasoning token
+     * - response.output_item.added (function_call) / response.function_call_arguments.delta → tool accumulation
+     * - response.completed → usage from response.usage
+     */
+    private StreamTurnResult streamUpstreamResponses(ResolvedLlm llm, ObjectNode chatBody, TokenSink sink) {
+        StringBuilder content = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
+        // function_call accumulation keyed by item_id
+        Map<String, String> callIds = new LinkedHashMap<>();
+        Map<String, String> callNames = new LinkedHashMap<>();
+        Map<String, StringBuilder> callArgs = new LinkedHashMap<>();
+        TokenUsage usage = null;
+
+        try {
+            ObjectNode body = objectMapper.createObjectNode();
+            body.put("model", chatBody.path("model").asText());
+            body.put("stream", true);
+            if (chatBody.hasNonNull("reasoning_effort")) {
+                body.putObject("reasoning").put("effort", chatBody.get("reasoning_effort").asText());
+            }
+            // tools: flatten {type:function, function:{...}} → {type:function, name, ...}
+            ArrayNode tools = body.putArray("tools");
+            for (JsonNode t : chatBody.path("tools")) {
+                if (!"function".equals(t.path("type").asText())) continue;
+                ObjectNode flat = tools.addObject();
+                flat.put("type", "function");
+                flat.put("name", t.path("function").path("name").asText());
+                flat.put("description", t.path("function").path("description").asText(""));
+                flat.set("parameters", t.path("function").path("parameters"));
+            }
+            // messages → input[]; tool results → function_call_output items.
+            // Responses API has no system role: the system prompt rides as instructions.
+            StringBuilder instructions = new StringBuilder();
+            ArrayNode input = body.putArray("input");
+            for (WireMessage wm : wireMessagesOf(chatBody)) {
+                ObjectNode m = wm.node();
+                String role = m.path("role").asText("");
+                if ("tool".equals(role)) {
+                    ObjectNode item = input.addObject();
+                    item.put("type", "function_call_output");
+                    item.put("call_id", m.path("tool_call_id").asText(""));
+                    item.put("output", m.path("content").asText(""));
+                    continue;
+                }
+                if ("system".equals(role)) {
+                    if (instructions.length() > 0) instructions.append("\n\n");
+                    instructions.append(m.path("content").asText(""));
+                    continue;
+                }
+                ObjectNode msgItem = input.addObject();
+                msgItem.put("type", "message");
+                msgItem.put("role", "assistant".equals(role) ? "assistant" : "user");
+                ArrayNode parts = msgItem.putArray("content");
+                ObjectNode part = parts.addObject();
+                part.put("type", "assistant".equals(role) ? "output_text" : "input_text");
+                part.put("text", m.path("content").asText(""));
+                // assistant turn that issued tool_calls: emit function_call items after the message
+                JsonNode calls = m.path("tool_calls");
+                if (calls.isArray()) {
+                    for (JsonNode c : calls) {
+                        ObjectNode callItem = input.addObject();
+                        callItem.put("type", "function_call");
+                        callItem.put("call_id", c.path("id").asText());
+                        callItem.put("name", c.path("function").path("name").asText());
+                        callItem.put("arguments", c.path("function").path("arguments").asText("{}"));
+                    }
+                }
+            }
+            if (instructions.length() > 0) {
+                body.put("instructions", instructions.toString());
+            }
+
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/responses"))
+                    .timeout(Duration.ofSeconds(120))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + llm.apiKey())
+                    .header("Accept", MediaType.ALL_VALUE)
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
+                    .build();
+            java.net.http.HttpResponse<java.io.InputStream> response = client.send(
+                    request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() >= 400) {
+                String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
+                        "", "", null, List.of(), null);
+            }
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
+                String line;
+                String eventName = "";
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("event:")) { eventName = line.substring(6).trim(); continue; }
+                    if (!line.startsWith("data:")) continue;
+                    String payload = line.substring(5).trim();
+                    if ("[DONE]".equals(payload)) break;
+                    JsonNode root;
+                    try { root = objectMapper.readTree(payload); } catch (Exception e) { continue; }
+                    String type = root.path("type").asText(eventName);
+                    if ("response.output_text.delta".equals(type)) {
+                        String delta = root.path("delta").asText("");
+                        if (!delta.isEmpty()) { content.append(delta); sink.accept(delta, null); }
+                    } else if ("response.reasoning_summary_text.delta".equals(type)
+                            || "response.reasoning_text.delta".equals(type)) {
+                        String delta = root.path("delta").asText("");
+                        if (!delta.isEmpty()) { reasoning.append(delta); sink.accept(null, delta); }
+                    } else if ("response.output_item.added".equals(type)) {
+                        JsonNode item = root.path("item");
+                        if ("function_call".equals(item.path("type").asText())) {
+                            String itemId = item.path("id").asText();
+                            callIds.putIfAbsent(itemId, item.path("call_id").asText(itemId));
+                            callNames.putIfAbsent(itemId, item.path("name").asText(""));
+                            callArgs.computeIfAbsent(itemId, k -> new StringBuilder())
+                                    .append(item.path("arguments").asText(""));
+                        }
+                    } else if ("response.function_call_arguments.delta".equals(type)) {
+                        String itemId = root.path("item_id").asText("");
+                        String delta = root.path("delta").asText("");
+                        if (!itemId.isEmpty() && !delta.isEmpty()) {
+                            callArgs.computeIfAbsent(itemId, k -> new StringBuilder()).append(delta);
+                        }
+                    } else if ("response.completed".equals(type)) {
+                        JsonNode u = root.path("response").path("usage");
+                        if (u.isObject() && !u.isEmpty()) {
+                            usage = new TokenUsage(
+                                    u.path("input_tokens").isInt() ? u.path("input_tokens").asInt() : null,
+                                    u.path("output_tokens").isInt() ? u.path("output_tokens").asInt() : null,
+                                    u.path("total_tokens").isInt() ? u.path("total_tokens").asInt() : null);
+                        }
+                    }
+                }
+            }
+            if (content.isEmpty() && reasoning.isEmpty() && callArgs.isEmpty()) {
+                return new StreamTurnResult(true, "empty stream", "", "", null, List.of(), usage);
+            }
+            // rebuild assistant message: content + tool_calls (chat.completions shape, so the
+            // ReAct loop / persistence layers stay protocol-agnostic)
+            ObjectNode assistant = objectMapper.createObjectNode();
+            assistant.put("role", "assistant");
+            assistant.put("content", content.toString());
+            List<JsonNode> orderedCalls = new ArrayList<>();
+            for (String itemId : callArgs.keySet()) {
+                ObjectNode call = objectMapper.createObjectNode();
+                call.put("id", callIds.getOrDefault(itemId, itemId));
+                ObjectNode fn = call.putObject("function");
+                fn.put("name", callNames.getOrDefault(itemId, ""));
+                fn.put("arguments", callArgs.get(itemId).toString());
+                orderedCalls.add(call);
+            }
+            if (!orderedCalls.isEmpty()) {
+                ArrayNode arr = assistant.putArray("tool_calls");
+                orderedCalls.forEach(arr::add);
+            }
+            return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
+                    assistant, orderedCalls, usage);
+        } catch (Exception e) {
+            return new StreamTurnResult(true, e.getMessage(), content.toString(), reasoning.toString(),
+                    null, List.of(), usage);
+        }
+    }
+
+    /** chat.completions body's messages array as WireMessage list (responses conversion helper). */
+    private List<WireMessage> wireMessagesOf(ObjectNode chatBody) {
+        List<WireMessage> result = new ArrayList<>();
+        for (JsonNode m : chatBody.path("messages")) {
+            if (m instanceof ObjectNode o) result.add(new WireMessage(o));
+        }
+        return result;
+    }
+
     private static java.util.Set<Integer> unionKeys(Map<Integer, String> a, Map<Integer, StringBuilder> b) {
         java.util.Set<Integer> all = new java.util.TreeSet<>(a.keySet());
         all.addAll(b.keySet());
@@ -926,7 +1142,8 @@ public class ChatOrchestrationService {
      * - qwen/glm:开关式字段,none 关、其余开。
      */
     private void applyReasoningRequest(ObjectNode body, ResolvedLlm llm) {
-        if (!"openai".equalsIgnoreCase(llm.protocol())) return;
+        // responses 协议走 reasoning:{effort} 映射(见 streamUpstreamResponses),同样需要注入档位
+        if (!"openai".equalsIgnoreCase(llm.protocol()) && !"responses".equalsIgnoreCase(llm.protocol())) return;
         String model = llm.model() == null ? "" : llm.model().toLowerCase();
         String requested = llm.effectiveReasoningLevel();
         boolean hasRequested = requested != null && !requested.isBlank() && !"auto".equalsIgnoreCase(requested);

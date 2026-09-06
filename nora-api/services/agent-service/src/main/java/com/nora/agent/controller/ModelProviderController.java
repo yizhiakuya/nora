@@ -111,7 +111,7 @@ public class ModelProviderController {
                 providerService.updateModels(id, models);
             }
             providerService.markStatus(id, "ok");
-            return ApiResponse.ok(new TestResult("ok", null, models.size()));
+            return ApiResponse.ok(new TestResult("ok", null, models.size(), models));
         } catch (BusinessException e) {
             providerService.markStatus(id, "fail");
             throw e;
@@ -157,7 +157,7 @@ public class ModelProviderController {
                                 ModelProviderService.ModelSettings modelSettings) {
     }
 
-    /** POST /test response. */
-    public record TestResult(String status, String error, Integer modelCount) {
+    /** POST /test response. models = upstream-discovered ids (for the picker UI). */
+    public record TestResult(String status, String error, Integer modelCount, List<String> models) {
     }
 }

@@ -3,25 +3,28 @@ import { persist } from "zustand/middleware";
 import { modelsApi } from "@/lib/services/modelsApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
-export type ProviderProtocol = "openai" | "ollama" | "anthropic";
+export type ProviderProtocol = "openai" | "responses" | "ollama" | "anthropic";
 
 /** 思考等级可选项;ultra 仅展示(上游暂未开放,禁选) */
 export const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const REASONING_LEVELS_DISABLED = ["ultra"] as const;
 
 export const PROTOCOL_META: Record<ProviderProtocol, { label: string; desc: string }> = {
-  openai:    { label: "OpenAI 兼容",  desc: "标准 /v1/chat/completions 协议，适用于 OpenAI、DeepSeek、中转站等" },
+  openai:    { label: "Chat Completions", desc: "标准 /v1/chat/completions 协议，适用于 OpenAI、DeepSeek、中转站等" },
+  responses: { label: "OpenAI Responses", desc: "OpenAI 新版 /v1/responses 协议（GPT-5/o 系列官方端点）" },
   anthropic: { label: "Anthropic",      desc: "Anthropic Messages API（/v1/messages）" },
   ollama:    { label: "Ollama",          desc: "本地 Ollama 原生协议（/api/chat）" },
 };
 
-/** 单个模型的请求参数配置:上下文窗口 + 思考等级白名单 + 默认等级 */
+/** 单个模型的请求参数配置:上下文窗口 + 思考等级白名单 + 默认等级 + 协议覆盖 */
 export interface PerModelSettings {
   contextWindow?: number | null;
   /** 该模型可选的思考等级;空 = 全部可用等级 */
   reasoningLevels?: string[];
   /** 默认等级;null/auto = 自动 */
   defaultReasoningLevel?: string | null;
+  /** 该模型的协议覆盖;null = 继承服务商协议 */
+  protocol?: ProviderProtocol | null;
 }
 
 /** 按模型 id 索引的设置表(后端 model_provider.model_settings JSONB) */
@@ -62,7 +65,7 @@ interface ModelProvidersState {
   defaultModel: string;
   /** 后端模式:拉取服务端 provider 列表 */
   syncFromBackend: () => Promise<void>;
-  addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }) => void;
+  addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[]; modelSettings?: Record<string, { protocol?: ProviderProtocol }> }) => void;
   /** 编辑服务商基础信息;key 留空 = 保持原密钥 */
   editProvider: (id: number, patch: { name: string; url: string; key?: string; protocol: ProviderProtocol }) => void;
   removeProvider: (id: number) => void;
@@ -119,11 +122,12 @@ export const useModelProviders = create<ModelProvidersState>()(
           /* 后端不可用时沿用本地缓存 */
         }
       },
-      addProvider: ({ name, url, key, protocol = "openai", models }) => {
+      addProvider: ({ name, url, key, protocol = "openai", models, modelSettings }) => {
         const optimistic = localProvider({ name, url, key, protocol, models });
+        if (modelSettings) optimistic.modelSettings = { ...optimistic.modelSettings, ...modelSettings };
         set((state) => ({ providers: [...state.providers, optimistic] }));
         if (USE_BACKEND) {
-          modelsApi.createProvider({ name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models })
+          modelsApi.createProvider({ name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models, ...(modelSettings ? { modelSettings: modelSettings as never } : {}) })
             .then((saved) => {
               set((state) => ({
                 providers: state.providers.map((p) => (p.id === optimistic.id ? saved : p)),

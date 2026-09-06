@@ -1,6 +1,13 @@
-import { AlertTriangle, Brain, ChevronDown, Loader2, Terminal } from "lucide-react";
+import { AlertTriangle, Brain, Check, ChevronDown, Loader2, Wrench, Ban } from "lucide-react";
 import { useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
+
+/**
+ * Agent 过程时间线（内联式，无外框）：
+ * - 推理（type=think）：浅色小字内联流式展示，结束后自动折叠为一行「已深度思考」
+ * - 工具（type=tool）：单行紧凑 chip（名称 + 参数摘要 + 状态），可展开参数/结果
+ * 整体作为消息骨架的一部分与回答平铺在同一时间线上。
+ */
 
 function outputLineCount(step: ChatStep): number | null {
   if (step.result?.lineCount != null) return step.result.lineCount;
@@ -9,9 +16,131 @@ function outputLineCount(step: ChatStep): number | null {
 }
 
 function argsPreview(step: ChatStep): string {
+  if (step.toolName === "execute_sql" && step.input?.sql) {
+    const sql = step.input.sql.replace(/\s+/g, " ").trim();
+    return sql.length > 56 ? `${sql.slice(0, 56)}…` : sql;
+  }
   if (!step.input) return "";
   const json = JSON.stringify(step.input);
   return json.length > 72 ? `${json.slice(0, 72)}…` : json;
+}
+
+/** 推理步骤：流式时展示浅色小字，结束后折叠为一行摘要（用户可手动展开回看）。 */
+function ReasoningRow({ step }: { step: ChatStep }) {
+  const running = step.status === "running";
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  // 流式中始终展开；结束后默认折叠,除非用户手动展开过
+  const open = running ? true : (userOpen ?? false);
+  const seconds = step.duration
+    ? step.duration.replace(/s$/, "")
+    : null;
+  // 后端 s-error(模型轮失败)不是推理,渲染为独立错误行
+  const isError = step.id === "s-error" || step.status === "failed";
+
+  if (isError && step.status === "failed") {
+    return (
+      <div className="flex items-center gap-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400 animate-in fade-in slide-in-from-top-1">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+        <span className="truncate">{step.detail || step.title || "模型轮失败"}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="animate-in fade-in slide-in-from-top-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setUserOpen(running ? !open : !(userOpen ?? false))}
+        className="w-full flex items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors group"
+      >
+        {running ? (
+          <Brain className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400 animate-pulse shrink-0" />
+        ) : (
+          <Brain className="w-3.5 h-3.5 text-violet-400/70 dark:text-violet-500/70 shrink-0" />
+        )}
+        <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+          {running ? "思考中…" : "已深度思考"}
+        </span>
+        {!running && seconds && (
+          <span className="text-[10px] text-muted-foreground/70 tabular-nums">{seconds}s</span>
+        )}
+        {step.status === "failed" && (
+          <span className="text-[10px] text-red-500">· 失败</span>
+        )}
+        <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && step.detail && (
+        <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground border-l-2 border-violet-200 dark:border-violet-900 pl-3 ml-[6px] mt-1 mb-2 max-h-64 overflow-auto">
+          {step.detail}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** 工具步骤：单行 chip,可展开参数与结果详情。 */
+function ToolRow({ step }: { step: ChatStep }) {
+  const [open, setOpen] = useState(step.status === "running");
+  const [userTouched, setUserTouched] = useState(false);
+  const effectiveOpen = userTouched ? open : step.status === "running";
+  const expandable = Boolean(step.input || step.result || step.detail);
+  const lines = outputLineCount(step);
+  const preview = argsPreview(step);
+  const running = step.status === "running";
+
+  return (
+    <div className="animate-in fade-in slide-in-from-top-1">
+      <button
+        type="button"
+        aria-expanded={effectiveOpen}
+        onClick={() => {
+          if (expandable) {
+            setUserTouched(true);
+            setOpen((v) => !v);
+          }
+        }}
+        className={`w-full flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left border transition-colors max-w-2xl ${
+          expandable ? "hover:bg-muted/70 cursor-pointer" : "cursor-default"
+        } ${
+          step.status === "failed"
+            ? "border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/20"
+            : step.status === "declined"
+              ? "border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20"
+              : "border-border bg-card"
+        }`}
+      >
+        <span className="shrink-0">
+          {running ? (
+            <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+          ) : step.status === "failed" ? (
+            <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+          ) : step.status === "declined" ? (
+            <Ban className="w-3.5 h-3.5 text-amber-500" />
+          ) : (
+            <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-500" />
+          )}
+        </span>
+        <span className="text-xs font-medium text-foreground shrink-0 flex items-center gap-1">
+          {!running && step.status === "completed" && <Wrench className="w-3 h-3 text-muted-foreground/60" />}
+          {step.toolName || step.title}
+        </span>
+        {preview && (
+          <span className="text-[11px] text-muted-foreground font-mono truncate flex-1">{preview}</span>
+        )}
+        {step.status === "completed" && lines != null && (
+          <span className="text-[10px] text-muted-foreground/70 shrink-0 tabular-nums">{lines} 行</span>
+        )}
+        {step.status === "failed" && <span className="text-[10px] text-red-600 dark:text-red-400 shrink-0">失败</span>}
+        {step.status === "declined" && <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">已拦截</span>}
+        {step.duration && <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{step.duration}</span>}
+        {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />}
+      </button>
+      {effectiveOpen && expandable && (
+        <ToolDetail step={step} />
+      )}
+    </div>
+  );
 }
 
 function ToolDetail({ step }: { step: ChatStep }) {
@@ -22,7 +151,7 @@ function ToolDetail({ step }: { step: ChatStep }) {
     if (!step.detail) return <span className="text-muted-foreground">无附加信息</span>;
     const [args, legacy] = step.detail.split(/\n结果：([\s\S]*)/);
     return (
-      <div className="space-y-1.5 w-full">
+      <div className="ml-6 my-1 space-y-1.5 max-w-2xl">
         <Section title="输入" content={args} />
         {legacy !== undefined && <Section title="输出" content={legacy} />}
       </div>
@@ -30,7 +159,7 @@ function ToolDetail({ step }: { step: ChatStep }) {
   }
 
   return (
-      <div className="space-y-1.5 w-full">
+    <div className="ml-6 my-1 space-y-1.5 max-w-2xl">
       {inputJson && <Section title="工具参数" content={inputJson} />}
       {result?.error ? (
         <Section title="失败原因" content={result.error} tone="error" />
@@ -65,7 +194,6 @@ function Section({
     <div>
       <div className={`text-[10px] uppercase tracking-wide mb-0.5 flex items-center gap-1 ${tone === "error" ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
         {tone === "error" && <AlertTriangle className="w-3 h-3" />}
-        {tone !== "error" && <Terminal className="w-3 h-3" />}
         {title}
         {meta}
       </div>
@@ -82,193 +210,51 @@ function Section({
   );
 }
 
-function StepBadge({ status }: { status: ChatStep["status"] }) {
-  if (status === "running") {
-    return (
-      <span className="text-[10px] text-blue-600 dark:text-blue-400 flex items-center gap-1 shrink-0">
-        <Loader2 className="w-3 h-3 animate-spin" />
-        执行中
-      </span>
-    );
-  }
-  if (status === "failed") return <span className="text-[10px] text-red-600 dark:text-red-400 shrink-0">失败</span>;
-  if (status === "declined") return <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">已拦截</span>;
-  return null;
+/** 单条步骤（think/tool 分发）。 */
+function StepRow({ step }: { step: ChatStep }) {
+  return step.type === "think" ? <ReasoningRow step={step} /> : <ToolRow step={step} />;
 }
 
-function statusDotClass(status: ChatStep["status"]): string {
-  if (status === "running") return "bg-blue-500";
-  if (status === "failed") return "bg-red-500";
-  if (status === "declined") return "bg-amber-500";
-  return "bg-green-500";
-}
-
-function ThoughtStepRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen || step.status === "running");
-  const [userTouched, setUserTouched] = useState(false);
-  const effectiveOpen = userTouched ? open : defaultOpen || step.status === "running";
-  const expandable = Boolean(step.detail);
+/**
+ * Agent 过程时间线：不再渲染为带标题的"思考块盒子"，
+ * 而是与回答平铺的内联步骤列表；元信息（工具次数/tokens/耗时）
+ * 由 ChatMessageItem 放到回答下方的 TurnMeta 行。
+ */
+export function AgentThoughtBlock({ steps }: { steps: ChatStep[] }) {
+  if (steps.length === 0) return null;
   return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={effectiveOpen}
-        onClick={() => {
-          if (expandable) {
-            setUserTouched(true);
-            setOpen((v) => !v);
-          }
-        }}
-        className={`w-full flex items-center gap-2 py-1 px-1.5 -mx-1.5 rounded-md text-left ${expandable ? "hover:bg-muted/70 cursor-pointer" : "cursor-default"}`}
-      >
-        <Brain className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400 shrink-0" />
-        <span className="text-xs text-foreground">{step.title || "思考过程"}</span>
-        {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/50 transition-transform ml-auto ${effectiveOpen ? "" : "-rotate-90"}`} />}
-      </button>
-      {effectiveOpen && expandable && (
-        <div className="ml-6 my-1 border-l border-border pl-3">
-          <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground max-h-48 overflow-auto">
-            {step.detail}
-          </pre>
-        </div>
-      )}
+    <div className="space-y-1">
+      {steps.map((step) => (
+        <StepRow key={step.id || `${step.type}-${step.title}`} step={step} />
+      ))}
     </div>
   );
 }
 
-function ToolStepRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const [userTouched, setUserTouched] = useState(false);
-  const effectiveOpen = userTouched ? open : defaultOpen;
-  const expandable = Boolean(step.input || step.result || step.detail);
-  const lines = outputLineCount(step);
-  const preview = argsPreview(step);
-
-  return (
-    <div className="animate-in fade-in slide-in-from-top-1">
-      <button
-        type="button"
-        aria-expanded={effectiveOpen}
-        onClick={() => {
-          if (expandable) {
-            setUserTouched(true);
-            setOpen((v) => !v);
-          }
-        }}
-        className={`w-full flex items-center gap-2 py-1.5 px-2 -mx-2 rounded-md text-left transition-colors ${expandable ? "hover:bg-muted/70 cursor-pointer" : "cursor-default"}`}
-      >
-        <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(step.status)}`} />
-        <span className="text-xs font-medium text-foreground shrink-0">{step.toolName || step.title}</span>
-        {step.toolName && preview && (
-          <span className="text-[11px] text-muted-foreground font-mono truncate flex-1">{preview}</span>
-        )}
-        {!step.toolName && <span className="text-xs text-foreground truncate flex-1">{step.title}</span>}
-        {step.status === "completed" && lines != null && (
-          <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{lines} lines of output</span>
-        )}
-        <StepBadge status={step.status} />
-        {step.duration && <span className="text-[10px] text-muted-foreground/70 tabular-nums shrink-0">{step.duration}</span>}
-        {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/50 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />}
-      </button>
-      {effectiveOpen && expandable && (
-        <div className="ml-4 my-1 border-l border-border pl-3">
-          <ToolDetail step={step} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function roundGroups(steps: ChatStep[]): Array<{ index: number; steps: ChatStep[] }> {
-  const groups = new Map<number, ChatStep[]>();
-  for (const step of steps) {
-    const index = step.roundIndex ?? 1;
-    const group = groups.get(index);
-    if (group) group.push(step);
-    else groups.set(index, [step]);
-  }
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([index, group]) => ({ index, steps: group }));
-}
-
-export function AgentThoughtBlock({
+/**
+ * 回答下方的执行元信息行(灰色小字):N 次工具调用 · N tokens · Ns。
+ * 仅在轮次结束后展示。
+ */
+export function TurnMeta({
   steps,
   durationMs,
   usage,
-  expanded,
 }: {
-  steps: ChatStep[];
+  steps?: ChatStep[];
   durationMs?: number;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
-  expanded?: boolean;
 }) {
-  const runningCount = steps.filter((s) => s.status === "running").length;
-  const failedCount = steps.filter((s) => s.status === "failed").length;
-  const declinedCount = steps.filter((s) => s.status === "declined").length;
-  const toolCount = steps.filter((s) => s.type === "tool").length;
-  const isWorking = expanded || runningCount > 0;
-  const defaultOpen = isWorking || failedCount > 0 || declinedCount > 0;
-  const [open, setOpen] = useState(defaultOpen);
-  const [userTouched, setUserTouched] = useState(false);
-  const effectiveOpen = userTouched ? open : defaultOpen;
+  const toolCount = steps?.filter((s) => s.type === "tool").length ?? 0;
+  const tokens = usage?.totalTokens ?? usage?.outputTokens ?? null;
 
-  const stats: string[] = [];
-  if (toolCount > 0) stats.push(`${toolCount} 次工具调用`);
-  if (failedCount > 0) stats.push(`${failedCount} 失败`);
-  if (declinedCount > 0) stats.push(`${declinedCount} 拦截`);
-  if (usage?.totalTokens != null) stats.push(`${usage.totalTokens} tokens`);
-  else if (usage?.outputTokens != null) stats.push(`${usage.outputTokens} tokens`);
-  if (durationMs != null) stats.push(`${(durationMs / 1000).toFixed(1)}s`);
+  if (toolCount === 0 && tokens == null && durationMs == null) return null;
+
+  const parts: string[] = [];
+  if (toolCount > 0) parts.push(`${toolCount} 次工具调用`);
+  if (tokens != null) parts.push(`${tokens} tokens`);
+  if (durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
 
   return (
-    <div className="rounded-xl border border-border bg-muted/25 animate-in fade-in slide-in-from-top-1 overflow-hidden">
-      <button
-        type="button"
-        aria-expanded={effectiveOpen}
-        onClick={() => {
-          setUserTouched(true);
-          setOpen((v) => !v);
-        }}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors cursor-pointer"
-      >
-        {isWorking ? (
-          <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0" />
-        ) : (
-          <Brain className="w-4 h-4 text-violet-500 dark:text-violet-400 shrink-0" />
-        )}
-        <span className="text-sm font-medium text-foreground">{isWorking ? "思考中" : "思考完成"}</span>
-        <span className="text-[11px] text-muted-foreground truncate flex-1">
-          {stats.join(" · ")}
-        </span>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground/60 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />
-      </button>
-
-      {effectiveOpen && (
-        <div className="px-3 pb-2.5 space-y-2">
-          {roundGroups(steps).map((group, groupIdx) => (
-            <div key={group.index} className={groupIdx > 0 ? "pt-2 border-t border-border/70" : ""}>
-              <div className="space-y-0.5">
-                {group.steps.map((step) =>
-                  step.type === "think" ? (
-                    <ThoughtStepRow
-                      key={step.id || `${group.index}-${step.title}`}
-                      step={step}
-                      defaultOpen={true}
-                    />
-                  ) : (
-                    <ToolStepRow
-                      key={step.id || `${group.index}-${step.title}`}
-                      step={step}
-                      defaultOpen={step.status === "running" || step.status === "failed" || step.status === "declined"}
-                    />
-                  )
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <div className="text-[10px] text-muted-foreground/70 tabular-nums pt-0.5">{parts.join(" · ")}</div>
   );
 }
