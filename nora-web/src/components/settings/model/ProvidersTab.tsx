@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, XCircle, Loader2, Globe, Eye, EyeOff, Trash2, Plus, Server } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Globe, Eye, EyeOff, Trash2, Plus, Server, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/custom/States";
 import { useModelProviders, PROTOCOL_META, type ModelProvider } from "@/hooks/useModelProviders";
 
-function ProviderCard({ p }: { p: ModelProvider }) {
+function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvider) => void }) {
   const toggleEnabled = useModelProviders((s) => s.toggleEnabled);
   const removeProvider = useModelProviders((s) => s.removeProvider);
   const markStatus = useModelProviders((s) => s.markStatus);
@@ -106,7 +106,16 @@ function ProviderCard({ p }: { p: ModelProvider }) {
             {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
             {testing ? "测试中…" : "测试连通"}
           </Button>
-          <span className="text-[10px] text-muted-foreground ml-auto">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px] px-2 text-muted-foreground hover:text-foreground"
+            onClick={() => onEdit(p)}
+            title="编辑服务商"
+          >
+            <Pencil className="w-3 h-3 mr-1" /> 编辑
+          </Button>
+          <span className="text-[10px] text-muted-foreground ml-auto hidden sm:inline">
             思考等级与上下文窗口在「模型列表」页按模型配置
           </span>
           {confirmRemove ? (
@@ -140,7 +149,7 @@ function ProviderCard({ p }: { p: ModelProvider }) {
   );
 }
 
-export function ProvidersTab({ onAdd }: { onAdd: () => void }) {
+export function ProvidersTab({ onAdd, onEdit }: { onAdd: () => void; onEdit: (p: ModelProvider) => void }) {
   const providers = useModelProviders((s) => s.providers);
   if (providers.length === 0) {
     return (
@@ -158,7 +167,7 @@ export function ProvidersTab({ onAdd }: { onAdd: () => void }) {
   }
   return (
     <div className="space-y-3">
-      {providers.map((p) => <ProviderCard key={p.id} p={p} />)}
+      {providers.map((p) => <ProviderCard key={p.id} p={p} onEdit={onEdit} />)}
     </div>
   );
 }

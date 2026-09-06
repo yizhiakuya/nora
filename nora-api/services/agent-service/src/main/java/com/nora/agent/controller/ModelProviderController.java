@@ -55,12 +55,13 @@ public class ModelProviderController {
                 request.apiKey(), request.models(), request.modelSettings()));
     }
 
-    /** Updates name/enabled/models; other fields keep their stored values. */
+    /** Updates name/enabled/models/protocol/endpoint/apiKey; null fields keep their stored values. */
     @PutMapping("/{id}")
     public ApiResponse<ModelProviderService.ProviderView> update(@PathVariable long id,
                                                                  @RequestBody UpdateRequest request) {
         ModelProviderService.ProviderView updated = providerService.update(
-                id, request.name(), request.enabled(), request.models(), request.modelSettings());
+                id, request.name(), request.protocol(), request.endpoint(), request.apiKey(),
+                request.enabled(), request.models(), request.modelSettings());
         if (updated == null) {
             throw new BusinessException(404, "provider not found: " + id);
         }
@@ -150,8 +151,9 @@ public class ModelProviderController {
             ModelProviderService.ModelSettings modelSettings) {
     }
 
-    /** PUT body for provider updates (partial). */
-    public record UpdateRequest(String name, Boolean enabled, List<String> models,
+    /** PUT body for provider updates (partial; null/blank apiKey keeps stored key). */
+    public record UpdateRequest(String name, String protocol, String endpoint, String apiKey,
+                                Boolean enabled, List<String> models,
                                 ModelProviderService.ModelSettings modelSettings) {
     }
 

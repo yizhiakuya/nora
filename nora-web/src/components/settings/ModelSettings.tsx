@@ -5,13 +5,14 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProvidersTab } from "@/components/settings/model/ProvidersTab";
 import { ModelsTab } from "@/components/settings/model/ModelsTab";
 import { AddProviderDialog } from "@/components/settings/model/AddProviderDialog";
-import { useModelProviders } from "@/hooks/useModelProviders";
+import { useModelProviders, type ModelProvider } from "@/hooks/useModelProviders";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function ModelSettings() {
   const [tab, setTab] = useState("providers");
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<ModelProvider | null>(null);
   const providers = useModelProviders((s) => s.providers);
   const defaultModel = useModelProviders((s) => s.defaultModel);
   const syncFromBackend = useModelProviders((s) => s.syncFromBackend);
@@ -29,6 +30,9 @@ export function ModelSettings() {
     void syncFromBackend();
   }, [syncFromBackend]);
 
+  const openAdd = () => { setEditing(null); setAddOpen(true); };
+  const openEdit = (p: ModelProvider) => { setEditing(p); setAddOpen(true); };
+
   return (
     <div className="space-y-4">
       {/* 状态概览卡片 */}
@@ -42,7 +46,7 @@ export function ModelSettings() {
                 : "尚未接入任何服务商，请先添加并测试连通性"}
             </p>
           </div>
-          <Button size="sm" className="h-8 px-3 text-xs" onClick={() => setAddOpen(true)}>
+          <Button size="sm" className="h-8 px-3 text-xs" onClick={openAdd}>
             <Plus className="w-3.5 h-3.5 mr-1" /> 接入服务商
           </Button>
         </div>
@@ -60,9 +64,9 @@ export function ModelSettings() {
         </TabsList>
       </Tabs>
 
-      {tab === "providers" && <ProvidersTab onAdd={() => setAddOpen(true)} />}
-      {tab === "models" && <ModelsTab onAdd={() => setAddOpen(true)} />}
-      <AddProviderDialog isOpen={addOpen} onClose={() => setAddOpen(false)} />
+      {tab === "providers" && <ProvidersTab onAdd={openAdd} onEdit={openEdit} />}
+      {tab === "models" && <ModelsTab onAdd={openAdd} />}
+      <AddProviderDialog isOpen={addOpen} onClose={() => setAddOpen(false)} editing={editing} />
     </div>
   );
 }

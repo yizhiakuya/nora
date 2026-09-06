@@ -63,6 +63,8 @@ interface ModelProvidersState {
   /** 后端模式:拉取服务端 provider 列表 */
   syncFromBackend: () => Promise<void>;
   addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }) => void;
+  /** 编辑服务商基础信息;key 留空 = 保持原密钥 */
+  editProvider: (id: number, patch: { name: string; url: string; key?: string; protocol: ProviderProtocol }) => void;
   removeProvider: (id: number) => void;
   toggleEnabled: (id: number) => void;
   setDefaultModel: (m: string) => void;
@@ -128,6 +130,30 @@ export const useModelProviders = create<ModelProvidersState>()(
               }));
             })
             .catch(() => { /* 保留本地乐观条目,错误由调用方 toast */ });
+        }
+      },
+      editProvider: (id, { name, url, key, protocol }) => {
+        set((state) => ({
+          providers: state.providers.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  name: name.trim(),
+                  url: url.trim(),
+                  protocol,
+                  masked: key ? key.slice(0, 4) + "••••••••" + key.slice(-4) : p.masked,
+                  status: "untested" as const,
+                }
+              : p
+          ),
+        }));
+        if (USE_BACKEND && id < 1e12) {
+          modelsApi.updateProvider(id, {
+            name: name.trim(),
+            protocol,
+            endpoint: url.trim(),
+            ...(key ? { apiKey: key } : {}),
+          }).catch(() => { /* 乐观更新已生效 */ });
         }
       },
       removeProvider: (id) => {

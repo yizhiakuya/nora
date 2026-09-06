@@ -109,6 +109,12 @@ public class ModelProviderService {
     /** Updates any subset of fields; null fields keep their stored value. */
     public ProviderView update(long id, String name, Boolean enabled, List<String> models,
                                ModelSettings modelSettings) {
+        return update(id, name, null, null, null, enabled, models, modelSettings);
+    }
+
+    /** Full-subset update; null protocol/endpoint/apiKey keep their stored value. */
+    public ProviderView update(long id, String name, String protocol, String endpoint, String apiKey,
+                               Boolean enabled, List<String> models, ModelSettings modelSettings) {
         List<StoredProvider> existing = jdbcTemplate.query(
                 "SELECT name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider WHERE id = ?",
                 (rs, rowNum) -> new StoredProvider(
@@ -121,14 +127,17 @@ public class ModelProviderService {
             return null;
         }
         StoredProvider current = existing.get(0);
+        boolean credentialsChanged = (endpoint != null && !endpoint.equals(current.endpoint()))
+                || (apiKey != null && !apiKey.isBlank() && !apiKey.equals(current.apiKey()));
         return upsert(id,
                 name != null ? name : current.name(),
-                current.protocol(),
-                current.endpoint(),
-                current.apiKey(),
+                protocol != null ? protocol : current.protocol(),
+                endpoint != null ? endpoint : current.endpoint(),
+                apiKey != null && !apiKey.isBlank() ? apiKey : current.apiKey(),
                 enabled != null ? enabled : current.enabled(),
                 models != null ? models : current.models(),
-                current.status(),
+                // 端点或密钥变更后旧的连通状态不再可信，重置为未测试
+                credentialsChanged ? "untested" : current.status(),
                 modelSettings != null ? modelSettings : current.modelSettings());
     }
 

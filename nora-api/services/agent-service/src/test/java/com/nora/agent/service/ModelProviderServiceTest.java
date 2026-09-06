@@ -85,6 +85,27 @@ class ModelProviderServiceTest {
     }
 
     @Test
+    void updateCredentialsResetsStatusAndKeepsOtherFields() {
+        java.sql.Array mockArray = org.mockito.Mockito.mock(java.sql.Array.class);
+        try {
+            when(mockArray.getArray()).thenReturn(new String[]{"m1"});
+        } catch (java.sql.SQLException ignored) {
+        }
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq(9L)))
+                .thenAnswer(inv -> {
+                    RowMapper<ModelProviderService.StoredProvider> mapper = inv.getArgument(1);
+                    return List.of(mapper.mapRow(newFakeRs("Old", "openai", "http://old", "sk-abcd12345678", true, mockArray, "ok"), 1));
+                });
+
+        // 改端点：状态重置为 untested，密钥留空保持原值
+        ModelProviderService.ProviderView view = service.update(9L, null, null, "http://new/v1", "", null, null, null);
+        assertEquals("http://new/v1", view.endpoint());
+        assertEquals("sk-a••••••••5678", view.masked());
+        assertEquals("untested", view.status());
+        assertEquals(List.of("m1"), view.models());
+    }
+
+    @Test
     void updateReturnsNullForUnknownId() {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq(99L))).thenReturn(List.of());
 

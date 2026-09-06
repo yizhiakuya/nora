@@ -59,7 +59,7 @@ export const modelsApi = {
 
   async updateProvider(
     id: number,
-    patch: { name?: string; enabled?: boolean; models?: string[]; modelSettings?: ModelSettings }
+    patch: { name?: string; protocol?: ProviderProtocol; endpoint?: string; apiKey?: string; enabled?: boolean; models?: string[]; modelSettings?: ModelSettings }
   ): Promise<ModelProvider> {
     const item = await requestJson<BackendProvider>(`/models/providers/${id}`, {
       method: "PUT",
