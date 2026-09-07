@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Globe, Loader2, Network, XCircle } from "lucide-react";
+import { CheckCircle2, Globe, Loader2, Network, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 
-/** GET /api/network/proxy 响应 */
+/** GET/PUT /api/network/proxy 响应 */
 interface ProxyView {
   enabled: boolean;
   host: string | null;
@@ -42,25 +42,73 @@ function StatusLine({ label, status, ms }: { label: string; status: number | nul
 }
 
 /**
- * 网络设置:出站代理状态展示 + 外网连通性测试(直连 vs 走代理对比)。
- * 代理本身经 application.yml / 环境变量(NORA_PROXY_*)配置,页面只读+验证,
- * 重启后端进程才会生效——避免"页面改了但运行中的 JVM 不感知"的错觉。
+ * 网络设置:出站代理直接在页面配置(host/port/开关),保存即持久化到后端
+ * app_setting 表并动态生效——无需环境变量、无需重启。
+ * 连通性测试(直连 vs 走代理)帮助确认代理是否真的解锁目标。
  */
 export function NetworkSettings() {
   const [proxy, setProxy] = useState<ProxyView | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [host, setHost] = useState("127.0.0.1");
+  const [port, setPort] = useState("7897");
+  const [saving, setSaving] = useState(false);
   const [probeUrl, setProbeUrl] = useState("https://opencode.ai");
   const [probing, setProbing] = useState(false);
   const [result, setResult] = useState<ProbeResult | null>(null);
   const mounted = useRef(true);
 
-  useEffect(() => {
-    mounted.current = true;
+  const loadProxy = useCallback(() => {
     if (!USE_BACKEND) return;
     requestJson<ProxyView>("/network/proxy")
-      .then((p) => { if (mounted.current) setProxy(p); })
+      .then((p) => {
+        if (!mounted.current) return;
+        setProxy(p);
+        setEnabled(p.enabled);
+        if (p.host) setHost(p.host);
+        if (p.port) setPort(String(p.port));
+      })
       .catch(() => { /* 后端不可用时保持 null */ });
-    return () => { mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadProxy();
+    return () => { mounted.current = false; };
+  }, [loadProxy]);
+
+  const save = useCallback(async (nextEnabled: boolean) => {
+    if (saving) return;
+    if (nextEnabled) {
+      if (!host.trim()) { toast.error("请填写代理主机地址"); return; }
+      const portNum = Number(port);
+      if (!Number.isInteger(portNum) || portNum <= 0 || portNum > 65535) {
+        toast.error("端口必须是 1-65535 的整数");
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      const p = await requestJson<ProxyView>("/network/proxy", {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: nextEnabled,
+          host: host.trim(),
+          port: nextEnabled ? Number(port) : null,
+        }),
+      });
+      if (!mounted.current) return;
+      setProxy(p);
+      setEnabled(p.enabled);
+      toast.success(p.enabled ? `代理已启用并生效:${p.url}` : "代理已停用,外网请求恢复直连");
+    } catch (e) {
+      // 后端保存前会先探测代理可达性,失败时给出行内提示
+      toast.error((e as Error).message || "保存失败");
+      // 以后端实际状态为准(可能保存被拒)
+      loadProxy();
+    } finally {
+      if (mounted.current) setSaving(false);
+    }
+  }, [host, port, saving, loadProxy]);
 
   const probe = useCallback(async () => {
     if (!probeUrl.trim() || probing) return;
@@ -81,29 +129,61 @@ export function NetworkSettings() {
 
   return (
     <div className="space-y-4">
-      {/* 出站代理状态 */}
+      {/* 出站代理:页面直接配置,保存即生效 */}
       <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <Network className="w-4 h-4 text-blue-500" />
             <h2 className="text-sm font-bold text-foreground">出站代理</h2>
           </div>
-          {proxy && (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-muted-foreground">{proxy.enabled ? "已启用" : "未启用"}</span>
-              <Switch checked={proxy.enabled} disabled title="由服务端配置决定(NORA_PROXY_*)，页面只读" />
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">{enabled ? "已启用" : "未启用"}</span>
+            <Switch
+              checked={enabled}
+              disabled={!USE_BACKEND || saving}
+              onCheckedChange={(v) => { setEnabled(v); void save(v); }}
+              title={enabled ? "点击停用代理" : "点击启用代理"}
+            />
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground leading-relaxed">
+        <p className="text-xs text-muted-foreground leading-relaxed mb-3">
           后端对外网（LLM 上游、embedding 提供方等）的请求经代理转发；内网服务互调始终直连。
-          <br />
-          {proxy?.enabled ? (
-            <>当前代理:<span className="font-mono text-foreground">{proxy.url}</span></>
-          ) : (
-            <>当前未启用。配置方式:设置环境变量 <code className="font-mono text-[10px] bg-muted px-1 rounded">NORA_PROXY_ENABLED=true</code>、<code className="font-mono text-[10px] bg-muted px-1 rounded">NORA_PROXY_HOST</code>、<code className="font-mono text-[10px] bg-muted px-1 rounded">NORA_PROXY_PORT</code> 后重启后端。</>
-          )}
+          保存后立即生效，无需重启。启用时会先探测代理可达性，避免保存一个坏配置。
         </p>
+        <div className="flex items-end gap-2 max-w-md">
+          <div className="flex-1">
+            <label className="text-[10px] text-muted-foreground mb-1 block">主机地址</label>
+            <Input
+              className="h-8 text-xs font-mono"
+              placeholder="127.0.0.1"
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              disabled={!USE_BACKEND || saving}
+            />
+          </div>
+          <div className="w-24">
+            <label className="text-[10px] text-muted-foreground mb-1 block">端口</label>
+            <Input
+              className="h-8 text-xs font-mono"
+              placeholder="7897"
+              inputMode="numeric"
+              value={port}
+              onChange={(e) => setPort(e.target.value.replace(/[^\d]/g, ""))}
+              disabled={!USE_BACKEND || saving}
+            />
+          </div>
+          <Button size="sm" variant="outline" className="h-8 px-3 text-xs shrink-0" onClick={() => void save(enabled)} disabled={!USE_BACKEND || saving}>
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            保存
+          </Button>
+        </div>
+        {proxy && (
+          <p className="text-[10px] text-muted-foreground mt-2">
+            {proxy.enabled
+              ? <>当前生效:<span className="font-mono text-foreground">{proxy.url}</span></>
+              : "当前直连外网。"}
+          </p>
+        )}
       </div>
 
       {/* 连通性测试 */}

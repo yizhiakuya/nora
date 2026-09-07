@@ -98,8 +98,8 @@ public class ModelProviderController {
                     new org.springframework.http.client.SimpleClientHttpRequestFactory();
             factory.setConnectTimeout(10_000);
             factory.setReadTimeout(30_000);
-            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
-                    .addressFor(proxyProperties, base);
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder
+                    .addressFor(base);
             if (proxyAddr != null) {
                 factory.setProxy(new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr));
             }

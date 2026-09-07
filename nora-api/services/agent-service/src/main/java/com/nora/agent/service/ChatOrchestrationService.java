@@ -856,8 +856,8 @@ public class ChatOrchestrationService {
         try {
             java.net.http.HttpClient.Builder clientBuilder = java.net.http.HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(10));
-            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
-                    .addressFor(proxyProperties, llm.baseUrl());
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder
+                    .addressFor(llm.baseUrl());
             if (proxyAddr != null) {
                 clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
             }
@@ -1054,8 +1054,8 @@ public class ChatOrchestrationService {
 
             java.net.http.HttpClient.Builder clientBuilder = java.net.http.HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(10));
-            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySupport
-                    .addressFor(proxyProperties, llm.baseUrl());
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder
+                    .addressFor(llm.baseUrl());
             if (proxyAddr != null) {
                 clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
             }
