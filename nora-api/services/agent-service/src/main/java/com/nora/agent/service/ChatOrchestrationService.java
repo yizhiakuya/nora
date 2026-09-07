@@ -570,15 +570,32 @@ public class ChatOrchestrationService {
      * 该模型的 reasoningLevels 白名单同时约束请求级取值(不在白名单内则回落默认)。
      */
     private ResolvedLlm resolveLlm(String requestedModel, String requestedReasoningLevel) {
+        // 设置中心(数据库 provider store)优先:模型选择/思考等级/每模型协议都源于此。
+        // 静态 nora.llm.* 配置仅作兜底(全新部署还没配 provider 时可用),
+        // 否则环境变量一存在就会短路整个 provider 体系——UI 上怎么选模型都不生效。
+        if (modelProviderService != null) {
+            ResolvedLlm fromStore = resolveFromStore(requestedModel, requestedReasoningLevel);
+            if (fromStore != null) return fromStore;
+        }
         if (llmProperties.configured()) {
             return new ResolvedLlm(llmProperties.baseUrl(), llmProperties.apiKey(), llmProperties.model(), "openai",
                     null);
         }
-        if (modelProviderService == null) return null;
+        return null;
+    }
+
+    /** Provider-store leg of {@link #resolveLlm}; null when nothing usable is enabled. */
+    private ResolvedLlm resolveFromStore(String requestedModel, String requestedReasoningLevel) {
         ModelProviderService.ActiveProvider provider = modelProviderService.activeProvider(requestedModel);
         if (provider == null || provider.endpoint() == null || provider.endpoint().isBlank()) return null;
-        String model = provider.models() == null || provider.models().isEmpty()
-                ? LlmProperties.DEFAULT_MODEL : provider.models().get(0);
+        // 请求级模型名优先(activeProvider 已按它筛选供应商);仅在请求未指定时回落
+        // 到该供应商模型列表的第一个。此前固定取 models.get(0),导致对话框里选的
+        // 模型被静默替换成供应商第一个模型(如选 nemotron 实际跑 muse)。
+        String model = requestedModel != null && !requestedModel.isBlank()
+                && (provider.models() == null || provider.models().contains(requestedModel))
+                ? requestedModel
+                : (provider.models() == null || provider.models().isEmpty()
+                        ? LlmProperties.DEFAULT_MODEL : provider.models().get(0));
         String effectiveLevel = effectiveReasoningLevel(provider, model, requestedReasoningLevel);
         // 协议按模型覆盖:modelSettings[model].protocol 优先,否则继承 provider 级协议
         ModelProviderService.PerModelSettings perModel =
@@ -970,6 +987,17 @@ public class ChatOrchestrationService {
             body.put("stream", true);
             if (chatBody.hasNonNull("reasoning_effort")) {
                 body.putObject("reasoning").put("effort", chatBody.get("reasoning_effort").asText());
+            }
+            // 摘要推理:部分模型(如 muse 系列)原始推理内容是 encrypted_content,不请求
+            // summary 就没有任何可见的思考文本——上游支持时必须带 summary=auto,
+            // 否则前端"思考过程"时间线对这类模型永远是空的。
+            if (!body.has("reasoning")) {
+                body.putObject("reasoning").put("summary", "auto");
+            } else {
+                JsonNode reasoningNode = body.path("reasoning");
+                if (reasoningNode.isObject()) {
+                    ((ObjectNode) reasoningNode).put("summary", "auto");
+                }
             }
             // tools: flatten {type:function, function:{...}} → {type:function, name, ...}
             ArrayNode tools = body.putArray("tools");
