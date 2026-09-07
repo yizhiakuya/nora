@@ -868,6 +868,7 @@ public class ChatOrchestrationService {
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + llm.apiKey())
                     .header("Accept", MediaType.ALL_VALUE)
+                    .headers(providerExtraHeaders(llm))
                     .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
                     .build();
@@ -1065,6 +1066,7 @@ public class ChatOrchestrationService {
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + llm.apiKey())
                     .header("Accept", MediaType.ALL_VALUE)
+                    .headers(providerExtraHeaders(llm))
                     .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
                     .build();
@@ -1162,6 +1164,21 @@ public class ChatOrchestrationService {
         java.util.Set<Integer> all = new java.util.TreeSet<>(a.keySet());
         all.addAll(b.keySet());
         return all;
+    }
+
+    /**
+     * Per-provider extra HTTP headers. OpenCode's free tier rejects requests
+     * without an X-Session-ID ("free tier can only be used in OpenCode");
+     * the ID is derived from the API key so it stays stable across turns
+     * (provider-side session continuity) without leaking anything.
+     */
+    private String[] providerExtraHeaders(ResolvedLlm llm) {
+        if (llm.baseUrl() != null && llm.baseUrl().contains("opencode.ai")) {
+            String key = llm.apiKey() == null ? "" : llm.apiKey();
+            String sessionId = "nora-" + Integer.toHexString(key.hashCode());
+            return new String[]{"X-Session-ID", sessionId};
+        }
+        return new String[0];
     }
 
     private static String stripTrailingSlash(String url) {
