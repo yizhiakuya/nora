@@ -7,15 +7,17 @@ import { Button } from "@/components/ui/button";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { ChatConversation } from "@/components/chat/ChatConversation";
 import { useModelProviders } from "@/hooks/useModelProviders";
+import { deleteSessionOnBackend } from "@/lib/api/agentApi";
+import { relativeTime } from "@/lib/relativeTime";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
-import { relativeTime } from "@/lib/relativeTime";
 
 export default function ChatPage() {
   const navigate = useNavigate();
   const sessions = useChatSessions((s) => s.sessions);
   const activeId = useChatSessions((s) => s.activeId);
   const deleteSession = useChatSessions((s) => s.deleteSession);
+  const undoDeleteSession = useChatSessions((s) => s.undoDeleteSession);
   const defaultModel = useModelProviders((s) => s.defaultModel);
   const syncProviders = useModelProviders((s) => s.syncFromBackend);
   const [copied, setCopied] = useState(false);
@@ -25,6 +27,28 @@ export default function ChatPage() {
   }, [syncProviders]);
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
+
+  /** 会话删除 + undo(与侧栏一致;5 秒内可撤销,窗口后才删后端) */
+  const handleDeleteActive = () => {
+    if (!active) return;
+    const snapshot = sessions;
+    const index = snapshot.findIndex((s) => s.id === active.id);
+    const removed = active;
+    const title = active.title;
+    deleteSession(active.id);
+    toast.success(`已删除「${title.slice(0, 16)}${title.length > 16 ? "…" : ""}」`, {
+      description: "5 秒内可撤销",
+      action: {
+        label: "撤销",
+        onClick: () => undoDeleteSession(removed, index),
+      },
+      duration: 5000,
+    });
+    window.setTimeout(() => {
+      const stillDeleted = !useChatSessions.getState().sessions.some((s) => s.id === removed.id);
+      if (stillDeleted) void deleteSessionOnBackend(removed.id).catch(() => undefined);
+    }, 5300);
+  };
 
   const copySessionId = async () => {
     if (!active) return;
@@ -78,7 +102,7 @@ export default function ChatPage() {
               size="icon"
               className="h-8 w-8 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
               title="删除当前会话"
-              onClick={() => { if (active) { deleteSession(active.id); toast.success("会话已删除"); } }}
+              onClick={handleDeleteActive}
             >
               <Trash2 className="w-4 h-4" />
             </Button>

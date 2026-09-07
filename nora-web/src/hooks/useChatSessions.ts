@@ -20,6 +20,8 @@ interface ChatSessionsState {
   syncing: boolean;
   createSession: () => string;
   deleteSession: (id: string) => void;
+  /** 撤销删除:后端无法恢复已删会话,这里只恢复本地状态并提示用户 */
+  undoDeleteSession: (session: ChatSession, index: number) => void;
   setActive: (id: string) => void;
   /** 发送过程中本地缓存消息(流式渲染用) */
   saveMessages: (id: string, messages: ChatMessage[]) => void;
@@ -55,10 +57,25 @@ export const useChatSessions = create<ChatSessionsState>()(
       },
       deleteSession: (id) => {
         const { sessions, activeId } = get();
-        // 乐观移除本地,后端失败不回滚(下次 syncFromBackend 以服务端为准)
+        // 记录被删会话与其位置,供 undo 恢复
+        const index = sessions.findIndex((s) => s.id === id);
+        if (index < 0) return;
+        const removed = sessions[index];
+        (get() as ChatSessionsState & { _lastDeleted?: { session: ChatSession; index: number } })._lastDeleted =
+          { session: removed, index };
+
+        // 乐观移除本地;后端删除延迟到 undo 窗口结束后执行
         const remaining = sessions.filter((s) => s.id !== id);
         set({ sessions: remaining, activeId: activeId === id ? remaining[0]?.id ?? "" : activeId });
-        void deleteSessionOnBackend(id).catch(() => undefined);
+      },
+      undoDeleteSession: (session, index) => {
+        // 恢复本地状态,取消待执行的后端删除
+        set((state) => {
+          const sessions = [...state.sessions];
+          sessions.splice(Math.min(index, sessions.length), 0, session);
+          return { sessions, activeId: session.id };
+        });
+        (get() as ChatSessionsState & { _lastDeleted?: unknown })._lastDeleted = undefined;
       },
       setActive: (id) => {
         set({ activeId: id });

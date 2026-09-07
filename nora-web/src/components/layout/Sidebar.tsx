@@ -4,13 +4,14 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Home, Folder, MessageSquare, Zap, BookOpen, Server,
   Database, ListCheck, Settings, ChevronDown, ChevronsUpDown,
-  User, LogOut, Check, X, PanelLeftClose, PanelLeftOpen, Plus
+  User, LogOut, Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
 import { useSidebarStore } from "@/hooks/useSidebar";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useChatSessions } from "@/hooks/useChatSessions";
+import { deleteSessionOnBackend } from "@/lib/api/agentApi";
 import { relativeTime } from "@/lib/relativeTime";
 import {
   DropdownMenu,
@@ -50,6 +51,31 @@ export function Sidebar() {
   const setActive = useChatSessions((s) => s.setActive);
   const createSession = useChatSessions((s) => s.createSession);
   const syncSessions = useChatSessions((s) => s.syncFromBackend);
+  /** 会话删除 + undo(调研:单项低频破坏性操作用 undo toast,不用确认弹窗) */
+  const deleteSession = useChatSessions((s) => s.deleteSession);
+  const undoDeleteSession = useChatSessions((s) => s.undoDeleteSession);
+
+  const handleDeleteSession = (id: string, title: string) => {
+    const snapshot = useChatSessions.getState().sessions;
+    const index = snapshot.findIndex((s) => s.id === id);
+    const removed = snapshot[index];
+    deleteSession(id);
+    toast.success(`已删除「${title.slice(0, 16)}${title.length > 16 ? "…" : ""}」`, {
+      description: "5 秒内可撤销",
+      action: {
+        label: "撤销",
+        onClick: () => {
+          if (removed) undoDeleteSession(removed, index);
+        },
+      },
+      duration: 5000,
+    });
+    // undo 窗口结束后再删后端(延迟到 toast 关闭)
+    window.setTimeout(() => {
+      const stillDeleted = !useChatSessions.getState().sessions.some((s) => s.id === id);
+      if (stillDeleted) void deleteSessionOnBackend(id).catch(() => undefined);
+    }, 5300);
+  };
   // 会话列表以后端为准:侧栏挂载时同步一次(失败静默用本地缓存)
   useEffect(() => {
     void syncSessions();
@@ -132,17 +158,28 @@ export function Sidebar() {
                                 if (pathname !== "/chat") navigate("/chat");
                               }}
                               className={cn(
-                                "px-2 py-1.5 text-xs rounded-md cursor-pointer transition-colors group/session",
+                                "px-2 py-1.5 text-xs rounded-md cursor-pointer transition-colors group/session relative",
                                 isSessionActive
                                   ? "bg-blue-50/50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium"
                                   : "text-muted-foreground hover:bg-muted hover:text-gray-900 dark:hover:text-gray-100"
                               )}
                               title={session.title}
                             >
-                              <div className="truncate">{session.title}</div>
-                              <div className={cn("text-[10px] tabular-nums", isSessionActive ? "text-blue-500/70 dark:text-blue-400/70" : "text-muted-foreground/60")}>
+                              <div className="truncate pr-5">{session.title}</div>
+                              <div className={cn("text-[10px] tabular-nums pr-5", isSessionActive ? "text-blue-500/70 dark:text-blue-400/70" : "text-muted-foreground/60")}>
                                 {session.messageCount != null && session.messageCount > 0 && <span>{session.messageCount} 条 · </span>}{relativeTime(session.updatedAt)}
                               </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteSession(session.id, session.title);
+                                }}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/session:opacity-100 hover:bg-red-50 dark:hover:bg-red-950/40 text-muted-foreground/50 hover:text-red-500 dark:hover:text-red-400 transition-all cursor-pointer"
+                                title="删除会话"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
                             </div>
                           );
                         })}
