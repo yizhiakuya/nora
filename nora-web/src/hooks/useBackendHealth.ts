@@ -19,8 +19,11 @@ interface BackendHealthState {
 }
 
 const POLL_MS = 30_000;
+/** 离线时的自动重试间隔(指数退避上限 30s);在线时回到常规轮询 */
+const RETRY_STEPS_MS = [5_000, 10_000, 20_000, 30_000];
 let pollingStarted = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let consecutiveFailures = 0;
 
 export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
   online: null,
@@ -31,7 +34,9 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
       const ok = response.ok;
       const wasOffline = get().online === false;
       set({ online: ok, lastCheckedAt: Date.now() });
-      if (ok && wasOffline) {
+      if (ok) {
+        consecutiveFailures = 0;
+        if (wasOffline) {
         // 恢复在线:通知各 store 重新拉数据(动态 import 避免环)
         const { useModelProviders } = await import("@/hooks/useModelProviders");
         void useModelProviders.getState().syncFromBackend();
@@ -45,9 +50,13 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
         void useAutomations.getState().syncFromBackend();
         const { useKnowledgeDocs } = await import("@/hooks/useKnowledgeDocs");
         void useKnowledgeDocs.getState().syncFromBackend();
+        }
+      } else {
+        consecutiveFailures++;
       }
       return ok;
     } catch {
+      consecutiveFailures++;
       set({ online: false, lastCheckedAt: Date.now() });
       return false;
     }
@@ -58,7 +67,11 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
     const loop = async () => {
       await get().check();
       if (timer) clearTimeout(timer);
-      timer = setTimeout(loop, POLL_MS);
+      // 在线:常规 30s 轮询;离线:指数退避(5s→10s→20s→30s 封顶)加速恢复感知
+      const nextMs = get().online === false
+        ? RETRY_STEPS_MS[Math.min(consecutiveFailures - 1, RETRY_STEPS_MS.length - 1)]
+        : POLL_MS;
+      timer = setTimeout(loop, Math.max(1_000, nextMs));
     };
     void loop();
     // 页面重新可见时立即探测(笔记本唤醒/切网)

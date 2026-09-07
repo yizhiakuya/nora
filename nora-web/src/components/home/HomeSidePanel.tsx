@@ -1,16 +1,29 @@
 'use client';
 
 import { useNavigate } from "react-router-dom";
-import { Database, Server, BookOpen } from "lucide-react";
+import { Database, Server, BookOpen, CloudOff } from "lucide-react";
 import { useConnections } from "@/hooks/useConnections";
 import { useServices } from "@/hooks/useServices";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { useBackendOnline } from "@/hooks/useBackendHealth";
+
+/** 区块标题旁的同步状态徽标(Linear 式):离线时显示「待同步」。 */
+function SyncBadge({ stale }: { stale: boolean }) {
+  if (!stale) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground border border-border rounded px-1.5 py-0.5">
+      <CloudOff className="w-3 h-3" /> 待同步
+    </span>
+  );
+}
 
 export function HomeSidePanel() {
   const navigate = useNavigate();
   const connections = useConnections((s) => s.connections);
   const services = useServices((s) => s.services);
   const docs = useKnowledgeDocs((s) => s.docs);
+  const online = useBackendOnline();
+  const stale = online === false;
 
   const connectedDb = connections.filter((c) => c.status === "connected").length;
   const runningSvcs = services.filter((s) => s.status === "running").length;
@@ -23,6 +36,7 @@ export function HomeSidePanel() {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
           <Database className="w-4 h-4 text-purple-500 dark:text-purple-400" /> 数据源
+          <SyncBadge stale={stale} />
         </h2>
         <button onClick={() => navigate("/data-sources")} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
           管理 →
@@ -49,6 +63,7 @@ export function HomeSidePanel() {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
           <Server className="w-4 h-4 text-green-500 dark:text-green-400" /> 环境
+          <SyncBadge stale={stale} />
         </h2>
         <button onClick={() => navigate("/environments")} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
           控制台 →
@@ -75,6 +90,7 @@ export function HomeSidePanel() {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
           <BookOpen className="w-4 h-4 text-blue-500 dark:text-blue-400" /> 知识库
+          <SyncBadge stale={stale} />
         </h2>
         <button onClick={() => navigate("/knowledge")} className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
           管理 →

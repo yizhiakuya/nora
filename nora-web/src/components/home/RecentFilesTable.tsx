@@ -1,10 +1,11 @@
 'use client';
 
 import { useNavigate } from "react-router-dom";
-import { Clock, FileText, FileSpreadsheet, FileImage, BookOpen } from "lucide-react";
+import { Clock, FileText, FileSpreadsheet, FileImage, BookOpen, CloudOff } from "lucide-react";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { useBackendOnline } from "@/hooks/useBackendHealth";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { FileItem } from "@/types";
 
@@ -20,6 +21,9 @@ export function RecentFilesTable() {
   const viewer = useFileViewer();
   const recent = useRecentFiles((s) => s.recent);
   const docs = useKnowledgeDocs((s) => s.docs);
+  const online = useBackendOnline();
+  // 离线:如实显示本机记录为待同步,而不是把它们装作最新数据
+  const stale = online === false;
 
   const openRecent = (name: string, type: string) => {
     const { Icon, color } = iconFor(name);
@@ -41,6 +45,11 @@ export function RecentFilesTable() {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
           <Clock className="w-4 h-4 text-blue-500 dark:text-blue-400" /> 最近使用
+          {stale && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground border border-border rounded px-1.5 py-0.5">
+              <CloudOff className="w-3 h-3" /> 待同步
+            </span>
+          )}
         </h2>
         <span className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer hover:underline" onClick={() => navigate("/files")}>查看全部</span>
       </div>
@@ -55,7 +64,14 @@ export function RecentFilesTable() {
             </tr>
           </thead>
           <tbody className="text-sm">
-            {recent.map(({ name, type, time }) => {
+            {recent.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="p-6 text-center text-xs text-muted-foreground">
+                  {stale ? "无法连接后端,暂无法获取最近使用记录" : "还没有打开过文件,去文件中心看看吧"}
+                </td>
+              </tr>
+            ) : (
+            recent.map(({ name, type, time }) => {
               const { Icon, color } = iconFor(name);
               const indexed = docs.some((d) => d.name === name);
               return (
@@ -83,7 +99,8 @@ export function RecentFilesTable() {
                   <td className="p-3 text-[11px] text-muted-foreground whitespace-nowrap">{time}</td>
                 </tr>
               );
-            })}
+            })
+            )}
           </tbody>
         </table>
       </div>
