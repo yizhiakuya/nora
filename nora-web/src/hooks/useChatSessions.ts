@@ -90,11 +90,17 @@ export const useChatSessions = create<ChatSessionsState>()(
           const now = Date.now();
           const remoteSessions: ChatSession[] = remote.map((r) => {
             const local = get().sessions.find((s) => s.id === r.id);
+            // 后端真实活跃时间优先(发送中本地 updatedAt 更新,取两者较新)
+            const serverTime = r.lastActivity ? new Date(r.lastActivity).getTime() : NaN;
+            const localTime = local?.updatedAt ?? NaN;
+            const updatedAt = Number.isFinite(serverTime) && Number.isFinite(localTime)
+              ? Math.max(serverTime, localTime)
+              : Number.isFinite(serverTime) ? serverTime : Number.isFinite(localTime) ? localTime : now;
             return {
               id: r.id,
               title: r.title || DEFAULT_TITLE,
               messageCount: r.messageCount,
-              updatedAt: local?.updatedAt ?? now,
+              updatedAt,
               // 保留本地消息缓存直到 loadHistory 拉到后端历史
               messages: local?.messages ?? [],
             };

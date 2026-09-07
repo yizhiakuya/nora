@@ -2,13 +2,14 @@
 
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
-import { Sparkles, Star, Share2, Trash2, Copy, Check } from "lucide-react";
+import { Sparkles, Trash2, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { ChatConversation } from "@/components/chat/ChatConversation";
 import { useModelProviders } from "@/hooks/useModelProviders";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
+import { relativeTime } from "@/lib/relativeTime";
 
 export default function ChatPage() {
   const navigate = useNavigate();
@@ -59,6 +60,11 @@ export default function ChatPage() {
                 {active.id}
               </button>
             )}
+            {active && (
+              <span className="hidden md:inline text-[10px] text-muted-foreground/70 tabular-nums" title="最近活跃时间">
+                {relativeTime(active.updatedAt)}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => navigate("/settings?tab=模型管理")}
@@ -67,12 +73,6 @@ export default function ChatPage() {
             >
               <Sparkles className="w-3 h-3" /> {defaultModel}
             </button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-yellow-400 dark:hover:text-yellow-300 hover:bg-yellow-50 dark:hover:bg-yellow-950/40">
-              <Star className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-              <Share2 className="w-4 h-4" />
-            </Button>
             <Button
               variant="ghost"
               size="icon"

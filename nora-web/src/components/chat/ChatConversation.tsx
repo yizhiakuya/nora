@@ -1,7 +1,8 @@
 'use client';
 
-import { MessageSquare as MessageSquareOpen } from "lucide-react";
+import { ArrowDown, MessageSquare as MessageSquareOpen } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
+import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { ChatInputArea } from "./ChatInputArea";
 import { ChatMessage, PermissionMode } from "@/lib/api/chatApi";
@@ -34,12 +35,18 @@ function estimateContextTokens(messages: ChatMessage[], input: string): number {
 /**
  * 单个会话的对话区：以 sessionId 为 React key 挂载，
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
+ * 智能滚动:用户上翻阅读历史时不强制拉底,显示「回到底部」按钮。
  */
 export function ChatConversation({ sessionId, initialMessages }: ChatConversationProps) {
-  const { messages, input, setInput, isSending, sendMessage, scrollRef, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode } = useChat({
+  const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage } = useChat({
     initialMessages,
     sessionId,
   });
+  // 跟随消息内容与流式状态变化;切会话时组件重挂载自动贴底
+  const { scrollRef, showJumpButton, scrollToBottom } = useAutoScroll([
+    messages,
+    messages[messages.length - 1]?.content,
+  ]);
 
   return (
     <>
@@ -52,12 +59,31 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
               <span className="text-xs">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
             </div>
           ) : (
-            messages.map((msg) => <ChatMessageItem key={msg.id} msg={msg} />)
+            messages.map((msg) => (
+              <ChatMessageItem
+                key={msg.id}
+                msg={msg}
+                onRetry={retryMessage}
+                canRetry={!isSending}
+              />
+            ))
           )}
         </div>
       </div>
 
-      <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage}
+      {/* 回到底部:用户上翻后出现,点击平滑回底并恢复自动跟随 */}
+      {showJumpButton && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom(true)}
+          className="absolute bottom-36 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-card border border-border shadow-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer animate-in fade-in slide-in-from-bottom-2"
+          title="回到底部"
+        >
+          <ArrowDown className="w-4 h-4" />
+        </button>
+      )}
+
+      <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage} onStop={stopGenerating}
         reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
         permissionMode={permissionMode} onPermissionModeChange={setPermissionMode}
         contextTokens={estimateContextTokens(messages, input)} />

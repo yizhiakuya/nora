@@ -54,6 +54,13 @@ export interface ChatMessage {
   turnMetrics?: ChatTurnMetrics;
   /** 当前轮等待用户处理的高风险审批 */
   approval?: ApprovalRequest;
+  /** 人性化错误提示 + 建议动作(原始串折叠在详情里) */
+  errorHint?: string;
+  errorKind?: "network" | "provider" | "auth" | "rate-limit" | "timeout" | "approval" | "unknown";
+  /** 原始错误串(排障用,UI 折叠展示) */
+  errorRaw?: string;
+  /** 本轮被用户主动停止(保留已流出的部分内容) */
+  stopped?: boolean;
 }
 
 export type PermissionMode = "ask" | "assist" | "full";
@@ -79,6 +86,18 @@ export type ChatResponder = (
   sessionId?: string,
   model?: string,
   reasoningLevel?: string,
-  permissionMode?: PermissionMode
+  permissionMode?: PermissionMode,
+  /** 中断本轮流式响应（停止生成按钮）；responder 实现方持有对应 AbortController */
+  signal?: AbortSignal
 ) => Promise<void>;
+
+/**
+ * 停止生成的结果约定：
+ * - 用户中断时 responder 以 { stopped: true } 结束（不是 throw），
+ *   已流出的部分文本保留并标记 stoppedAt（消息上显示「已停止」角标）。
+ * 研究来源：frontendpatterns.dev/stop-generation —— abort 是正常结果不是错误。
+ */
+export interface StopHandle {
+  stopped?: boolean;
+}
 

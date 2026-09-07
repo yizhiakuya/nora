@@ -11,6 +11,7 @@ import { useEffect } from "react";
 import { useSidebarStore } from "@/hooks/useSidebar";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useChatSessions } from "@/hooks/useChatSessions";
+import { relativeTime } from "@/lib/relativeTime";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -131,14 +132,17 @@ export function Sidebar() {
                                 if (pathname !== "/chat") navigate("/chat");
                               }}
                               className={cn(
-                                "px-2 py-1.5 text-xs rounded-md cursor-pointer truncate transition-colors",
+                                "px-2 py-1.5 text-xs rounded-md cursor-pointer transition-colors group/session",
                                 isSessionActive
                                   ? "bg-blue-50/50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium"
                                   : "text-muted-foreground hover:bg-muted hover:text-gray-900 dark:hover:text-gray-100"
                               )}
                               title={session.title}
                             >
-                              {session.title}
+                              <div className="truncate">{session.title}</div>
+                              <div className={cn("text-[10px] tabular-nums", isSessionActive ? "text-blue-500/70 dark:text-blue-400/70" : "text-muted-foreground/60")}>
+                                {session.messageCount != null && session.messageCount > 0 && <span>{session.messageCount} 条 · </span>}{relativeTime(session.updatedAt)}
+                              </div>
                             </div>
                           );
                         })}

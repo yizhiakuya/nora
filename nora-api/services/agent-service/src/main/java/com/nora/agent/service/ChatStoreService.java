@@ -98,7 +98,8 @@ public class ChatStoreService {
                         rs.getString("id"),
                         rs.getString("title"),
                         rs.getInt("message_count"),
-                        rs.getTimestamp("created_at")));
+                        rs.getTimestamp("created_at"),
+                        rs.getTimestamp("last_activity")));
     }
 
     /** Deletes a session and its messages (cascade). Returns false when unknown. */
@@ -132,7 +133,8 @@ public class ChatStoreService {
             String id,
             String title,
             int messageCount,
-            java.sql.Timestamp createdAt) {
+            java.sql.Timestamp createdAt,
+            java.sql.Timestamp lastActivity) {
     }
 
     private String toJson(Object value) {

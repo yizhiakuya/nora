@@ -38,7 +38,7 @@ describe("useChat", () => {
     expect(assistant.isTyping).toBe(false);
   });
 
-  it("responder 抛错时消息进入 error 态并结束发送", async () => {
+  it("responder 抛错时消息进入人性化 error 态并保留原始串", async () => {
     const { responder } = stubResponder(async (_msg, onUpdate) => {
       onUpdate({ isTyping: false });
       throw new Error("后端不可达");
@@ -51,7 +51,35 @@ describe("useChat", () => {
     });
 
     expect(result.current.isSending).toBe(false);
-    expect(result.current.messages[1].error).toBe("后端不可达");
+    // 错误被人性化为人话文案,原始串保留在 errorRaw 供排障
+    expect(result.current.messages[1].error).toBeTruthy();
+    expect(result.current.messages[1].error).not.toBe("后端不可达");
+    expect(result.current.messages[1].errorRaw).toBe("后端不可达");
+  });
+
+  it("重试失败的轮次:复用原用户消息并清空错误", async () => {
+    let shouldFail = true;
+    const { responder } = stubResponder(async (_msg, onUpdate) => {
+      onUpdate({ isTyping: false });
+      if (shouldFail) throw new Error("boom");
+      onUpdate({ content: "恢复后的回答", isTyping: false });
+    });
+    const { result } = renderHook(() => useChat({ responder }));
+
+    act(() => result.current.setInput("hi"));
+    await act(async () => {
+      await result.current.sendMessage();
+    });
+    expect(result.current.messages[1].error).toBeTruthy();
+
+    shouldFail = false;
+    const failedId = result.current.messages[1].id;
+    await act(async () => {
+      await result.current.retryMessage(failedId);
+    });
+    expect(result.current.messages.length).toBe(2);
+    expect(result.current.messages[1].error).toBeUndefined();
+    expect(result.current.messages[1].content).toBe("恢复后的回答");
   });
 
   it("clear 清空消息", async () => {

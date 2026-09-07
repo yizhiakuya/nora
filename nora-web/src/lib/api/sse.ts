@@ -14,47 +14,63 @@ export interface SSEEvent {
 
 export async function parseSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  onEvent: (event: SSEEvent) => void | Promise<void>
+  onEvent: (event: SSEEvent) => void | Promise<void>,
+  /** 「停止生成」:abort 时释放 reader 退出读循环,已解析的事件不再派发 */
+  signal?: AbortSignal
 ): Promise<void> {
   const decoder = new TextDecoder();
   let buffer = "";
 
-  const dispatch = (block: string) => {
-    let eventName = "";
-    const dataLines: string[] = [];
+  // 停止生成:释放底层流锁并唤醒 reader.read(),让 await 里的循环立刻退出
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  if (signal?.aborted) {
+    onAbort();
+    return;
+  }
+  signal?.addEventListener("abort", onAbort, { once: true });
 
-    for (const rawLine of block.split("\n")) {
-      const line = rawLine.trimEnd();
-      if (!line || line.startsWith(":")) continue;
-      if (line.startsWith("event:")) {
-        eventName = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trimStart());
+  try {
+    const dispatch = (block: string) => {
+      let eventName = "";
+      const dataLines: string[] = [];
+
+      for (const rawLine of block.split("\n")) {
+        const line = rawLine.trimEnd();
+        if (!line || line.startsWith(":")) continue;
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+
+      if (eventName || dataLines.length > 0) {
+        onEvent({ event: eventName, data: dataLines.join("\n") });
+      }
+    };
+
+    let reading = true;
+    while (reading) {
+      const { done, value } = await reader.read();
+      if (signal?.aborted || done) {
+        reading = false;
+        continue;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+
+      for (const block of blocks) {
+        dispatch(block);
       }
     }
 
-    if (eventName || dataLines.length > 0) {
-      onEvent({ event: eventName, data: dataLines.join("\n") });
-    }
-  };
-
-  let reading = true;
-  while (reading) {
-    const { done, value } = await reader.read();
-    if (done) {
-      reading = false;
-      continue;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split("\n\n");
-    buffer = blocks.pop() ?? "";
-
-    for (const block of blocks) {
-      dispatch(block);
-    }
+    buffer += decoder.decode();
+    if (buffer.trim()) dispatch(buffer);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
-
-  buffer += decoder.decode();
-  if (buffer.trim()) dispatch(buffer);
 }

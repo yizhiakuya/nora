@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Loader2, Zap, Check, Settings, Brain, ShieldAlert } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
 import { useModelProviders, REASONING_LEVELS } from "@/hooks/useModelProviders";
@@ -20,6 +20,8 @@ interface ChatInputAreaProps {
   setInput: (value: string) => void;
   isSending: boolean;
   onSend: () => void;
+  /** 停止生成:中断当前流式响应(流式期间发送按钮变停止按钮) */
+  onStop?: () => void;
   contextTokens?: number;
   contextLimit?: number;
   /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
@@ -30,7 +32,7 @@ interface ChatInputAreaProps {
   onPermissionModeChange?: (mode: PermissionMode) => void;
 }
 
-export function ChatInputArea({ input, setInput, isSending, onSend, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange }: ChatInputAreaProps) {
+export function ChatInputArea({ input, setInput, isSending, onSend, onStop, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange }: ChatInputAreaProps) {
   const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
@@ -242,13 +244,19 @@ export function ChatInputArea({ input, setInput, isSending, onSend, contextToken
                         </DropdownMenuContent>
                       </DropdownMenu>
 
+                      {/* 流式期间发送按钮变停止按钮(调研:frontendpatterns.dev/stop-generation) */}
                       <Button
                         size="icon"
-                        className="shrink-0 w-8 h-8 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white rounded-lg ml-1 transition-colors disabled:opacity-50"
-                        onClick={onSend}
-                        disabled={!input.trim() || isSending}
+                        className={`shrink-0 w-8 h-8 rounded-lg ml-1 transition-colors ${
+                          isSending
+                            ? "bg-foreground hover:bg-foreground/80 text-background"
+                            : "bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white"
+                        }`}
+                        onClick={isSending ? onStop : onSend}
+                        disabled={!isSending && !input.trim()}
+                        title={isSending ? "停止生成" : "发送"}
                       >
-                          {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5 ml-0.5" />}
+                          {isSending ? <Square className="w-3 h-3 fill-current" /> : <Send className="w-3.5 h-3.5 ml-0.5" />}
                       </Button>
                   </div>
               </div>

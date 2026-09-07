@@ -116,7 +116,7 @@ export async function resolveApproval(
 }
 
 export const AgentAPI: { sendMessage: ChatResponder } = {
-  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode) {
+  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode, signal) {
     if (!sessionId) {
       throw new Error("Agent API requires a sessionId");
     }
@@ -132,8 +132,14 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
           reasoningLevel: reasoningLevel || null,
           permissionMode: permissionMode ?? "assist",
         }),
+        // 请求阶段可被「停止」按钮中断;流阶段由 reader.cancel 兜底
+        signal,
       });
     } catch (error) {
+      // 用户主动停止:以正常结果结束(部分文本已由 onUpdate 流出),不按错误处理
+      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        return;
+      }
       throw new Error("Cannot connect to agent-service", { cause: error });
     }
 
@@ -159,6 +165,8 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     };
 
     await parseSSEStream(response.body.getReader(), ({ event, data }) => {
+      // 用户已停止:退出事件处理(SSE 解析循环由 signal 监听终止)
+      if (signal?.aborted) return;
       if (event === "approval_required") {
         const approval = parseData<ApprovalRequest>(data);
         if (approval?.approvalToken) {
@@ -234,9 +242,15 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         onUpdate({ error: payload?.message || "Agent 执行失败", isTyping: false });
         throw new Error(payload?.message || "Agent 执行失败");
       }
-    });
+    }, signal);
 
     flushPendingSteps();
+
+    // 用户停止:保留已流出的部分内容,正常结束(stopped 标记由 useChat 层加)
+    if (signal?.aborted) {
+      onUpdate({ isTyping: false });
+      return;
+    }
 
     if (!content && steps.length === 0) {
       throw new Error("Agent API returned an empty stream");
@@ -248,7 +262,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
 
 /** GET /chat/sessions → 会话摘要列表(最近活跃在前) */
 export async function fetchSessions(): Promise<
-  { id: string; title: string; messageCount: number; createdAt: string }[]
+  { id: string; title: string; messageCount: number; createdAt: string; lastActivity?: string }[]
 > {
   const res = await fetch(`${API_BASE}/chat/sessions`);
   if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
@@ -258,6 +272,7 @@ export async function fetchSessions(): Promise<
     title: string;
     messageCount: number;
     createdAt: string;
+    lastActivity?: string;
   }>;
   return Array.isArray(list) ? list : [];
 }

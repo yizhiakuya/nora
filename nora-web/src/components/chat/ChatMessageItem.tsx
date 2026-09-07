@@ -1,4 +1,4 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { AgentThoughtBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -8,6 +8,17 @@ import { toast } from "sonner";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { USE_BACKEND } from "@/lib/api/client";
+
+/** 错误图标与配色(按 kind 微调,不喧宾夺主) */
+const ERROR_ICON: Record<string, React.ElementType> = {
+  network: Server,
+  auth: Sparkles,
+  "rate-limit": AlertTriangle,
+  timeout: AlertTriangle,
+  provider: Sparkles,
+  approval: BookOpen,
+  unknown: AlertTriangle,
+};
 
 const SOURCE_ICON: Record<string, React.ElementType> = {
   file: FileText,
@@ -75,9 +86,10 @@ function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
   );
 }
 
-export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
+export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMessage; onRetry?: (msgId: string) => void; canRetry?: boolean }) {
   const sessionId = useChatSessions((s) => s.activeId);
   const [copied, setCopied] = useState(false);
+  const [rawExpanded, setRawExpanded] = useState(false);
 
   const copyId = async () => {
     try {
@@ -86,6 +98,15 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
       setTimeout(() => setCopied(false), 1500);
     } catch {
       /* 剪贴板不可用时忽略 */
+    }
+  };
+
+  const copyContent = async () => {
+    try {
+      await navigator.clipboard.writeText(msg.content);
+      toast.success("已复制回答内容");
+    } catch {
+      toast.error("复制失败");
     }
   };
 
@@ -125,10 +146,61 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
                     />
                   )}
 
-                  {msg.error && <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
-                    <div className="break-words">{msg.error}</div>
-                    {sessionId && <button type="button" onClick={copyId} className="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-red-600/70 dark:text-red-400/70 hover:text-red-700 dark:hover:text-red-300 underline underline-dotted cursor-pointer" title="复制会话 ID 用于排障">{copied ? <Check className="w-3 h-3" /> : null}{copied ? "已复制" : `复制会话 ID：${sessionId}`}</button>}
-                  </div>}
+                  {msg.error && (() => {
+                    const ErrIcon = ERROR_ICON[msg.errorKind ?? "unknown"] ?? AlertTriangle;
+                    return (
+                      <div className="mb-2 rounded-xl border border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/25 px-3.5 py-3 max-w-2xl animate-in fade-in slide-in-from-top-1">
+                        <div className="flex items-start gap-2.5">
+                          <ErrIcon className="w-4 h-4 text-red-500 dark:text-red-400 shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-medium text-red-800 dark:text-red-200">{msg.error}</div>
+                            {msg.errorHint && (
+                              <div className="text-[11px] text-red-600/80 dark:text-red-300/80 mt-1 leading-relaxed">{msg.errorHint}</div>
+                            )}
+                            <div className="flex items-center gap-2 mt-2.5">
+                              {onRetry && (
+                                <button
+                                  type="button"
+                                  disabled={!canRetry}
+                                  onClick={() => onRetry(msg.id)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors cursor-pointer"
+                                >
+                                  <RotateCcw className="w-3 h-3" /> 重试
+                                </button>
+                              )}
+                              {msg.content && (
+                                <button
+                                  type="button"
+                                  onClick={copyContent}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-red-700 dark:text-red-300 hover:bg-red-100/70 dark:hover:bg-red-900/40 transition-colors cursor-pointer"
+                                >
+                                  复制已生成内容
+                                </button>
+                              )}
+                              {msg.errorRaw && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRawExpanded((v) => !v)}
+                                  className="inline-flex items-center gap-1 text-[10px] text-red-500/70 dark:text-red-400/70 hover:text-red-600 dark:hover:text-red-300 cursor-pointer transition-colors"
+                                >
+                                  <ChevronDown className={`w-3 h-3 transition-transform ${rawExpanded ? "rotate-180" : ""}`} />
+                                  技术详情
+                                </button>
+                              )}
+                            </div>
+                            {rawExpanded && msg.errorRaw && (
+                              <pre className="mt-2 whitespace-pre-wrap break-words rounded-md bg-red-100/70 dark:bg-red-900/30 px-2 py-1.5 text-[10px] font-mono text-red-700 dark:text-red-300 max-h-32 overflow-auto">{msg.errorRaw}</pre>
+                            )}
+                            {sessionId && (
+                              <button type="button" onClick={copyId} className="mt-2 inline-flex items-center gap-1 font-mono text-[10px] text-red-600/60 dark:text-red-400/60 hover:text-red-700 dark:hover:text-red-300 underline underline-dotted cursor-pointer" title="复制会话 ID 用于排障">
+                                {copied ? <Check className="w-3 h-3" /> : null}{copied ? "已复制" : `会话 ID：${sessionId}`}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {(msg.content || msg.isTyping) && (
                     <div className="relative animate-in fade-in">
                         <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)]">
@@ -142,14 +214,27 @@ export function ChatMessageItem({ msg }: { msg: ChatMessage }) {
                             )}
                             {msg.isTyping && msg.content && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
                         </div>
-                        {/* 回答结束后的元信息行:工具次数 · tokens · 耗时 */}
+                        {/* 回答结束后的元信息行:工具次数 · tokens · 耗时 · 已停止标记 + 复制 */}
                         {!msg.isTyping && (
-                          <div className="mt-1.5">
+                          <div className="mt-1.5 flex items-center gap-3 group/meta">
                             <TurnMeta
                               steps={msg.steps}
                               durationMs={msg.turnMetrics?.durationMs}
                               usage={msg.turnMetrics?.usage}
                             />
+                            {msg.stopped && (
+                              <span className="text-[10px] text-amber-600 dark:text-amber-400">· 已停止</span>
+                            )}
+                            {msg.content && (
+                              <button
+                                type="button"
+                                onClick={copyContent}
+                                className="text-[10px] text-muted-foreground/0 group-hover/meta:text-muted-foreground/70 hover:!text-foreground transition-colors cursor-pointer"
+                                title="复制回答"
+                              >
+                                复制
+                              </button>
+                            )}
                           </div>
                         )}
                     </div>
