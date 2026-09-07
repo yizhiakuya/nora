@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { BackendOfflineBanner } from "@/components/layout/BackendOfflineBanner";
+import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
 import { useBackendHealth } from "@/hooks/useBackendHealth";
 
 import HomePage from "@/app/page";
@@ -29,7 +29,8 @@ const TITLES: Record<string, string> = {
 function RouteShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const startPolling = useBackendHealth((s) => s.startPolling);
-  // 全局后端健康探测:离线时各页渲染正规空态,横幅提示可重试
+  const online = useBackendHealth((s) => s.online);
+  // 全局后端健康探测:离线时所有路由替换为服务不可用页
   useEffect(() => {
     startPolling();
   }, [startPolling]);
@@ -37,11 +38,14 @@ function RouteShell({ children }: { children: React.ReactNode }) {
     const title = TITLES[location.pathname];
     document.title = title ? `${title} · Nora 个人工作台` : "Nora 个人工作台";
   }, [location.pathname]);
+  // API 不在线 = 全部功能不可用:整屏替换为服务不可用页(无侧栏/导航)
+  if (online === false) {
+    return <ServiceUnavailablePage />;
+  }
   return (
     <div className="h-screen flex overflow-hidden text-gray-800 dark:text-gray-100 bg-background dark:bg-background">
       <Sidebar />
       <main className="flex-1 flex flex-col overflow-hidden bg-background relative">
-        <BackendOfflineBanner />
         {children}
       </main>
     </div>
