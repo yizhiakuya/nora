@@ -48,6 +48,11 @@ export function Sidebar() {
   const activeId = useChatSessions((s) => s.activeId);
   const setActive = useChatSessions((s) => s.setActive);
   const createSession = useChatSessions((s) => s.createSession);
+  const syncSessions = useChatSessions((s) => s.syncFromBackend);
+  // 会话列表以后端为准:侧栏挂载时同步一次(失败静默用本地缓存)
+  useEffect(() => {
+    void syncSessions();
+  }, [syncSessions]);
 
   const initials = accountName
     .split(/\s+/)

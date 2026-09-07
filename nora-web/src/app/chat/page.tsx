@@ -86,9 +86,16 @@ export default function ChatPage() {
         }
       />
       <div className="flex-1 flex overflow-hidden">
-        <div key={active?.id} className="flex-1 relative flex flex-col min-w-0">
-          <ChatConversation sessionId={active.id} initialMessages={active.messages} />
-        </div>
+        {active ? (
+          <div key={active.id} className="flex-1 relative flex flex-col min-w-0">
+            <ChatConversation sessionId={active.id} initialMessages={active.messages} />
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+            <p className="text-sm">暂无会话</p>
+            <p className="text-xs opacity-70">从左侧「新建对话」开始,或稍后同步会话列表</p>
+          </div>
+        )}
       </div>
     </>
   );

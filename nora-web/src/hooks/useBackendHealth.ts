@@ -44,6 +44,8 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
         void useFiles.getState().syncFromBackend();
         const { useConnections } = await import("@/hooks/useConnections");
         void useConnections.getState().syncFromBackend();
+        const { useChatSessions } = await import("@/hooks/useChatSessions");
+        void useChatSessions.getState().syncFromBackend();
         const { useServices } = await import("@/hooks/useServices");
         void useServices.getState().syncFromBackend();
         const { useAutomations } = await import("@/hooks/useAutomations");

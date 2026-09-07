@@ -245,3 +245,46 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     onUpdate({ isTyping: false });
   },
 };
+
+/** GET /chat/sessions → 会话摘要列表(最近活跃在前) */
+export async function fetchSessions(): Promise<
+  { id: string; title: string; messageCount: number; createdAt: string }[]
+> {
+  const res = await fetch(`${API_BASE}/chat/sessions`);
+  if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
+  const body = await res.json();
+  const list = (body?.data ?? body) as Array<{
+    id: string;
+    title: string;
+    messageCount: number;
+    createdAt: string;
+  }>;
+  return Array.isArray(list) ? list : [];
+}
+
+/** GET /chat/sessions/{id}/messages → 完整消息历史(steps 合并后) */
+export async function fetchSessionMessages(sessionId: string): Promise<ChatMessage[]> {
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`);
+  if (!res.ok) throw new Error(`fetchSessionMessages failed: ${res.status}`);
+  const stored = (await res.json()) as Array<{
+    role: "user" | "assistant";
+    content: string;
+    steps?: StepPayload[];
+    sources?: Citation[];
+    createdAt?: string;
+  }>;
+  return (stored ?? []).map((m, i) => ({
+    id: `${sessionId}-${i}`,
+    role: m.role,
+    content: m.content ?? "",
+    timestamp: m.createdAt ? new Date(m.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "",
+    steps: (m.steps ?? []).map((s, j) => normalizeStep(s, j)),
+    sources: normalizeSources(m.sources),
+  }));
+}
+
+/** DELETE /chat/sessions/{id} → 删除会话及消息 */
+export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`deleteSession failed: ${res.status}`);
+}
