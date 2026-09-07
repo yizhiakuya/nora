@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, PermissionMode } from "./chatApi";
-import { API_BASE } from "./client";
+import { API_BASE, defaultTimeoutSignal } from "./client";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
 
@@ -264,7 +264,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
 export async function fetchSessions(): Promise<
   { id: string; title: string; messageCount: number; createdAt: string; lastActivity?: string }[]
 > {
-  const res = await fetch(`${API_BASE}/chat/sessions`);
+  const res = await fetch(`${API_BASE}/chat/sessions`, { signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
   const body = await res.json();
   const list = (body?.data ?? body) as Array<{
@@ -279,7 +279,7 @@ export async function fetchSessions(): Promise<
 
 /** GET /chat/sessions/{id}/messages → 完整消息历史(steps 合并后) */
 export async function fetchSessionMessages(sessionId: string): Promise<ChatMessage[]> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`);
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessionMessages failed: ${res.status}`);
   const stored = (await res.json()) as Array<{
     role: "user" | "assistant";
@@ -300,6 +300,6 @@ export async function fetchSessionMessages(sessionId: string): Promise<ChatMessa
 
 /** DELETE /chat/sessions/{id} → 删除会话及消息 */
 export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`deleteSession failed: ${res.status}`);
 }

@@ -47,6 +47,7 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
+    signal: init?.signal ?? defaultTimeoutSignal(),
   });
 
   if (!response.ok) {
@@ -55,4 +56,14 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   }
 
   return parseBody<T>(response);
+}
+
+/**
+ * 默认请求超时(30s):网关挂起时让 UI 尽快失败而不是永久等待。
+ * 调用方显式传 signal 时以其为准;超时错误文案便于 humanizeError 识别。
+ */
+export function defaultTimeoutSignal(ms = 30_000): AbortSignal {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new DOMException("请求超时(30s)", "TimeoutError")), ms);
+  return controller.signal;
 }

@@ -84,7 +84,7 @@ function toPreview(p: BackendFilePreview, name: string): FilePreview {
 }
 
 async function requestRaw<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, init);
+  const response = await fetch(`/api${path}`, { ...init, signal: init?.signal ?? defaultTimeoutSignal() });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(text || `HTTP ${response.status}`);
@@ -95,6 +95,9 @@ async function requestRaw<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return payload.data;
 }
+
+// 请求默认超时策略(30s):与 client.ts 共用,避免挂起时 UI 永久等待
+import { defaultTimeoutSignal } from "@/lib/api/client";
 
 /**
  * 文件中心后端接入层(USE_BACKEND 开关):
