@@ -47,7 +47,7 @@ export function RecentFilesTable() {
           <Clock className="w-4 h-4 text-blue-500 dark:text-blue-400" /> 最近使用
           {stale && (
             <span className="inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground border border-border rounded px-1.5 py-0.5">
-              <CloudOff className="w-3 h-3" /> 待同步
+              <CloudOff className="w-3 h-3" /> 同步中断
             </span>
           )}
         </h2>
@@ -67,7 +67,7 @@ export function RecentFilesTable() {
             {recent.length === 0 ? (
               <tr>
                 <td colSpan={3} className="p-6 text-center text-xs text-muted-foreground">
-                  {stale ? "无法连接后端,暂无法获取最近使用记录" : "还没有打开过文件,去文件中心看看吧"}
+                  {stale ? "暂时拿不到最近使用记录,连接恢复后自动显示" : "还没有打开过文件,去文件中心看看吧"}
                 </td>
               </tr>
             ) : (

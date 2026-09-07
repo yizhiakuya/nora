@@ -4,10 +4,10 @@ import { Button } from "@/components/ui/button";
 import { useBackendHealth } from "@/hooks/useBackendHealth";
 
 /**
- * 全局后端离线横幅(Gmail/Slack 式:非模态细条,不阻塞内容):
- * - 所有页面显示(主页数据面板同样来自后端,需要知情)
- * - 文案给出具体排查方向(Notion 帮助中心风格),不指责用户
- * - 30s 自动轮询持续进行,横幅右上角显示"将自动重试";恢复在线自动消失
+ * 全局断连横幅(Gmail/Slack/Home Assistant 式文案,非模态细条):
+ * - 状态词 + 下一步动作,不出现 server/backend/端口等内部术语
+ * - 强调数据安全(数据截至 N 前,恢复后自动消失),不让用户慌
+ * - 指数退避自动重试持续进行,无需用户操作;「立即重连」给急性子
  */
 export function BackendOfflineBanner() {
   const online = useBackendHealth((s) => s.online);
@@ -36,15 +36,14 @@ export function BackendOfflineBanner() {
     >
       <CloudOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
       <span className="text-xs font-medium text-amber-800 dark:text-amber-200 shrink-0">
-        无法连接后端服务
+        连接已断开,正在重连
       </span>
       <span className="text-[11px] text-amber-700/80 dark:text-amber-300/70 truncate">
-        数据可能不是最新。请确认 nora-api 已启动(网关 :8080)或检查网络/代理设置。
+        {ago
+          ? `数据截至 ${ago}。服务恢复后这里会自动消失。`
+          : "数据可能不是最新,服务恢复后这里会自动消失。"}
       </span>
       <span className="flex-1" />
-      <span className="hidden sm:inline text-[10px] text-amber-700/60 dark:text-amber-300/50 tabular-nums shrink-0">
-        检查于 {ago} · 将自动重试
-      </span>
       <Button
         variant="outline"
         size="sm"
@@ -60,7 +59,7 @@ export function BackendOfflineBanner() {
         ) : (
           <RefreshCw className="w-3 h-3 mr-1" />
         )}
-        重试
+        立即重连
       </Button>
     </div>
   );

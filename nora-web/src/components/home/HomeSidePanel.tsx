@@ -7,12 +7,12 @@ import { useServices } from "@/hooks/useServices";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useBackendOnline } from "@/hooks/useBackendHealth";
 
-/** 区块标题旁的同步状态徽标(Linear 式):离线时显示「待同步」。 */
+/** 区块标题旁的同步状态徽标(Linear "Syncing" 徽标的离线版):状态词,无术语。 */
 function SyncBadge({ stale }: { stale: boolean }) {
   if (!stale) return null;
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground border border-border rounded px-1.5 py-0.5">
-      <CloudOff className="w-3 h-3" /> 待同步
+      <CloudOff className="w-3 h-3" /> 同步中断
     </span>
   );
 }
