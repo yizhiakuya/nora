@@ -18,6 +18,7 @@ import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
  * - searchDocsAsync    → POST /api/rag/search        { query, topK } → RetrievalResult[]
  * - fetchIndexStats    → GET  /api/rag/index/stats    → IndexStats
  * - generateCitationsAsync → POST /api/rag/citations  { query, topK } → Citation[]
+ * - saveTextAsync      → POST /api/rag/index/text      { name, text } → KnowledgeDoc
  */
 
 /** 将查询拆分为检索词：中文按单字，英文/数字按完整 token */
@@ -175,4 +176,11 @@ export async function generateCitationsAsync(query: string, topK = 2): Promise<C
   });
 }
 
-
+/** POST /api/rag/index/text → 保存文本到知识库(name-keyed,同名覆盖重建索引) */
+export async function saveTextAsync(name: string, text: string): Promise<KnowledgeDoc | null> {
+  const doc = await requestJson<KnowledgeDoc>("/rag/index/text", {
+    method: "POST",
+    body: JSON.stringify({ name, text }),
+  });
+  return doc ?? null;
+}

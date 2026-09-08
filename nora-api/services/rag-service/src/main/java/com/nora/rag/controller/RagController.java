@@ -148,6 +148,28 @@ public class RagController {
         }
     }
 
+    /**
+     * POST /api/rag/index/text — indexes raw text under a display name
+     * (name-keyed source "text"; re-saving the same name replaces its chunks).
+     * Consumed by the chat "保存到知识库" action so saved answers survive
+     * refresh and are retrievable cross-device.
+     */
+    @PostMapping("/index/text")
+    public ApiResponse<KnowledgeDocService.KnowledgeDocView> indexText(@RequestBody TextIndexRequest request) {
+        if (request.text() == null || request.text().isBlank()) {
+            throw new IllegalArgumentException("text is required");
+        }
+        String name = (request.name() == null || request.name().isBlank())
+                ? "对话保存 " + java.time.LocalDate.now() : request.name();
+        long docId = indexingService.indexDocument(name, "text", null,
+                (request.text().length() / 1024) + " KB", request.text());
+        return ApiResponse.ok(knowledgeDocService.getDoc(docId));
+    }
+
+    /** POST /api/rag/index/text body. */
+    public record TextIndexRequest(String name, String text) {
+    }
+
     /** POST /api/rag/index body. */
     public record IndexRequest(Long fileId, String name) {
     }

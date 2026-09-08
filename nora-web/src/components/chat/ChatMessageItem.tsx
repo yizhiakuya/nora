@@ -6,6 +6,7 @@ import { ChatMessage } from "@/lib/api/chatApi";
 import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { saveTextAsync } from "@/lib/services/ragService";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -66,12 +67,21 @@ function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
   const [saved, setSaved] = useState(false);
   const addChatDoc = useKnowledgeDocs((s) => s.addChatDoc);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (saved) return;
-    const title = `对话结论 · ${msg.content.slice(0, 24).replace(/[#*\n]/g, "").trim()}…`;
-    addChatDoc(title, msg.content);
+    const title = `对话结论 · ${msg.content.slice(0, 24).replace(/[#*\n]/g, "").trim()}`;
+    // 本地始终留底;后端模式再真实入库(name-keyed 同名覆盖,可在知识库检索)
+    addChatDoc(`${title}…`, msg.content);
+    if (USE_BACKEND) {
+      try {
+        await saveTextAsync(title, msg.content);
+      } catch (e) {
+        toast.error(`入库失败：${(e as Error).message}`);
+        return;
+      }
+    }
     setSaved(true);
-    toast[USE_BACKEND ? "info" : "success"](USE_BACKEND ? "当前后端暂未提供对话文本入库接口，已保存到本地" : "已保存到知识库（对话产出）");
+    toast.success(USE_BACKEND ? "已入库，可在知识库检索" : "已保存到本地知识库");
   };
 
   return (
