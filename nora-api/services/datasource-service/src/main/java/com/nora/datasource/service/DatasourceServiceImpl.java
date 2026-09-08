@@ -115,16 +115,19 @@ public class DatasourceServiceImpl {
         try (Connection conn = JdbcConnections.open(params)) {
             DatabaseMetaData meta = conn.getMetaData();
             List<DbTable> tables = new ArrayList<>();
+            // schema 限定读取:不限 schema 时跨 schema 同名表(如各库的 flyway_schema_history)
+            // 会在快照里重复且 getColumns(null, null, table) 会把不同 schema 的同名列合并
             try (ResultSet rs = meta.getTables(null, null, "%", new String[]{"TABLE", "VIEW"})) {
                 while (rs.next()) {
+                    String tableSchema = rs.getString("TABLE_SCHEM");
                     String table = rs.getString("TABLE_NAME");
                     List<Column> columns = new ArrayList<>();
-                    try (ResultSet cols = meta.getColumns(null, null, table, "%")) {
+                    try (ResultSet cols = meta.getColumns(null, tableSchema, table, "%")) {
                         while (cols.next()) {
                             columns.add(new Column(cols.getString("COLUMN_NAME"), cols.getString("TYPE_NAME")));
                         }
                     }
-                    tables.add(new DbTable(table, columns));
+                    tables.add(new DbTable(tableSchema, table, columns));
                 }
             }
             jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);

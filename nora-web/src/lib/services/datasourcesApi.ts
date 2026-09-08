@@ -16,6 +16,8 @@ export interface BackendConnection {
 
 /** 后端表结构 */
 export interface BackendTable {
+  /** 所属 schema/catalog(如 pg 的 public);无 schema 的引擎为 null */
+  schema?: string | null;
   name: string;
   columns: { name: string; type: string }[];
 }

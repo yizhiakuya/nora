@@ -48,8 +48,8 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendMode, connectionId]);
 
-  const tables: { name: string; columns: { name: string; type: string }[] }[] =
-    (serverTables ?? []).map((t) => ({ name: t.name, columns: t.columns }));
+  const tables: { schema?: string | null; name: string; columns: { name: string; type: string }[] }[] =
+    (serverTables ?? []).map((t) => ({ schema: t.schema, name: t.name, columns: t.columns }));
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -78,7 +78,7 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
         {tables.map((table) => {
           const isOpen = expanded === table.name;
           return (
-            <div key={table.name}>
+            <div key={`${table.schema}.${table.name}`}>
               <button
                 type="button"
                 onClick={() => setExpanded(isOpen ? null : table.name)}

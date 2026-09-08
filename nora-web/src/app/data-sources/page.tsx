@@ -14,7 +14,8 @@ import { useNotifications } from "@/hooks/useNotifications";
 const VIEW_TABS = ["Schema 浏览", "查询控制台"] as const;
 
 export default function DataSourcesPage() {
-  const [selectedId, setSelectedId] = useState<number>(() => useConnections.getState().connections[0].id);
+  // 连接列表可能为空(后端不可达/首次使用):延迟取首项,避免 undefined.id 崩页
+  const [selectedId, setSelectedId] = useState<number | null>(() => useConnections.getState().connections[0]?.id ?? null);
   const [activeView, setActiveView] = useState<(typeof VIEW_TABS)[number]>("Schema 浏览");
   const [targetSql, setTargetSql] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -40,6 +41,30 @@ export default function DataSourcesPage() {
     if (conn) addNotification("数据源已连接", `「${conn.name}」（${conn.engine}）连接成功，AI 可读取其 Schema 辅助生成 SQL。`);
   };
 
+  // 空列表:引导新建连接,而不是渲染 undefined
+  if (!selected) {
+    return (
+      <>
+        <Header
+          breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "数据源", isCurrent: true }]}
+          actions={
+            <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
+              <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建连接
+            </Button>
+          }
+        />
+        <div className="flex-1 overflow-y-auto custom-scroll p-6 bg-background">
+          <div className="max-w-6xl mx-auto pt-24 flex flex-col items-center gap-3 text-muted-foreground">
+            <Database className="w-8 h-8 opacity-20" />
+            <p className="text-sm">暂无数据源连接</p>
+            <p className="text-xs">点击右上角「新建连接」添加第一个数据库</p>
+          </div>
+          <NewConnectionModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={handleCreated} />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <Header
@@ -63,7 +88,7 @@ export default function DataSourcesPage() {
           </div>
 
           <div className="flex flex-col md:flex-row gap-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <ConnectionList selectedId={selectedId} onSelect={setSelectedId} />
+            <ConnectionList selectedId={selectedId ?? selected.id} onSelect={setSelectedId} />
 
             <div className="flex-1 min-w-0 space-y-4">
               {/* Connection info bar */}
