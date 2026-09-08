@@ -57,8 +57,10 @@ export const useAutomations = create<AutomationsState>()(
         }
       },
       addRule: (name, trigger, action) => {
-        if (USE_BACKEND && looksLikeSql(action)) {
-          // 后端模式 + SQL 动作:走服务端(执行器会跑真实查询)
+        const isSqlAction = looksLikeSql(action);
+        if (USE_BACKEND) {
+          // 后端模式:SQL 动作走 sql 分支;其余(NL 指令)走 agent 分支,
+          // 由 agent-service 执行(RAG + 工具循环),不再落回本地 mock
           const optimistic: AutomationRule = {
             id: Date.now(),
             name,
@@ -70,7 +72,11 @@ export const useAutomations = create<AutomationsState>()(
           };
           set((state) => ({ rules: [optimistic, ...state.rules] }));
           automationsApi
-            .createRule({ name, triggerType: triggerTypeFromLabel(trigger), sql: action })
+            .createRule(
+              isSqlAction
+                ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action }
+                : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action },
+            )
             .then((saved) => {
               set((state) => ({
                 rules: state.rules.map((r) => (r.id === optimistic.id ? saved : r)),
@@ -80,7 +86,7 @@ export const useAutomations = create<AutomationsState>()(
           useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
           return optimistic;
         }
-        // Mock 模式或非 SQL 动作:本地行为
+        // Mock 模式:本地行为
         const rule: AutomationRule = {
           id: Date.now(),
           name,

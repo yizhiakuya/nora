@@ -21,6 +21,8 @@ spring:
 nora:
   datasource:
     base-url: http://localhost:8084
+  agent:
+    base-url: http://localhost:8083
 
 management:
   endpoints:

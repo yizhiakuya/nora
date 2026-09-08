@@ -6,6 +6,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * CRUD + execution for automation rules ({@code schema_automation}).
@@ -17,6 +19,8 @@ public class AutomationService {
     private final JdbcTemplate jdbcTemplate;
     private final ActionExecutor actionExecutor;
     private final ObjectMapper objectMapper;
+    /** 正在执行中的规则 ID:agent 动作可跑数分钟,防止调度/手动重复触发同一规则 */
+    private final Set<Long> runningRules = ConcurrentHashMap.newKeySet();
 
     public AutomationService(JdbcTemplate jdbcTemplate, ActionExecutor actionExecutor,
                              ObjectMapper objectMapper) {
@@ -40,8 +44,11 @@ public class AutomationService {
                         rs.getTimestamp("last_run_at")));
     }
 
-    /** Creates a rule. v1 action executor is SQL-only. */
-    public RuleView create(String name, String triggerType, String sql) {
+    /**
+     * Creates a rule. 动作二选一:{@code actionType="agent"} + {@code prompt}
+     * (自然语言指令,由 agent-service 执行),或默认 SQL + {@code sql}。
+     */
+    public RuleView create(String name, String triggerType, String actionType, String sql, String prompt) {
         if (name == null || name.isBlank()) {
             throw new BusinessException(400, "name is required");
         }
@@ -49,13 +56,21 @@ public class AutomationService {
         if (!List.of("manual", "daily", "weekly", "file", "error").contains(type)) {
             throw new BusinessException(400, "invalid trigger type: " + type);
         }
-        if (sql == null || sql.isBlank()) {
+        boolean agentAction = "agent".equals(actionType);
+        if (agentAction) {
+            if (prompt == null || prompt.isBlank()) {
+                throw new BusinessException(400, "prompt is required for agent actions");
+            }
+        } else if (sql == null || sql.isBlank()) {
             throw new BusinessException(400, "sql action is required");
         }
         String label = triggerLabel(type);
+        String actionJson = agentAction
+                ? actionExecutor.agentAction(prompt.trim())
+                : actionExecutor.sqlAction(sql);
         jdbcTemplate.update(
                 "INSERT INTO automation_rule (name, trigger_type, trigger_expr, action, enabled, status) VALUES (?, ?, ?, ?::jsonb, true, 'active')",
-                name.trim(), type, label, actionExecutor.sqlAction(sql));
+                name.trim(), type, label, actionJson);
         Long id = jdbcTemplate.queryForObject(
                 "SELECT id FROM automation_rule WHERE name = ? ORDER BY id DESC LIMIT 1", Long.class, name.trim());
         return get(id);
@@ -89,17 +104,26 @@ public class AutomationService {
 
     /** Shared execution path for manual runs and the scheduler. */
     public ExecutionView execute(RuleView rule) {
-        long start = System.currentTimeMillis();
-        String detail = actionExecutor.execute(rule.actionJson());
-        long duration = System.currentTimeMillis() - start;
-        boolean ok = !detail.startsWith("ERROR");
-        jdbcTemplate.update(
-                "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, ?, ?, ?)",
-                rule.id(), duration, ok ? "success" : "failed", detail);
-        jdbcTemplate.update(
-                "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ?",
-                ok ? "active" : "error", rule.id());
-        return latestExecution(rule.id());
+        // 同一规则不并发执行:agent 动作一次可跑数分钟,期间调度器每分钟都会
+        // 重新扫到这条规则,不挡会重复烧 LLM token。跳过时返回最近一条记录。
+        if (!runningRules.add(rule.id())) {
+            return latestExecution(rule.id());
+        }
+        try {
+            long start = System.currentTimeMillis();
+            String detail = actionExecutor.execute(rule.actionJson());
+            long duration = System.currentTimeMillis() - start;
+            boolean ok = !detail.startsWith("ERROR");
+            jdbcTemplate.update(
+                    "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, ?, ?, ?)",
+                    rule.id(), duration, ok ? "success" : "failed", detail);
+            jdbcTemplate.update(
+                    "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ?",
+                    ok ? "active" : "error", rule.id());
+            return latestExecution(rule.id());
+        } finally {
+            runningRules.remove(rule.id());
+        }
     }
 
     /** Latest executions across all rules (frontend ExecutionRecord[]). */

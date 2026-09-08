@@ -22,10 +22,18 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Chat endpoints: SSE streaming (step/delta/sources/done) plus session
@@ -103,6 +111,74 @@ public class AgentController {
             }
         });
         return emitter;
+    }
+
+    /** 一次性 agent 运行专用线程池:chat() 是同步阻塞的,提交到这里才能超时可取消 */
+    private final ExecutorService agentRunExecutor = Executors.newCachedThreadPool();
+
+    /**
+     * POST /api/chat/agent/run — 供服务间调用(automation 动作)的非流式一次性
+     * agent 运行。走同一套编排(RAG + 工具循环),FULL 权限档、无审批门(无会话),
+     * 静默收集事件,返回最终回答 + token 用量;以 SSE 超时为上限,超时会真正
+     * 中断编排线程使上游 LLM 读中止。
+     *
+     * <p>响应 {@code {status:"completed", answer, usage}} 或
+     * {@code {status:"error", error}};status 字段让调用方无需靠答案文本猜测成败。
+     */
+    @PostMapping("/agent/run")
+    public Map<String, Object> runAgent(@RequestBody AgentRunRequest request) {
+        if (request.prompt() == null || request.prompt().isBlank()) {
+            throw new IllegalArgumentException("prompt is required");
+        }
+        if (request.prompt().trim().length() > 8000) {
+            throw new IllegalArgumentException("prompt exceeds 8000 characters");
+        }
+        // chat() 内部是同步执行并返回已完成的 future,用 join() 取值;
+        // 包一层 Future 才能实现超时取消(中断编排线程使上游 LLM 读中止)
+        java.util.concurrent.Future<ChatOrchestrationService.ChatTurn> future =
+                agentRunExecutor.submit(() -> orchestrationService.chat(
+                        request.prompt().trim(),
+                        List.of(), List.of(),
+                        request.model(), request.reasoningLevel(),
+                        PermissionMode.FULL,
+                        null,
+                        SILENT_CONSUMER).join());
+        try {
+            ChatOrchestrationService.ChatTurn turn = future.get(SSE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("status", "completed");
+            out.put("answer", turn.answer());
+            if (turn.usage() != null) {
+                out.put("usage", Map.of(
+                        "inputTokens", Objects.requireNonNullElse(turn.usage().inputTokens(), 0),
+                        "outputTokens", Objects.requireNonNullElse(turn.usage().outputTokens(), 0),
+                        "totalTokens", Objects.requireNonNullElse(turn.usage().totalTokens(), 0)));
+            }
+            return out;
+        } catch (TimeoutException e) {
+            future.cancel(true); // 中断编排线程 → 上游 LLM HTTP 读中止,不再白烧 token
+            throw new IllegalStateException("agent run timed out after " + SSE_TIMEOUT_MS + "ms");
+        } catch (CancellationException e) {
+            throw new IllegalStateException("agent run was cancelled");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // 恢复中断标志,不吞信号
+            throw new IllegalStateException("agent run interrupted");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new IllegalStateException("agent run failed: " + cause.getMessage(), cause);
+        }
+    }
+
+    /** 静默消费全部编排事件:机对机运行没有 SSE 流可发 */
+    private static final ChatOrchestrationService.ChatEventConsumer SILENT_CONSUMER =
+            new ChatOrchestrationService.ChatEventConsumer() {
+                @Override public void step(ChatStepDto step) { }
+                @Override public void delta(String token) { }
+                @Override public void sources(List<CitationDto> found) { }
+            };
+
+    /** POST /api/chat/agent/run 请求体。 */
+    public record AgentRunRequest(String prompt, String model, String reasoningLevel) {
     }
 
     /**

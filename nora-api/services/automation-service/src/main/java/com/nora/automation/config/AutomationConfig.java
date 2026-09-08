@@ -28,6 +28,23 @@ public class AutomationConfig {
         return RestClient.builder().baseUrl(baseUrl).build();
     }
 
+    /**
+     * agent-service 调用客户端(agent 动作执行器)。读超时必须覆盖完整的一次
+     * agent 运行(RAG + 工具循环),比默认值长。
+     *
+     * @param baseUrl agent-service 地址,来自 {@code nora.agent.base-url}
+     * @return 绑定到 agent-service 基础 URL 的 RestClient
+     */
+    @Bean
+    public RestClient agentServiceRestClient(
+            @Value("${nora.agent.base-url:http://localhost:8083}") String baseUrl) {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(180_000); // agent run covers RAG + tool loop
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+    }
+
     /** Fires due rules every minute. */
     @Component
     static class ScheduledRuleRunner {

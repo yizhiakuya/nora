@@ -42,7 +42,11 @@ function toRule(r: BackendRule): AutomationRule {
 
 function describeAction(actionJson: string): string {
   try {
-    const action = JSON.parse(actionJson) as { type?: string; sql?: string };
+    const action = JSON.parse(actionJson) as { type?: string; sql?: string; prompt?: string };
+    if (action.type === "agent" && action.prompt) {
+      const oneLine = action.prompt.replace(/\s+/g, " ");
+      return "🤖 " + (oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine);
+    }
     if (action.type === "sql" && action.sql) {
       const oneLine = action.sql.replace(/\s+/g, " ");
       return oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
@@ -80,7 +84,15 @@ export const automationsApi = {
     return items.map(toRule);
   },
 
-  async createRule(input: { name: string; triggerType: string; sql: string }): Promise<AutomationRule> {
+  async createRule(input: {
+    name: string;
+    triggerType: string;
+    /** 动作类型:"sql"(默认)或 "agent" */
+    actionType?: string;
+    sql?: string;
+    /** actionType="agent" 时的自然语言指令 */
+    prompt?: string;
+  }): Promise<AutomationRule> {
     const item = await requestJson<BackendRule>("/automations", {
       method: "POST",
       body: JSON.stringify(input),

@@ -13,10 +13,14 @@ import org.springframework.web.client.RestClient;
 /**
  * Executes automation actions.
  *
- * <p>v1 supports a single action type: {@code sql} — a guarded read-only
- * statement run against datasource-service (which enforces SELECT/SHOW/
- * EXPLAIN, row limits and timeouts). The execution detail is the rendered
- * result, stored on the execution record.
+ * Supported action types:
+ * <ul>
+ *   <li>{@code sql} — 受保护的只读查询,经 datasource-service 执行
+ *       (只允许 SELECT/SHOW/EXPLAIN,有行数上限和超时)</li>
+ *   <li>{@code agent} — 自然语言指令,由 agent-service 一次性运行端点执行
+ *       (RAG + 工具循环,FULL 权限档);回答即执行详情</li>
+ * </ul>
+ * 执行详情存储在执行记录上。
  */
 @Service
 public class ActionExecutor {
@@ -24,10 +28,13 @@ public class ActionExecutor {
     private static final Logger log = LoggerFactory.getLogger(ActionExecutor.class);
 
     private final RestClient restClient;
+    private final RestClient agentRestClient;
     private final ObjectMapper objectMapper;
 
-    public ActionExecutor(RestClient datasourceServiceRestClient, ObjectMapper objectMapper) {
+    public ActionExecutor(RestClient datasourceServiceRestClient, RestClient agentServiceRestClient,
+                          ObjectMapper objectMapper) {
         this.restClient = datasourceServiceRestClient;
+        this.agentRestClient = agentServiceRestClient;
         this.objectMapper = objectMapper;
     }
 
@@ -41,6 +48,9 @@ public class ActionExecutor {
         try {
             JsonNode action = objectMapper.readTree(actionJson);
             String type = action.path("type").asText("sql");
+            if ("agent".equals(type)) {
+                return executeAgent(action.path("prompt").asText(""));
+            }
             if (!"sql".equals(type)) {
                 return "ERROR: unsupported action type " + type;
             }
@@ -48,10 +58,12 @@ public class ActionExecutor {
             if (sql.isBlank()) {
                 return "ERROR: action sql is empty";
             }
+            // 显式 Long:三元两分支类型不一致时会自动拆箱,null 会当场 NPE,
+            // 让下面的判空形同虚设(真实踩过的坑)
             Long connectionId = action.hasNonNull("connectionId")
-                    ? action.get("connectionId").asLong() : firstConnectionId();
+                    ? Long.valueOf(action.get("connectionId").asLong()) : firstConnectionId();
             if (connectionId == null) {
-                return "ERROR: no database connection configured";
+                return "ERROR: no database connection configured — 请先在数据源页添加一个连接";
             }
             Envelope<QueryBody> envelope = restClient.post()
                     .uri("/api/datasources/{id}/query", connectionId)
@@ -68,6 +80,43 @@ public class ActionExecutor {
         } catch (Exception e) {
             log.warn("action execution failed: {}", e.getMessage());
             return "ERROR: " + e.getMessage();
+        }
+    }
+
+    /** 走 agent-service 的一次性运行端点执行自然语言指令;回答即执行详情。 */
+    private String executeAgent(String prompt) {
+        if (prompt.isBlank()) {
+            return "ERROR: action prompt is empty";
+        }
+        try {
+            java.util.Map<String, Object> out = agentRestClient.post()
+                    .uri("/api/chat/agent/run")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(java.util.Map.of("prompt", prompt))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<java.util.Map<String, Object>>() {
+                    });
+            // agent-service 以 status 字段标明成败(答案文本可能是任意内容,不能靠
+            // "ERROR:" 前缀猜;模型未配置时也返回 status=error)
+            if (out == null) {
+                return "ERROR: empty agent response";
+            }
+            if (!"completed".equals(out.get("status"))) {
+                Object error = out.get("error");
+                return "ERROR: agent run failed: "
+                        + (error == null ? "no status in response" : error);
+            }
+            Object answer = out.get("answer");
+            return answer == null ? "ERROR: agent returned null answer" : answer.toString();
+        } catch (Exception e) {
+            log.warn("agent action failed: {}", e.getMessage());
+            // 5xx 时 RestClient 只给状态行,响应体里的具体错误/操作提示被丢掉;
+            // 读出 body 一起返回,错误才可操作(符合仓库「错误带 hint」约定)
+            String hint = "";
+            if (e instanceof org.springframework.web.client.RestClientResponseException restEx) {
+                hint = " | " + restEx.getResponseBodyAsString();
+            }
+            return "ERROR: agent run failed: " + e.getMessage() + hint;
         }
     }
 
@@ -107,6 +156,14 @@ public class ActionExecutor {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "sql");
         node.put("sql", sql);
+        return node.toString();
+    }
+
+    /** Builds the stored action JSON for an agent (natural-language) rule. */
+    public String agentAction(String prompt) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("type", "agent");
+        node.put("prompt", prompt);
         return node.toString();
     }
 

@@ -38,10 +38,11 @@ public class AutomationController {
         return ApiResponse.ok(service.list());
     }
 
-    /** Creates a rule (v1 action: SQL). */
+    /** Creates a rule (SQL 或 agent 动作,由 actionType 区分). */
     @PostMapping
     public ApiResponse<AutomationService.RuleView> create(@RequestBody CreateRequest request) {
-        return ApiResponse.ok(service.create(request.name(), request.triggerType(), request.sql()));
+        return ApiResponse.ok(service.create(request.name(), request.triggerType(),
+                request.actionType(), request.sql(), request.prompt()));
     }
 
     /** Toggles enabled/paused. */
@@ -74,6 +75,7 @@ public class AutomationController {
     }
 
     /** POST /api/automations body. */
-    public record CreateRequest(String name, String triggerType, String sql) {
+    /** actionType 缺省 = "sql";"agent" 时用 prompt。 */
+    public record CreateRequest(String name, String triggerType, String actionType, String sql, String prompt) {
     }
 }
