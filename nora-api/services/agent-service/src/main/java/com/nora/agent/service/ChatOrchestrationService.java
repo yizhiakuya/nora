@@ -265,14 +265,15 @@ public class ChatOrchestrationService {
         try {
             for (int round = 0; round < maxToolRounds; round++) {
                 roundsUsed[0] = round + 1;
-                int compactedCount = compactForRound(messages, budget, false);
+                int compactedCount = compactForRound(messages, budget, false, PER_REQUEST_OVERHEAD_TOKENS);
                 if (compactedCount > 0) {
                     eventConsumer.step(new ChatStepDto("s-compact-" + round, "think",
                             "整理上下文", "已压缩 " + compactedCount + " 条早期工具结果,释放约 "
                                     + estimateTokensFreed + " tokens 预算",
                             0L, "completed", null, null, null, round));
                 }
-                lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
+                lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
+                        + PER_REQUEST_OVERHEAD_TOKENS;
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
                         round + 1, eventConsumer, ttftMs, turnStartMs);
                 if (result.usage() != null) {
@@ -282,7 +283,7 @@ public class ChatOrchestrationService {
                     StreamTurnResult retry = null;
                     if (isContextOverflow(result.errorMessage)) {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
-                        compactForRound(messages, budget, true);
+                        compactForRound(messages, budget, true, PER_REQUEST_OVERHEAD_TOKENS);
                         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
                         retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
@@ -307,6 +308,7 @@ public class ChatOrchestrationService {
                 }
                 if (result.toolCalls.isEmpty()) {
                     // 回答(与推理)已随流逐 token 转发完毕
+                    logCalibration(lastPromptEstimate[0], totalUsage, budget);
                     return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
                 }
                 messages.add(new WireMessage(result.assistantMessage));
@@ -332,14 +334,16 @@ public class ChatOrchestrationService {
         final String fallbackOutcome = toolOutcome;
 
         final int reasoningRound = roundsUsed[0] + 1;
-        lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
+        lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
+                + PER_REQUEST_OVERHEAD_TOKENS;
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                 reasoningRound, eventConsumer, ttftMs, turnStartMs);
         // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试
         if (finalResult.failed && finalResult.content().isBlank()) {
             if (isContextOverflow(finalResult.errorMessage)) {
-                compactForRound(messages, budget, true);
-                lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
+                compactForRound(messages, budget, true, PER_REQUEST_OVERHEAD_TOKENS);
+                lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
+                        + PER_REQUEST_OVERHEAD_TOKENS;
             }
             finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                     reasoningRound, eventConsumer, ttftMs, turnStartMs);
@@ -350,6 +354,7 @@ public class ChatOrchestrationService {
                 totalUsage = totalUsage == null ? finalResult.usage() : totalUsage.add(finalResult.usage());
             }
             if (!answerText.isBlank()) {
+                logCalibration(lastPromptEstimate[0], totalUsage, budget);
                 return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
             }
         }
@@ -1443,7 +1448,8 @@ public class ChatOrchestrationService {
 
         int fixedCost = ContextBudget.estimateTokens(systemPrompt)
                 + (reflectionBlock == null ? 0 : ContextBudget.estimateTokens(reflectionBlock))
-                + ContextBudget.estimateTokens(userMessage);
+                + ContextBudget.estimateTokens(userMessage)
+                + PER_REQUEST_OVERHEAD_TOKENS;
         long historyBudget = budget.historyBudgetTokens(fixedCost);
         int used = 0;
         int from = history.size();
@@ -1471,17 +1477,26 @@ public class ChatOrchestrationService {
     private static final int COMPACTION_TAIL_KEEP = 6;
 
     /**
+     * 每次请求的固定 overhead token 估算(tools spec JSON schema ~1.5k +
+     * 协议封装/系统字段;实测校准 2026-09-08:消息体估算与上游真实
+     * inputTokens 比值 6.7~10.4,overhead 主导,必须计入预算)。
+     */
+    static final int PER_REQUEST_OVERHEAD_TOKENS = 1_800;
+
+    /**
      * 轮内微压缩(microcompact,语义对齐 Claude Code):预估 prompt 超过
      * 触发线时,把最旧的工具结果就地改写为头尾摘录。只改 content,role/
      * tool_call_id 不动(OpenAI tool_call 配对校验不破),最近
      * {@link #COMPACTION_TAIL_KEEP} 条消息完整保留;历史轮的失败也只留要点。
      * force=true(上游已报超限)时压缩目标降为恢复线(窗口 60%)。
      */
-    private int compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) {
+    private int compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force,
+                                long overheadTokens) {
         long total = 0;
         for (WireMessage m : messages) {
             total += messageTokens(m);
         }
+        total += overheadTokens; // tools spec + 协议封装,占请求大头
         long limit = force
                 ? (long) (budget.window() * ContextBudget.RECOVERY_RATIO)
                 : budget.triggerTokens() - budget.outputReserve();
@@ -1533,6 +1548,26 @@ public class ChatOrchestrationService {
             }
         }
         return tokens;
+    }
+
+    /**
+     * 估算校准日志:每轮结束把服务端 prompt 估算与上游真实 inputTokens
+     * 对齐输出(真实值含 tools spec/协议封装 overhead,估算只含消息体)。
+     * 比值持续偏离预期时调整 ContextBudget 估算系数——观测驱动的闭环。
+     */
+    private void logCalibration(int promptEstimate, TokenUsage usage, ContextBudget budget) {
+        if (usage == null || usage.inputTokens() == null || promptEstimate <= 0) return;
+        int real = usage.inputTokens();
+        double ratio = (double) real / promptEstimate;
+        // 只在明显偏离时告警(±35% 外),正常波动打 debug
+        String r = String.format("%.2f", ratio);
+        if (ratio < 0.65 || ratio > 1.35) {
+            log.warn("context estimate calibration: promptEstimate={} realInput={} ratio={} window={} trigger={}",
+                    promptEstimate, real, r, budget.window(), budget.triggerTokens());
+        } else {
+            log.debug("context estimate ok: promptEstimate={} realInput={} ratio={}",
+                    promptEstimate, real, r);
+        }
     }
 
     /** 上游上下文超限错误识别(各家中转措辞不一,宽松匹配)。 */
