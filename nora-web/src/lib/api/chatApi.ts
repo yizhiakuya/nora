@@ -38,6 +38,10 @@ export interface ChatStep {
 export interface ChatTurnMetrics {
   durationMs: number;
   usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
+  /** 生效模型上下文窗口(tokens;null = 未配置,前端退回默认 128k) */
+  contextWindow?: number | null;
+  /** 服务端最后一次请求的 token 估算(CJK 感知;比前端字符估算准) */
+  promptTokens?: number | null;
 }
 
 export interface ChatMessage {

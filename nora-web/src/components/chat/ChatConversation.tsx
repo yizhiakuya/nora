@@ -13,10 +13,16 @@ interface ChatConversationProps {
 }
 
 /**
- * 上下文用量:优先累计服务端真实 usage(done 事件下发,覆盖工具轮);
- * 任一消息缺 usage 时整段退回字符估算(÷4),避免真伪混计。
+ * 上下文用量:三级来源——① 最后一条 assistant 轮的服务端 prompt 估算
+ * (done.contextWindow/promptTokens,与后端裁剪同一套 CJK 感知口径)加本轮
+ * 输入;② 逐轮累计服务端真实 usage(全部轮都有时);③ 字符估算(÷4)兜底。
+ * 不混计:前一级可用就完全不用后一级。
  */
 function estimateContextTokens(messages: ChatMessage[], input: string): number {
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  if (lastAssistant?.turnMetrics?.promptTokens != null) {
+    return lastAssistant.turnMetrics.promptTokens + Math.ceil(input.length / 4);
+  }
   const allMeasured = messages
     .filter((m) => m.role === "assistant")
     .every((m) => m.turnMetrics?.usage?.totalTokens != null);
@@ -30,6 +36,12 @@ function estimateContextTokens(messages: ChatMessage[], input: string): number {
     return assistantTokens + Math.ceil(userChars / 4) + Math.ceil(input.length / 4);
   }
   return messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0) + Math.ceil(input.length / 4);
+}
+
+/** 上下文窗口:服务端 done 下发的生效窗口 > 默认 128k */
+function resolveContextLimit(messages: ChatMessage[]): number {
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  return lastAssistant?.turnMetrics?.contextWindow ?? 128000;
 }
 
 /**
@@ -86,7 +98,8 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
       <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage} onStop={stopGenerating}
         reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
         permissionMode={permissionMode} onPermissionModeChange={setPermissionMode}
-        contextTokens={estimateContextTokens(messages, input)} />
+        contextTokens={estimateContextTokens(messages, input)}
+        contextLimit={resolveContextLimit(messages)} />
     </>
   );
 }

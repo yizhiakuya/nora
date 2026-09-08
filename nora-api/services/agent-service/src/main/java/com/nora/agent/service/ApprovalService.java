@@ -95,6 +95,16 @@ public class ApprovalService {
                 .toList();
     }
 
+    /**
+     * 会话轮次被用户取消时清掉该会话全部挂起审批:以拒绝语义完成 future,
+     * 让阻塞中的工具线程立刻释放(与超时自动拒绝同路径)。
+     */
+    public void clearPending(String sessionId) {
+        pending.values().stream()
+                .filter(p -> p.sessionId().equals(sessionId))
+                .forEach(p -> p.future().complete(false));
+    }
+
     /** Serializes the payload for the SSE approval_required event. */
     public String toJson(ApprovalRequestDto payload) {
         try {

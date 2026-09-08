@@ -45,6 +45,9 @@ public class AgentController {
     private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
     private final ExecutorService chatExecutor = Executors.newCachedThreadPool();
+    /** 进行中的轮次,按会话注册;「停止生成」据此中断上游 HTTP 读(省 token) */
+    private final java.util.concurrent.ConcurrentMap<String, java.util.concurrent.Future<?>> activeTurns =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
@@ -85,10 +88,36 @@ public class AgentController {
             throw new IllegalArgumentException("content is required");
         }
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
-        chatExecutor.execute(() -> runChatTurn(sessionId, request.content().trim(),
-                request.model(), request.reasoningLevel(),
-                PermissionMode.parse(request.permissionMode()), emitter));
+        chatExecutor.execute(() -> {
+            var handle = new java.util.concurrent.FutureTask<>(() -> {
+                runChatTurn(sessionId, request.content().trim(),
+                        request.model(), request.reasoningLevel(),
+                        PermissionMode.parse(request.permissionMode()), emitter);
+                return null;
+            });
+            activeTurns.put(sessionId, handle);
+            try {
+                handle.run();
+            } finally {
+                activeTurns.remove(sessionId, handle);
+            }
+        });
         return emitter;
+    }
+
+    /**
+     * 取消某会话进行中的轮次:中断编排线程使上游 LLM HTTP 读中止(不再白烧
+     * token),并清掉挂起的审批。无进行中轮次时幂等返回 ok(false)。
+     */
+    @PostMapping("/sessions/{sessionId}/cancel")
+    public ApiResponse<Boolean> cancelTurn(@PathVariable String sessionId) {
+        var future = activeTurns.remove(sessionId);
+        boolean cancelled = future != null;
+        if (cancelled) {
+            future.cancel(true);
+        }
+        approvalService.clearPending(sessionId);
+        return ApiResponse.ok(cancelled);
     }
 
     /**
@@ -193,10 +222,13 @@ public class AgentController {
                 throw new IllegalStateException("agent orchestration returned no future");
             }
             turnFuture.whenComplete((turn, error) -> {
+                        // 用户主动取消(线程中断→上游读中止):静默收尾,不发 error 不记失败
+                        boolean userCancelled = error instanceof java.util.concurrent.CancellationException
+                                || (error != null && Thread.currentThread().isInterrupted());
                         String answerText = turn != null ? turn.answer() : answer.toString();
                         long durationMs = System.currentTimeMillis() - turnStart;
                         var usage = turn != null ? turn.usage() : null;
-                        if (error != null) {
+                        if (error != null && !userCancelled) {
                             try {
                                 chatStoreService.saveReflection(sessionId, "chat-turn",
                                         "本轮 Agent 执行失败：" + (error.getMessage() == null ? "unknown error" : error.getMessage()));
@@ -212,29 +244,36 @@ public class AgentController {
                             }
                         }
                         try {
-                            for (var entry : reasoningBuffers.entrySet()) {
-                                if (entry.getValue().isEmpty()) continue;
-                                Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
-                                ChatStepDto reasoningStep = new ChatStepDto(
-                                        "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
-                                        "think", "推理过程", entry.getValue().toString(), durationMs,
-                                        "completed", null, null, null, roundIndex);
-                                steps.add(reasoningStep);
-                                try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
-                                catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
+                            if (!userCancelled) {
+                                for (var entry : reasoningBuffers.entrySet()) {
+                                    if (entry.getValue().isEmpty()) continue;
+                                    Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
+                                    ChatStepDto reasoningStep = new ChatStepDto(
+                                            "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
+                                            "think", "推理过程", entry.getValue().toString(), durationMs,
+                                            "completed", null, null, null, roundIndex);
+                                    steps.add(reasoningStep);
+                                    try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
+                                    catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
+                                }
+                                chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations);
                             }
-                            chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations);
                         } catch (Exception e) {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());
                         }
                         // done carries turn metrics (harness pattern: server stamps timing so
                         // the client never recomputes); usage is the provider's real token
-                        // accounting summed across tool rounds (null when relay omits it)
-                        send(emitter, "done", new DonePayload(UUID.randomUUID().toString(),
-                                durationMs,
-                                usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
-                                answerText.length()));
+                        // accounting summed across tool rounds (null when relay omits it);
+                        // contextWindow/promptTokens feed the frontend context meter
+                        if (!userCancelled) {
+                            send(emitter, "done", new DonePayload(UUID.randomUUID().toString(),
+                                    durationMs,
+                                    usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
+                                    answerText.length(),
+                                    turn != null ? turn.contextWindow() : null,
+                                    turn != null ? turn.promptTokens() : null));
+                        }
                         emitter.complete();
                     });
         } catch (Exception e) {
@@ -284,7 +323,8 @@ public class AgentController {
      * model gateway returns token accounting; the frontend falls back to its
      * local estimate while it is null.
      */
-    public record DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars) {
+    public record DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
+                              Long contextWindow, Integer promptTokens) {
 
         /** Token accounting from the provider (harness: usage is a first-class done field). */
         public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {

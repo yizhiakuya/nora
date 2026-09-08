@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatMessage, type ChatResponder, type PermissionMode } from "@/lib/api/chatApi";
-import { AgentAPI } from "@/lib/api/agentApi";
+import { AgentAPI, cancelTurnOnBackend } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
 import { useModelProviders } from "./useModelProviders";
@@ -161,10 +161,13 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
     [messages, isSending, runTurn]
   );
 
-  /** 停止生成:中断流式响应,已流出的部分文本保留 */
+  /** 停止生成:前端断流 + 通知后端取消轮次(上游 LLM 调用一并中止,不白烧 token) */
   const stopGenerating = useCallback(() => {
     abortRef.current?.abort();
-  }, []);
+    if (USE_BACKEND && sessionId) {
+      void cancelTurnOnBackend(sessionId);
+    }
+  }, [sessionId]);
 
   const clear = useCallback(() => {
     setMessages([]);

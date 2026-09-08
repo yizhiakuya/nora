@@ -1,0 +1,47 @@
+# 上下文管理系统性设计（2026-09-08）
+
+## 目标
+
+单文件 `buildMessages` 的字符裁剪升级为贯穿「单轮对话全生命周期」的上下文预算体系：度量统一、分层预算、多级防线、计量闭环。设计对齐 `harness-tool-calling-research-2026-09-05.md` 的调研结论（Claude Code microcompact / 83% 触发线 / Manus 上下文原则）。
+
+## 架构：一个度量核心 × 三个应用层 × 三级防线
+
+```
+ContextBudget (度量核心)
+  ├─ 窗口来源：设置页 per-model contextWindow（ResolvedLlm.contextWindow），未配置 → 128k 默认
+  ├─ 触发线 = 窗口 × 83%          （对齐 Claude Code：200K@167K 触发 compact）
+  ├─ 输出预留 = min(16k, 窗口×10%) （留给本轮回答 + 推理 token）
+  ├─ 恢复线 = 窗口 × 60%          （超限后的压缩目标）
+  └─ estimateTokens(): CJK 感知估算（中文≈1 token/字，ASCII≈1/4 字符，其他≈1/2）
+       唯一估算口径——历史裁剪、轮内压缩、prompt 估算共用；宁高勿低。
+```
+
+### 应用层
+
+| 层 | 位置 | 机制 |
+|---|---|---|
+| 会话历史装配 | `buildMessages` | 固定层（system+RAG+反思+新消息）之外的 token 预算 = 触发线 − 输出预留 − 固定开销；历史从新到旧装入，至少 1 条，硬上限 40 条 |
+| 轮内微压缩 | `compactForRound` | 每轮请求前预估 prompt；超触发线把**最旧的工具结果**就地改写为头 800+尾 200 摘录（失败只留头 400）。只改 content，role/tool_call_id 不动（OpenAI 配对校验不破）；最近 6 条消息永不触碰 |
+| 超限恢复 | `isContextOverflow` + force 压缩 | 上游报 context length 错误时硬压缩到恢复线（60%）重试一次——防线上 400 翻车 |
+
+### 计量闭环
+
+- 服务端：`ChatTurn` 新增 `contextWindow` + `promptTokens`（最后一次请求的估算值），随 `done` 事件下发。
+- 前端进度条三级来源（不混计，高级可用就完全不用低级）：
+  1. 服务端 prompt 估算（与裁剪同口径，最准）
+  2. 逐轮累计真实 usage（全部 assistant 轮都有时）
+  3. 字符 ÷4 兜底
+- 窗口展示跟随服务端 `contextWindow`，不再前端写死 128k。
+
+## 边界与不变式
+
+- **append-only**：压缩只改写旧 tool content，不删除/重排消息（Manus：擦掉失败就擦掉了证据；KV-cache 友好）。
+- **审批/循环熔断不受影响**：压缩发生在 fingerprint 记账之外。
+- **usage 真实值**只做展示，不反向参与装配决策（估算与计量分离）。
+- 未配置窗口的模型：128k 默认窗口，全链路行为与配置过的模型一致。
+
+## 已知取舍
+
+- 估算是启发式不是 tokenizer：对代码/JSON 密集内容偏差 ±30%，靠 17% 触发线余量 + 超限恢复兜底。
+- 微压缩只针对 tool 结果（最大冗余源）；历史 user/assistant 文本已在会话级裁剪中限量。
+- 未做全量摘要（auto-compact）：当前会话规模不需要，接入点已预留（`compactForRound` 的 force 分支可替换为摘要实现）。

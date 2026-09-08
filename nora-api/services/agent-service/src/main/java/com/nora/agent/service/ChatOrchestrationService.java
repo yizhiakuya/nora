@@ -222,7 +222,7 @@ public class ChatOrchestrationService {
                     "请先在设置中心配置 LLM API Key 和端点", 0L, "failed"));
             String message = "当前尚未配置可用的模型。请到设置中心配置 LLM 服务商、端点和 API Key 后重试。";
             eventConsumer.delta(message);
-            return CompletableFuture.completedFuture(new ChatTurn(message, List.of(), null));
+            return CompletableFuture.completedFuture(new ChatTurn(message, List.of(), null, null, null));
         }
         // 请求级等级优先,其次设置页为该模型配置的默认等级(在 resolveLlm 内合并)
         // Step 1: knowledge retrieval (best-effort, before the LLM call)
@@ -242,34 +242,45 @@ public class ChatOrchestrationService {
         // content/reasoning deltas go to the client token-by-token as they arrive
         // from upstream; tool_call argument fragments accumulate locally and the
         // tools execute after the stream closes.
-        List<WireMessage> messages = buildMessages(userMessage, history, citations, reflections);
         // 先解析一次拿到合并后的思考等级(请求级 > 设置页该模型默认),工具轮与最终回答共用
         ResolvedLlm resolved = resolveLlm(requestedModel, requestedReasoningLevel);
         if (resolved == null) {
             // configured() 已校验过,这里防御性兜底
             throw new IllegalStateException("no LLM provider resolved for model: " + requestedModel);
         }
+        // 系统性上下文预算(设计见 docs/context-management-design.md):
+        // 会话级裁剪 + 轮内微压缩 + 超限恢复,统一走 ContextBudget
+        ContextBudget budget = new ContextBudget(resolved.contextWindow());
+        List<WireMessage> messages = buildMessages(userMessage, history, citations, reflections, budget);
         final String reasoningLevel = resolved.effectiveReasoningLevel();
         String toolOutcome = null;
         final int[] roundsUsed = {0};
+        final int[] lastPromptEstimate = {0};
         TokenUsage totalUsage = null;
         // loop breaker state: (toolName + normalized args) → consecutive repeat count
         Map<String, Integer> callFingerprints = new HashMap<>();
         try {
             for (int round = 0; round < maxToolRounds; round++) {
                 roundsUsed[0] = round + 1;
+                compactForRound(messages, budget, false);
+                lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
                         round + 1, eventConsumer);
                 if (result.usage() != null) {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
                 if (result.failed) {
-                    // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
-                    // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
-                    boolean transientFailure = result.content().isEmpty() && result.toolCalls().isEmpty();
-                    StreamTurnResult retry = transientFailure
-                            ? streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer)
-                            : null;
+                    StreamTurnResult retry = null;
+                    if (isContextOverflow(result.errorMessage)) {
+                        // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
+                        compactForRound(messages, budget, true);
+                        lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
+                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer);
+                    } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
+                        // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
+                        // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
+                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer);
+                    }
                     if (retry != null) {
                         if (retry.usage() != null) {
                             totalUsage = totalUsage == null ? retry.usage() : totalUsage.add(retry.usage());
@@ -287,7 +298,7 @@ public class ChatOrchestrationService {
                 }
                 if (result.toolCalls.isEmpty()) {
                     // 回答(与推理)已随流逐 token 转发完毕
-                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage));
+                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage, budget.window(), lastPromptEstimate[0]));
                 }
                 messages.add(new WireMessage(result.assistantMessage));
                 for (JsonNode call : result.toolCalls) {
@@ -312,10 +323,15 @@ public class ChatOrchestrationService {
         final String fallbackOutcome = toolOutcome;
 
         final int reasoningRound = roundsUsed[0] + 1;
+        lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                 reasoningRound, eventConsumer);
-        // 瞬时上游错误(空内容失败)自动重试一次
+        // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试
         if (finalResult.failed && finalResult.content().isBlank()) {
+            if (isContextOverflow(finalResult.errorMessage)) {
+                compactForRound(messages, budget, true);
+                lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
+            }
             finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                     reasoningRound, eventConsumer);
         }
@@ -325,7 +341,7 @@ public class ChatOrchestrationService {
                 totalUsage = totalUsage == null ? finalResult.usage() : totalUsage.add(finalResult.usage());
             }
             if (!answerText.isBlank()) {
-                return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage));
+                return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0]));
             }
         }
         // 流式最终回答失败:回落到最后一次工具结果作为回答,而不是死流
@@ -334,7 +350,7 @@ public class ChatOrchestrationService {
                 : "";
         if (!fallback.isBlank()) {
             eventConsumer.delta(fallback);
-            return CompletableFuture.completedFuture(new ChatTurn(fallback, citations, totalUsage));
+            return CompletableFuture.completedFuture(new ChatTurn(fallback, citations, totalUsage, budget.window(), lastPromptEstimate[0]));
         }
         eventConsumer.step(new ChatStepDto("s-error", "think", "模型调用失败",
                 finalResult.errorMessage, System.currentTimeMillis() - answerStart, "failed",
@@ -579,7 +595,7 @@ public class ChatOrchestrationService {
         }
         if (llmProperties.configured()) {
             return new ResolvedLlm(llmProperties.baseUrl(), llmProperties.apiKey(), llmProperties.model(), "openai",
-                    null);
+                    null, null);
         }
         return null;
     }
@@ -602,7 +618,8 @@ public class ChatOrchestrationService {
                 ModelProviderService.parseModelSettingsStatic(provider.modelSettingsJson()).forModel(model);
         String protocol = perModel.protocol() != null && !perModel.protocol().isBlank()
                 ? perModel.protocol() : provider.protocol();
-        return new ResolvedLlm(provider.endpoint(), provider.apiKey(), model, protocol, effectiveLevel);
+        return new ResolvedLlm(provider.endpoint(), provider.apiKey(), model, protocol, effectiveLevel,
+                perModel.contextWindow());
     }
 
     /** Merges the per-request level with the per-model default from settings. */
@@ -1261,7 +1278,7 @@ public class ChatOrchestrationService {
     /** Returns a copy of the resolved endpoint carrying the given reasoning level. */
     private static ResolvedLlm withLevel(ResolvedLlm llm, String reasoningLevel) {
         if (llm == null) return null;
-        return new ResolvedLlm(llm.baseUrl(), llm.apiKey(), llm.model(), llm.protocol(), reasoningLevel);
+        return new ResolvedLlm(llm.baseUrl(), llm.apiKey(), llm.model(), llm.protocol(), reasoningLevel, llm.contextWindow());
     }
 
     /** Returns a copy of the resolved endpoint carrying the given reasoning level. */
@@ -1269,7 +1286,9 @@ public class ChatOrchestrationService {
     /** Package-visible for tests; never returned outside the service. */
     record ResolvedLlm(String baseUrl, String apiKey, String model, String protocol,
                        /** 生效思考等级(已合并请求级与设置页默认);null = auto */
-                       String effectiveReasoningLevel) {}
+                       String effectiveReasoningLevel,
+                       /** 模型上下文窗口(tokens);null = 未配置 */
+                       Long contextWindow) {}
 
     private ArrayNode messagesArray(List<WireMessage> messages) {
         ArrayNode array = objectMapper.createArrayNode();
@@ -1384,17 +1403,41 @@ public class ChatOrchestrationService {
         return tools;
     }
 
+    /**
+     * 系统性上下文装配(设计见 docs/context-management-design.md):
+     * 固定层(system prompt + RAG 片段 + 反思 + 新消息)之外,历史按 token
+     * 预算从新到旧装入;预算 = 触发线 - 输出预留 - 固定开销。估算统一走
+     * {@link ContextBudget#estimateTokens}(CJK 感知);上游真实 usage 只做
+     * 展示与事后校准,不参与装配决策。至少保留 1 条历史,条数硬上限 40。
+     */
     private List<WireMessage> buildMessages(String userMessage,
                                             List<ChatStoreService.StoredMessage> history,
                                             List<CitationDto> citations,
-                                            List<String> reflections) {
+                                            List<String> reflections,
+                                            ContextBudget budget) {
         List<WireMessage> messages = new ArrayList<>();
-        messages.add(WireMessage.system(objectMapper, systemPromptWith(citations)));
-        if (reflections != null && !reflections.isEmpty()) {
-            messages.add(WireMessage.system(objectMapper, "此前类似任务的失败反思（仅作参考）：\n- " + String.join("\n- ", reflections)));
+        String systemPrompt = systemPromptWith(citations);
+        messages.add(WireMessage.system(objectMapper, systemPrompt));
+        String reflectionBlock = reflections == null || reflections.isEmpty() ? null
+                : "此前类似任务的失败反思（仅作参考）：\n- " + String.join("\n- ", reflections);
+        if (reflectionBlock != null) {
+            messages.add(WireMessage.system(objectMapper, reflectionBlock));
         }
 
-        int from = Math.max(0, history.size() - 6);
+        int fixedCost = ContextBudget.estimateTokens(systemPrompt)
+                + (reflectionBlock == null ? 0 : ContextBudget.estimateTokens(reflectionBlock))
+                + ContextBudget.estimateTokens(userMessage);
+        long historyBudget = budget.historyBudgetTokens(fixedCost);
+        int used = 0;
+        int from = history.size();
+        while (from > 0) {
+            ChatStoreService.StoredMessage prev = history.get(from - 1);
+            int cost = ContextBudget.estimateTokens(prev.content()) + 8;
+            if (used + cost > historyBudget && from < history.size()) break; // 至少保留 1 条
+            used += cost;
+            from--;
+            if (history.size() - from >= 40) break; // 条数硬上限,防御超长单条
+        }
         for (int i = from; i < history.size(); i++) {
             ChatStoreService.StoredMessage msg = history.get(i);
             if ("user".equals(msg.role())) {
@@ -1405,6 +1448,74 @@ public class ChatOrchestrationService {
         }
         messages.add(WireMessage.user(objectMapper, userMessage));
         return messages;
+    }
+
+    /** 轮内微压缩永不触碰的尾部消息数(最近一轮工具往返 + 余量)。 */
+    private static final int COMPACTION_TAIL_KEEP = 6;
+
+    /**
+     * 轮内微压缩(microcompact,语义对齐 Claude Code):预估 prompt 超过
+     * 触发线时,把最旧的工具结果就地改写为头尾摘录。只改 content,role/
+     * tool_call_id 不动(OpenAI tool_call 配对校验不破),最近
+     * {@link #COMPACTION_TAIL_KEEP} 条消息完整保留;历史轮的失败也只留要点。
+     * force=true(上游已报超限)时压缩目标降为恢复线(窗口 60%)。
+     */
+    private void compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) {
+        long total = 0;
+        for (WireMessage m : messages) {
+            total += messageTokens(m);
+        }
+        long limit = force
+                ? (long) (budget.window() * ContextBudget.RECOVERY_RATIO)
+                : budget.triggerTokens() - budget.outputReserve();
+        if (total <= limit) return;
+        int lastCompactable = messages.size() - COMPACTION_TAIL_KEEP;
+        for (int i = 1; i < lastCompactable && total > limit; i++) { // i=0 system 不动
+            WireMessage m = messages.get(i);
+            if (!"tool".equals(m.node().path("role").asText())) continue;
+            String content = m.node().path("content").asText("");
+            String compacted = compactToolContent(content);
+            if (compacted.equals(content)) continue; // 太短不值得
+            total -= ContextBudget.estimateTokens(content) - ContextBudget.estimateTokens(compacted);
+            ((ObjectNode) m.node()).put("content", compacted);
+        }
+    }
+
+    /** 单条工具结果的压缩形态:头 800 + 尾 200,失败只留头 400(错误要点在前)。 */
+    static String compactToolContent(String content) {
+        boolean failure = content.startsWith("ERROR:");
+        int head = failure ? 400 : 800;
+        int tail = failure ? 0 : 200;
+        if (content.length() <= head + tail + 80) return content;
+        String body = content.substring(0, head)
+                + "\n…[早期工具结果已压缩,原文 " + content.length() + " 字符]…";
+        if (tail > 0) {
+            body += "\n" + content.substring(content.length() - tail);
+        }
+        return body;
+    }
+
+    /** 一条 wire 消息的 token 估算(content + tool_calls 参数 + 封装)。 */
+    private static int messageTokens(WireMessage m) {
+        ObjectNode n = m.node();
+        int tokens = ContextBudget.estimateTokens(n.path("content").asText("")) + 8;
+        JsonNode calls = n.path("tool_calls");
+        if (calls.isArray()) {
+            for (JsonNode c : calls) {
+                tokens += ContextBudget.estimateTokens(c.path("function").path("name").asText(""))
+                        + ContextBudget.estimateTokens(c.path("function").path("arguments").asText("")) + 8;
+            }
+        }
+        return tokens;
+    }
+
+    /** 上游上下文超限错误识别(各家中转措辞不一,宽松匹配)。 */
+    static boolean isContextOverflow(String errorMessage) {
+        if (errorMessage == null) return false;
+        String s = errorMessage.toLowerCase();
+        return s.contains("context length") || s.contains("maximum context")
+                || s.contains("context_length") || s.contains("too many tokens")
+                || s.contains("token limit") || s.contains("上下文长度");
     }
 
     private String systemPromptWith(List<CitationDto> citations) {
@@ -1479,8 +1590,12 @@ public class ChatOrchestrationService {
         void sources(List<CitationDto> citations);
     }
 
-    /** Result of one chat turn. */
-    public record ChatTurn(String answer, List<CitationDto> citations, TokenUsage usage) {
+    /**
+     * Result of one chat turn. {@code promptTokens} 是最后一次请求的 token
+     * 估算、{@code contextWindow} 是生效窗口——两者随 done 下发给前端进度条。
+     */
+    public record ChatTurn(String answer, List<CitationDto> citations, TokenUsage usage,
+                           Long contextWindow, Integer promptTokens) {
     }
 
     /** Wire-format message wrapper (JsonNode so tool messages mix in). */

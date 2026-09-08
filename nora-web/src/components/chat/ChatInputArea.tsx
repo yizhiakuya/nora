@@ -120,7 +120,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                           <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex">
                               <div className={`h-full ${contextPercent >= 90 ? "bg-red-500" : contextPercent >= 75 ? "bg-amber-500" : "bg-blue-500"}`} style={{width: `${contextPercent}%`}}></div>
                           </div>
-                          <span className="font-mono">{Math.round(contextTokens / 1000)}k/{Math.round(contextLimit / 1000)}k</span>
+                          <span className="font-mono">{contextTokens >= 1000 ? `${Math.round(contextTokens / 1000)}k` : contextTokens}/{contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k` : contextLimit}</span>
                       </div>
 
                       <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>

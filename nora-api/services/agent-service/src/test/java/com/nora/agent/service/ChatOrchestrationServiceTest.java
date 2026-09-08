@@ -272,7 +272,7 @@ class ChatOrchestrationServiceTest {
     private com.fasterxml.jackson.databind.node.ObjectNode applyReasoning(String model, String protocol, String level)
             throws Exception {
         ChatOrchestrationService svc = reasoningService();
-        var resolved = new ChatOrchestrationService.ResolvedLlm("http://up/v1", "key", model, protocol, level);
+        var resolved = new ChatOrchestrationService.ResolvedLlm("http://up/v1", "key", model, protocol, level, null);
         var method = ChatOrchestrationService.class.getDeclaredMethod("applyReasoningRequest",
                 com.fasterxml.jackson.databind.node.ObjectNode.class, ChatOrchestrationService.ResolvedLlm.class);
         method.setAccessible(true);

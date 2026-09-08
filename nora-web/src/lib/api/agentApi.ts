@@ -53,6 +53,8 @@ interface DonePayload {
   durationMs?: number;
   usage?: DoneUsage | null;
   answerChars?: number;
+  contextWindow?: number | null;
+  promptTokens?: number | null;
 }
 interface ErrorPayload { message?: string }
 
@@ -233,7 +235,12 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
           approval: undefined,
           steps: [...steps],
           turnMetrics: donePayload?.durationMs != null
-            ? { durationMs: donePayload.durationMs, usage: donePayload.usage ?? null }
+            ? {
+                durationMs: donePayload.durationMs,
+                usage: donePayload.usage ?? null,
+                contextWindow: donePayload.contextWindow ?? null,
+                promptTokens: donePayload.promptTokens ?? null,
+              }
             : undefined,
         });
       } else if (event === "error") {
@@ -259,6 +266,15 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     onUpdate({ isTyping: false });
   },
 };
+
+/** POST /chat/sessions/{id}/cancel → 中断进行中的轮次(上游 LLM 调用一并中止) */
+export async function cancelTurnOnBackend(sessionId: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
+  } catch {
+    /* 网络失败时前端 abort 已断流,后端轮次自然结束即可 */
+  }
+}
 
 /** GET /chat/sessions → 会话摘要列表(最近活跃在前) */
 export async function fetchSessions(): Promise<
