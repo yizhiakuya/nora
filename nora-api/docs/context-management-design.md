@@ -40,6 +40,13 @@ ContextBudget (度量核心)
 - **usage 真实值**只做展示，不反向参与装配决策（估算与计量分离）。
 - 未配置窗口的模型：128k 默认窗口，全链路行为与配置过的模型一致。
 
+## 估算校准闭环(2026-09-08 实测)
+
+- 每轮结束输出校准日志 `context estimate calibration`(估算 vs 上游真实 inputTokens,±35% 外 WARN)。
+- 首轮实测 ratio 6.7~10.4:固定 overhead(tools spec ~1.5k + 协议封装)主导,估算严重偏低——真实 token 先于触发线到达,压缩来不及。
+- 修正:估算统一计入 `PER_REQUEST_OVERHEAD_TOKENS = 1800`(历史预算、压缩阈值、promptTokens 下发同口径)。
+- 修正后实测:估算 2041 vs 眾实 1613,ratio 1.26,落入正常带。
+
 ## 已知取舍
 
 - 估算是启发式不是 tokenizer：对代码/JSON 密集内容偏差 ±30%，靠 17% 触发线余量 + 超限恢复兜底。
