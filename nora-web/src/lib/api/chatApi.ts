@@ -42,6 +42,8 @@ export interface ChatTurnMetrics {
   contextWindow?: number | null;
   /** 服务端最后一次请求的 token 估算(CJK 感知;比前端字符估算准) */
   promptTokens?: number | null;
+  /** 首 token 延迟 ms(服务端盖章;null = 未收到任何 token) */
+  ttftMs?: number | null;
 }
 
 export interface ChatMessage {

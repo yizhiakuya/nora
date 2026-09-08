@@ -239,10 +239,12 @@ export function TurnMeta({
   steps,
   durationMs,
   usage,
+  ttftMs,
 }: {
   steps?: ChatStep[];
   durationMs?: number;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
+  ttftMs?: number | null;
 }) {
   const toolCount = steps?.filter((s) => s.type === "tool").length ?? 0;
   const tokens = usage?.totalTokens ?? usage?.outputTokens ?? null;
@@ -252,6 +254,7 @@ export function TurnMeta({
   const parts: string[] = [];
   if (toolCount > 0) parts.push(`${toolCount} 次工具调用`);
   if (tokens != null) parts.push(`${tokens} tokens`);
+  if (ttftMs != null && ttftMs >= 0) parts.push(`首字 ${(ttftMs / 1000).toFixed(1)}s`);
   if (durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
 
   return (

@@ -221,6 +221,7 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMe
                               steps={msg.steps}
                               durationMs={msg.turnMetrics?.durationMs}
                               usage={msg.turnMetrics?.usage}
+                              ttftMs={msg.turnMetrics?.ttftMs}
                             />
                             {msg.stopped && (
                               <span className="text-[10px] text-amber-600 dark:text-amber-400">· 已停止</span>

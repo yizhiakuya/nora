@@ -55,6 +55,7 @@ interface DonePayload {
   answerChars?: number;
   contextWindow?: number | null;
   promptTokens?: number | null;
+  ttftMs?: number | null;
 }
 interface ErrorPayload { message?: string }
 
@@ -240,6 +241,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
                 usage: donePayload.usage ?? null,
                 contextWindow: donePayload.contextWindow ?? null,
                 promptTokens: donePayload.promptTokens ?? null,
+                ttftMs: donePayload.ttftMs ?? null,
               }
             : undefined,
         });

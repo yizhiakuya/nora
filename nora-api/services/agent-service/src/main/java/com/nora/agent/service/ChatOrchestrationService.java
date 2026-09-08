@@ -222,7 +222,7 @@ public class ChatOrchestrationService {
                     "请先在设置中心配置 LLM API Key 和端点", 0L, "failed"));
             String message = "当前尚未配置可用的模型。请到设置中心配置 LLM 服务商、端点和 API Key 后重试。";
             eventConsumer.delta(message);
-            return CompletableFuture.completedFuture(new ChatTurn(message, List.of(), null, null, null));
+            return CompletableFuture.completedFuture(new ChatTurn(message, List.of(), null, null, null, null));
         }
         // 请求级等级优先,其次设置页为该模型配置的默认等级(在 resolveLlm 内合并)
         // Step 1: knowledge retrieval (best-effort, before the LLM call)
@@ -256,16 +256,25 @@ public class ChatOrchestrationService {
         String toolOutcome = null;
         final int[] roundsUsed = {0};
         final int[] lastPromptEstimate = {0};
+        // TTFT:首个模型 token 到达耗时(对齐 harness TurnComplete 的 time_to_first_token_ms)
+        final long turnStartMs = System.currentTimeMillis();
+        final long[] ttftMs = {-1};
         TokenUsage totalUsage = null;
         // loop breaker state: (toolName + normalized args) → consecutive repeat count
         Map<String, Integer> callFingerprints = new HashMap<>();
         try {
             for (int round = 0; round < maxToolRounds; round++) {
                 roundsUsed[0] = round + 1;
-                compactForRound(messages, budget, false);
+                int compactedCount = compactForRound(messages, budget, false);
+                if (compactedCount > 0) {
+                    eventConsumer.step(new ChatStepDto("s-compact-" + round, "think",
+                            "整理上下文", "已压缩 " + compactedCount + " 条早期工具结果,释放约 "
+                                    + estimateTokensFreed + " tokens 预算",
+                            0L, "completed", null, null, null, round));
+                }
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
-                        round + 1, eventConsumer);
+                        round + 1, eventConsumer, ttftMs, turnStartMs);
                 if (result.usage() != null) {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
@@ -275,11 +284,11 @@ public class ChatOrchestrationService {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
                         compactForRound(messages, budget, true);
                         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
-                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer);
+                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
                         // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
                         // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
-                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer);
+                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
                     }
                     if (retry != null) {
                         if (retry.usage() != null) {
@@ -298,7 +307,7 @@ public class ChatOrchestrationService {
                 }
                 if (result.toolCalls.isEmpty()) {
                     // 回答(与推理)已随流逐 token 转发完毕
-                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage, budget.window(), lastPromptEstimate[0]));
+                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
                 }
                 messages.add(new WireMessage(result.assistantMessage));
                 for (JsonNode call : result.toolCalls) {
@@ -325,7 +334,7 @@ public class ChatOrchestrationService {
         final int reasoningRound = roundsUsed[0] + 1;
         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
-                reasoningRound, eventConsumer);
+                reasoningRound, eventConsumer, ttftMs, turnStartMs);
         // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试
         if (finalResult.failed && finalResult.content().isBlank()) {
             if (isContextOverflow(finalResult.errorMessage)) {
@@ -333,7 +342,7 @@ public class ChatOrchestrationService {
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
             }
             finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
-                    reasoningRound, eventConsumer);
+                    reasoningRound, eventConsumer, ttftMs, turnStartMs);
         }
         if (!finalResult.failed) {
             String answerText = finalResult.content;
@@ -341,7 +350,7 @@ public class ChatOrchestrationService {
                 totalUsage = totalUsage == null ? finalResult.usage() : totalUsage.add(finalResult.usage());
             }
             if (!answerText.isBlank()) {
-                return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0]));
+                return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
             }
         }
         // 流式最终回答失败:回落到最后一次工具结果作为回答,而不是死流
@@ -350,7 +359,7 @@ public class ChatOrchestrationService {
                 : "";
         if (!fallback.isBlank()) {
             eventConsumer.delta(fallback);
-            return CompletableFuture.completedFuture(new ChatTurn(fallback, citations, totalUsage, budget.window(), lastPromptEstimate[0]));
+            return CompletableFuture.completedFuture(new ChatTurn(fallback, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
         }
         eventConsumer.step(new ChatStepDto("s-error", "think", "模型调用失败",
                 finalResult.errorMessage, System.currentTimeMillis() - answerStart, "failed",
@@ -814,12 +823,16 @@ public class ChatOrchestrationService {
      */
     private StreamTurnResult streamTurn(List<WireMessage> messages, String requestedModel,
                                         String reasoningLevel, int round,
-                                        ChatEventConsumer eventConsumer) {
+                                        ChatEventConsumer eventConsumer,
+                                        long[] ttftMs, long turnStartMs) {
         ResolvedLlm llm = withLevel(resolveLlm(requestedModel), reasoningLevel);
         ObjectNode body = baseBody(true, llm);
         body.set("messages", messagesArray(messages));
         body.set("tools", toolsSpec());
         return streamUpstream(llm, body, (contentToken, reasoningToken) -> {
+            if (ttftMs[0] < 0 && (contentToken != null || reasoningToken != null)) {
+                ttftMs[0] = System.currentTimeMillis() - turnStartMs;
+            }
             if (reasoningToken != null) eventConsumer.reasoningDelta(round, reasoningToken);
             if (contentToken != null) eventConsumer.delta(contentToken);
         });
@@ -828,7 +841,8 @@ public class ChatOrchestrationService {
     /** Forced-answer variant of {@link #streamTurn} for the final round (tool_choice=none). */
     private StreamTurnResult streamFinalAnswer(List<WireMessage> messages, String requestedModel,
                                                String reasoningLevel, int round,
-                                               ChatEventConsumer eventConsumer) {
+                                               ChatEventConsumer eventConsumer,
+                                               long[] ttftMs, long turnStartMs) {
         ResolvedLlm llm = withLevel(resolveLlm(requestedModel), reasoningLevel);
         ObjectNode body = baseBody(true, llm);
         body.set("messages", messagesArray(messages));
@@ -836,6 +850,9 @@ public class ChatOrchestrationService {
         // final round: the model must answer, not call more tools
         body.put("tool_choice", "none");
         return streamUpstream(llm, body, (contentToken, reasoningToken) -> {
+            if (ttftMs[0] < 0 && (contentToken != null || reasoningToken != null)) {
+                ttftMs[0] = System.currentTimeMillis() - turnStartMs;
+            }
             if (reasoningToken != null) eventConsumer.reasoningDelta(round, reasoningToken);
             if (contentToken != null) eventConsumer.delta(contentToken);
         });
@@ -1460,7 +1477,7 @@ public class ChatOrchestrationService {
      * {@link #COMPACTION_TAIL_KEEP} 条消息完整保留;历史轮的失败也只留要点。
      * force=true(上游已报超限)时压缩目标降为恢复线(窗口 60%)。
      */
-    private void compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) {
+    private int compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) {
         long total = 0;
         for (WireMessage m : messages) {
             total += messageTokens(m);
@@ -1468,7 +1485,9 @@ public class ChatOrchestrationService {
         long limit = force
                 ? (long) (budget.window() * ContextBudget.RECOVERY_RATIO)
                 : budget.triggerTokens() - budget.outputReserve();
-        if (total <= limit) return;
+        if (total <= limit) return 0;
+        int compactedCount = 0;
+        long freed = 0;
         int lastCompactable = messages.size() - COMPACTION_TAIL_KEEP;
         for (int i = 1; i < lastCompactable && total > limit; i++) { // i=0 system 不动
             WireMessage m = messages.get(i);
@@ -1476,10 +1495,17 @@ public class ChatOrchestrationService {
             String content = m.node().path("content").asText("");
             String compacted = compactToolContent(content);
             if (compacted.equals(content)) continue; // 太短不值得
+            freed += ContextBudget.estimateTokens(content) - ContextBudget.estimateTokens(compacted);
             total -= ContextBudget.estimateTokens(content) - ContextBudget.estimateTokens(compacted);
+            compactedCount++;
             ((ObjectNode) m.node()).put("content", compacted);
         }
+        estimateTokensFreed = freed;
+        return compactedCount;
     }
+
+    /** 最近一次 compactForRound 释放的 token 估算(可视化 step 用)。 */
+    private long estimateTokensFreed;
 
     /** 单条工具结果的压缩形态:头 800 + 尾 200,失败只留头 400(错误要点在前)。 */
     static String compactToolContent(String content) {
@@ -1595,7 +1621,7 @@ public class ChatOrchestrationService {
      * 估算、{@code contextWindow} 是生效窗口——两者随 done 下发给前端进度条。
      */
     public record ChatTurn(String answer, List<CitationDto> citations, TokenUsage usage,
-                           Long contextWindow, Integer promptTokens) {
+                           Long contextWindow, Integer promptTokens, Long ttftMs) {
     }
 
     /** Wire-format message wrapper (JsonNode so tool messages mix in). */

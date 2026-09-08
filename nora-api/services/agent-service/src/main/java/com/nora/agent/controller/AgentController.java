@@ -272,7 +272,8 @@ public class AgentController {
                                     usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
                                     answerText.length(),
                                     turn != null ? turn.contextWindow() : null,
-                                    turn != null ? turn.promptTokens() : null));
+                                    turn != null ? turn.promptTokens() : null,
+                                    turn != null ? turn.ttftMs() : null));
                         }
                         emitter.complete();
                     });
@@ -324,7 +325,7 @@ public class AgentController {
      * local estimate while it is null.
      */
     public record DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
-                              Long contextWindow, Integer promptTokens) {
+                              Long contextWindow, Integer promptTokens, Long ttftMs) {
 
         /** Token accounting from the provider (harness: usage is a first-class done field). */
         public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {
