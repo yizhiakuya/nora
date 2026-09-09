@@ -2,7 +2,7 @@
 
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  Home, Folder, MessageSquare, Zap, BookOpen, Server,
+  Home, Folder, MessageSquare, Zap, BookOpen, Server, Plug,
   Database, ListCheck, Settings, ChevronDown, ChevronsUpDown,
   User, LogOut, Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
 } from "lucide-react";
@@ -30,6 +30,7 @@ const NAV_ITEMS = [
 { name: "对话", icon: MessageSquare, href: "/chat" },
 { name: "知识库", icon: BookOpen, href: "/knowledge" },
 { name: "AI 能力", icon: Zap, href: "/skills" },
+{ name: "MCP", icon: Plug, href: "/mcp" },
 { name: "数据源", icon: Database, href: "/data-sources" },
 { name: "环境控制台", icon: Server, href: "/environments" },
 { name: "自动任务", icon: ListCheck, href: "/automations" },

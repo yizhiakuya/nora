@@ -9,6 +9,7 @@ import FilesPage from "@/app/files/page";
 import ChatPage from "@/app/chat/page";
 import KnowledgePage from "@/app/knowledge/page";
 import SkillsPage from "@/app/skills/page";
+import McpPage from "@/app/mcp/page";
 import DataSourcesPage from "@/app/data-sources/page";
 import EnvironmentsPage from "@/app/environments/page";
 import AutomationsPage from "@/app/automations/page";
@@ -60,6 +61,7 @@ export default function App() {
       <Route path="/chat" element={<RouteShell><ChatPage /></RouteShell>} />
       <Route path="/knowledge" element={<RouteShell><KnowledgePage /></RouteShell>} />
       <Route path="/skills" element={<RouteShell><SkillsPage /></RouteShell>} />
+      <Route path="/mcp" element={<RouteShell><McpPage /></RouteShell>} />
       <Route path="/data-sources" element={<RouteShell><DataSourcesPage /></RouteShell>} />
       <Route path="/environments" element={<RouteShell><EnvironmentsPage /></RouteShell>} />
       <Route path="/automations" element={<RouteShell><AutomationsPage /></RouteShell>} />

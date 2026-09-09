@@ -67,6 +67,11 @@ final class RiskClassifier {
             }
             return Risk.HIGH;
         }
+        if (toolName != null && toolName.startsWith("mcp__")) {
+            // MCP 挂载工具:外部服务器能力未知,一律 HIGH——ASSIST 档询问、
+            // FULL 档放行、无人值守通道按设计放行(见 CLAUDE.md 高风险工具节)
+            return Risk.HIGH;
+        }
         return Risk.LOW;
     }
 

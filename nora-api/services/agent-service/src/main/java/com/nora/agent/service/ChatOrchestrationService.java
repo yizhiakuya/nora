@@ -89,6 +89,7 @@ public class ChatOrchestrationService {
     private final DataSourceManageClient dataSourceManageClient;
     private final ServiceManageClient serviceManageClient;
     private final FileToolClient fileToolClient;
+    private final McpServerService mcpServerService;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -104,6 +105,7 @@ public class ChatOrchestrationService {
                                     DataSourceManageClient dataSourceManageClient,
                                     ServiceManageClient serviceManageClient,
                                     FileToolClient fileToolClient,
+                                    McpServerService mcpServerService,
                                     @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties) {
@@ -119,6 +121,7 @@ public class ChatOrchestrationService {
         this.dataSourceManageClient = dataSourceManageClient;
         this.serviceManageClient = serviceManageClient;
         this.fileToolClient = fileToolClient;
+        this.mcpServerService = mcpServerService;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
@@ -139,7 +142,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
+                null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -150,7 +153,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, maxToolRounds, null);
+                null, null, null, null, null, null, null, maxToolRounds, null);
     }
 
     /**
@@ -418,8 +421,11 @@ public class ChatOrchestrationService {
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
 
-        // loop breaker: same (tool, normalized args) repeated too often
-        String fingerprint = name + "|" + normalizeArgs(name, input);
+        // loop breaker: same (tool, normalized args) repeated too often.
+        // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
+        // 原始 args,避免不同参数被误判为重复调用
+        String fingerprint = name + "|"
+                + (name.startsWith("mcp__") ? (args == null ? "" : args) : normalizeArgs(name, input));
         int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
         if (repeats > LOOP_BLOCK_THRESHOLD) {
             String error = "重复调用已阻断：同样的参数已连续执行 " + (repeats - 1)
@@ -596,7 +602,7 @@ public class ChatOrchestrationService {
             case "manage_datasource" -> "数据源管理";
             case "manage_service" -> "服务纳管";
             case "read_file" -> "读取文件";
-            default -> name;
+            default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
         };
     }
 
@@ -684,10 +690,20 @@ public class ChatOrchestrationService {
                 }
             }
             default -> {
-                actionType = toolName;
-                target = parsed.input().service() != null ? parsed.input().service()
-                        : (parsed.input().sql() != null ? abbreviate(parsed.input().sql(), 40) : "—");
-                risk = "该档位下每次工具调用都需要确认";
+                if (toolName.startsWith("mcp__")) {
+                    actionType = "mcp_tool";
+                    // 畸形挂载名(LLM 幻觉出 mcp__srv 缺第二个 __)不能让 substring 越界
+                    int sep = toolName.indexOf("__", "mcp__".length());
+                    String serverName = sep < 0 ? "?" : toolName.substring("mcp__".length(), sep);
+                    target = "MCP 服务器 " + serverName;
+                    detail = "工具: " + toolName + "\n参数: " + abbreviate(rawArgs == null ? "{}" : rawArgs, 400);
+                    risk = "外部 MCP 服务器提供的工具,能力未知,执行前需确认";
+                } else {
+                    actionType = toolName;
+                    target = parsed.input().service() != null ? parsed.input().service()
+                            : (parsed.input().sql() != null ? abbreviate(parsed.input().sql(), 40) : "—");
+                    risk = "该档位下每次工具调用都需要确认";
+                }
             }
         }
         return new ApprovalRequestDto(null, stepId, actionType, target,
@@ -997,12 +1013,24 @@ public class ChatOrchestrationService {
             }
             return bounded(fileToolClient.preview(Long.parseLong(target)), null);
         }
+        // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
+        // 输出同样走 bounded 截断与脱敏
+        if (mcpServerService != null && name.startsWith("mcp__")) {
+            McpServerService.RawServer server = mcpServerService.serverForMountedTool(name);
+            if (server == null) {
+                return new ToolOutcome("ERROR: 找不到该工具对应的 MCP 服务器(可能已被禁用或删除): " + name,
+                        null, null, false);
+            }
+            return bounded(mcpServerService.callTool(server.id(), McpServerService.rawToolName(name), args),
+                    "MCP " + server.name() + " 执行完成");
+        }
         return new ToolOutcome("ERROR: unknown tool " + name
                 + ". 可用工具：execute_sql（只读 SQL,可选 datasource 参数）、execute_write_sql（写 SQL,需批准）、"
                 + "read_service_logs（容器日志）、manage_container（容器启停,需批准）、"
                 + "manage_datasource（数据源 list/create/test/schema/remove,create/remove 需批准）、"
                 + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）、"
-                + "read_file（工作台文件 list/read,只读）", null, null, false);
+                + "read_file（工作台文件 list/read,只读）"
+                + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
     }
 
     /**
@@ -1860,6 +1888,29 @@ public class ChatOrchestrationService {
         fileDescProp.put("description", "一句话描述这次调用要做什么(5-12 个字,祈使句)");
         ArrayNode fileRequired = fileParams.putArray("required");
         tools.add(fileTool);
+
+        // MCP 挂载工具:已启用且完成过 refresh(有 tools_cache)的远程服务器的
+        // 工具,命名 mcp__<server>__<tool>;schema/描述来自远端 snapshot。
+        // mcpServerService 为 null = 测试便捷构造器,跳过挂载
+        if (mcpServerService != null) {
+            for (McpServerService.MountedTool mounted : mcpServerService.mountedTools()) {
+                ObjectNode mTool = objectMapper.createObjectNode();
+                mTool.put("type", "function");
+                ObjectNode mFn = mTool.putObject("function");
+                mFn.put("name", mounted.mountedName());
+                String desc = mounted.description() == null || mounted.description().isBlank()
+                        ? "MCP 工具(" + mounted.serverName() + " 提供)" : mounted.description();
+                mFn.put("description", desc);
+                ObjectNode mParams = mFn.putObject("parameters");
+                if (mounted.inputSchema() != null && mounted.inputSchema().isObject()) {
+                    mParams.setAll((ObjectNode) mounted.inputSchema());
+                } else {
+                    mParams.put("type", "object");
+                    mParams.putObject("properties");
+                }
+                tools.add(mTool);
+            }
+        }
 
         return tools;
     }

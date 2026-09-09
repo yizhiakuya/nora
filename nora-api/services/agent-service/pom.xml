@@ -74,6 +74,21 @@
             <artifactId>langchain4j-open-ai</artifactId>
         </dependency>
 
+        <!-- MCP Java SDK (client): Streamable HTTP / SSE transports, JDK-based -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+        <!-- MCP SDK 2.x 的 Jackson 3 绑定(mcp-json-jackson3)需要 annotations 2.21
+             (JsonSerializeAs 等);Spring Boot 3.3 BOM 锁 2.17.2 会 NoClassDefFoundError。
+             annotations 向后兼容,对 Spring 自带的 databind 2.17 无影响 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.21</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
