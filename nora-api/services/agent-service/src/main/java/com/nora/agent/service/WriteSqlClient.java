@@ -20,18 +20,31 @@ public class WriteSqlClient {
 
     private final RestClient restClient;
 
-    public WriteSqlClient(RestClient datasourceServiceRestClient) {
+    private final SqlToolClient sqlToolClient;
+
+    public WriteSqlClient(RestClient datasourceServiceRestClient, SqlToolClient sqlToolClient) {
         this.restClient = datasourceServiceRestClient;
+        this.sqlToolClient = sqlToolClient;
     }
 
     /**
      * @return LLM-friendly rendering ("rows_affected: N ...") or "ERROR: ..."
      */
     public String executeWrite(String sql) {
+        return executeWrite(sql, null);
+    }
+
+    /**
+     * @param sql          single write statement
+     * @param datasourceId explicit connection (id or name); null = first configured
+     * @return LLM-friendly rendering ("rows_affected: N ...") or "ERROR: ..."
+     */
+    public String executeWrite(String sql, String datasourceId) {
         try {
-            Long connectionId = firstConnectionId();
+            Long connectionId = sqlToolClient.resolveConnectionId(datasourceId);
             if (connectionId == null) {
-                return "ERROR: no database connection is configured in the datasource service";
+                return "ERROR: no database connection is configured in the datasource service"
+                        + (datasourceId == null ? "" : " (查询目标: " + datasourceId + ")");
             }
             Envelope<JsonNode> envelope = restClient.post()
                     .uri("/api/datasources/{id}/execute", connectionId)
@@ -50,25 +63,6 @@ public class WriteSqlClient {
         } catch (Exception e) {
             log.warn("write sql failed: {}", e.getMessage());
             return "ERROR: " + (e.getMessage() == null ? "unknown error" : e.getMessage());
-        }
-    }
-
-    private Long firstConnectionId() {
-        try {
-            Envelope<JsonNode> envelope = restClient.get()
-                    .uri("/api/datasources")
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
-            if (envelope == null || envelope.code() != 0 || envelope.data() == null
-                    || envelope.data().isEmpty() || !envelope.data().isArray()) {
-                return null;
-            }
-            return envelope.data().get(0).path("id").asLong();
-        } catch (Exception e) {
-            log.warn("datasource list failed: {}", e.getMessage());
-            return null;
         }
     }
 

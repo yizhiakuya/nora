@@ -55,6 +55,48 @@ class ChatOrchestrationServiceTest {
     }
 
     @Test
+    void riskClassifierTiersNewManageTools() {
+        // 数据源:list 低风险;create/test HIGH;remove CRITICAL(不可逆,任何档位问)
+        assertEquals(RiskClassifier.Risk.LOW,
+                RiskClassifier.classify("manage_datasource", "{\"action\": \"list\"}"));
+        assertEquals(RiskClassifier.Risk.HIGH,
+                RiskClassifier.classify("manage_datasource", "{\"action\": \"create\", \"engine\": \"postgresql\"}"));
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_datasource", "{\"action\": \"remove\", \"target\": \"old-db\"}"));
+        // 纳管源:register/remove CRITICAL(PROC 注册=宿主机命令纳入守护);enable/disable HIGH
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_service", "{\"action\": \"register\", \"kind\": \"PROC\", \"command\": \"x\"}"));
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_service", "{\"action\": \"remove\", \"target\": \"3\"}"));
+        assertEquals(RiskClassifier.Risk.HIGH,
+                RiskClassifier.classify("manage_service", "{\"action\": \"disable\", \"target\": \"backup\"}"));
+        assertEquals(RiskClassifier.Risk.LOW,
+                RiskClassifier.classify("manage_service", "{\"action\": \"list\"}"));
+        // action 缺失按未知处理:不低于 HIGH
+        assertEquals(RiskClassifier.Risk.HIGH, RiskClassifier.classify("manage_datasource", "{}"));
+        // 原有工具的档位不变
+        assertEquals(RiskClassifier.Risk.HIGH, RiskClassifier.classify("execute_write_sql", "{}"));
+        assertEquals(RiskClassifier.Risk.LOW, RiskClassifier.classify("execute_sql", "{}"));
+    }
+
+    @Test
+    void datasourceAndServiceValidatorsGiveActionableErrors() {
+        // engine 白名单与必填项
+        assertTrue(RiskClassifier.validateDatasourceCreate("oracle", "h", 1521, "db") != null);
+        assertTrue(RiskClassifier.validateDatasourceCreate("postgresql", null, 5432, "db") != null);
+        assertTrue(RiskClassifier.validateDatasourceCreate("postgresql", "h", 70000, "db") != null);
+        assertEquals(null, RiskClassifier.validateDatasourceCreate("PostgreSQL", "h", 5432, "db"));
+        // kind 与字段匹配(env-service 同语义)
+        assertTrue(RiskClassifier.validateServiceRegister("PROC", null, null, null) != null);
+        assertTrue(RiskClassifier.validateServiceRegister("DOCKER", null, null, "cmd") != null);
+        assertEquals(null, RiskClassifier.validateServiceRegister("proc", null, null, "/opt/run.sh"));
+        assertEquals(null, RiskClassifier.validateServiceRegister("docker", null, "nora-redis", null));
+        // action 白名单
+        assertTrue(RiskClassifier.validateDatasourceAction("drop") != null);
+        assertTrue(RiskClassifier.validateServiceAction("restart") != null);
+    }
+
+    @Test
     void guardrailErrorsFollowThreePartShape() {
         // 三段式:拒绝什么 + 违反哪条 + 正确示例(错误即提示,引导模型自纠)
         String write = ChatOrchestrationService.guardSql("DELETE FROM users");
@@ -169,7 +211,7 @@ class ChatOrchestrationServiceTest {
         }
 
         @Override
-        public SqlOutcome executeSqlDetailed(String sql) {
+        public SqlOutcome executeSqlDetailed(String sql, String datasourceId) {
             calls.incrementAndGet();
             return new SqlOutcome("1\n(1 rows, 1ms)", "1 rows, 1ms", false);
         }

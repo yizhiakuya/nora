@@ -162,6 +162,12 @@ public class ServiceController {
 
     // ---------- 纳管清单 CRUD ----------
 
+    /** 全部纳管源(含暂停的;/services 只返回启用的)。 */
+    @GetMapping("/managed")
+    public ApiResponse<List<ManagedSourceService.SourceView>> listManaged() {
+        return ApiResponse.ok(managed.list());
+    }
+
     /** 添加纳管源。body: {kind, name, fileLogPath?, containerName?, command?, workDir?} */
     @PostMapping("/managed")
     public ApiResponse<ManagedSourceService.SourceView> addManaged(@RequestBody Map<String, String> body) {

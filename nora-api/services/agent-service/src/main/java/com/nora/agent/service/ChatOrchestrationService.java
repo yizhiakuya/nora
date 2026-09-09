@@ -86,6 +86,8 @@ public class ChatOrchestrationService {
     private final ApprovalService approvalService;
     private final WriteSqlClient writeSqlClient;
     private final ContainerControlClient containerControlClient;
+    private final DataSourceManageClient dataSourceManageClient;
+    private final ServiceManageClient serviceManageClient;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -98,6 +100,8 @@ public class ChatOrchestrationService {
                                     ApprovalService approvalService,
                                     WriteSqlClient writeSqlClient,
                                     ContainerControlClient containerControlClient,
+                                    DataSourceManageClient dataSourceManageClient,
+                                    ServiceManageClient serviceManageClient,
                                     @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties) {
@@ -110,6 +114,8 @@ public class ChatOrchestrationService {
         this.approvalService = approvalService;
         this.writeSqlClient = writeSqlClient;
         this.containerControlClient = containerControlClient;
+        this.dataSourceManageClient = dataSourceManageClient;
+        this.serviceManageClient = serviceManageClient;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
@@ -130,7 +136,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
+                null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -141,7 +147,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, maxToolRounds, null);
+                null, null, null, null, null, maxToolRounds, null);
     }
 
     /**
@@ -398,7 +404,7 @@ public class ChatOrchestrationService {
                               PermissionMode permissionMode,
                               String sessionId,
                               ChatEventConsumer eventConsumer) {
-        ParsedArgs parsed = parseArgs(args);
+        ParsedArgs parsed = parseArgs(name, args);
         ChatStepDto.StepInput input = parsed.input();
         // Claude Code pattern: the model fills the display title via the
         // description arg (imperative, no subjective words); fall back to
@@ -425,11 +431,15 @@ public class ChatOrchestrationService {
             log.info("loop warning: {} called {} times with identical args", name, repeats);
         }
 
-        // 审批门:ASK 全问,ASSIST 只问高风险。审批状态保存在服务端(ApprovalService),
-        // 模型文本中的"同意"不构成批准
+        // 审批门:ASK 全问;ASSIST 问 HIGH+CRITICAL;FULL 只问 CRITICAL
+        // (不可逆/带外操作,如删数据源、注册纳管命令)。审批状态保存在
+        // 服务端(ApprovalService),模型文本中的"同意"不构成批准
         if (approvalService != null && sessionId != null) {
-            boolean highRisk = RiskClassifier.classify(name, args) == RiskClassifier.Risk.HIGH;
-            if (permissionMode == PermissionMode.ASK || (permissionMode == PermissionMode.ASSIST && highRisk)) {
+            RiskClassifier.Risk risk = RiskClassifier.classify(name, args);
+            boolean needApproval = permissionMode == PermissionMode.ASK
+                    || permissionMode == PermissionMode.ASSIST && risk != RiskClassifier.Risk.LOW
+                    || permissionMode == PermissionMode.FULL && risk == RiskClassifier.Risk.CRITICAL;
+            if (needApproval) {
                 ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, parsed, permissionMode);
                 ApprovalRequestDto ticket = approvalService.register(sessionId, toolStepId, request);
                 eventConsumer.approvalRequired(ticket);
@@ -502,32 +512,52 @@ public class ChatOrchestrationService {
     }
 
     /** Parsed tool call: typed input plus the model-written display title. */
-    record ParsedArgs(ChatStepDto.StepInput input, String description, String containerAction) {
+    record ParsedArgs(ChatStepDto.StepInput input, String description, String containerAction,
+                      /** manage_datasource / manage_service 的 action 子命令 */
+                      String datasourceAction) {
+
+        /** Back-compat constructor for call sites without the manage action. */
+        ParsedArgs(ChatStepDto.StepInput input, String description, String containerAction) {
+            this(input, description, containerAction, null);
+        }
     }
 
     /** Parses tool arguments into the typed input shown by the frontend + the display title. */
-    private ParsedArgs parseArgs(String argsJson) {
+    private ParsedArgs parseArgs(String toolName, String argsJson) {
         try {
             JsonNode node = objectMapper.readTree(argsJson);
             String description = node.path("description").asText(null);
             if (description != null && description.length() > 120) {
                 description = description.substring(0, 120);
             }
-            if (node.has("sql")) {
-                return new ParsedArgs(new ChatStepDto.StepInput(node.path("sql").asText(null), null, null),
-                        description, null);
+            String action = node.path("action").asText(null);
+            switch (toolName) {
+                case "execute_sql", "execute_write_sql" -> {
+                    return new ParsedArgs(new ChatStepDto.StepInput(node.path("sql").asText(null), null, null,
+                                    node.path("datasource").asText(null)),
+                            description, null);
+                }
+                case "manage_datasource", "manage_service" -> {
+                    String target = node.has("name") ? node.path("name").asText(null)
+                            : node.has("id") ? node.path("id").asText(null)
+                            : node.path("target").asText(null);
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
+                            description, null, action);
+                }
+                default -> {
+                    if (node.has("action") && node.has("service")) {
+                        return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
+                                description, node.path("action").asText(null));
+                    }
+                    if (node.has("service") || node.has("limit")) {
+                        Integer limit = node.has("limit") && node.get("limit").isNumber()
+                                ? node.get("limit").asInt() : null;
+                        return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), limit),
+                                description, null);
+                    }
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), description, null);
+                }
             }
-            if (node.has("action") && node.has("service")) {
-                return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
-                        description, node.path("action").asText(null));
-            }
-            if (node.has("service") || node.has("limit")) {
-                Integer limit = node.has("limit") && node.get("limit").isNumber()
-                        ? node.get("limit").asInt() : null;
-                return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), limit),
-                        description, null);
-            }
-            return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), description, null);
         } catch (Exception e) {
             return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), null, null);
         }
@@ -540,6 +570,8 @@ public class ChatOrchestrationService {
             case "execute_write_sql" -> "写入数据库";
             case "read_service_logs" -> "读取服务日志";
             case "manage_container" -> "容器操作";
+            case "manage_datasource" -> "数据源管理";
+            case "manage_service" -> "服务纳管";
             default -> name;
         };
     }
@@ -547,10 +579,14 @@ public class ChatOrchestrationService {
     /** Stable string for loop detection: the meaningful part of the args. */
     private String normalizeArgs(String name, ChatStepDto.StepInput input) {
         if ("execute_sql".equals(name) || "execute_write_sql".equals(name)) {
-            return input.sql() == null ? "" : input.sql().trim().toLowerCase();
+            return (input.sql() == null ? "" : input.sql().trim().toLowerCase())
+                    + "@" + (input.target() == null ? "" : input.target().toLowerCase());
         }
         if ("read_service_logs".equals(name)) return (input.service() == null ? "" : input.service()) + "#" + input.limit();
         if ("manage_container".equals(name)) return input.service() == null ? "" : input.service();
+        if ("manage_datasource".equals(name) || "manage_service".equals(name)) {
+            return (input.target() == null ? "?" : input.target().toLowerCase());
+        }
         return "";
     }
 
@@ -563,13 +599,39 @@ public class ChatOrchestrationService {
         switch (toolName) {
             case "execute_write_sql" -> {
                 actionType = "sql_write";
-                target = "数据库(首个连接)";
+                target = parsed.input().target() != null
+                        ? "数据源 " + parsed.input().target()
+                        : "数据库(默认连接)";
                 risk = "将修改真实数据(" + abbreviate(parsed.input().sql() == null ? "" : parsed.input().sql(), 40) + "…),不可自动撤销";
             }
             case "manage_container" -> {
                 actionType = "container_control";
                 target = parsed.input().service() == null ? "未知容器" : parsed.input().service();
                 risk = "停止/重启容器会导致该服务短暂不可用";
+            }
+            case "manage_datasource" -> {
+                actionType = "datasource_manage";
+                String action = parsed.datasourceAction();
+                target = parsed.input().target() == null ? "新数据源" : parsed.input().target();
+                if ("remove".equals(action)) {
+                    risk = "将删除数据源连接记录及其全部查询历史,不可恢复";
+                } else if ("create".equals(action)) {
+                    risk = "将新增一个数据库连接(密码仅存入数据源服务,不会出现在对话记录)";
+                } else {
+                    risk = "对数据源连接执行 " + action + " 操作";
+                }
+            }
+            case "manage_service" -> {
+                actionType = "service_manage";
+                String action = parsed.datasourceAction();
+                target = parsed.input().target() == null ? "新纳管源" : parsed.input().target();
+                if ("register".equals(action)) {
+                    risk = "将注册一条纳管源(PROC 源含宿主机启动命令),系统会持续跟踪其进程与日志";
+                } else if ("remove".equals(action)) {
+                    risk = "将删除纳管源注册记录(不影响容器/文件本身)";
+                } else {
+                    risk = "对纳管源执行 " + action + " 操作";
+                }
             }
             default -> {
                 actionType = toolName;
@@ -667,6 +729,40 @@ public class ChatOrchestrationService {
     }
 
     /**
+     * Resolves a managed source name (or numeric id) to its env-service id.
+     * Names are matched case-insensitively against the full registry
+     * (including paused sources, which /services omits).
+     */
+    private Long resolveManagedSourceId(String target) {
+        String listing = serviceManageClient.list();
+        if (listing.startsWith("ERROR") || listing.startsWith("(")) {
+            return null;
+        }
+        String trimmed = target.trim();
+        for (String line : listing.split("\n")) {
+            // 行形如:id=3 | DOCKER | nora-redis | nora-redis | enabled
+            String[] parts = line.split("\\|");
+            if (parts.length < 3) continue;
+            String id = parts[0].replace("id=", "").trim();
+            String kind = parts[1].trim();
+            String name = parts[2].trim();
+            if (trimmed.equalsIgnoreCase(name) || (trimmed.matches("\\d+") && trimmed.equals(id))) {
+                return Long.parseLong(id);
+            }
+            if ("PROC".equals(kind) && trimmed.equalsIgnoreCase(name)) {
+                return Long.parseLong(id);
+            }
+        }
+        return null;
+    }
+
+    /** create 结果的摘要行(密码永不回传,渲染端只含连接目标与测试结论)。 */
+    private static String summarizeCreate(String content) {
+        String firstLine = content.contains("\n") ? content.substring(0, content.indexOf('\n')) : content;
+        return firstLine.length() <= 80 ? firstLine : firstLine.substring(0, 80);
+    }
+
+    /**
      * Dispatches a tool call. Guardrail rejections return a three-part error
      * (what was refused + which rule + a correct example) so the model can
      * self-correct on the next round.
@@ -678,7 +774,7 @@ public class ChatOrchestrationService {
             if (guard != null) {
                 return new ToolOutcome("ERROR: " + guard, null, null, false);
             }
-            SqlToolClient.SqlOutcome outcome = sqlToolClient.executeSqlDetailed(sql);
+            SqlToolClient.SqlOutcome outcome = sqlToolClient.executeSqlDetailed(sql, parsed.input().target());
             return new ToolOutcome(outcome.content(), outcome.summary(), null, outcome.truncated());
         }
         if ("read_service_logs".equals(name)) {
@@ -699,7 +795,7 @@ public class ChatOrchestrationService {
             if (writeSqlClient == null) {
                 return new ToolOutcome("ERROR: 写入能力未启用(服务未配置)", null, null, false);
             }
-            String content = writeSqlClient.executeWrite(sql);
+            String content = writeSqlClient.executeWrite(sql, parsed.input().target());
             boolean failure = content.startsWith("ERROR:");
             return new ToolOutcome(content, failure ? null : content, null, false);
         }
@@ -723,9 +819,117 @@ public class ChatOrchestrationService {
             boolean failure = content.startsWith("ERROR:");
             return new ToolOutcome(content, failure ? null : content, null, false);
         }
+        if ("manage_datasource".equals(name)) {
+            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+            String guard = RiskClassifier.validateDatasourceAction(action);
+            if (guard != null) {
+                return new ToolOutcome("ERROR: " + guard, null, null, false);
+            }
+            if ("list".equals(action)) {
+                return bounded(dataSourceManageClient.list(), null);
+            }
+            if ("schema".equals(action)) {
+                // schema 不在工具 spec 里宣传,但模型从 list 结果推断时放行(只读)
+                return bounded(dataSourceManageClient.schema(parsed.input().target()), null);
+            }
+            if ("create".equals(action)) {
+                // 连接参数从原始 args 取(密码只 here 使用,不进 ParsedArgs/步骤记录)
+                JsonNode a;
+                try {
+                    a = objectMapper.readTree(args == null ? "{}" : args);
+                } catch (Exception e) {
+                    return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
+                }
+                String dName = a.path("name").asText(null);
+                String engine = a.path("engine").asText(null);
+                String host = a.path("host").asText(null);
+                Integer port = a.path("port").isInt() ? a.path("port").asInt() : null;
+                String database = a.path("database").asText(null);
+                String username = a.path("username").asText(null);
+                String password = a.path("password").asText(null);
+                String createGuard = RiskClassifier.validateDatasourceCreate(engine, host, port, database);
+                if (createGuard != null) {
+                    return new ToolOutcome("ERROR: " + createGuard, null, null, false);
+                }
+                if (dName == null || dName.isBlank()) {
+                    return new ToolOutcome("ERROR: 缺少 name 参数(连接显示名,如 \"订单库-生产\")", null, null, false);
+                }
+                String content = dataSourceManageClient.create(dName, engine, host, port, database, username, password);
+                boolean failure = content.startsWith("ERROR:");
+                return new ToolOutcome(content, failure ? null : summarizeCreate(content), null, false);
+            }
+            // test / remove:目标 = name 或数字 id
+            String target = parsed.input().target();
+            if (target == null || target.isBlank()) {
+                return new ToolOutcome("ERROR: 缺少目标数据源(name 或 id)。可先用 action=list 查看", null, null, false);
+            }
+            Long connectionId = sqlToolClient.resolveConnectionId(target);
+            if (connectionId == null) {
+                return new ToolOutcome("ERROR: 找不到数据源 \"" + target + "\"。可用连接:\n" + dataSourceManageClient.list(),
+                        null, null, false);
+            }
+            String content = "test".equals(action)
+                    ? dataSourceManageClient.test(connectionId)
+                    : dataSourceManageClient.remove(connectionId);
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : content, null, false);
+        }
+        if ("manage_service".equals(name)) {
+            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+            String guard = RiskClassifier.validateServiceAction(action);
+            if (guard != null) {
+                return new ToolOutcome("ERROR: " + guard, null, null, false);
+            }
+            if ("list".equals(action)) {
+                return bounded(serviceManageClient.list(), null);
+            }
+            if ("register".equals(action)) {
+                JsonNode a;
+                try {
+                    a = objectMapper.readTree(args == null ? "{}" : args);
+                } catch (Exception e) {
+                    return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
+                }
+                String kind = a.path("kind").asText(null);
+                String sName = a.path("name").asText(null);
+                String fileLogPath = a.path("fileLogPath").asText(null);
+                String containerName = a.path("containerName").asText(null);
+                String command = a.path("command").asText(null);
+                String workDir = a.path("workDir").asText(null);
+                String registerGuard = RiskClassifier.validateServiceRegister(kind, fileLogPath, containerName, command);
+                if (registerGuard != null) {
+                    return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
+                }
+                if (sName == null || sName.isBlank()) {
+                    return new ToolOutcome("ERROR: 缺少 name 参数(纳管源显示名)", null, null, false);
+                }
+                String content = serviceManageClient.register(kind, sName, fileLogPath, containerName, command, workDir);
+                boolean failure = content.startsWith("ERROR:");
+                return new ToolOutcome(content, failure ? null : content, null, false);
+            }
+            // enable / disable / remove:目标 = name 或数字 id
+            String target = parsed.input().target();
+            if (target == null || target.isBlank()) {
+                return new ToolOutcome("ERROR: 缺少目标纳管源(name 或 id)。可先用 action=list 查看", null, null, false);
+            }
+            Long sourceId = resolveManagedSourceId(target);
+            if (sourceId == null) {
+                return new ToolOutcome("ERROR: 找不到纳管源 \"" + target + "\"。可用纳管源:\n" + serviceManageClient.list(),
+                        null, null, false);
+            }
+            String content = switch (action) {
+                case "enable" -> serviceManageClient.setEnabled(sourceId, true);
+                case "disable" -> serviceManageClient.setEnabled(sourceId, false);
+                default -> serviceManageClient.remove(sourceId);
+            };
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : content, null, false);
+        }
         return new ToolOutcome("ERROR: unknown tool " + name
-                + ". 可用工具：execute_sql（只读 SQL）、execute_write_sql（写 SQL,需批准）、"
-                + "read_service_logs（容器日志）、manage_container（容器启停,需批准）", null, null, false);
+                + ". 可用工具：execute_sql（只读 SQL,可选 datasource 参数）、execute_write_sql（写 SQL,需批准）、"
+                + "read_service_logs（容器日志）、manage_container（容器启停,需批准）、"
+                + "manage_datasource（数据源 list/create/test/schema/remove,create/remove 需批准）、"
+                + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）", null, null, false);
     }
 
     /**
@@ -1374,6 +1578,10 @@ public class ChatOrchestrationService {
         ObjectNode sqlProp = sqlProps.putObject("sql");
         sqlProp.put("type", "string");
         sqlProp.put("description", "要执行的只读 SQL 语句,必须是单条完整的 SELECT/SHOW/EXPLAIN,不要带分号以外的多条语句");
+        ObjectNode sqlDsProp = sqlProps.putObject("datasource");
+        sqlDsProp.put("type", "string");
+        sqlDsProp.put("description", "可选:目标数据源的连接名或 id(以 manage_datasource action=list 返回的 name/id 为准,"
+                + "不要猜测数据库名);单连接时省略此参数");
         ObjectNode sqlDescProp = sqlProps.putObject("description");
         sqlDescProp.put("type", "string");
         sqlDescProp.put("description", "一句话描述这次调用要做什么,将作为执行时间线的标题展示给用户(5-12 个字,祈使句)。"
@@ -1423,6 +1631,9 @@ public class ChatOrchestrationService {
         ObjectNode writeSqlProp = writeProps.putObject("sql");
         writeSqlProp.put("type", "string");
         writeSqlProp.put("description", "要执行的单条写 SQL(INSERT/UPDATE/DELETE/DDL),不要带 WHERE 以外的子查询副作用");
+        ObjectNode writeDsProp = writeProps.putObject("datasource");
+        writeDsProp.put("type", "string");
+        writeDsProp.put("description", "可选:目标数据源的名称或 id(不填=默认连接)");
         ObjectNode writeDescProp = writeProps.putObject("description");
         writeDescProp.put("type", "string");
         writeDescProp.put("description", "一句话描述这次写操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
@@ -1458,6 +1669,100 @@ public class ChatOrchestrationService {
         containerRequired.add("action");
         tools.add(containerTool);
 
+        // 数据源管理:list/schema 只读自动;create/test ASSIST+FULL 需批准(见 RiskClassifier);
+        // remove CRITICAL——任何档位都要用户确认(级联删历史,不可逆)
+        ObjectNode dsTool = objectMapper.createObjectNode();
+        dsTool.put("type", "function");
+        ObjectNode dsFn = dsTool.putObject("function");
+        dsFn.put("name", "manage_datasource");
+        dsFn.put("description", "管理数据库连接:list=列出全部连接;create=新增连接(用户提供 host/port/账号密码,"
+                + "创建后自动测试连通性);test=测试某连接;schema=查看某连接的表结构(免掉探索性 SQL);"
+                + "remove=删除连接(其查询历史一并删除)。用户明确要求添加/删除数据库时使用;"
+                + "create 和 remove 在执行前会收到审批请求。示例:{\"action\": \"list\"}");
+        ObjectNode dsParams = dsFn.putObject("parameters");
+        dsParams.put("type", "object");
+        dsParams.put("additionalProperties", false);
+        ObjectNode dsProps = dsParams.putObject("properties");
+        ObjectNode dsActionProp = dsProps.putObject("action");
+        dsActionProp.put("type", "string");
+        dsActionProp.put("description", "list / create / test / schema / remove");
+        ObjectNode dsNameProp = dsProps.putObject("name");
+        dsNameProp.put("type", "string");
+        dsNameProp.put("description", "create 时:连接显示名;其他 action 时省略(用 target 定位)");
+        ObjectNode dsTargetProp = dsProps.putObject("target");
+        dsTargetProp.put("type", "string");
+        dsTargetProp.put("description", "test/schema/remove 时:目标数据源的名称或 id");
+        ObjectNode dsEngineProp = dsProps.putObject("engine");
+        dsEngineProp.put("type", "string");
+        dsEngineProp.put("description", "create 时:postgresql 或 mysql");
+        ObjectNode dsHostProp = dsProps.putObject("host");
+        dsHostProp.put("type", "string");
+        dsHostProp.put("description", "create 时:数据库主机名或 IP");
+        ObjectNode dsPortProp = dsProps.putObject("port");
+        dsPortProp.put("type", "integer");
+        dsPortProp.put("description", "create 时:端口(如 postgresql 5432 / mysql 3306)");
+        ObjectNode dsDbProp = dsProps.putObject("database");
+        dsDbProp.put("type", "string");
+        dsDbProp.put("description", "create 时:数据库名");
+        ObjectNode dsUserProp = dsProps.putObject("username");
+        dsUserProp.put("type", "string");
+        dsUserProp.put("description", "create 时:用户名(可选)");
+        ObjectNode dsPwdProp = dsProps.putObject("password");
+        dsPwdProp.put("type", "string");
+        dsPwdProp.put("description", "create 时:密码(可选;仅存入数据源服务,不会出现在对话与日志)");
+        ObjectNode dsDescProp = dsProps.putObject("description");
+        dsDescProp.put("type", "string");
+        dsDescProp.put("description", "一句话描述这次操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)");
+        ArrayNode dsRequired = dsParams.putArray("required");
+        dsRequired.add("action");
+        tools.add(dsTool);
+
+        // 纳管源管理:list/enable/disable ASSIST 需批准;register/remove CRITICAL——
+        // 任何档位都要用户确认(PROC 源的 command 是宿主机命令,注册等于纳入监控+守护)
+        ObjectNode svcTool = objectMapper.createObjectNode();
+        svcTool.put("type", "function");
+        ObjectNode svcFn = svcTool.putObject("function");
+        svcFn.put("name", "manage_service");
+        svcFn.put("description", "管理环境纳管源(日志/监控注册表):list=列出全部;register=注册新源"
+                + "(FILE=日志文件,DOCKER=容器名,PROC=宿主机进程及启动命令);enable/disable=暂停或恢复监控;"
+                + "remove=删除注册(不动容器/文件)。注册 PROC 源意味着系统将跟踪其命令并采集日志,"
+                + "register 和 remove 执行前会收到审批请求。示例:{\"action\": \"register\", \"kind\": \"PROC\","
+                + " \"name\": \"backup-job\", \"command\": \"/opt/scripts/backup.sh\", \"workDir\": \"/opt/scripts\"}");
+        ObjectNode svcParams = svcFn.putObject("parameters");
+        svcParams.put("type", "object");
+        svcParams.put("additionalProperties", false);
+        ObjectNode svcProps = svcParams.putObject("properties");
+        ObjectNode svcActionProp = svcProps.putObject("action");
+        svcActionProp.put("type", "string");
+        svcActionProp.put("description", "list / register / enable / disable / remove");
+        ObjectNode svcKindProp = svcProps.putObject("kind");
+        svcKindProp.put("type", "string");
+        svcKindProp.put("description", "register 时:FILE / DOCKER / PROC");
+        ObjectNode svcNameProp = svcProps.putObject("name");
+        svcNameProp.put("type", "string");
+        svcNameProp.put("description", "register 时:纳管源唯一显示名;其他 action 时省略(用 target 定位)");
+        ObjectNode svcFileProp = svcProps.putObject("fileLogPath");
+        svcFileProp.put("type", "string");
+        svcFileProp.put("description", "kind=FILE 时:日志文件绝对路径");
+        ObjectNode svcContainerProp = svcProps.putObject("containerName");
+        svcContainerProp.put("type", "string");
+        svcContainerProp.put("description", "kind=DOCKER 时:容器名");
+        ObjectNode svcCmdProp = svcProps.putObject("command");
+        svcCmdProp.put("type", "string");
+        svcCmdProp.put("description", "kind=PROC 时:启动命令(绝对路径或可执行文件)");
+        ObjectNode svcWorkDirProp = svcProps.putObject("workDir");
+        svcWorkDirProp.put("type", "string");
+        svcWorkDirProp.put("description", "kind=PROC 时:工作目录(可选)");
+        ObjectNode svcTargetProp = svcProps.putObject("target");
+        svcTargetProp.put("type", "string");
+        svcTargetProp.put("description", "enable/disable/remove 时:目标纳管源的名称或 id");
+        ObjectNode svcDescProp = svcProps.putObject("description");
+        svcDescProp.put("type", "string");
+        svcDescProp.put("description", "一句话描述这次操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)");
+        ArrayNode svcRequired = svcParams.putArray("required");
+        svcRequired.add("action");
+        tools.add(svcTool);
+
         return tools;
     }
 
@@ -1488,16 +1793,26 @@ public class ChatOrchestrationService {
                 + PER_REQUEST_OVERHEAD_TOKENS;
         long historyBudget = budget.historyBudgetTokens(fixedCost);
         int used = 0;
-        int from = history.size();
+        // controller 在调用前已把当前 user 消息落库(loadMessages 的末条就是它),
+        // 这里只拼历史部分并排除末条,末尾统一 add(userMessage)——否则当前消息
+        // 会被发两遍(中转/上游按两条独立 user 消息计费并处理)
+        int historyEnd = history.size();
+        if (historyEnd > 0) {
+            ChatStoreService.StoredMessage last = history.get(historyEnd - 1);
+            if ("user".equals(last.role()) && userMessage.equals(last.content())) {
+                historyEnd--;
+            }
+        }
+        int from = historyEnd;
         while (from > 0) {
             ChatStoreService.StoredMessage prev = history.get(from - 1);
             int cost = ContextBudget.estimateTokens(prev.content()) + 8;
-            if (used + cost > historyBudget && from < history.size()) break; // 至少保留 1 条
+            if (used + cost > historyBudget && from < historyEnd) break; // 至少保留 1 条
             used += cost;
             from--;
-            if (history.size() - from >= 40) break; // 条数硬上限,防御超长单条
+            if (historyEnd - from >= 40) break; // 条数硬上限,防御超长单条
         }
-        for (int i = from; i < history.size(); i++) {
+        for (int i = from; i < historyEnd; i++) {
             ChatStoreService.StoredMessage msg = history.get(i);
             if ("user".equals(msg.role())) {
                 messages.add(WireMessage.user(objectMapper, msg.content()));

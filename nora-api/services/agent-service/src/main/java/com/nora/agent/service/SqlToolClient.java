@@ -48,13 +48,16 @@ public class SqlToolClient {
      * Like {@link #executeSql(String)} but also reports the provider-side row
      * cap so the orchestrator can mark the step {@code truncated} — a silent
      * cap makes the model present partial rows as the full answer.
+     *
+     * @param sql          SELECT / SHOW / EXPLAIN statement
+     * @param datasourceId explicit connection (id or name); null = first configured
      */
-    public SqlOutcome executeSqlDetailed(String sql) {
+    public SqlOutcome executeSqlDetailed(String sql, String datasourceId) {
         try {
-            // Phase 3: single-connection workbench — use the first connection row
-            Long connectionId = firstConnectionId();
+            Long connectionId = resolveConnectionId(datasourceId);
             if (connectionId == null) {
-                return new SqlOutcome("ERROR: no database connection is configured in the datasource service",
+                return new SqlOutcome("ERROR: no database connection is configured in the datasource service"
+                        + (datasourceId == null ? "" : " (查询目标: " + datasourceId + ")"),
                         null, false);
             }
             Envelope<QueryBody> envelope = restClient.post()
@@ -81,6 +84,67 @@ public class SqlToolClient {
         }
     }
 
+    /** Back-compat: first configured connection. */
+    public SqlOutcome executeSqlDetailed(String sql) {
+        return executeSqlDetailed(sql, null);
+    }
+
+    /**
+     * Resolves the {@code datasource} arg to a connection id: numeric → id,
+     * else case-insensitive match against the connection display name OR the
+     * database name (models habitually pass the db name); anything else
+     * falls back to the first connection rather than failing — the arg only
+     * disambiguates, a wrong guess must not block the query.
+     *
+     * @return connection id, or null when no connection is configured at all
+     */
+    public Long resolveConnectionId(String datasourceId) {
+        try {
+            Envelope<ArrayNode> envelope = restClient.get()
+                    .uri("/api/datasources")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null
+                    || envelope.data().isEmpty()) {
+                return null;
+            }
+            if (datasourceId == null || datasourceId.isBlank()) {
+                return envelope.data().get(0).path("id").asLong();
+            }
+            String target = datasourceId.trim();
+            if (target.matches("\\d+")) {
+                long id = Long.parseLong(target);
+                for (JsonNode n : envelope.data()) {
+                    if (n.path("id").asLong(-1) == id) {
+                        return id;
+                    }
+                }
+            } else {
+                for (JsonNode n : envelope.data()) {
+                    if (target.equalsIgnoreCase(n.path("name").asText(""))
+                            || target.equalsIgnoreCase(n.path("database").asText(""))) {
+                        return n.path("id").asLong();
+                    }
+                }
+                // 前缀/包含匹配(模型常传"nora-pg"这类缩写)
+                for (JsonNode n : envelope.data()) {
+                    String name = n.path("name").asText("");
+                    if (!name.isBlank() && (name.toLowerCase().startsWith(target.toLowerCase())
+                            || name.toLowerCase().contains(target.toLowerCase()))) {
+                        return n.path("id").asLong();
+                    }
+                }
+            }
+            // 未匹配到:回落第一个连接(参数只是提示,猜错不该阻断查询)
+            return envelope.data().get(0).path("id").asLong();
+        } catch (Exception e) {
+            log.warn("datasource list failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
     /** Rendered SQL result plus UI-facing metadata. */
     public record SqlOutcome(String content, String summary, boolean truncated) {
     }
@@ -102,26 +166,6 @@ public class SqlToolClient {
                     + "先用 SELECT tablename FROM pg_tables 确认表名,跨 schema 时用 schema.table 限定）";
         }
         return message;
-    }
-
-    private Long firstConnectionId() {
-        try {
-            Envelope<ArrayNode> envelope = restClient.get()
-                    .uri("/api/datasources")
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
-            if (envelope == null || envelope.code() != 0 || envelope.data() == null
-                    || envelope.data().isEmpty()) {
-                return null;
-            }
-            JsonNode first = envelope.data().get(0);
-            return first.has("id") ? first.get("id").asLong() : null;
-        } catch (Exception e) {
-            log.warn("datasource list failed: {}", e.getMessage());
-            return null;
-        }
     }
 
     /** Renders columns+rows as a compact TSV the LLM can read at a glance. */

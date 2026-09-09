@@ -38,9 +38,19 @@ public record ChatStepDto(
         this(id, type, title, detail, duration, status, null, null, null, null);
     }
 
-    /** Parsed tool arguments, rendered per-tool by the frontend. */
+    /**
+     * Parsed tool arguments, rendered per-tool by the frontend.
+     *
+     * @param target  manage_datasource / manage_service 的操作对象(数据源名/id、
+     *                纳管源名/id);null 表示其余工具
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record StepInput(String sql, String service, Integer limit) {
+    public record StepInput(String sql, String service, Integer limit, String target) {
+
+        /** Back-compat constructor for existing call sites (no target). */
+        public StepInput(String sql, String service, Integer limit) {
+            this(sql, service, limit, null);
+        }
     }
 
     /**
