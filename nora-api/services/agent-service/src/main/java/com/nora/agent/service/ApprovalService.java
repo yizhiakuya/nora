@@ -46,7 +46,7 @@ public class ApprovalService {
     public ApprovalRequestDto register(String sessionId, String stepId, ApprovalRequestDto request) {
         String token = UUID.randomUUID().toString();
         ApprovalRequestDto ticket = new ApprovalRequestDto(token, request.stepId(), request.actionType(),
-                request.target(), request.summary(), request.risk());
+                request.target(), request.summary(), request.risk(), request.detail());
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         pending.put(token, new PendingRequest(token, sessionId, stepId, ticket, future, Instant.now()));
         log.info("approval required: session={} step={} action={}", sessionId, stepId, ticket.actionType());

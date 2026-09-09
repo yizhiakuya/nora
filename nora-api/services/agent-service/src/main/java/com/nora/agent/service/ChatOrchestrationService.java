@@ -456,7 +456,7 @@ public class ChatOrchestrationService {
                     || permissionMode == PermissionMode.ASSIST && risk != RiskClassifier.Risk.LOW
                     || permissionMode == PermissionMode.FULL && risk == RiskClassifier.Risk.CRITICAL;
             if (needApproval) {
-                ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, parsed, permissionMode);
+                ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, parsed, permissionMode, args);
                 ApprovalRequestDto ticket = approvalService.register(sessionId, toolStepId, request);
                 eventConsumer.approvalRequired(ticket);
                 boolean approved = approvalService.await(ticket.approvalToken());
@@ -617,33 +617,44 @@ public class ChatOrchestrationService {
         return "";
     }
 
-    /** approval_required 事件载荷:操作类型、目标、参数摘要、风险说明。 */
+    /** approval_required 事件载荷:操作类型、目标、参数摘要、风险说明、参数明细。 */
     private ApprovalRequestDto buildApprovalRequest(String stepId, String toolName, ParsedArgs parsed,
-                                                    PermissionMode mode) {
+                                                    PermissionMode mode, String rawArgs) {
         String actionType;
         String target;
         String risk;
+        String detail = null;
         switch (toolName) {
             case "execute_write_sql" -> {
                 actionType = "sql_write";
                 target = parsed.input().target() != null
                         ? "数据源 " + parsed.input().target()
                         : "数据库(默认连接)";
-                risk = "将修改真实数据(" + abbreviate(parsed.input().sql() == null ? "" : parsed.input().sql(), 40) + "…),不可自动撤销";
+                detail = "SQL: " + (parsed.input().sql() == null ? "(空)" : parsed.input().sql());
+                risk = "将修改真实数据,不可自动撤销";
             }
             case "manage_container" -> {
                 actionType = "container_control";
                 target = parsed.input().service() == null ? "未知容器" : parsed.input().service();
+                detail = "操作: " + parsed.containerAction();
                 risk = "停止/重启容器会导致该服务短暂不可用";
             }
             case "manage_datasource" -> {
                 actionType = "datasource_manage";
                 String action = parsed.datasourceAction();
                 target = parsed.input().target() == null ? "新数据源" : parsed.input().target();
+                JsonNode a = parseArgsSafe(rawArgs);
                 if ("remove".equals(action)) {
-                    risk = "将删除数据源连接记录及其全部查询历史,不可恢复";
+                    detail = "数据源: " + target + "\n后果: 连接记录 + 全部查询历史一并删除";
+                    risk = "不可恢复的删除操作";
                 } else if ("create".equals(action)) {
-                    risk = "将新增一个数据库连接(密码仅存入数据源服务,不会出现在对话记录)";
+                    detail = "名称: " + a.path("name").asText("?")
+                            + "\n类型: " + a.path("engine").asText("?")
+                            + "\n地址: " + a.path("host").asText("?") + ":" + a.path("port").asInt(0)
+                            + "\n数据库: " + a.path("database").asText("?")
+                            + "\n用户: " + a.path("username").asText("(空)")
+                            + "\n密码: (已隐藏,仅存入数据源服务)";
+                    risk = "将新增一个数据库连接";
                 } else {
                     risk = "对数据源连接执行 " + action + " 操作";
                 }
@@ -652,10 +663,22 @@ public class ChatOrchestrationService {
                 actionType = "service_manage";
                 String action = parsed.datasourceAction();
                 target = parsed.input().target() == null ? "新纳管源" : parsed.input().target();
+                JsonNode a = parseArgsSafe(rawArgs);
                 if ("register".equals(action)) {
-                    risk = "将注册一条纳管源(PROC 源含宿主机启动命令),系统会持续跟踪其进程与日志";
+                    String kind = a.path("kind").asText("?");
+                    detail = "名称: " + a.path("name").asText("?") + "\n类型: " + kind;
+                    if ("FILE".equalsIgnoreCase(kind)) {
+                        detail += "\n日志文件: " + a.path("fileLogPath").asText("?");
+                    } else if ("DOCKER".equalsIgnoreCase(kind)) {
+                        detail += "\n容器: " + a.path("containerName").asText("?");
+                    } else {
+                        detail += "\n启动命令: " + a.path("command").asText("?")
+                                + "\n工作目录: " + a.path("workDir").asText("(无)");
+                    }
+                    risk = "PROC 源的命令将在宿主机被执行并被持续监控";
                 } else if ("remove".equals(action)) {
-                    risk = "将删除纳管源注册记录(不影响容器/文件本身)";
+                    detail = "纳管源: " + target + "(容器/文件本身不受影响)";
+                    risk = "删除后该源不再被监控与采集日志";
                 } else {
                     risk = "对纳管源执行 " + action + " 操作";
                 }
@@ -668,7 +691,16 @@ public class ChatOrchestrationService {
             }
         }
         return new ApprovalRequestDto(null, stepId, actionType, target,
-                defaultTitle(toolName) + " · " + target, risk);
+                defaultTitle(toolName) + " · " + target, risk, detail);
+    }
+
+    /** 解析审批明细用的 args JSON;失败返回空节点(明细降级为不含参数)。 */
+    private JsonNode parseArgsSafe(String rawArgs) {
+        try {
+            return objectMapper.readTree(rawArgs == null ? "{}" : rawArgs);
+        } catch (Exception e) {
+            return objectMapper.createObjectNode();
+        }
     }
 
     /** Whether an LLM API key is configured. */

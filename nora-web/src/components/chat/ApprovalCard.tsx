@@ -36,6 +36,11 @@ export function ApprovalCard({ approval, onResolved }: {
           <div className="text-xs font-semibold text-foreground">需要你的批准</div>
           <div className="text-xs text-foreground mt-1">{approval.summary}</div>
           <div className="text-[11px] text-muted-foreground mt-1 break-words">目标：{approval.target}</div>
+          {approval.detail && (
+            <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-md bg-background/70 border border-orange-200/60 dark:border-orange-900/40 px-2 py-1.5 text-[11px] font-mono text-foreground max-h-40 overflow-auto">
+              {approval.detail}
+            </pre>
+          )}
           <div className="text-[11px] text-orange-700 dark:text-orange-300 mt-1.5 break-words">{approval.risk}</div>
           {!decision ? (
             <div className="flex items-center gap-2 mt-2.5">

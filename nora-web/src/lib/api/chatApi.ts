@@ -86,6 +86,8 @@ export interface ApprovalRequest {
   target: string;
   summary: string;
   risk: string;
+  /** 各工具的参数明细(逐行 key=value;密码类参数后端已排除),可能为空 */
+  detail?: string;
 }
 
 export type ChatResponder = (
