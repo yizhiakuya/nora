@@ -170,14 +170,19 @@ export interface ServiceInstance {
   uptime: string;
   cpu: string;
   memory: string;
+  /** 纳管源类型:DOCKER=容器(可启停)| FILE=进程日志源(只观测)| PROC=平台拉起的程序(可启停/守护重启);mock/旧数据缺省视为 DOCKER */
+  kind?: "DOCKER" | "FILE" | "PROC";
+  /** PROC 源:启动命令(java -jar xx.jar / node server.js …) */
+  command?: string;
+  /** PROC 源:工作目录 */
+  workDir?: string;
+  /** FILE 源:日志文件路径(日志 tail / AI 分析用) */
+  fileLogPath?: string;
+  /** 后端纳管源 id(FILE 源日志接口按它取数);后端模式下必填 */
+  sourceId?: number;
+  /** 状态补充说明(如「日志活跃于 2 分钟前」「容器不存在」) */
+  detail?: string;
 }
-
-export const MOCK_SERVICES: ServiceInstance[] = [
-  { id: 1, name: "api-gateway",   image: "node:20-alpine",   port: 3000, status: "running", health: "healthy", uptime: "3d 4h",   cpu: "12%",  memory: "245 MB" },
-  { id: 2, name: "worker-service", image: "node:20-alpine",  port: 3001, status: "running", health: "healthy", uptime: "3d 4h",   cpu: "8%",   memory: "180 MB" },
-  { id: 3, name: "postgres",       image: "postgres:16",     port: 5432, status: "running", health: "healthy", uptime: "7d 12h",  cpu: "4%",   memory: "420 MB" },
-  { id: 4, name: "redis",          image: "redis:7-alpine",  port: 6379, status: "stopped", health: "down",    uptime: "—",       cpu: "0%",   memory: "0 MB" },
-];
 
 export interface LogEntry {
   time: string;
@@ -185,16 +190,6 @@ export interface LogEntry {
   service: string;
   message: string;
 }
-
-export const MOCK_LOGS: LogEntry[] = [
-  { time: "14:02:31", level: "error", service: "api-gateway",   message: "Connection refused: redis://localhost:6379 (ECONNREFUSED)" },
-  { time: "14:02:32", level: "warn",  service: "api-gateway",   message: "Retrying Redis connection in 5s... (attempt 3/10)" },
-  { time: "14:02:30", level: "info",  service: "worker-service", message: "Job queue idle, waiting for tasks..." },
-  { time: "14:02:28", level: "info",  service: "postgres",       message: "Checkpoint complete: wrote 842 buffers" },
-  { time: "14:02:25", level: "error", service: "worker-service", message: "Failed to publish event: cache_unavailable" },
-  { time: "14:02:20", level: "info",  service: "api-gateway",   message: "GET /api/v2/products 200 12ms" },
-  { time: "14:02:15", level: "warn",  service: "postgres",       message: "Connection pool usage at 80% (16/20)" },
-];
 
 // ==========================================
 // 自动任务
@@ -211,14 +206,6 @@ export interface AutomationRule {
   status: "active" | "paused" | "error";
 }
 
-export const MOCK_AUTOMATIONS: AutomationRule[] = [
-  { id: 1, name: "每日数据备份",    trigger: "每日 02:00",         action: "pg_dump → S3",           enabled: true,  lastRun: "今天 02:00", nextRun: "明天 02:00", status: "active" },
-  { id: 2, name: "CSV 上传入库",    trigger: "文件上传 (.csv)",    action: "解析 → 批量插入 orders",  enabled: true,  lastRun: "1 小时前",   status: "active" },
-  { id: 3, name: "服务异常告警",    trigger: "日志 ERROR ≥ 5/min", action: "AI 诊断 → 发通知",       enabled: true,  lastRun: "3 分钟前",   status: "active" },
-  { id: 4, name: "周报生成",        trigger: "每周五 17:00",       action: "查询汇总 → Markdown 报告", enabled: true,  lastRun: "3 天前",    nextRun: "周五 17:00", status: "active" },
-  { id: 5, name: "缓存预热",        trigger: "服务启动后",         action: "刷新热点数据到 Redis",    enabled: false, lastRun: "—",        status: "paused" },
-];
-
 /** 自动任务执行记录 */
 export interface ExecutionRecord {
   id: number;
@@ -228,13 +215,6 @@ export interface ExecutionRecord {
   status: "success" | "failed" | "running";
   detail: string;
 }
-
-export const MOCK_EXECUTIONS: ExecutionRecord[] = [
-  { id: 1, ruleName: "服务异常告警",     time: "14:02", duration: "1.2s",  status: "success", detail: "AI 诊断 ECONNREFUSED → 已生成修复建议" },
-  { id: 2, ruleName: "每日数据备份",     time: "02:00", duration: "42s",   status: "success", detail: "pg_dump → S3 (myapp_dev, 128 MB)" },
-  { id: 3, ruleName: "CSV 上传入库",     time: "13:05", duration: "3.8s",  status: "success", detail: "orders_export.csv → 826 行已插入" },
-  { id: 4, ruleName: "周报生成",         time: "周五 17:00", duration: "12s", status: "failed", detail: "查询超时（>10s）：analytics_events 表锁等待" },
-];
 
 export interface EnvVar {
   key: string;

@@ -2,14 +2,20 @@ package com.nora.env.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Docker facade. v1 shells out to the {@code docker} CLI (simple, no extra
@@ -22,6 +28,22 @@ public class DockerClientService {
     private static final Logger log = LoggerFactory.getLogger(DockerClientService.class);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * docker stats 缓存:stats --no-stream 单次要 1.5~3s,直接在 /services
+     * 请求里跑会拖慢环境控制台首屏,改为后台刷新 + 读缓存(见 {@link #stats()})。
+     */
+    private volatile Map<String, String[]> statsCache = Map.of();
+    /** 最近一次成功采样的时间戳(ms) */
+    private volatile long statsAt = 0;
+    private static final long STATS_TTL_MS = 20_000;
+    /** stats 后台刷新线程(单线程;单飞标记防止并发请求叠出多个 docker stats) */
+    private final ExecutorService statsExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "docker-stats-refresh");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicBoolean statsRefreshing = new AtomicBoolean(false);
 
     /** One managed container as consumed by the frontend ServiceInstance. */
     public record ContainerView(
@@ -58,6 +80,80 @@ public class DockerClientService {
         } catch (Exception e) {
             log.warn("docker ps failed: {}", e.getMessage());
             return List.of();
+        }
+    }
+
+    /**
+     * 一次性取所有容器的即时资源占用(name → [cpu, memUsage])。
+     *
+     * <p>阻塞版实现在后台线程跑,本方法只读缓存立即返回:缓存过期(>20s)时
+     * 触发一次单飞异步刷新,另由 {@link #warmStatsCache()} 定时预热,保证
+     * 服务启动后缓存温热。资源数据最多滞后一个刷新周期,监控展示可接受。
+     */
+    public Map<String, String[]> stats() {
+        if (System.currentTimeMillis() - statsAt > STATS_TTL_MS) {
+            refreshStatsAsync();
+        }
+        return statsCache;
+    }
+
+    /** 单飞后台刷新:已在刷新中直接跳过,避免并发请求叠出多个 docker stats。 */
+    private void refreshStatsAsync() {
+        if (!statsRefreshing.compareAndSet(false, true)) {
+            return;
+        }
+        statsExecutor.execute(() -> {
+            try {
+                Map<String, String[]> fresh = fetchStats();
+                if (fresh != null) {
+                    statsCache = fresh;
+                    statsAt = System.currentTimeMillis();
+                } else {
+                    // 采样失败:只推时间戳,保留旧缓存(TTL 过期下轮再试)
+                    statsAt = System.currentTimeMillis();
+                }
+            } finally {
+                statsRefreshing.set(false);
+            }
+        });
+    }
+
+    /** 环境页 30s 轮询之外兜底预热:env-service 启动后缓存始终温热,首屏也有数据。 */
+    @Scheduled(initialDelay = 5_000, fixedDelay = 30_000)
+    public void warmStatsCache() {
+        refreshStatsAsync();
+    }
+
+    @PreDestroy
+    void shutdownStatsExecutor() {
+        statsExecutor.shutdownNow();
+    }
+
+    /**
+     * 实际执行 docker stats(阻塞 1.5~3s),只在后台线程调用。
+     * 失败时返回 null 表示「保留上一轮缓存」,不覆盖好数据。
+     */
+    private Map<String, String[]> fetchStats() {
+        try {
+            String raw = exec("docker", "stats", "--no-stream", "--format", "{{json .}}");
+            Map<String, String[]> out = new java.util.HashMap<>();
+            for (String line : raw.split("\n")) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                JsonNode node = objectMapper.readTree(line);
+                String name = node.path("Name").asText("");
+                if (name.isEmpty()) {
+                    continue;
+                }
+                out.put(name, new String[]{
+                        node.path("CPUPerc").asText("—"),
+                        node.path("MemUsage").asText("—")});
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("docker stats failed (keeping previous cache): {}", e.getMessage());
+            return null;
         }
     }
 
@@ -148,9 +244,25 @@ public class DockerClientService {
         }
     }
 
+    /** 增量日志:返回 since 之后写入的行(docker logs --since,RFC3339 时间戳)。 */
+    public List<String> logsSince(String idOrName, Instant since) {
+        String sinceSpec = since.truncatedTo(java.time.temporal.ChronoUnit.MILLIS).toString();
+        try {
+            String raw = exec("docker", "logs", "--since", sinceSpec, idOrName);
+            if (raw.isBlank()) {
+                raw = execMergeStderr("docker", "logs", "--since", sinceSpec, idOrName);
+            }
+            if (raw.isBlank()) {
+                return List.of();
+            }
+            return List.of(raw.stripTrailing().split("\n"));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     /** Like {@link #exec} but merges stderr into stdout (docker logs writes there for most images). */
-    private String execMergeStderr(String... command) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(command);
+    private String execMergeStderr(String... command) throws Exception {        ProcessBuilder pb = new ProcessBuilder(command);
         pb.environment().putAll(System.getenv());
         pb.redirectErrorStream(true);
         Process process = pb.start();

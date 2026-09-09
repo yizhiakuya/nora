@@ -326,7 +326,7 @@ public class ChatOrchestrationService {
                 }
             }
         } catch (Exception e) {
-            log.warn("tool loop failed, falling back to plain answer: {}", e.getMessage());
+            log.warn("tool loop failed, falling back to plain answer", e);
         }
 
         // Step 3: forced-answer streaming round (with tool outcome already in the messages)
@@ -880,6 +880,7 @@ public class ChatOrchestrationService {
      * responses → POST /responses (stream) with event-name mapping.
      */
     private StreamTurnResult streamUpstream(ResolvedLlm llm, ObjectNode body, TokenSink sink) {
+        logUpstreamRequest(llm, body);
         if ("responses".equalsIgnoreCase(llm.protocol())) {
             return streamUpstreamResponses(llm, body, sink);
         }
@@ -901,13 +902,14 @@ public class ChatOrchestrationService {
                 clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
             }
             java.net.http.HttpClient client = clientBuilder.build();
-            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+            java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/chat/completions"))
                     .timeout(Duration.ofSeconds(120))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + llm.apiKey())
-                    .header("Accept", MediaType.ALL_VALUE)
-                    .headers(providerExtraHeaders(llm))
+                    .header("Accept", MediaType.ALL_VALUE);
+            applyExtraHeaders(requestBuilder, llm);
+            java.net.http.HttpRequest request = requestBuilder
                     .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
                     .build();
@@ -915,6 +917,7 @@ public class ChatOrchestrationService {
                     request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                log.warn("LLM upstream {} → HTTP {}: body={}", llm.baseUrl(), response.statusCode(), err);
                 return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
                         "", "", null, List.of(), null);
             }
@@ -993,7 +996,8 @@ public class ChatOrchestrationService {
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
         } catch (Exception e) {
-            return new StreamTurnResult(true, e.getMessage(), content.toString(), reasoning.toString(),
+            log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
+            return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
                     null, List.of(), usage);
         }
     }
@@ -1099,13 +1103,14 @@ public class ChatOrchestrationService {
                 clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
             }
             java.net.http.HttpClient client = clientBuilder.build();
-            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+            java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/responses"))
                     .timeout(Duration.ofSeconds(120))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + llm.apiKey())
-                    .header("Accept", MediaType.ALL_VALUE)
-                    .headers(providerExtraHeaders(llm))
+                    .header("Accept", MediaType.ALL_VALUE);
+            applyExtraHeaders(requestBuilder, llm);
+            java.net.http.HttpRequest request = requestBuilder
                     .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
                     .build();
@@ -1113,6 +1118,7 @@ public class ChatOrchestrationService {
                     request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                log.warn("LLM upstream {} → HTTP {}: body={}", llm.baseUrl(), response.statusCode(), err);
                 return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
                         "", "", null, List.of(), null);
             }
@@ -1185,7 +1191,8 @@ public class ChatOrchestrationService {
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
         } catch (Exception e) {
-            return new StreamTurnResult(true, e.getMessage(), content.toString(), reasoning.toString(),
+            log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
+            return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
                     null, List.of(), usage);
         }
     }
@@ -1211,6 +1218,35 @@ public class ChatOrchestrationService {
      * the ID is derived from the API key so it stays stable across turns
      * (provider-side session continuity) without leaking anything.
      */
+    /** DEBUG 报文日志:协议/模型/档位/URL/请求体(api_key 不入日志,Authorization 头不拼进 body)。 */
+    private void logUpstreamRequest(ResolvedLlm llm, ObjectNode body) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        try {
+            log.debug("LLM upstream request: protocol={} model={} level={} url={}/... body={}",
+                    llm.protocol(), llm.model(), llm.effectiveReasoningLevel(),
+                    stripTrailingSlash(llm.baseUrl()), objectMapper.writeValueAsString(body));
+        } catch (Exception e) {
+            log.debug("LLM upstream request: protocol={} model={} url={} (body serialize failed: {})",
+                    llm.protocol(), llm.model(), llm.baseUrl(), e.toString());
+        }
+    }
+
+    /**
+     * Provider 专属附加头(opencode 需要 X-Session-ID)。
+     * 空数组时必须跳过 {@code HttpRequest.Builder.headers(String...)}:
+     * JDK 对 0 个参数同样抛 IAE "wrong number, 0, of parameters"(varargs
+     * 成对校验不接受空数组),曾在所有普通 provider 上导致每轮请求必失败。
+     */
+    private java.net.http.HttpRequest.Builder applyExtraHeaders(java.net.http.HttpRequest.Builder builder, ResolvedLlm llm) {
+        String[] extra = providerExtraHeaders(llm);
+        if (extra.length > 0) {
+            builder.headers(extra);
+        }
+        return builder;
+    }
+
     private String[] providerExtraHeaders(ResolvedLlm llm) {
         if (llm.baseUrl() != null && llm.baseUrl().contains("opencode.ai")) {
             String key = llm.apiKey() == null ? "" : llm.apiKey();

@@ -16,3 +16,12 @@ node_modules/
 
 # service run logs (dev)
 *.log
+
+# upstream debugging captures (local only)
+/hy3_*.json
+/hy3_*.txt
+/enc_*.json
+/.playwright-mcp/
+
+# runtime file logs (logback)
+logs/

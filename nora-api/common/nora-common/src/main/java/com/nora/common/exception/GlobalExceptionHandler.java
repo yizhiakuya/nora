@@ -27,6 +27,19 @@ public class GlobalExceptionHandler {
         return ApiResponse.error(ex.getCode(), ex.getMessage());
     }
 
+    /**
+     * 静态资源未命中(prometheus/actuator 抓取 404 等):高频且无排障价值,
+     * 降为 DEBUG 单行,不再刷 ERROR 堆栈。
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiResponse<Void> handleNoResourceFound(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        if (log.isDebugEnabled()) {
+            log.debug("No static resource: {}", ex.getResourcePath());
+        }
+        return ApiResponse.error(404, "Not found: " + ex.getResourcePath());
+    }
+
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResponse<Void> handleUnexpected(Exception ex) {

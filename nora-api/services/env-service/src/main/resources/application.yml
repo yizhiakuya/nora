@@ -4,6 +4,15 @@ server:
 spring:
   application:
     name: env-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_env
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_env
+    default-schema: schema_env
+    create-schemas: true
   cloud:
     nacos:
       discovery:

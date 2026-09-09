@@ -134,13 +134,17 @@ public class AgentController {
             throw new IllegalArgumentException("prompt exceeds 8000 characters");
         }
         // chat() 内部是同步执行并返回已完成的 future,用 join() 取值;
-        // 包一层 Future 才能实现超时取消(中断编排线程使上游 LLM 读中止)
+        // 包一层 Future 才能实现超时取消(中断编排线程使上游 LLM 读中止)。
+        // permissionMode 缺省 FULL(automation 场景);只读分析场景显式传 ASSIST
+        PermissionMode mode = request.permissionMode() == null || request.permissionMode().isBlank()
+                ? PermissionMode.FULL
+                : PermissionMode.parse(request.permissionMode());
         java.util.concurrent.Future<ChatOrchestrationService.ChatTurn> future =
                 agentRunExecutor.submit(() -> orchestrationService.chat(
                         request.prompt().trim(),
                         List.of(), List.of(),
                         request.model(), request.reasoningLevel(),
-                        PermissionMode.FULL,
+                        mode,
                         null,
                         SILENT_CONSUMER).join());
         try {
@@ -177,8 +181,8 @@ public class AgentController {
                 @Override public void sources(List<CitationDto> found) { }
             };
 
-    /** POST /api/chat/agent/run 请求体。 */
-    public record AgentRunRequest(String prompt, String model, String reasoningLevel) {
+    /** POST /api/chat/agent/run 请求体。permissionMode 缺省 FULL;只读分析场景传 ASSIST。 */
+    public record AgentRunRequest(String prompt, String model, String reasoningLevel, String permissionMode) {
     }
 
     /**
