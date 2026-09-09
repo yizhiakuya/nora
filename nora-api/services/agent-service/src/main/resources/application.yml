@@ -38,6 +38,8 @@ nora:
     base-url: http://localhost:8084
   env:
     base-url: http://localhost:8085
+  file:
+    base-url: http://localhost:8081
 
 management:
   endpoints:

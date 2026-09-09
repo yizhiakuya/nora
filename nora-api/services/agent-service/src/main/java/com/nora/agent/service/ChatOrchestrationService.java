@@ -88,6 +88,7 @@ public class ChatOrchestrationService {
     private final ContainerControlClient containerControlClient;
     private final DataSourceManageClient dataSourceManageClient;
     private final ServiceManageClient serviceManageClient;
+    private final FileToolClient fileToolClient;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -102,6 +103,7 @@ public class ChatOrchestrationService {
                                     ContainerControlClient containerControlClient,
                                     DataSourceManageClient dataSourceManageClient,
                                     ServiceManageClient serviceManageClient,
+                                    FileToolClient fileToolClient,
                                     @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties) {
@@ -116,6 +118,7 @@ public class ChatOrchestrationService {
         this.containerControlClient = containerControlClient;
         this.dataSourceManageClient = dataSourceManageClient;
         this.serviceManageClient = serviceManageClient;
+        this.fileToolClient = fileToolClient;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
@@ -136,7 +139,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
+                null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -147,7 +150,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, maxToolRounds, null);
+                null, null, null, null, null, null, maxToolRounds, null);
     }
 
     /**
@@ -557,6 +560,13 @@ public class ChatOrchestrationService {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
                 }
+                case "read_file" -> {
+                    String target = node.path("id").asText(null);
+                    Integer limit = node.has("limit") && node.get("limit").isNumber()
+                            ? node.get("limit").asInt() : null;
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, limit, target),
+                            description, null, action);
+                }
                 default -> {
                     if (node.has("action") && node.has("service")) {
                         return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
@@ -585,6 +595,7 @@ public class ChatOrchestrationService {
             case "manage_container" -> "容器操作";
             case "manage_datasource" -> "数据源管理";
             case "manage_service" -> "服务纳管";
+            case "read_file" -> "读取文件";
             default -> name;
         };
     }
@@ -599,6 +610,9 @@ public class ChatOrchestrationService {
         if ("manage_container".equals(name)) return input.service() == null ? "" : input.service();
         if ("manage_datasource".equals(name) || "manage_service".equals(name)) {
             return (input.target() == null ? "?" : input.target().toLowerCase());
+        }
+        if ("read_file".equals(name)) {
+            return input.target() == null ? "?" : input.target();
         }
         return "";
     }
@@ -938,11 +952,25 @@ public class ChatOrchestrationService {
             boolean failure = content.startsWith("ERROR:");
             return new ToolOutcome(content, failure ? null : content, null, false);
         }
+        if ("read_file".equals(name)) {
+            String action = parsed.datasourceAction() == null ? "list" : parsed.datasourceAction().trim().toLowerCase();
+            if ("list".equals(action) || parsed.input().target() == null) {
+                // 无 id = 列出文件让模型挑;显式 action=list 同理
+                return bounded(fileToolClient.list(), null);
+            }
+            String target = parsed.input().target();
+            if (!target.matches("\\d+")) {
+                return new ToolOutcome("ERROR: id 必须是数字(先用 action=list 查看可用文件)"
+                        + ",不能按文件名猜测。当前收到: " + target, null, null, false);
+            }
+            return bounded(fileToolClient.preview(Long.parseLong(target)), null);
+        }
         return new ToolOutcome("ERROR: unknown tool " + name
                 + ". 可用工具：execute_sql（只读 SQL,可选 datasource 参数）、execute_write_sql（写 SQL,需批准）、"
                 + "read_service_logs（容器日志）、manage_container（容器启停,需批准）、"
                 + "manage_datasource（数据源 list/create/test/schema/remove,create/remove 需批准）、"
-                + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）", null, null, false);
+                + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）、"
+                + "read_file（工作台文件 list/read,只读）", null, null, false);
     }
 
     /**
@@ -1775,6 +1803,31 @@ public class ChatOrchestrationService {
         ArrayNode svcRequired = svcParams.putArray("required");
         svcRequired.add("action");
         tools.add(svcTool);
+
+        // 文件读取:纯只读(LOW),无审批;文件名猜不准,先 list 再按 id 读
+        ObjectNode fileTool = objectMapper.createObjectNode();
+        fileTool.put("type", "function");
+        ObjectNode fileFn = fileTool.putObject("function");
+        fileFn.put("name", "read_file");
+        fileFn.put("description", "读取工作台已上传文件的内容(list 列出全部文件;带 id 读取某个文件的提取文本,"
+                + "支持文档/PDF/代码等)。用户问\"我的文件里/上传的文档里\"这类问题时使用——"
+                + "注意 RAG 检索只能召回片段,通读全文用此工具。文件名不能猜,必须先 list 拿到 id。"
+                + "示例:{\"action\": \"list\"} 或 {\"id\": \"3\"}");
+        ObjectNode fileParams = fileFn.putObject("parameters");
+        fileParams.put("type", "object");
+        fileParams.put("additionalProperties", false);
+        ObjectNode fileProps = fileParams.putObject("properties");
+        ObjectNode fileActionProp = fileProps.putObject("action");
+        fileActionProp.put("type", "string");
+        fileActionProp.put("description", "list(列文件)或 read(读内容);省略时:有 id 即 read,无 id 即 list");
+        ObjectNode fileIdProp = fileProps.putObject("id");
+        fileIdProp.put("type", "string");
+        fileIdProp.put("description", "read 时:文件 id(list 结果里的数字 id,非文件名)");
+        ObjectNode fileDescProp = fileProps.putObject("description");
+        fileDescProp.put("type", "string");
+        fileDescProp.put("description", "一句话描述这次调用要做什么(5-12 个字,祈使句)");
+        ArrayNode fileRequired = fileParams.putArray("required");
+        tools.add(fileTool);
 
         return tools;
     }

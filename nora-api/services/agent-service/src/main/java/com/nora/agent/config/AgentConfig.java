@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClient;
         RagServiceProperties.class,
         DatasourceServiceProperties.class,
         EnvServiceProperties.class,
+        FileServiceProperties.class,
         ProxyProperties.class})
 public class AgentConfig {
 
@@ -53,6 +54,19 @@ public class AgentConfig {
      */
     @Bean
     public RestClient envServiceRestClient(EnvServiceProperties properties) {
+        return RestClient.builder()
+                .baseUrl(properties.baseUrl())
+                .build();
+    }
+
+    /**
+     * HTTP client for file-service calls (workbench file listing/preview).
+     *
+     * @param properties file-service settings
+     * @return RestClient bound to file-service base URL
+     */
+    @Bean
+    public RestClient fileServiceRestClient(FileServiceProperties properties) {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .build();
