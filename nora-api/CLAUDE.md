@@ -24,6 +24,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 
 ## 已知坑
 
+- **时区全局约定**:`nora.timezone`(默认 Asia/Shanghai)统一三处——JVM 默认时区(nora-common `TimeZoneConfig` 静态块生效)、Jackson 序列化、DB 会话(`ALTER DATABASE nora SET timezone`,已固定)。DB 时间列一律 `timestamp without time zone` 存本地挂钟时间,Java 读取必须用 `LocalDateTime`(用 `OffsetDateTime` 读会被 JDBC 贴错 UTC 标签,前端 +8h);前端解析 `created_at` 走 `toHm()`(agentApi)手动拆解,不用 `new Date()`
 - **SSE 上游用 JDK HttpClient 流式读取**,不要用 RestClient `.body(byte[].class)`(伪流式),其字符串转换器还会把 text/event-stream 按 ISO-8859-1 弄乱中文
 - 测试 mock:`ModelProviderServiceTest` 用 Strict stubs,参数不匹配直接报 PotentialStubbingProblem
 - 工具输出 30K/10K 截断;循环熔断(同参数 3 次阻断)

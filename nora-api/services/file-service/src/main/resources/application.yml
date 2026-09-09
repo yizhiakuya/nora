@@ -2,6 +2,8 @@ server:
   port: 8081
 
 spring:
+  jackson:
+    time-zone: Asia/Shanghai
   application:
     name: file-service
   datasource:
@@ -23,6 +25,7 @@ spring:
       max-request-size: 100MB
 
 nora:
+  timezone: Asia/Shanghai
   file:
     storage-dir: ./data/files/
   rag:
@@ -33,3 +36,4 @@ management:
     web:
       exposure:
         include: health
+

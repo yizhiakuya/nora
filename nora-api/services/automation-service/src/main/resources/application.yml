@@ -2,6 +2,8 @@ server:
   port: 8086
 
 spring:
+  jackson:
+    time-zone: Asia/Shanghai
   application:
     name: automation-service
   datasource:
@@ -19,6 +21,7 @@ spring:
         enabled: true
 
 nora:
+  timezone: Asia/Shanghai
   datasource:
     base-url: http://localhost:8084
   agent:

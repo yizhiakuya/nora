@@ -2,6 +2,8 @@ server:
   port: 8080
 
 spring:
+  jackson:
+    time-zone: Asia/Shanghai
   application:
     name: gateway-service
   cloud:
@@ -22,6 +24,10 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/network/**
+        - id: mcp
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/mcp/**
         - id: file
           uri: lb://file-service
           predicates:
@@ -48,3 +54,7 @@ management:
     web:
       exposure:
         include: health
+
+# 全局统一时区(nora-common TimeZoneConfig 消费;JVM 默认时区)
+nora:
+  timezone: Asia/Shanghai

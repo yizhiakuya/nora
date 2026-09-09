@@ -2,6 +2,8 @@ server:
   port: 8085
 
 spring:
+  jackson:
+    time-zone: Asia/Shanghai
   application:
     name: env-service
   datasource:
@@ -23,3 +25,7 @@ management:
     web:
       exposure:
         include: health
+
+# 全局统一时区(nora-common TimeZoneConfig 消费;JVM 默认时区)
+nora:
+  timezone: Asia/Shanghai

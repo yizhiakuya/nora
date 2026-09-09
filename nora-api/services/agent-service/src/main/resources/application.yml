@@ -4,6 +4,9 @@ server:
 spring:
   application:
     name: agent-service
+  jackson:
+    # 全局统一时区:Date/Instant 序列化偏移(JVM 默认时区由 nora-common TimeZoneConfig 设置)
+    time-zone: Asia/Shanghai
   datasource:
     url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_agent
     username: nora
@@ -19,6 +22,8 @@ spring:
         enabled: true
 
 nora:
+  # 全局统一时区(nora-common TimeZoneConfig 消费;JVM 默认时区)
+  timezone: Asia/Shanghai
   agent:
     # ReAct depth guard: max tool rounds per chat turn (harness convention 10-25)
     max-tool-rounds: 10
