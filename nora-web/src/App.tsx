@@ -3,6 +3,10 @@ import { useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
 import { useBackendHealth } from "@/hooks/useBackendHealth";
+import { installGlobalErrorReporting } from "@/lib/errorReporter";
+
+// 全局错误兜底(window.onerror/unhandledrejection/资源加载失败)→ 上报后端日志
+installGlobalErrorReporting();
 
 import HomePage from "@/app/page";
 import FilesPage from "@/app/files/page";

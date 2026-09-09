@@ -45,6 +45,8 @@ import java.util.concurrent.CompletableFuture;
 public class ChatOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestrationService.class);
+    /** 上游 LLM SSE 事件时间线专用 logger(独立文件 agent-service-sse.log,见 logback) */
+    private static final Logger sseLog = LoggerFactory.getLogger("com.nora.agent.sse");
 
     private static final String SYSTEM_PROMPT = """
             你是 Nora 个人工作台的助手。回答必须：
@@ -418,6 +420,7 @@ public class ChatOrchestrationService {
         String title = parsed.description() != null && !parsed.description().isBlank()
                 ? parsed.description() : defaultTitle(name);
         long toolStart = System.currentTimeMillis();
+        log.info("tool call: {} (round={}, args={})", name, roundIndex, abbreviate(args == null ? "{}" : args, 200));
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
 
@@ -1220,9 +1223,12 @@ public class ChatOrchestrationService {
                     .build();
             java.net.http.HttpResponse<java.io.InputStream> response = client.send(
                     request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            sseLog.info("upstream POST {} -> HTTP {} (model={})",
+                    stripTrailingSlash(llm.baseUrl()), response.statusCode(), llm.model());
             if (response.statusCode() >= 400) {
                 String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 log.warn("LLM upstream {} → HTTP {}: body={}", llm.baseUrl(), response.statusCode(), err);
+                sseLog.warn("upstream ERROR body={}", abbreviateForSse(err, 400));
                 return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
                         "", "", null, List.of(), null);
             }
@@ -1298,10 +1304,14 @@ public class ChatOrchestrationService {
                 ArrayNode arr = assistant.putArray("tool_calls");
                 orderedCalls.forEach(arr::add);
             }
+            sseLog.info("upstream round done: contentChars={} reasoningChars={} toolCalls={} usage={}",
+                    content.length(), reasoning.length(), orderedCalls.size(),
+                    usage == null ? "none" : "in=" + usage.inputTokens() + " out=" + usage.outputTokens());
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
         } catch (Exception e) {
             log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
+            sseLog.warn("upstream STREAM FAILED: {}", e.toString());
             return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
                     null, List.of(), usage);
         }
@@ -1421,9 +1431,12 @@ public class ChatOrchestrationService {
                     .build();
             java.net.http.HttpResponse<java.io.InputStream> response = client.send(
                     request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            sseLog.info("upstream POST {} -> HTTP {} (model={})",
+                    stripTrailingSlash(llm.baseUrl()), response.statusCode(), llm.model());
             if (response.statusCode() >= 400) {
                 String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 log.warn("LLM upstream {} → HTTP {}: body={}", llm.baseUrl(), response.statusCode(), err);
+                sseLog.warn("upstream ERROR body={}", abbreviateForSse(err, 400));
                 return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
                         "", "", null, List.of(), null);
             }
@@ -1493,10 +1506,14 @@ public class ChatOrchestrationService {
                 ArrayNode arr = assistant.putArray("tool_calls");
                 orderedCalls.forEach(arr::add);
             }
+            sseLog.info("upstream round done (responses): contentChars={} toolCalls={} usage={}",
+                    content.length(), orderedCalls.size(),
+                    usage == null ? "none" : "in=" + usage.inputTokens() + " out=" + usage.outputTokens());
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
         } catch (Exception e) {
             log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
+            sseLog.warn("upstream STREAM FAILED: {}", e.toString());
             return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
                     null, List.of(), usage);
         }
@@ -2092,8 +2109,12 @@ public class ChatOrchestrationService {
         return sb.toString();
     }
 
-    private static String abbreviate(String text, int max) {
-        if (text == null) {
+    private static String abbreviateForSse(String text, int max) {
+        if (text == null) return "";
+        return text.length() <= max ? text : text.substring(0, max) + "…(" + text.length() + " chars)";
+    }
+
+    private static String abbreviate(String text, int max) {        if (text == null) {
             return "";
         }
         return text.length() <= max ? text : text.substring(0, max) + "…";

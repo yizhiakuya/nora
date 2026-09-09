@@ -1,6 +1,29 @@
 export const API_BASE = "/api";
 export const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === "true";
 
+/**
+ * 浏览器侧链路 ID:每个页面会话一个(per-tab session),随全部 API 请求以
+ * X-Nora-Trace-Id 传播;网关/后端透传或采纳,日志系统按它串联前后端事件。
+ * 错误上报(errorReporter)也带同一 ID,与后端日志交叉检索。
+ */
+const BROWSER_TRACE_ID = (() => {
+  try {
+    const key = "nora-browser-trace-id";
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+      sessionStorage.setItem(key, id);
+    }
+    return id;
+  } catch {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+  }
+})();
+
+export function browserTraceId(): string {
+  return BROWSER_TRACE_ID;
+}
+
 interface ApiEnvelope<T> {
   code: number;
   data: T;
@@ -45,6 +68,7 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
     ...init,
     headers: {
       "Content-Type": "application/json",
+      "X-Nora-Trace-Id": BROWSER_TRACE_ID,
       ...(init?.headers ?? {}),
     },
     signal: init?.signal ?? defaultTimeoutSignal(),
@@ -52,7 +76,11 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(text || `HTTP ${response.status}`);
+    // 500 类错误:响应头里有服务端 traceId,拼进错误消息——用户复制会话 ID
+    // 报障时,后端日志能按这个 ID 直接定位到当次请求
+    const serverTrace = response.headers.get("X-Nora-Trace-Id");
+    const traceSuffix = response.status >= 500 && serverTrace ? ` [trace=${serverTrace}]` : "";
+    throw new Error((text || `HTTP ${response.status}`) + traceSuffix);
   }
 
   return parseBody<T>(response);

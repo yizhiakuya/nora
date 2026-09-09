@@ -8,6 +8,7 @@ import com.nora.agent.service.ApprovalService;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
 import com.nora.agent.service.PermissionMode;
+import com.nora.common.logging.TraceContext;
 import com.nora.common.response.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -96,7 +97,13 @@ public class AgentController {
             throw new IllegalArgumentException("content is required");
         }
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
-        chatExecutor.execute(() -> {
+        // 轮次入口:sessionId + turnId 进 MDC(经 TraceContext.wrap 传播到 chatExecutor
+        // 线程),本轮编排/落库/SSE 发送的全部日志自动携带,排障时按会话一屏串联
+        String turnId = TraceContext.newTraceId();
+        chatExecutor.execute(TraceContext.wrap(() -> {
+            TraceContext.setSessionId(sessionId);
+            TraceContext.setTurnId(turnId);
+            log.info(">> turn start (contentChars={})", request.content().length());
             var handle = new java.util.concurrent.FutureTask<>(() -> {
                 runChatTurn(sessionId, request.content().trim(),
                         request.model(), request.reasoningLevel(),
@@ -108,8 +115,9 @@ public class AgentController {
                 handle.run();
             } finally {
                 activeTurns.remove(sessionId, handle);
+                TraceContext.clear();
             }
-        });
+        }));
         return emitter;
     }
 
@@ -140,13 +148,13 @@ public class AgentController {
                 ? PermissionMode.FULL
                 : PermissionMode.parse(request.permissionMode());
         java.util.concurrent.Future<ChatOrchestrationService.ChatTurn> future =
-                agentRunExecutor.submit(() -> orchestrationService.chat(
+                agentRunExecutor.submit(TraceContext.wrap(() -> orchestrationService.chat(
                         request.prompt().trim(),
                         List.of(), List.of(),
                         request.model(), request.reasoningLevel(),
                         mode,
                         null,
-                        SILENT_CONSUMER).join());
+                        SILENT_CONSUMER).join()));
         try {
             ChatOrchestrationService.ChatTurn turn = future.get(SSE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             Map<String, Object> out = new LinkedHashMap<>();
@@ -384,10 +392,25 @@ public class AgentController {
 
     private void send(SseEmitter emitter, String event, Object payload) {
         try {
-            emitter.send(SseEmitter.event().name(event).data(toJson(payload), MediaType.APPLICATION_JSON));
+            String json = toJson(payload);
+            emitter.send(SseEmitter.event().name(event).data(json, MediaType.APPLICATION_JSON));
+            // SSE 事件时间线:done/error/step 全记,delta 采样记(事件流复盘时
+            // 与前端 agentApi 解析出的序列逐条对齐,竞态问题按 traceId 拉时间线)
+            switch (event) {
+                case "delta" -> { /* 高频,不逐条记 */ }
+                case "error" -> log.warn("sse event={} payload={}", event, abbreviate(json, 300));
+                case "step", "approval_required", "sources", "done" ->
+                        log.info("sse event={} payload={}", event, abbreviate(json, 200));
+                default -> log.debug("sse event={}", event);
+            }
         } catch (IOException | IllegalStateException e) {
             log.debug("SSE send failed (client disconnected?): {}", e.getMessage());
         }
+    }
+
+    private static String abbreviate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max) + "…(" + s.length() + " chars)";
     }
 
     private String toJson(Object payload) {

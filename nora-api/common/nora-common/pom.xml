@@ -35,5 +35,10 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- 结构化 JSON 日志编码器:由 common 引入,全部服务经传递依赖获得 -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+        </dependency>
     </dependencies>
 </project>

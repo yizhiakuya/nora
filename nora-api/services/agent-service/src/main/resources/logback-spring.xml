@@ -1,50 +1,58 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  agent-service 日志基建(开发模式):
-  - 控制台 + 滚动文件双输出;文件含异常完整堆栈与 MDC(会话/请求 id 可后续接入)
-  - com.nora 全链路 DEBUG(开发期排障;上游 SSE 报文日志挂在该级别下)
-  - 第三方噪音收敛:tomcat/jetty/hibernate WARN;prometheus 404 噪音在
-    GlobalExceptionHandler 中降级,不在此处按 logger 压制(保留可见性)
-  滚动策略:单文件 20MB,保留 7 天/20 个,总量上限 500MB,异步写出避免阻塞 SSE 线程。
+  agent-service 日志配置:引用 nora-common 共享基座(nora-logbase.xml,
+  JSON + 文本双文件输出、异步写出),本文件只做服务级差异化:
+  - SERVICE_NAME 定位日志文件名;
+  - com.nora 全链路 DEBUG(开发期排障;上游 SSE 报文日志挂在该级别下);
+  - sse-upstream logger 专门记上游 LLM SSE 报文时间线,单独文件便于复盘流式问题;
+  - 第三方噪音收敛:tomcat/hibernate WARN,hikari INFO。
 -->
 <configuration>
 
+  <springProperty scope="context" name="SERVICE_NAME" source="spring.application.name" defaultValue="agent-service"/>
+
+  <include resource="logging/nora-logbase.xml"/>
+
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %level [%X{traceId:-}] %logger{20} [%thread] : %msg%n%ex{short}</pattern>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %level [${SERVICE_NAME}] [trace=%X{traceId:-} sess=%X{sessionId:-} turn=%X{turnId:-}] %logger{20} : %msg%n%ex{short}</pattern>
       <charset>UTF-8</charset>
     </encoder>
   </appender>
 
-  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${LOG_PATH:-D:/claude/Nora/logs}/agent-service.log</file>
+  <!-- 上游 LLM SSE 事件时间线(逐事件一行,ChatOrchestrationService 写入):
+       排查流式中断/首字延迟/token 统计缺失时,把 traceId 在主日志和本文件之间对上 -->
+  <appender name="SSE_TRACE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_PATH:-D:/claude/Nora/logs}/agent-service-sse.log</file>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-      <fileNamePattern>${LOG_PATH:-D:/claude/Nora/logs}/agent-service.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <fileNamePattern>${LOG_PATH:-D:/claude/Nora/logs}/agent-service-sse.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
       <maxFileSize>20MB</maxFileSize>
       <maxHistory>7</maxHistory>
       <totalSizeCap>500MB</totalSizeCap>
     </rollingPolicy>
     <encoder>
-      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %level %logger{36} [%thread] : %msg%n%ex{full}</pattern>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSS} [trace=%X{traceId:-} sess=%X{sessionId:-} turn=%X{turnId:-}] %msg%n</pattern>
       <charset>UTF-8</charset>
     </encoder>
   </appender>
-
-  <!-- 异步包装:流式读取线程不因磁盘 IO 阻塞 -->
-  <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
-    <queueSize>4096</queueSize>
+  <appender name="ASYNC_SSE" class="ch.qos.logback.classic.AsyncAppender">
+    <queueSize>8192</queueSize>
     <discardingThreshold>0</discardingThreshold>
     <neverBlock>true</neverBlock>
-    <appender-ref ref="FILE"/>
+    <appender-ref ref="SSE_TRACE_FILE"/>
   </appender>
 
   <logger name="com.nora" level="DEBUG"/>
+  <logger name="com.nora.agent.sse" level="INFO" additivity="false">
+    <appender-ref ref="ASYNC_SSE"/>
+  </logger>
   <logger name="org.apache.tomcat" level="WARN"/>
   <logger name="org.hibernate" level="WARN"/>
   <logger name="com.zaxxer.hikari" level="INFO"/>
 
   <root level="INFO">
     <appender-ref ref="CONSOLE"/>
-    <appender-ref ref="ASYNC_FILE"/>
+    <appender-ref ref="ASYNC_JSON"/>
+    <appender-ref ref="ASYNC_TEXT"/>
   </root>
 </configuration>

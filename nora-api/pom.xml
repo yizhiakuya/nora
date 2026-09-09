@@ -90,6 +90,13 @@
                 <artifactId>tika-parsers-standard-package</artifactId>
                 <version>2.9.2</version>
             </dependency>
+            <!-- 结构化 JSON 日志(logstash-logback-encoder):全服务统一 JSON 行文件输出,
+                 traceId/sessionId 进字段,便于 jq 检索与后续 Loki 采集 -->
+            <dependency>
+                <groupId>net.logstash.logback</groupId>
+                <artifactId>logstash-logback-encoder</artifactId>
+                <version>8.0</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

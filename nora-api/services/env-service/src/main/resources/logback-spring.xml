@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- env-service:引用 nora-common 共享日志基座(JSON+文本双文件、异步写出),服务级仅差名 -->
+<configuration>
+
+  <springProperty scope="context" name="SERVICE_NAME" source="spring.application.name" defaultValue="env-service"/>
+
+  <include resource="logging/nora-logbase.xml"/>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %level [] [trace=%X{traceId:-}] %logger{20} : %msg%n%ex{short}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <logger name="com.nora" level="DEBUG"/>
+  <logger name="org.apache.tomcat" level="WARN"/>
+  <logger name="org.hibernate" level="WARN"/>
+  <logger name="com.zaxxer.hikari" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="ASYNC_JSON"/>
+    <appender-ref ref="ASYNC_TEXT"/>
+  </root>
+</configuration>
