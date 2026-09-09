@@ -5,6 +5,8 @@ export interface ChatStepInput {
   sql?: string;
   service?: string;
   limit?: number;
+  /** manage_datasource / manage_service 的操作对象(数据源名/id、纳管源名/id) */
+  target?: string;
 }
 
 /** 结构化工具结果:content 是喂给模型的完整(有界)输出 */

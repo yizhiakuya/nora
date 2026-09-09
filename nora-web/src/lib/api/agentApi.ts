@@ -18,6 +18,7 @@ interface StepInputPayload {
   sql?: string;
   service?: string;
   limit?: number;
+  target?: string;
 }
 
 interface StepPayload {
