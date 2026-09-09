@@ -20,6 +20,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 
 - HMR 对重命名导出不可靠,报 "does not provide an export" 先整页 reload 再判断
 - Zustand persist 的 store 改字段结构时注意兼容旧 localStorage 数据
+- 链路追踪:`client.ts` 每页面会话生成 browserTraceId,随全部请求走 `X-Nora-Trace-Id`;全局错误经 `lib/errorReporter.ts` 上报 `POST /api/log/frontend`(10s 去重);500 错误消息带服务端 `[trace=…]`,可与后端日志交叉检索
 
 ## 测试
 

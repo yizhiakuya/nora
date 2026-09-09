@@ -34,6 +34,14 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 
 agent-service → sub2api 中转 `http://192.168.0.109:28765/v1`(内网直连);provider 存 model_provider 表(api_key 明文,key 不回传,mask 后展示);模型发现:测试连通时 GET /models
 
+## 日志/排障约定
+
+- **全链路 traceId**:入口 `TraceIdFilter`(nora-common 自动装配)读/生成 `X-Nora-Trace-Id` 并写 MDC,响应头回写;服务间 RestClient 出口自动注入;前端每页面会话生成 browserTraceId 随全部请求携带——前后端日志按同一 ID 串联。gateway(WebFlux)走 GatewayTraceFilter 同语义
+- **JSON 日志**:每个服务双文件输出到 `LOG_PATH`(缺省 D:/claude/Nora/logs)——`{service}.log` 是 JSON 行(traceId/service 为独立字段,`jq 'select(.traceId=="…")'` 直接检索),`{service}-text.log` 是人读文本;共享基座 `common/nora-common/src/main/resources/logging/nora-logbase.xml`,各服务 logback-spring.xml 只做差异化
+- **agent 对话轮次**:sessionId/turnId 进 MDC,一轮对话从编排到落库的全部日志按会话串联;上游 LLM SSE 时间线单独落 `agent-service-sse.log`;SSE 事件(step/approval/done/error)在主日志有逐条时间线
+- **前端错误上报**:errorReporter 全局兜底 → `POST /api/log/frontend`(FrontendLogController),入库即主日志;500 错误消息会拼 `[trace=…]`,报障按 ID 直查后端
+- **异步线程必须用 `TraceContext.wrap()`** 包装 Runnable/Callable,否则 MDC 丢失、日志断链
+
 ## 测试
 
 `mvn -pl services/agent-service test`(21 用例)
