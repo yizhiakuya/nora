@@ -55,22 +55,24 @@ public class ServiceLogClient {
     }
 
     /**
-     * Tails recent log lines of a container.
+     * Tails recent log lines of a managed source (DOCKER container name, FILE
+     * path source, or PROC managed process — all are addressable by name).
      *
-     * @param service container name
+     * @param service managed source name
      * @param limit   max lines
      * @return LLM-friendly rendering: header + lines, or an error line
      */
     public String readLogs(String service, int limit) {
         try {
             int safeLimit = Math.max(1, Math.min(limit, 100));
-            List<String> names = listServices();
-            if (!names.contains(service)) {
-                return "ERROR: unknown service " + service + ". Available: " + names;
+            String sourceId = findSourceId(service);
+            if (sourceId == null) {
+                return "ERROR: unknown service " + service + ". Available: " + listServices();
             }
-            // 非流式 /logs 端点:立即返回 tail 行(流式 /logs/stream 会保持连接数分钟,工具路径不能调)
+            // 非流式按源 id tail 端点:立即返回 tail 行(流式 /sources/{id}/logs/stream
+            // 会保持连接数分钟,工具路径不能调)
             Envelope<List<String>> envelope = restClient.get()
-                    .uri("/api/environment/logs?service={s}&tail={n}", service, safeLimit)
+                    .uri("/api/environment/sources/{id}/logs?tail={n}", sourceId, safeLimit)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -89,6 +91,34 @@ public class ServiceLogClient {
         } catch (Exception e) {
             log.warn("log tail failed for {}: {}", service, e.getMessage());
             return "ERROR: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Managed source name → source id (GET /services returns id+name pairs).
+     *
+     * @return id as string, or null when the name is unknown
+     */
+    private String findSourceId(String name) {
+        try {
+            Envelope<List<JsonNode>> envelope = restClient.get()
+                    .uri("/api/environment/services")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
+                return null;
+            }
+            return envelope.data().stream()
+                    .filter(n -> name.equals(n.path("name").asText(null)))
+                    .map(n -> n.path("id").asText(null))
+                    .filter(id -> id != null && !id.isBlank())
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception e) {
+            log.warn("env-service lookup failed: {}", e.getMessage());
+            return null;
         }
     }
 
