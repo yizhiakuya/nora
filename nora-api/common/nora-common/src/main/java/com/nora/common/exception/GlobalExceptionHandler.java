@@ -27,6 +27,14 @@ public class GlobalExceptionHandler {
         return ApiResponse.error(ex.getCode(), ex.getMessage());
     }
 
+    /** 参数校验类失败(路径变量越界、非法取值等)按 400 语义返回,不落 500。 */
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiResponse<Void> handleIllegalArgument(IllegalArgumentException ex) {
+        log.warn("Bad request: {}", ex.getMessage());
+        return ApiResponse.error(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    }
+
     /**
      * 静态资源未命中(prometheus/actuator 抓取 404 等):高频且无排障价值,
      * 降为 DEBUG 单行,不再刷 ERROR 堆栈。

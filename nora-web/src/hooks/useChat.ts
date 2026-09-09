@@ -1,10 +1,54 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { ChatMessage, type ChatResponder, type PermissionMode } from "@/lib/api/chatApi";
-import { AgentAPI, cancelTurnOnBackend } from "@/lib/api/agentApi";
+import { AgentAPI, cancelTurnOnBackend, fetchAgentSettings, saveAgentSettings, truncateMessagesFrom } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
 import { useModelProviders } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
+
+/**
+ * Agent 全局设置(权限模式 / 默认模型 / 思考等级覆写):后端 app_setting
+ * 表(key=agent)为唯一真相,localStorage 只作缓存。跨会话、跨浏览器一致;
+ * 后端模式启动时拉取,切换时写后端(乐观更新本地)。
+ */
+interface AgentSettingsState {
+  permissionMode: PermissionMode;
+  reasoningLevelOverride?: string | undefined;
+  setPermissionMode: (mode: PermissionMode) => void;
+  setReasoningLevelOverride: (level: string | undefined) => void;
+  syncFromBackend: () => Promise<void>;
+}
+
+export const useAgentSettings = create<AgentSettingsState>()(
+  persist(
+    (set, get) => ({
+      permissionMode: "assist",
+      reasoningLevelOverride: undefined,
+      setPermissionMode: (permissionMode) => {
+        set({ permissionMode });
+        if (USE_BACKEND) void saveAgentSettings({ permissionMode });
+      },
+      setReasoningLevelOverride: (reasoningLevelOverride) => {
+        set({ reasoningLevelOverride });
+        if (USE_BACKEND) void saveAgentSettings({ reasoningLevel: reasoningLevelOverride ?? null });
+      },
+      syncFromBackend: async () => {
+        if (!USE_BACKEND) return;
+        try {
+          const s = await fetchAgentSettings();
+          if (s.permissionMode === "ask" || s.permissionMode === "assist" || s.permissionMode === "full") {
+            set({ permissionMode: s.permissionMode, reasoningLevelOverride: s.reasoningLevel ?? undefined });
+          }
+        } catch {
+          /* 后端不可达:沿用本地缓存 */
+        }
+      },
+    }),
+    { name: "chat-agent-settings" }
+  )
+);
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
@@ -22,10 +66,16 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const model = useModelProviders((s) => s.defaultModel);
-  /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
+  /** 对话框思考等级:全局覆写(持久);undefined = 跟随设置页该模型默认 */
   const [reasoningLevel, setReasoningLevel] = useState<string | undefined>(undefined);
-  /** 权限模式:默认仅对高风险操作请求批准 */
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("assist");
+  useEffect(() => {
+    // 初始化:全局覆写优先;无覆写时回落设置页该模型默认等级
+    const override = useAgentSettings.getState().reasoningLevelOverride;
+    if (override) setReasoningLevel(override);
+  }, []);
+  /** 权限模式 + 其余全局设置:后端设置表为真相 */
+  const permissionMode = useAgentSettings((s) => s.permissionMode);
+  const setPermissionMode = useAgentSettings((s) => s.setPermissionMode);
   const scrollRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
   /** 进行中轮次的 AbortController;null = 空闲。「停止生成」按钮调用 abort() */
@@ -51,10 +101,39 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
   }, [messages]);
 
   // 会话持久化：消息变化即写回 store（未传 sessionId 时不持久化，测试/调试场景不受影响）
+  // 瞬态字段(approval/isTyping/startedAtMs)不入缓存:审批卡是一次性交互态,
+  // 缓存里的死卡 reload 后会重现(其 token 早已被消费/超时),点了只会 500
+  // lastSavedRef 记下写回 store 的确切数组引用:saveMessages 存的就是它,
+  // 收编 effect 比对引用即可识别「自己写回的回声」,斩断无限循环
+  // (否则 map 出的新数组每次都是新引用 → store 变 → 收编 → 再写回 → 死循环白屏)
+  const lastSavedRef = useRef<ChatMessage[] | null>(null);
   useEffect(() => {
     if (!sessionId) return;
-    useChatSessions.getState().saveMessages(sessionId, messages);
+    const persistable = messages.map(({ approval, isTyping, startedAtMs, ...rest }) => rest);
+    lastSavedRef.current = persistable;
+    useChatSessions.getState().saveMessages(sessionId, persistable);
   }, [messages, sessionId]);
+
+  // 历史加载收编:loadHistory 晚于挂载完成时,useState 快照不会跟进 store 更新
+  // (刷新/切会话后对话区永远空态的根因)。监听 store 中本会话消息:引用变化
+  // 且非本 hook 刚写回的数组(回声)、且当前不在流式中 → 以后端历史为准整表替换。
+  // 回声判定必须读 store 现值(getState)而非闭包 sessionMessages:回合收尾的
+  // 同一 commit 里,persist effect(先声明)已把终态写入 store 并更新 lastSavedRef,
+  // 而闭包 sessionMessages 还是渲染时的中间快照——拿旧引用比对会误判为「外部
+  // 更新」,把停止前的快照反灌回来(stopped 丢失、推理步骤卡 running、「已停止」
+  // 与 meta 行消失)。Zustand set 同步生效,effect 按声明顺序执行,getState 必能
+  // 看到 persist 刚写入的数组。晚到的落后 loadHistory 快照在 store 层已被
+  // 新鲜度闸门(useChatSessions)丢弃,不会到这里。
+  const sessionMessages = useChatSessions((s) =>
+    sessionId ? s.sessions.find((x) => x.id === sessionId)?.messages : undefined
+  );
+  useEffect(() => {
+    if (isSending) return; // 流式进行中不抢本地状态,结束后由写回自然收敛
+    if (!sessionMessages) return;
+    const current = useChatSessions.getState().sessions.find((x) => x.id === sessionId)?.messages;
+    if (!current || current === lastSavedRef.current) return; // 自己写回的回声,忽略
+    setMessages(current);
+  }, [sessionMessages, isSending, sessionId]);
 
   const updateMessage = useCallback((id: string, partial: Partial<ChatMessage>) => {
     if (!mountedRef.current) return; // 卸载后忽略流式更新
@@ -128,6 +207,7 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
         content: "",
         timestamp: formatTime(),
         isTyping: true,
+        startedAtMs: Date.now(),
       },
     ]);
     setInput("");
@@ -152,7 +232,7 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
       setMessages((prev) =>
         prev.map((m) =>
           m.id === failedMsgId
-            ? { id: assistantMsgId, role: "assistant", content: "", timestamp: formatTime(), isTyping: true }
+            ? { id: assistantMsgId, role: "assistant", content: "", timestamp: formatTime(), isTyping: true, startedAtMs: Date.now() }
             : m
         )
       );
@@ -168,6 +248,39 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
       void cancelTurnOnBackend(sessionId);
     }
   }, [sessionId]);
+
+  /**
+   * 编辑重发:回退到某条用户消息,内容替换为 edited 后重新发送。
+   * 上下文一致性:先从本地删除该条及其后全部消息,再调后端截断接口
+   * 删服务端同分支历史,然后以新内容正常发送——UI 与 LLM 上下文严格一致。
+   * 后端截断失败不阻断(本地已删,下轮同步会收敛;旧历史只是多留一轮)。
+   */
+  const editAndResend = useCallback(
+    async (userMsgId: string, edited: string) => {
+      if (isSending || !edited.trim()) return;
+      const idx = messages.findIndex((m) => m.id === userMsgId);
+      if (idx < 0 || messages[idx].role !== "user") return;
+
+      const kept = messages.slice(0, idx);
+      setMessages(kept);
+      if (USE_BACKEND && sessionId) {
+        try {
+          await truncateMessagesFrom(sessionId, idx);
+        } catch {
+          /* 截断失败:以本地为准继续,后端旧分支由下次写回/同步覆盖语义兜底 */
+        }
+      }
+
+      const assistantMsgId = crypto.randomUUID();
+      setMessages([
+        ...kept,
+        { id: crypto.randomUUID(), role: "user", content: edited.trim(), timestamp: formatTime() },
+        { id: assistantMsgId, role: "assistant", content: "", timestamp: formatTime(), isTyping: true, startedAtMs: Date.now() },
+      ]);
+      await runTurn(edited.trim(), assistantMsgId);
+    },
+    [messages, isSending, sessionId, runTurn]
+  );
 
   const clear = useCallback(() => {
     setMessages([]);
@@ -187,5 +300,6 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
     setPermissionMode,
     stopGenerating,
     retryMessage,
+    editAndResend,
   };
 }

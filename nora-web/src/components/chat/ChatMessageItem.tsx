@@ -1,4 +1,4 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X } from "lucide-react";
 import { useState } from "react";
 import { AgentThoughtBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { saveTextAsync } from "@/lib/services/ragService";
 import { useChatSessions } from "@/hooks/useChatSessions";
+import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
 import { USE_BACKEND } from "@/lib/api/client";
 
 /** 错误图标与配色(按 kind 微调,不喧宾夺主) */
@@ -96,10 +97,14 @@ function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
   );
 }
 
-export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMessage; onRetry?: (msgId: string) => void; canRetry?: boolean }) {
+export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit = true }: { msg: ChatMessage; onRetry?: (msgId: string) => void; canRetry?: boolean; onEdit?: (msgId: string, edited: string) => void; canEdit?: boolean }) {
   const sessionId = useChatSessions((s) => s.activeId);
   const [copied, setCopied] = useState(false);
   const [rawExpanded, setRawExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
+  // 流式期间实时秒表(每秒递增);结束后停表不再显示(总耗时走 TurnMeta)
+  const elapsedSeconds = useElapsedSeconds(msg.startedAtMs, !!msg.isTyping);
 
   const copyId = async () => {
     try {
@@ -123,12 +128,58 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMe
   if (msg.role === 'user') {
     return (
       <>
-        <div className="flex gap-4 animate-in fade-in slide-in-from-bottom-2">
+        <div className="group/user flex gap-4 animate-in fade-in slide-in-from-bottom-2">
             <div className="flex-1"></div>
-            <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%] whitespace-pre-wrap">
+            {editing ? (
+              <div className="bg-background border border-blue-400 dark:border-blue-600 rounded-2xl rounded-tr-sm p-3 max-w-[80%] w-full">
+                <textarea
+                  autoFocus
+                  rows={Math.min(6, Math.max(1, editDraft.split('\n').length))}
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return;
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (editDraft.trim() && onEdit) { onEdit(msg.id, editDraft); setEditing(false); }
+                    } else if (e.key === 'Escape') {
+                      setEditing(false);
+                    }
+                  }}
+                  className="w-full bg-transparent resize-none outline-none text-sm text-foreground custom-scroll"
+                />
+                <div className="flex justify-end gap-1.5 mt-1.5">
+                  <button type="button" onClick={() => setEditing(false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer">
+                    <X className="w-3 h-3" /> 取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!editDraft.trim() || !canEdit}
+                    onClick={() => { if (onEdit && editDraft.trim()) { onEdit(msg.id, editDraft); setEditing(false); } }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    <Check className="w-3 h-3" /> 重新发送
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%] whitespace-pre-wrap">
                 {msg.content}
+              </div>
+            )}
+            <div className="flex flex-col items-center gap-1">
+              <div className="w-8 h-8 rounded-full flex-shrink-0 bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center shadow-sm">NC</div>
+              {onEdit && canEdit && !editing && (
+                <button
+                  type="button"
+                  title="编辑并重新发送(之后的对话将一并回退)"
+                  onClick={() => { setEditDraft(msg.content); setEditing(true); }}
+                  className="opacity-0 group-hover/user:opacity-100 transition-opacity text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
-            <div className="w-8 h-8 rounded-full flex-shrink-0 bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center shadow-sm">NC</div>
         </div>
         <div className="text-right text-[10px] text-muted-foreground pr-12 mt-1">{msg.timestamp}</div>
       </>
@@ -142,7 +193,11 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMe
               <Sparkles className="w-4 h-4" />
           </div>
           <div className="flex-1 overflow-hidden">
-              <div className="text-sm font-medium flex items-center gap-2 mb-4">AI 助理 <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span></div>
+              <div className="text-sm font-medium flex items-center gap-2 mb-4">AI 助理 <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>
+                {msg.isTyping && elapsedSeconds != null && (
+                  <span className="text-[10px] font-normal tabular-nums text-blue-600 dark:text-blue-400" title="本轮流式响应已用时">{elapsedSeconds}s</span>
+                )}
+              </div>
               
               <div className="relative pl-6 space-y-3 before:absolute before:inset-y-2 before:left-2.5 before:w-px before:bg-gray-200 dark:before:bg-gray-700">
                   {msg.steps && msg.steps.length > 0 && (
@@ -152,7 +207,7 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMe
                   {msg.approval && (
                     <ApprovalCard
                       approval={msg.approval}
-                      onResolved={() => undefined}
+                      onResolved={(d) => toast.success(d === "approved" ? "已批准，Agent 继续执行" : "已拒绝，Agent 跳过该操作")}
                     />
                   )}
 
@@ -211,7 +266,7 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMe
                       </div>
                     );
                   })()}
-                  {(msg.content || msg.isTyping) && (
+                  {(msg.content || msg.isTyping || msg.stopped) && (
                     <div className="relative animate-in fade-in">
                         <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)]">
                             <MessageSquare className="w-[10px] h-[10px] text-blue-500 dark:text-blue-400" />
@@ -219,8 +274,10 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true }: { msg: ChatMe
                         <div className="text-sm text-foreground leading-relaxed pt-0.5">
                             {msg.content ? (
                               <Markdown className="chat-markdown">{msg.content}</Markdown>
+                            ) : msg.isTyping ? (
+                              <span className="text-muted-foreground text-xs">正在思考…{elapsedSeconds != null ? ` ${elapsedSeconds}s` : ""}</span>
                             ) : (
-                              <span className="text-muted-foreground text-xs">正在思考…</span>
+                              <span className="text-muted-foreground text-xs">已停止生成，未产生内容。可重新编辑发送。</span>
                             )}
                             {msg.isTyping && msg.content && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
                         </div>

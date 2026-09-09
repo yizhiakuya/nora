@@ -34,6 +34,16 @@ interface ChatSessionsState {
 const DEFAULT_TITLE = "新对话";
 
 /**
+ * 每会话本地消息写入版本号:loadHistory 返回后比对,落后即丢弃快照。
+ * 否则流式/停止前后端晚到的旧历史(如健康检查重连触发的 loadHistory)会
+ * 盲目覆盖缓存,把刚结束轮次的本地终态(stopped 标记、部分内容)整个冲掉。
+ */
+const localWriteVersions = new Map<string, number>();
+function bumpLocalWriteVersion(id: string): void {
+  localWriteVersions.set(id, (localWriteVersions.get(id) ?? 0) + 1);
+}
+
+/**
  * 会话状态:后端 chat_session 表为唯一数据源,localStorage 只作缓存
  * (离线兜底 + 切会话时即时渲染,加载中会被后端历史覆盖)。
  * - syncFromBackend:拉列表(标题/时间排序),本地有而后端无的孤儿会话清除
@@ -81,7 +91,12 @@ export const useChatSessions = create<ChatSessionsState>()(
         set({ activeId: id });
         void get().loadHistory(id);
       },
-      saveMessages: (id, messages) =>
+      saveMessages: (id, messages) => {
+        // 同引用短路:useChat 收编 store 消息后写回的是同一数组,
+        // 不拦截会 map 出新引用 → 触发收编 effect → 无限循环
+        const existing = get().sessions.find((s) => s.id === id);
+        if (existing && existing.messages === messages) return;
+        bumpLocalWriteVersion(id);
         set((state) => ({
           sessions: state.sessions.map((s) =>
             s.id === id
@@ -97,7 +112,8 @@ export const useChatSessions = create<ChatSessionsState>()(
                 }
               : s
           ),
-        })),
+        }));
+      },
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         if (get().syncing) return;
@@ -127,9 +143,11 @@ export const useChatSessions = create<ChatSessionsState>()(
             sessions: remoteSessions,
             activeId: activeStillThere ? get().activeId : remoteSessions[0]?.id ?? "",
           });
-          // 默认激活的第一个会话预取历史(后台,不阻塞)
+          // 默认激活的第一个会话总是刷新历史(后台,不阻塞)。
+          // 不能用「缓存非空就跳过」:localStorage 里可能躺着陈旧瞬态
+          // (旧审批卡/typing 态),必须让后端真史覆盖,否则死卡永远重现
           const first = remoteSessions[0];
-          if (first && !first.messages.length) {
+          if (first) {
             void get().loadHistory(first.id);
           }
         } catch {
@@ -140,8 +158,13 @@ export const useChatSessions = create<ChatSessionsState>()(
       },
       loadHistory: async (id) => {
         if (!USE_BACKEND || !id) return;
+        // 快照新鲜度:请求发起后本会话若有过本地消息写入(流式写回/新回合
+        // 终态),返回的快照已落后于本地,整份丢弃——否则晚到的旧历史会把
+        // 停止/刚结束轮次的本地终态(stopped、部分内容)整个冲掉
+        const localWritesAtRequest = localWriteVersions.get(id) ?? 0;
         try {
           const messages = await fetchSessionMessages(id);
+          if ((localWriteVersions.get(id) ?? 0) !== localWritesAtRequest) return;
           set((state) => ({
             sessions: state.sessions.map((s) => (s.id === id ? { ...s, messages } : s)),
           }));

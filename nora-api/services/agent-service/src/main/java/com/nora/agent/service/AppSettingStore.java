@@ -78,6 +78,28 @@ public class AppSettingStore implements ApplicationRunner {
         }
     }
 
+    /**
+     * Reads one setting's payload straight from the table (no cache).
+     * Returns null when the key has no row; callers decide the defaults.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> raw(String key) {
+        try {
+            return jdbcTemplate.query(
+                    "SELECT value FROM app_setting WHERE key = ?",
+                    (rs, i) -> {
+                        try {
+                            return (Map<String, Object>) objectMapper.readValue(rs.getString("value"), Map.class);
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    },
+                    key).stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void apply(String key, String json) {
         Function<Map<String, Object>, Void> applier = appliers.get(key);
         if (applier == null) {

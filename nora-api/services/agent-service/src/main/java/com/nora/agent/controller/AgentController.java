@@ -244,6 +244,22 @@ public class AgentController {
         return ApiResponse.ok();
     }
 
+    /**
+     * Truncates history from the message at {@code index} (0-based, chronological)
+     * inclusive. Used by the frontend "edit & resend" flow: the user rewinds to an
+     * earlier user message, edits it, and resends — the server context must match,
+     * so the old branch (that message and everything after) is deleted first.
+     */
+    @DeleteMapping("/sessions/{sessionId}/messages/{index}")
+    public ApiResponse<Integer> truncateFrom(@PathVariable String sessionId,
+                                             @PathVariable int index) {
+        int deleted = chatStoreService.truncateFrom(sessionId, index);
+        if (deleted < 0) {
+            throw new IllegalArgumentException("message index out of range: " + index);
+        }
+        return ApiResponse.ok(deleted);
+    }
+
     private void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
                              com.nora.agent.service.PermissionMode permissionMode, SseEmitter emitter) {
         try {
@@ -324,20 +340,22 @@ public class AgentController {
                             }
                         }
                         try {
-                            if (!userCancelled) {
-                                for (var entry : reasoningBuffers.entrySet()) {
-                                    if (entry.getValue().isEmpty()) continue;
-                                    Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
-                                    ChatStepDto reasoningStep = new ChatStepDto(
-                                            "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
-                                            "think", "推理过程", entry.getValue().toString(), durationMs,
-                                            "completed", null, null, null, roundIndex);
-                                    steps.add(reasoningStep);
-                                    try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
-                                    catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
-                                }
-                                chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations);
+                            // 取消轮也落库:前端「停止生成」保留半截气泡(stopped),
+                            // 服务端行必须与前端消息序列一一对齐,否则「编辑重发」
+                            // 按下标截断时前后端错位、删错分支。取消轮持久化
+                            // answerText(半截内容)+ 已收集的步骤,语义即前端所见。
+                            for (var entry : reasoningBuffers.entrySet()) {
+                                if (entry.getValue().isEmpty()) continue;
+                                Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
+                                ChatStepDto reasoningStep = new ChatStepDto(
+                                        "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
+                                        "think", "推理过程", entry.getValue().toString(), durationMs,
+                                        "completed", null, null, null, roundIndex);
+                                steps.add(reasoningStep);
+                                try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
+                                catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
                             }
+                            chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations);
                         } catch (Exception e) {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());

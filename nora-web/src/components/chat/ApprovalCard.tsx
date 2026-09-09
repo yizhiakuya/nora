@@ -6,11 +6,12 @@ import { useChatSessions } from "@/hooks/useChatSessions";
 
 /**
  * 高风险操作审批卡:只有用户点击批准/拒绝才会解析服务端 pending future;
- * 模型文本不会触发这里的任何动作。
+ * 模型文本不会触发这里的任何动作。批准/拒绝后整卡消失——工具执行过程
+ * 与结果由思考块步骤行展示,这里不需要留一块橙色横幅占地方。
  */
 export function ApprovalCard({ approval, onResolved }: {
   approval: ApprovalRequest;
-  onResolved: () => void;
+  onResolved: (decision: "approved" | "declined") => void;
 }) {
   const sessionId = useChatSessions((s) => s.activeId);
   const [working, setWorking] = useState(false);
@@ -22,11 +23,13 @@ export function ApprovalCard({ approval, onResolved }: {
     try {
       await resolveApproval(sessionId, approval.approvalToken, approved);
       setDecision(approved ? "approved" : "declined");
-      onResolved();
+      onResolved(approved ? "approved" : "declined");
     } catch {
       setWorking(false);
     }
   };
+
+  if (decision) return null;
 
   return (
     <div className="relative rounded-xl border border-orange-200 dark:border-orange-900/70 bg-orange-50/70 dark:bg-orange-950/20 p-3 animate-in fade-in slide-in-from-top-1">

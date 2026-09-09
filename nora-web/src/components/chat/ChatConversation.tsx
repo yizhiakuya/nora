@@ -1,7 +1,9 @@
 'use client';
 
+import { Fragment } from "react";
 import { ArrowDown, MessageSquare as MessageSquareOpen } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
+import { useAgentSettings } from "@/hooks/useChat";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { ChatInputArea } from "./ChatInputArea";
@@ -45,12 +47,36 @@ function resolveContextLimit(messages: ChatMessage[]): number {
 }
 
 /**
+ * 时间分隔线判定:首条消息,或与上一条间隔 ≥5 分钟(负差值 = 跨天)时,
+ * 在该消息组前居中显示回复时间。timestamp 是 "HH:mm"(历史持久化数据);
+ * 后端若返回 ISO 串则走 Date 解析兜底。
+ */
+const TIME_GAP_MINUTES = 5;
+
+function toMinutes(ts: string): number | null {
+  if (!ts) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(ts.trim());
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? null : d.getHours() * 60 + d.getMinutes();
+}
+
+function shouldShowTimeDivider(prev: ChatMessage | undefined, cur: ChatMessage): boolean {
+  if (!prev) return true;
+  const a = toMinutes(prev.timestamp);
+  const b = toMinutes(cur.timestamp);
+  if (a == null || b == null) return false;
+  const diff = b - a;
+  return diff >= TIME_GAP_MINUTES || diff < 0;
+}
+
+/**
  * 单个会话的对话区：以 sessionId 为 React key 挂载，
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  * 智能滚动:用户上翻阅读历史时不强制拉底,显示「回到底部」按钮。
  */
 export function ChatConversation({ sessionId, initialMessages }: ChatConversationProps) {
-  const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage } = useChat({
+  const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend } = useChat({
     initialMessages,
     sessionId,
   });
@@ -71,13 +97,23 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
               <span className="text-xs">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
             </div>
           ) : (
-            messages.map((msg) => (
-              <ChatMessageItem
-                key={msg.id}
-                msg={msg}
-                onRetry={retryMessage}
-                canRetry={!isSending}
-              />
+            messages.map((msg, i) => (
+              <Fragment key={msg.id}>
+                {shouldShowTimeDivider(messages[i - 1], msg) && (
+                  <div className="flex justify-center pb-1">
+                    <span className="text-[10px] text-muted-foreground bg-muted/70 dark:bg-muted/40 px-2.5 py-0.5 rounded-full tabular-nums">
+                      {msg.timestamp}
+                    </span>
+                  </div>
+                )}
+                <ChatMessageItem
+                  msg={msg}
+                  onRetry={retryMessage}
+                  canRetry={!isSending}
+                  onEdit={editAndResend}
+                  canEdit={!isSending}
+                />
+              </Fragment>
             ))
           )}
         </div>
@@ -96,7 +132,7 @@ export function ChatConversation({ sessionId, initialMessages }: ChatConversatio
       )}
 
       <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage} onStop={stopGenerating}
-        reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
+        reasoningLevel={reasoningLevel} onReasoningLevelChange={(l) => { setReasoningLevel(l); useAgentSettings.getState().setReasoningLevelOverride(l); }}
         permissionMode={permissionMode} onPermissionModeChange={setPermissionMode}
         contextTokens={estimateContextTokens(messages, input)}
         contextLimit={resolveContextLimit(messages)} />

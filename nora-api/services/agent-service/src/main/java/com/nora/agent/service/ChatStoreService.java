@@ -55,7 +55,8 @@ public class ChatStoreService {
                         rs.getString("role"),
                         rs.getString("content"),
                         fromJson(rs.getString("steps"), STEP_LIST),
-                        fromJson(rs.getString("sources"), SOURCE_LIST)),
+                        fromJson(rs.getString("sources"), SOURCE_LIST),
+                        rs.getObject("created_at", java.time.LocalDateTime.class)),
                 sessionId);
         // steps 按 (id → 状态) 追加式存储(running 先行、终态覆盖),恢复时合并去重,
         // 并丢弃没有终态的悬挂 running(会话中断残留)
@@ -63,7 +64,7 @@ public class ChatStoreService {
             List<ChatStepDto> steps = loaded.get(i).steps();
             if (steps == null || steps.isEmpty()) continue;
             loaded.set(i, new StoredMessage(loaded.get(i).role(), loaded.get(i).content(),
-                    mergeSteps(steps), loaded.get(i).sources()));
+                    mergeSteps(steps), loaded.get(i).sources(), loaded.get(i).createdAt()));
         }
         return loaded;
     }
@@ -105,6 +106,24 @@ public class ChatStoreService {
     /** Deletes a session and its messages (cascade). Returns false when unknown. */
     public boolean deleteSession(String sessionId) {
         return jdbcTemplate.update("DELETE FROM chat_session WHERE id = ?", sessionId) > 0;
+    }
+
+    /**
+     * Truncates the session history from the message at {@code index}
+     * (0-based, chronological) inclusive — used by the frontend
+     * "edit & resend" flow so the LLM context stays consistent with the UI.
+     *
+     * @return number of messages deleted; -1 when the index is out of range
+     */
+    public int truncateFrom(String sessionId, int index) {
+        List<StoredMessage> all = loadMessages(sessionId);
+        if (index < 0 || index >= all.size()) {
+            return -1;
+        }
+        java.time.LocalDateTime cutoff = all.get(index).createdAt();
+        return jdbcTemplate.update(
+                "DELETE FROM chat_message WHERE session_id = ? AND created_at >= ?",
+                sessionId, cutoff);
     }
 
     public void saveReflection(String sessionId, String taskSignature, String reflection) {
@@ -159,12 +178,24 @@ public class ChatStoreService {
         }
     }
 
-    /** One persisted message row. */
+    /**
+     * One persisted message row. {@code createdAt} 是落库时间——列是
+     * {@code timestamp without time zone}、写入的是本地挂钟时间,必须按
+     * {@link java.time.LocalDateTime} 原样读出(不贴时区标签);若用
+     * OffsetDateTime 读,JDBC 会按 DB 会话时区(UTC)错误标注 Z,前端会
+     * 再加 8 小时。序列化为 ISO {@code yyyy-MM-dd'T'HH:mm[:ss]}。
+     */
     public record StoredMessage(
             String role,
             String content,
             List<ChatStepDto> steps,
-            List<CitationDto> sources
+            List<CitationDto> sources,
+            java.time.LocalDateTime createdAt
     ) {
+
+        /** Back-compat constructor for in-memory messages that have no DB timestamp. */
+        public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources) {
+            this(role, content, steps, sources, null);
+        }
     }
 }

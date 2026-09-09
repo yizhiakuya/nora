@@ -33,11 +33,14 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
       const response = await fetch(`${API_BASE}/chat/health`);
       const ok = response.ok;
       const wasOffline = get().online === false;
+      const firstOnline = get().online === null && ok;
       set({ online: ok, lastCheckedAt: Date.now() });
       if (ok) {
         consecutiveFailures = 0;
-        if (wasOffline) {
-        // 恢复在线:通知各 store 重新拉数据(动态 import 避免环)
+        // 首次探测成功(online 从 null 转 true)或离线恢复:重新拉数据
+        // (动态 import 避免环)。首次也要拉——agent 设置等 store 的本地
+        // 缓存可能是空的,不拉的话设置永远到不了 UI
+        if (wasOffline || firstOnline) {
         const { useModelProviders } = await import("@/hooks/useModelProviders");
         void useModelProviders.getState().syncFromBackend();
         const { useFiles } = await import("@/hooks/useFiles");
@@ -52,6 +55,8 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
         void useAutomations.getState().syncFromBackend();
         const { useKnowledgeDocs } = await import("@/hooks/useKnowledgeDocs");
         void useKnowledgeDocs.getState().syncFromBackend();
+        const { useAgentSettings } = await import("@/hooks/useChat");
+        void useAgentSettings.getState().syncFromBackend();
         }
       } else {
         consecutiveFailures++;

@@ -69,6 +69,8 @@ export interface ChatMessage {
   errorRaw?: string;
   /** 本轮被用户主动停止(保留已流出的部分内容) */
   stopped?: boolean;
+  /** 本轮流式开始时刻(Date.now());仅进行中的消息有,用于 UI 实时计时 */
+  startedAtMs?: number;
 }
 
 export type PermissionMode = "ask" | "assist" | "full";
