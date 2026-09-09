@@ -176,6 +176,46 @@ class ChatOrchestrationServiceTest {
         assertEquals(4, declinedStep.roundIndex(), "structured steps carry the ReAct round");
     }
 
+    @Test
+    void headlessChannelRejectsCriticalTools() {
+        // 无会话通道(/agent/run):CRITICAL 工具必须被拒——没有用户在场,审批不可达;
+        // step 记 declined,模型收到引导文案,且工具从未执行(下方无 recorder 涉及)
+        ChatOrchestrationService headless = new ChatOrchestrationService(
+                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
+                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), 5);
+        Map<String, Integer> fingerprints = new java.util.HashMap<>();
+        List<ChatStepDto> steps = new java.util.ArrayList<>();
+        ChatOrchestrationService.ChatEventConsumer consumer = new NoopConsumer() {
+            @Override
+            public void step(ChatStepDto step) { steps.add(step); }
+        };
+
+        invokeEmitFull(headless, "s-h1", "manage_datasource",
+                "{\"action\": \"remove\", \"target\": \"1\"}", fingerprints, 1, consumer);
+
+        assertEquals("declined", steps.get(steps.size() - 1).status(), "critical tool declined on headless channel");
+        assertTrue(steps.get(steps.size() - 1).result().error().contains("不可逆操作"),
+                "error text tells the model why + what to do");
+    }
+
+    /** emitToolStep with explicit permission mode and sessionId (headless = null session). */
+    private void invokeEmitFull(ChatOrchestrationService svc, String stepId, String tool, String args,
+                                Map<String, Integer> fingerprints,
+                                int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
+        try {
+            var method = ChatOrchestrationService.class.getDeclaredMethod("emitToolStep",
+                    String.class, String.class, String.class, Map.class, List.class, String.class,
+                    int.class, PermissionMode.class, String.class,
+                    ChatOrchestrationService.ChatEventConsumer.class);
+            method.setAccessible(true);
+            List<Object> wireList = new java.util.ArrayList<>();
+            method.invoke(svc, stepId, tool, args, fingerprints, wireList, "call-h1", roundIndex,
+                    PermissionMode.FULL, null, consumer);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     /** Captures the tool message the orchestrator backfills (role=tool JSON). */
     private void invokeEmit(ChatOrchestrationService svc, String stepId, String tool, String args,
                             Map<String, Integer> fingerprints, List<Object[]> messages,

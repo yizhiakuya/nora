@@ -431,6 +431,19 @@ public class ChatOrchestrationService {
             log.info("loop warning: {} called {} times with identical args", name, repeats);
         }
 
+        // 无会话通道闸(/agent/run 等 automation 场景):sessionId 为 null 意味着
+        // 没有用户在场,审批门(APPWD/ASSIST 的询问)形同虚设——CRITICAL(不可逆/
+        // 带外操作)在此通道一律拒绝;模型会收到引导文案转告调用方走聊天通道
+        if (sessionId == null && RiskClassifier.classify(name, args) == RiskClassifier.Risk.CRITICAL) {
+            String error = "拒绝执行：" + name + " 属于不可逆操作(删除/注册类),只能在有人值守的聊天对话中执行"
+                    + "(用户需亲自批准)。请把这一结论连同操作目的返回给调用方";
+            finishToolStep(toolStepId, name, title, input, toolStart,
+                    new ChatStepDto.StepResult(null, "无人值守通道拒绝执行", null, null, false, error),
+                    "declined", roundIndex, eventConsumer);
+            backfillToolMessage(messages, callId, "ERROR: " + error);
+            return;
+        }
+
         // 审批门:ASK 全问;ASSIST 问 HIGH+CRITICAL;FULL 只问 CRITICAL
         // (不可逆/带外操作,如删数据源、注册纳管命令)。审批状态保存在
         // 服务端(ApprovalService),模型文本中的"同意"不构成批准
