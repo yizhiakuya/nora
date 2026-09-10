@@ -59,7 +59,10 @@ java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
 ```
 
 Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local` 的 `NORA_EMBEDDING_API_KEY`
-（**禁止提交、禁止回显**）。未配置时检索类端点降级为业务异常，文档列表仍可用。
+（**禁止提交、禁止回显**）。启动时由 nora-common 的 `DotenvEnvironmentPostProcessor` 自动加载
+（最低优先级，真实环境变量优先；查找顺序 `NORA_ENV_FILE` > cwd/.env.local > cwd/nora-api/.env.local）。
+未配置时检索类端点降级为业务异常，文档列表仍可用。外网调用（Jina/LLM 上游）需经代理，`.env.local`
+中配 `NORA_PROXY_ENABLED/HOST/PORT`。
 
 > ✅ **环境说明（2026-09-06 已修复）**：本机 Git Bash 下 `mvn` 曾启动失败
 > （`ClassNotFoundException: plexus.classworlds.launcher`）。根因是 Maven 官方 `bin/mvn`

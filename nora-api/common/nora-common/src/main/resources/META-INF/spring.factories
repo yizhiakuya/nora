@@ -1,0 +1,3 @@
+# EnvironmentPostProcessor 必须经 spring.factories 注册(不支持 AutoConfiguration.imports)
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.nora.common.config.DotenvEnvironmentPostProcessor

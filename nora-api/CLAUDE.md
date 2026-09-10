@@ -30,6 +30,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - 工具输出 30K/10K 截断;循环熔断(同参数 3 次阻断)
 - execute_sql guardrail:单条 SELECT/SHOW/EXPLAIN
 - **取消语义**:cancel/超时中断编排线程后,JDK HttpClient 阻塞读抛 `IOException(InterruptedException)` 进 streamUpstream 的 `failed` 结果——编排层到处检查 `Thread.currentThread().isInterrupted()`/`isInterruption(cause)` 短路返回 `failedFuture(CancellationException)`,**任何空响应重试/最终回答兜底都必须排除中断**,否则取消变成多烧一整轮 token 且取消轮被当正常完成落库;控制器收尾的 `answer` StringBuilder 靠 `delta()` append 维持半截内容
+- **`.env.local` 启动自动加载**:nora-common `DotenvEnvironmentPostProcessor`(spring.factories 注册)以最低优先级加载 `nora-api/.env.local`,真实环境变量优先;key 找不到会走默认空值 → rag 报 "embedding not configured"、外网调用直连超时(需 `NORA_PROXY_ENABLED=true`)——排障先查 dotenv 日志与 key/代理
 
 ## LLM 通道
 
@@ -45,7 +46,7 @@ agent-service → sub2api 中转 `http://192.168.0.109:28765/v1`(内网直连);p
 
 ## 测试
 
-`mvn -pl services/agent-service test`(21 用例)
+`mvn -pl services/agent-service test`(32 用例)+ `mvn -pl common/nora-common test`(8 用例)+ `mvn -pl services/rag-service test`(30 用例)
 
 ## 文档
 
