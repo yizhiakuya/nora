@@ -21,6 +21,8 @@ pnpm exec tsc --noEmit  # 类型检查
 pnpm exec vitest run    # 单测
 ```
 
+- 前端开发服务统一用内置浏览器预览启动(name=`nora-web`, 端口 3001, 配置见 `.claude/launch.json`),不要用裸 `pnpm dev` 后台进程;截图/控制台检查直接在内置浏览器完成
+
 ## 硬性规则(Windows)
 
 - **重启后端服务前必须先停旧进程**:jar 被锁会导致 repackage 失败(Unable to rename)。`netstat -ano | grep :<port>` 找 PID → `powershell Stop-Process -Id <pid> -Force`
