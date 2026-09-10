@@ -132,7 +132,7 @@ export function Sidebar() {
                 <button className="md:hidden ml-1 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg shrink-0" onClick={() => setIsOpen(false)}><X className="w-5 h-5" /></button>
               </div>
           </div>
-          <div className="flex-1 overflow-y-auto custom-scroll px-2 sm:px-3 py-2">
+          <div className="flex-1 overflow-y-auto custom-scroll sidebar-scroll px-2 sm:px-3 py-2">
             <nav className="space-y-1">
               {NAV_ITEMS.map((item) => {
                 const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
@@ -141,7 +141,7 @@ export function Sidebar() {
                     <Link
                       to={item.href}
                       title={collapsed ? item.name : undefined}
-                      className={cn("flex items-center rounded-lg text-sm font-medium transition-all group cursor-pointer", collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5", isActive ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
+                      className={cn("sidebar-item flex items-center rounded-lg text-sm font-medium transition-all group cursor-pointer", collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5", isActive ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                     >
                       <div className={cn("flex items-center", collapsed ? "justify-center" : "gap-3")}><item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground group-hover:text-foreground")} />{!collapsed && <span className="truncate">{item.name}</span>}</div>
                     </Link>
