@@ -11,6 +11,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - `components/settings/model/ReasoningLevelConfig.tsx` — per-model 推理等级配置
 - `hooks/useSkills` — 技能唯一数据源(列表走 /api/skills 不带正文;详情按需 loadDetail 拉正文——渐进披露);后端模式 CRUD 乐观更新+失败回滚
 - `components/settings/WorkspaceSettings.tsx` — 设置中心「工作区」:agent 文件系统私有空间(也是记忆载体:USER.md/MEMORY.md 自动注入;memory/ 日记按需读);文件树 + 编辑器 + 保存/删除,人工检查与修正 agent 记忆的入口
+- `components/files/WorkspaceBrowser.tsx` — 文件页「Agent 工作区」Tab:同一工作区的文件树浏览 + 编辑器(agent 记忆的人工查看入口);范围切换在 `app/files/page.tsx`(我的文件 / Agent 工作区)
 - `lib/services/workspaceApi.ts` — 工作区 API 接入层(stats/files/read/write/delete)
 
 ## 约定

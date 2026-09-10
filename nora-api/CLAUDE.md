@@ -14,7 +14,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **编排** `ChatOrchestrationService.chat()`:RAG 检索 → 每轮 `streamTurn` 真流式(JDK HttpClient 逐行读上游 SSE,tool_calls 增量累积到流结束再执行)→ `streamFinalAnswer` 兜底
 - **usage**:上游最后 chunk(空 choices)带真实 token,跨工具轮累加后 `done.usage` 下发
 - **持久化**:会话/消息/step 落 schema_agent;reasoning 聚合后一次性保存(`s-reasoning-{round}`)
-- **工作区/记忆(文件系统,对齐 OpenClaw)**:agent 的私有目录(默认 `D:/claude/Nora/agent-workspace`,可配 `nora.agent.workspace`)既是文件工具根目录也是记忆载体——`AGENTS.md`(行为指令)/`SOUL.md`(人设)/`USER.md`(偏好)/`MEMORY.md`(耐久事实)**每轮自动注入**系统提示,逐文件 6k 字 + 总量 16k 字双预算截断;`memory/YYYY-MM-DD.md` 日记只列清单不注入,按需 `read`。「记住…」= 落盘(无隐藏状态);文件工具 `manage_workspace`(list/read/write/append/delete)全部锁定工作区内(拒绝绝对路径/`..`/符号链接逃逸);管理 API `/api/workspace`(GET stats / files / file,PUT file,DELETE file)。前端:设置中心「工作区」标签页可查看/编辑/删除(改完立即影响下轮对话)
+- **工作区/记忆(文件系统,对齐 OpenClaw)**:agent 的目录(默认 `D:/claude/Nora/agent-workspace`,可配 `nora.agent.workspace`)既是**默认 cwd**也是记忆载体——`AGENTS.md`(行为指令)/`SOUL.md`(人设)/`USER.md`(偏好)/`MEMORY.md`(耐久事实)**每轮自动注入**系统提示,逐文件 6k 字 + 总量 16k 字双预算截断;`memory/YYYY-MM-DD.md` 日记只列清单不注入,按需 `read`。「记住…」= 落盘(无隐藏状态)。**工作区是默认目录而非硬沙箱**(OpenClaw 语义):相对路径=区内,**绝对路径=整机**(agent 可读/写项目文件);风险分级 `manage_workspace`——区内写=LOW 自动、区外写=HIGH(ASSIST 询问)、区外删=CRITICAL(任何档位确认),系统目录(Windows/Program Files/盘根)写删硬拒;管理 API `/api/workspace`(GET stats/files/file,PUT file,DELETE file——**仅限区内**,前端管理通道不开放整机)。前端:文件页「Agent 工作区」Tab(文件树+编辑器)+ 设置中心「工作区」页
 - **指令型技能**:`agent_skill` 表(名称/描述/分类/正文),启用技能的**目录**(名称+描述)注入系统提示,正文由 `manage_skill action=read` 按需拉取(渐进披露,不占每轮预算);CRUD API `/api/skills`(列表不返回正文,详情才返回);agent 可在对话中 create/update 沉淀技能(闭环自管)
 
 ## 模型/推理注入规则
@@ -48,7 +48,7 @@ agent-service → sub2api 中转 `http://192.168.0.109:28765/v1`(内网直连);p
 
 ## 测试
 
-`mvn -pl services/agent-service test`(51 用例)+ `mvn -pl common/nora-common test`(8 用例)+ `mvn -pl services/rag-service test`(30 用例)
+`mvn -pl services/agent-service test`(61 用例)+ `mvn -pl common/nora-common test`(8 用例)+ `mvn -pl services/rag-service test`(30 用例)
 
 ## 文档
 

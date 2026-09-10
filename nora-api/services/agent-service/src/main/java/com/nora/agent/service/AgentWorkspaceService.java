@@ -33,8 +33,13 @@ import java.util.stream.Stream;
  * <p>模型只记住落盘的东西(无隐藏状态):记忆写入就是普通文件写。
  * 注入有逐文件/总量双重预算,超限截断并标记;缺失文件注入占位符。
  *
- * <p>安全:所有路径解析锁定在根目录内(拒绝绝对路径、{@code ..}、符号链接逃逸);
- * 读写有大小上限;文件操作由 {@code manage_workspace} 工具暴露。
+ * <p>安全模型(对齐 OpenClaw):工作区是**默认 cwd 而非硬沙箱**——相对路径以工作区为基准,
+ * 绝对路径/区外路径允许访问(整机),风险由审批分级把门:
+ * 区内写=LOW(记忆维护自动放行)、区外写=HIGH(ASSIST 询问)、区外删=CRITICAL(任何档位确认);
+ * 系统目录(Windows/Program Files/盘根)写删一律拒绝。读写有大小上限。
+ *
+ * <p>前端管理 API 走 {@link #resolveSafe}(仅区内);
+ * agent 工具走 {@link #resolveAny} + 审批分级。
  */
 @Service
 public class AgentWorkspaceService {
@@ -117,10 +122,40 @@ public class AgentWorkspaceService {
         }
     }
 
-    // ---------- 路径安全 ----------
+    // ---------- 路径解析 ----------
+
+    /** 解析结果:目标绝对路径 + 是否位于工作区内(决定风险分级)。 */
+    public record ResolvedTarget(Path path, boolean insideWorkspace) {
+        /** 展示用路径:区内→相对,区外→绝对。 */
+        public String display() {
+            return insideWorkspace ? path.getFileName().toString() : path.toString();
+        }
+    }
+
+    /**
+     * 解析任意路径(agent 工具用):相对路径以工作区为基准(OpenClaw cwd 语义),
+     * 绝对路径与 {@code ..} 逃逸解析为工作区外目标——不在此拒绝,由
+     * {@code RiskClassifier} 按"区内/区外"分级审批(区外写=HIGH、区外删=CRITICAL)。
+     */
+    public ResolvedTarget resolveAny(String path) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalArgumentException("路径不能为空");
+        }
+        String cleaned = path.trim().replace('\\', '/');
+        Path resolved;
+        boolean absolute = cleaned.startsWith("/") || cleaned.matches("^[A-Za-z]:.*");
+        if (absolute) {
+            resolved = Path.of(cleaned).toAbsolutePath().normalize();
+        } else {
+            resolved = root.resolve(cleaned).normalize();
+        }
+        boolean inside = resolved.startsWith(root);
+        return new ResolvedTarget(resolved, inside);
+    }
 
     /**
      * 解析相对路径为工作区内的绝对路径;越界(绝对路径/.. /符号链接逃逸)抛异常。
+     * 用于前端管理 API 与引导注入——这些通道只允许操作工作区内文件。
      *
      * @param relative 模型给的相对路径(允许 / 或 \ 分隔)
      */
@@ -150,16 +185,54 @@ public class AgentWorkspaceService {
         return resolved;
     }
 
+    /** 系统目录防呆:写/删一律拒绝(读允许,避免 agent 误改操作系统文件)。 */
+    private static final List<String> SYSTEM_PATH_BLOCKLIST = List.of(
+            "/windows/", "/windows\\", "/program files/", "/program files (x86)/",
+            "/programdata/", "/$recycle.bin/", "/system volume information/");
+
+    static boolean isSystemPath(Path p) {
+        String s = p.toString().replace('\\', '/').toLowerCase();
+        // 盘符根(C:/ D:/ 本身)也拒绝写删
+        if (s.matches("^[a-z]:$") || s.matches("^[a-z]:/$")) {
+            return true;
+        }
+        return SYSTEM_PATH_BLOCKLIST.stream().anyMatch(s::contains);
+    }
+
+    private static void guardSystemPath(Path file, String action) {
+        if (isSystemPath(file)) {
+            throw new IllegalArgumentException("拒绝" + action + "系统目录/盘根: " + file
+                    + "(该路径属于操作系统关键区域,请指定具体项目目录)");
+        }
+    }
+
     // ---------- 文件操作 ----------
 
     public record FileEntry(String path, boolean directory, long size, String modifiedAt) {
     }
 
+    /** 路径展示:区内→相对工作区,区外→绝对。 */
+    private String displayPath(Path p) {
+        return p.startsWith(root)
+                ? root.relativize(p).toString().replace(java.io.File.separatorChar, '/')
+                : p.toString().replace(java.io.File.separatorChar, '/');
+    }
+
     /** 列举目录(depth 1,JSON 友好):相对路径、大小、修改时间。 */
     public List<FileEntry> list(String relativeDir) {
         Path dir = (relativeDir == null || relativeDir.isBlank()) ? root : resolveSafe(relativeDir);
+        return listDir(dir);
+    }
+
+    /** 列举任意目录(agent 工具用;区外由审批把门)。 */
+    public List<FileEntry> listAny(String path) {
+        Path dir = (path == null || path.isBlank()) ? root : resolveAny(path).path();
+        return listDir(dir);
+    }
+
+    private List<FileEntry> listDir(Path dir) {
         if (!Files.isDirectory(dir)) {
-            throw new IllegalArgumentException("不是目录: " + relativeDir);
+            throw new IllegalArgumentException("不是目录: " + dir);
         }
         List<FileEntry> entries = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(dir, 1)) {
@@ -170,7 +243,7 @@ public class AgentWorkspaceService {
                     .forEach(p -> {
                         try {
                             entries.add(new FileEntry(
-                                    root.relativize(p).toString().replace('\\', '/'),
+                                    displayPath(p),
                                     Files.isDirectory(p),
                                     Files.isDirectory(p) ? 0 : Files.size(p),
                                     Files.getLastModifiedTime(p).toInstant()
@@ -188,14 +261,22 @@ public class AgentWorkspaceService {
 
     /** 读取文本文件(限长;二进制拒绝)。 */
     public String read(String relative) {
-        Path file = resolveSafe(relative);
+        return readPath(resolveSafe(relative));
+    }
+
+    /** 读取任意文件(agent 工具用;区外按审批档位放行)。 */
+    public String readAny(String path) {
+        return readPath(resolveAny(path).path());
+    }
+
+    private String readPath(Path file) {
         if (!Files.isRegularFile(file)) {
-            throw new IllegalArgumentException("文件不存在: " + relative);
+            throw new IllegalArgumentException("文件不存在: " + file);
         }
         try {
             String content = Files.readString(file, StandardCharsets.UTF_8);
             if (content.indexOf('\u0000') >= 0) {
-                throw new IllegalArgumentException("拒绝读取二进制文件: " + relative);
+                throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
             }
             if (content.length() > MAX_FILE_CHARS) {
                 return content.substring(0, MAX_FILE_CHARS) + "\n…(文件过大,已截断;完整读取请分段)";
@@ -208,9 +289,18 @@ public class AgentWorkspaceService {
 
     /** 覆盖写入(自动建父目录;限长)。 */
     public int write(String relative, String content) {
-        Path file = resolveSafe(relative);
+        return writePath(resolveSafe(relative), content);
+    }
+
+    /** 写入任意文件(agent 工具用;区外写由 HIGH 审批把门)。 */
+    public int writeAny(String path, String content) {
+        return writePath(resolveAny(path).path(), content);
+    }
+
+    private int writePath(Path file, String content) {
+        guardSystemPath(file, "写入");
         if (Files.isDirectory(file)) {
-            throw new IllegalArgumentException("目标是目录,不能写入: " + relative);
+            throw new IllegalArgumentException("目标是目录,不能写入: " + file);
         }
         String body = content == null ? "" : content;
         if (body.length() > MAX_FILE_CHARS) {
@@ -228,7 +318,16 @@ public class AgentWorkspaceService {
 
     /** 追加(不存在则创建)。 */
     public int append(String relative, String content) {
-        Path file = resolveSafe(relative);
+        return appendPath(resolveSafe(relative), content);
+    }
+
+    /** 追加任意文件(agent 工具用)。 */
+    public int appendAny(String path, String content) {
+        return appendPath(resolveAny(path).path(), content);
+    }
+
+    private int appendPath(Path file, String content) {
+        guardSystemPath(file, "写入");
         String body = content == null ? "" : content;
         if (body.length() > MAX_FILE_CHARS) {
             throw new IllegalArgumentException("内容超过 " + MAX_FILE_CHARS + " 字符上限");
@@ -249,16 +348,25 @@ public class AgentWorkspaceService {
 
     /** 删除文件(拒绝目录与根)。 */
     public void delete(String relative) {
-        Path file = resolveSafe(relative);
+        deletePath(resolveSafe(relative));
+    }
+
+    /** 删除任意文件(agent 工具用;区外删由 CRITICAL 审批把门)。 */
+    public void deleteAny(String path) {
+        deletePath(resolveAny(path).path());
+    }
+
+    private void deletePath(Path file) {
+        guardSystemPath(file, "删除");
         if (file.equals(root)) {
             throw new IllegalArgumentException("不能删除工作区根目录");
         }
         if (Files.isDirectory(file)) {
-            throw new IllegalArgumentException("这里是目录;为防误删,请逐个删除文件: " + relative);
+            throw new IllegalArgumentException("这里是目录;为防误删,请逐个删除文件: " + file);
         }
         try {
             if (!Files.deleteIfExists(file)) {
-                throw new IllegalArgumentException("文件不存在: " + relative);
+                throw new IllegalArgumentException("文件不存在: " + file);
             }
         } catch (IOException e) {
             throw new IllegalArgumentException("删除失败: " + e.getMessage());
@@ -295,7 +403,7 @@ public class AgentWorkspaceService {
     public String bootstrapPrompt() {
         try {
             StringBuilder sb = new StringBuilder();
-            sb.append("以下是你的工作区(文件系统上的私有空间,用 manage_workspace 工具读写;工作区内用相对路径):\n");
+            sb.append("以下是你的工作区(文件系统上的私有空间,也是你的记忆载体;用 manage_workspace 工具读写)。相对路径=工作区内;绝对路径(如 D:/projects/...)可访问整机——帮用户查看/整理项目文件时直接用,写/删区外文件会请求用户确认:\n");
             sb.append("工作区根: ").append(root).append("\n");
             int total = 0;
             for (String name : BOOTSTRAP_FILES) {

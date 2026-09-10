@@ -762,6 +762,20 @@ public class ChatOrchestrationService {
                     risk = "对纳管源执行 " + action + " 操作";
                 }
             }
+            case "manage_workspace" -> {
+                actionType = "workspace_file";
+                JsonNode a = parseArgsSafe(rawArgs);
+                String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction();
+                String p = a.path("path").asText(null);
+                if (p == null) {
+                    p = a.path("dir").asText(null);
+                }
+                target = p == null ? "工作区" : p;
+                detail = "操作: " + action + " | 路径: " + target
+                        + (a.has("content")
+                        ? " | 内容预览: " + abbreviate(a.path("content").asText(""), 200) : "");
+                risk = "该路径在工作区之外——将改动本机的真实文件(不可自动撤销)";
+            }
             default -> {
                 if (toolName.startsWith("mcp__")) {
                     actionType = "mcp_tool";
@@ -1100,8 +1114,13 @@ public class ChatOrchestrationService {
                 String path = a.path("path").asText(null);
                 return new ToolOutcome(switch (action) {
                     case "list" -> {
+                        // dir 优先,其次 path(agent 可能把路径塞进 path)
+                        String dirArg = a.path("dir").asText(null);
+                        if (dirArg == null) {
+                            dirArg = a.path("path").asText(null);
+                        }
                         List<AgentWorkspaceService.FileEntry> entries =
-                                agentWorkspaceService.list(a.path("dir").asText(null));
+                                agentWorkspaceService.listAny(dirArg);
                         if (entries.isEmpty()) {
                             yield "(空目录)";
                         }
@@ -1115,9 +1134,9 @@ public class ChatOrchestrationService {
                     }
                     case "read" -> {
                         if (path == null || path.isBlank()) {
-                            yield "ERROR: 缺少 path 参数(相对路径,如 USER.md 或 memory/2026-09-10.md)";
+                            yield "ERROR: 缺少 path 参数。相对路径=工作区内(如 USER.md);绝对路径可读整机(如 D:/projects/x/README.md)";
                         }
-                        yield agentWorkspaceService.read(path);
+                        yield agentWorkspaceService.readAny(path);
                     }
                     case "write" -> {
                         if (path == null || path.isBlank()) {
@@ -1127,7 +1146,7 @@ public class ChatOrchestrationService {
                         if (content == null) {
                             yield "ERROR: 缺少 content 参数(要写入的完整内容;如需保留原内容请先 read)";
                         }
-                        int written = agentWorkspaceService.write(path, content);
+                        int written = agentWorkspaceService.writeAny(path, content);
                         yield "已写入 " + path + "(" + written + " 字符)";
                     }
                     case "append" -> {
@@ -1138,14 +1157,14 @@ public class ChatOrchestrationService {
                         if (content == null || content.isBlank()) {
                             yield "ERROR: 缺少 content 参数(要追加的内容)";
                         }
-                        int written = agentWorkspaceService.append(path, content);
+                        int written = agentWorkspaceService.appendAny(path, content);
                         yield "已追加 " + written + " 字符到 " + path;
                     }
                     default -> {
                         if (path == null || path.isBlank()) {
-                            yield "ERROR: 缺少 path 参数(相对路径;删除不可恢复,请先向用户确认)";
+                            yield "ERROR: 缺少 path 参数;删除不可恢复,请先向用户确认";
                         }
-                        agentWorkspaceService.delete(path);
+                        agentWorkspaceService.deleteAny(path);
                         yield "已删除 " + path;
                     }
                 }, null, null, false);
@@ -2157,11 +2176,14 @@ public class ChatOrchestrationService {
         wsTool.put("type", "function");
         ObjectNode wsFn = wsTool.putObject("function");
         wsFn.put("name", "manage_workspace");
-        wsFn.put("description", "读写你的工作区(文件系统上的私有空间,也是你的长期记忆)。"
+        wsFn.put("description", "文件系统读写(工作区是你的家目录,也是你的长期记忆)。"
                 + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除。"
+                + "**相对路径=工作区内**(如 USER.md、memory/2026-09-10.md);"
+                + "**绝对路径=整机任意位置**(如 D:/projects/app/src/main.ts、C:/Users/xxx/notes.md),"
+                + "可帮用户查看/整理项目文件——写/删工作区外的文件前用户会被要求确认。"
                 + "记忆维护约定:稳定偏好→USER.md,耐久事实/决定→MEMORY.md(保持精简,每轮自动注入),"
                 + "日常观察/进度→memory/YYYY-MM-DD.md(按需读取)。用户说「记住…」时必须落盘。"
-                + "示例:{\"action\": \"append\", \"path\": \"memory/2026-09-10.md\", \"content\": \"- 完成了 X\"}");
+                + "示例:{\"action\": \"read\", \"path\": \"D:/projects/myapp/package.json\"}");
         ObjectNode wsParams = wsFn.putObject("parameters");
         wsParams.put("type", "object");
         wsParams.put("additionalProperties", false);
@@ -2171,10 +2193,10 @@ public class ChatOrchestrationService {
         wsActionProp.put("description", "list / read / write / append / delete");
         ObjectNode wsPathProp = wsProps.putObject("path");
         wsPathProp.put("type", "string");
-        wsPathProp.put("description", "read/write/append/delete 时:工作区内相对路径(如 USER.md、MEMORY.md、memory/2026-09-10.md)");
+        wsPathProp.put("description", "read/write/append/delete 时:相对路径=工作区内(如 USER.md);绝对路径=整机(如 D:/projects/x/README.md;写/删前会被要求确认)");
         ObjectNode wsDirProp = wsProps.putObject("dir");
         wsDirProp.put("type", "string");
-        wsDirProp.put("description", "list 时:相对目录(省略=根目录)");
+        wsDirProp.put("description", "list 时:目录(相对=工作区内;绝对=整机;省略=工作区根目录)");
         ObjectNode wsContentProp = wsProps.putObject("content");
         wsContentProp.put("type", "string");
         wsContentProp.put("description", "write/append 时:文件内容(write 会覆盖整文件,先 read 再写)");

@@ -123,4 +123,58 @@ class AgentWorkspaceServiceTest {
         assertTrue(service.todayDailyPath().startsWith("memory/"));
         assertTrue(service.todayDailyPath().endsWith(".md"));
     }
+
+    // ---- 任意路径(区外)语义:工作区=默认 cwd,而非硬沙箱 ----
+
+    @Test
+    void resolveAnyMarksInsideAndOutside() {
+        AgentWorkspaceService.ResolvedTarget inside = service.resolveAny("USER.md");
+        assertTrue(inside.insideWorkspace(), "相对路径=区内");
+        assertTrue(inside.path().startsWith(tmp));
+
+        AgentWorkspaceService.ResolvedTarget outside = service.resolveAny("D:/somewhere/other.txt");
+        assertTrue(!outside.insideWorkspace(), "绝对路径=区外");
+    }
+
+    @Test
+    void writeAnyToOutsidePathWorksAndCreatesParentDirs() throws Exception {
+        Path outside = tmp.getParent().resolve("nora-ws-test-outside-" + System.nanoTime() + "/a/b/note.md");
+        try {
+            service.writeAny(outside.toString(), "hello outside");
+            assertEquals("hello outside", java.nio.file.Files.readString(outside));
+            service.deleteAny(outside.toString());
+            assertTrue(!java.nio.file.Files.exists(outside));
+        } finally {
+            // 递归清理测试残留目录
+            Path root = outside.getParent().getParent().getParent();
+            try (java.util.stream.Stream<Path> walk = java.nio.file.Files.walk(root)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                    try {
+                        java.nio.file.Files.deleteIfExists(p);
+                    } catch (java.io.IOException ignored) {
+                    }
+                });
+            } catch (java.io.IOException ignored) {
+            }
+        }
+    }
+
+    @Test
+    void writeAnyRefusesSystemPaths() {
+        assertThrows(IllegalArgumentException.class,
+                () -> service.writeAny("C:/Windows/System32/test.txt", "x"));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.deleteAny("D:/"));
+    }
+
+    @Test
+    void readAnyAllowsOutsideRead() throws Exception {
+        Path outside = tmp.getParent().resolve("nora-ws-read-test-" + System.nanoTime() + ".txt");
+        java.nio.file.Files.writeString(outside, "outside content");
+        try {
+            assertEquals("outside content", service.readAny(outside.toString()));
+        } finally {
+            java.nio.file.Files.deleteIfExists(outside);
+        }
+    }
 }

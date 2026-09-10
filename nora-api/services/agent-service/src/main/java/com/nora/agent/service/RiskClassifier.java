@@ -36,6 +36,12 @@ final class RiskClassifier {
      * @param argsJson 模型填的参数 JSON
      */
     static Risk classify(String toolName, String argsJson) {
+        if ("manage_workspace".equals(toolName)) {
+            // 工作区语义(对齐 OpenClaw):默认 cwd 而非硬沙箱。
+            // 区内:读 LOW、写/追加 LOW(记忆维护需自动)——这与「记住…」必须即时落盘矛盾最小;
+            // 区外:读仍 LOW(只读无破坏),写/追加 HIGH,删除 CRITICAL(不可逆)
+            return classifyWorkspace(argsJson);
+        }
         if ("execute_write_sql".equals(toolName)) {
             return Risk.HIGH;
         }
@@ -73,6 +79,64 @@ final class RiskClassifier {
             return Risk.HIGH;
         }
         return Risk.LOW;
+    }
+
+    /**
+     * manage_workspace 的风险分级:解析 args 的 action 与 path,
+     * 判断目标是否在工作区内(相对路径=区内;绝对路径/.. = 区外)。
+     * 解析失败按 HIGH 保守处理。
+     */
+    private static Risk classifyWorkspace(String argsJson) {
+        if (argsJson == null || argsJson.isBlank()) {
+            return Risk.HIGH;
+        }
+        try {
+            String action = extractAction(argsJson).toLowerCase(Locale.ROOT);
+            if ("list".equals(action) || "read".equals(action)) {
+                return Risk.LOW; // 读操作无副作用(含区外读)
+            }
+            boolean knownAction = "write".equals(action) || "append".equals(action) || "delete".equals(action);
+            if (!knownAction) {
+                return Risk.HIGH; // 参数坏/action 未知:保守按 HIGH
+            }
+            // 写/追加/删除:判定目标是否区外
+            String path = extractStringField(argsJson, "path");
+            String dir = extractStringField(argsJson, "dir");
+            String target = path != null ? path : dir;
+            boolean outside = isOutsideWorkspace(target);
+            if ("delete".equals(action)) {
+                return outside ? Risk.CRITICAL : Risk.HIGH;
+            }
+            // write / append:区内=LOW(记忆维护须即时落盘,不打扰);区外=HIGH
+            return outside ? Risk.HIGH : Risk.LOW;
+        } catch (Exception e) {
+            return Risk.HIGH;
+        }
+    }
+
+    /** 简单判定:绝对路径或含 ../ 上跳 = 工作区外。 */
+    private static boolean isOutsideWorkspace(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        String cleaned = path.trim().replace(java.io.File.separatorChar, '/');
+        return cleaned.startsWith("/") || cleaned.matches("^[A-Za-z]:.*") || cleaned.contains("../");
+    }
+
+    /** 提取 args JSON 里的指定字符串字段(简易解析,失败返回 null)。 */
+    private static String extractStringField(String argsJson, String field) {
+        try {
+            int idx = argsJson.indexOf("\"" + field + "\"");
+            if (idx < 0) {
+                return null;
+            }
+            int colon = argsJson.indexOf(':', idx);
+            int quoteStart = argsJson.indexOf('"', colon + 1);
+            int quoteEnd = argsJson.indexOf('"', quoteStart + 1);
+            return quoteStart < 0 || quoteEnd < 0 ? null : argsJson.substring(quoteStart + 1, quoteEnd);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** 提取 args JSON 里的 action 字段(解析失败按空串=未知,按 HIGH 处理)。 */

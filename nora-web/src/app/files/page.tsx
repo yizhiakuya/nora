@@ -12,6 +12,7 @@ import { useSelection } from "@/hooks/useSelection";
 import { useSimulatedUpload } from "@/hooks/useUpload";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
+import { WorkspaceBrowser } from "@/components/files/WorkspaceBrowser";
 import { toast } from "sonner";
 import { FileItem } from "@/types";
 import { useFiles } from "@/hooks/useFiles";
@@ -21,8 +22,12 @@ import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { filesApi } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
+/** 文件页范围:我的文件(上传区) / Agent 工作区(agent 的文件系统空间)。 */
+type FileScope = "mine" | "workspace";
+
 export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [scope, setScope] = useState<FileScope>("mine");
   const files = useFiles((s) => s.files);
   const addFile = useFiles((s) => s.addFile);
   const deleteFiles = useFiles((s) => s.deleteFiles);
@@ -105,10 +110,12 @@ export default function FilesPage() {
         breadcrumbs={[
           { label: "工作台", isCurrent: false },
           { label: "文件中心", isCurrent: false },
-          { label: "全部文件", isCurrent: true },
+          { label: scope === "mine" ? "全部文件" : "Agent 工作区", isCurrent: true },
         ]}
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            {scope === "mine" && (
+            <>
             <div className="relative w-[100px] sm:w-[180px] shrink-0">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3.5 h-3.5" />
               <Input
@@ -125,24 +132,58 @@ export default function FilesPage() {
             <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 shrink-0" onClick={upload.open}>
               <CloudUpload className="w-3.5 h-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">上传文件</span>
             </Button>
+            </>
+            )}
           </div>
         }
       />
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          <div className="flex items-center justify-between mb-4 animate-in fade-in">
-            <h2 className="text-sm font-bold text-foreground">所有文件</h2>
-            <div className="text-xs text-muted-foreground">共 {files.length} 个文件</div>
+          {/* 范围切换:我的文件(用户上传区) / Agent 工作区(agent 的文件系统空间) */}
+          <div role="tablist" aria-label="文件范围" className="inline-flex gap-1 p-1 bg-muted/50 rounded-lg mb-4 animate-in fade-in">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={scope === "mine"}
+              onClick={() => setScope("mine")}
+              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-all ${
+                scope === "mine" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              我的文件
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={scope === "workspace"}
+              onClick={() => setScope("workspace")}
+              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-all ${
+                scope === "workspace" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Agent 工作区
+            </button>
           </div>
 
-          <FileTable
-            files={filteredFiles}
-            selection={selection}
-            onDeleteSelected={handleDeleteSelected}
-            onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
-            onIndex={handleIndexFile}
-          />
+          {scope === "mine" ? (
+            <>
+              <div className="flex items-center justify-between mb-4 animate-in fade-in">
+                <h2 className="text-sm font-bold text-foreground">所有文件</h2>
+                <div className="text-xs text-muted-foreground">共 {files.length} 个文件</div>
+              </div>
+
+              <FileTable
+                files={filteredFiles}
+                selection={selection}
+                onDeleteSelected={handleDeleteSelected}
+                onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
+                onIndex={handleIndexFile}
+              />
+            </>
+          ) : (
+            <WorkspaceBrowser />
+          )}
         </div>
       </div>
 
