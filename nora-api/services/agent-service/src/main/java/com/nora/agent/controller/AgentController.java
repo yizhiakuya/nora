@@ -300,6 +300,7 @@ public class AgentController {
 
                         @Override
                         public void delta(String token) {
+                            answer.append(token);
                             send(emitter, "delta", new DeltaPayload(token));
                         }
 
@@ -332,6 +333,12 @@ public class AgentController {
                         String answerText = turn != null ? turn.answer() : answer.toString();
                         long durationMs = System.currentTimeMillis() - turnStart;
                         var usage = turn != null ? turn.usage() : null;
+                        if (userCancelled) {
+                            // 取消轮收尾:主日志显式记录(此前取消静默到只剩 DEBUG send-fail,
+                            // 时间线上 cancel 之后像断了一样);半截内容照常落库
+                            log.info("turn cancelled by user, persisting partial answer (chars={}, steps={}, durationMs={})",
+                                    answerText.length(), steps.size(), durationMs);
+                        }
                         if (error != null && !userCancelled) {
                             try {
                                 chatStoreService.saveReflection(sessionId, "chat-turn",

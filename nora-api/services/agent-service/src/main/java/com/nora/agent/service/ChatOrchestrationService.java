@@ -278,6 +278,11 @@ public class ChatOrchestrationService {
         Map<String, Integer> callFingerprints = new HashMap<>();
         try {
             for (int round = 0; round < maxToolRounds; round++) {
+                if (Thread.currentThread().isInterrupted()) {
+                    // 工具执行/审批等待期间被取消:不再发起新的上游请求,按取消收场
+                    log.info("tool loop interrupted (user cancel) before round {}, abort turn", round + 1);
+                    return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
+                }
                 roundsUsed[0] = round + 1;
                 int compactedCount = compactForRound(messages, budget, false, PER_REQUEST_OVERHEAD_TOKENS);
                 if (compactedCount > 0) {
@@ -294,6 +299,12 @@ public class ChatOrchestrationService {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
                 if (result.failed) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        // 取消:中断被上游阻塞读转成 failed 结果(streamUpstream 已恢复标志),
+                        // 这里短路——绝不当「空响应」重试,否则取消变成多烧一整轮 token
+                        log.info("tool round interrupted (user cancel), abort turn");
+                        return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
+                    }
                     StreamTurnResult retry = null;
                     if (isContextOverflow(result.errorMessage)) {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
@@ -315,6 +326,11 @@ public class ChatOrchestrationService {
                     }
                 }
                 if (result.failed) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        // 流中取消(已转发部分内容):不发 s-error step,直接按取消收场
+                        log.info("tool round interrupted (user cancel) with partial content, abort turn");
+                        return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
+                    }
                     eventConsumer.step(new ChatStepDto("s-error", "think", "模型返回空响应",
                             result.errorMessage != null ? result.errorMessage : "上游未返回内容,请重试",
                             null, "failed", null, null, null, round + 1));
@@ -340,7 +356,19 @@ public class ChatOrchestrationService {
                 }
             }
         } catch (Exception e) {
+            // 取消穿透工具循环(审批等待 join 被中断抛 CompletionException(InterruptedException)
+            // 且消费掉标志;或流内异常带中断 cause):不回落强制回答,直接按取消收场
+            if (isInterruption(e) || Thread.currentThread().isInterrupted()) {
+                Thread.currentThread().interrupt();
+                log.info("tool loop interrupted (user cancel), abort turn");
+                return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
+            }
             log.warn("tool loop failed, falling back to plain answer", e);
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            // s-error break / 轮次自然耗尽后取消:同样不发最终回答请求
+            log.info("turn interrupted (user cancel) before final answer, abort turn");
+            return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
         }
 
         // Step 3: forced-answer streaming round (with tool outcome already in the messages)
@@ -352,8 +380,9 @@ public class ChatOrchestrationService {
                 + PER_REQUEST_OVERHEAD_TOKENS;
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                 reasoningRound, eventConsumer, ttftMs, turnStartMs);
-        // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试
-        if (finalResult.failed && finalResult.content().isBlank()) {
+        // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试。
+        // 线程被中断(用户取消)绝不重试——那会让取消多烧一整轮上游 token
+        if (finalResult.failed && finalResult.content().isBlank() && !Thread.currentThread().isInterrupted()) {
             if (isContextOverflow(finalResult.errorMessage)) {
                 compactForRound(messages, budget, true, PER_REQUEST_OVERHEAD_TOKENS);
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
@@ -371,6 +400,12 @@ public class ChatOrchestrationService {
                 logCalibration(lastPromptEstimate[0], totalUsage, budget);
                 return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
             }
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            // 取消:不再用最后一次工具结果兜底(那会把取消轮标成正常完成、
+            // 落库完整内容,与前端「停止生成」的半截气泡错位)
+            log.info("turn interrupted (user cancel) at final fallback, abort turn");
+            return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
         }
         // 流式最终回答失败:回落到最后一次工具结果作为回答,而不是死流
         String fallback = fallbackOutcome != null && !fallbackOutcome.isBlank()
@@ -1134,6 +1169,15 @@ public class ChatOrchestrationService {
      * execution after the stream closes. Blocks the calling thread until the
      * upstream stream ends — run on a worker executor.
      */
+    /** 中断识别:JDK HttpClient 阻塞读被 interrupt 时抛 IOException(cause=InterruptedException),逐层找。 */
+    private static boolean isInterruption(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof InterruptedException) return true;
+            if (c.getCause() == c) break; // 自引用防环
+        }
+        return false;
+    }
+
     private StreamTurnResult streamTurn(List<WireMessage> messages, String requestedModel,
                                         String reasoningLevel, int round,
                                         ChatEventConsumer eventConsumer,
@@ -1310,8 +1354,15 @@ public class ChatOrchestrationService {
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
         } catch (Exception e) {
+            // 用户取消时 HttpClient 阻塞读抛 IOException(InterruptedException):
+            // 恢复中断标志让编排层据此短路(不做空响应重试/最终回答兜底)
+            if (isInterruption(e)) {
+                Thread.currentThread().interrupt();
+                sseLog.warn("upstream STREAM FAILED: {} (turn cancelled)", e.toString());
+            } else {
+                sseLog.warn("upstream STREAM FAILED: {}", e.toString());
+            }
             log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
-            sseLog.warn("upstream STREAM FAILED: {}", e.toString());
             return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
                     null, List.of(), usage);
         }
@@ -1512,8 +1563,13 @@ public class ChatOrchestrationService {
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
         } catch (Exception e) {
+            if (isInterruption(e)) {
+                Thread.currentThread().interrupt();
+                sseLog.warn("upstream STREAM FAILED: {} (turn cancelled)", e.toString());
+            } else {
+                sseLog.warn("upstream STREAM FAILED: {}", e.toString());
+            }
             log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
-            sseLog.warn("upstream STREAM FAILED: {}", e.toString());
             return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
                     null, List.of(), usage);
         }
