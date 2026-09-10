@@ -81,7 +81,7 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
           </div>
           <div className="bg-muted rounded-lg p-3">
             <div className="text-muted-foreground mb-0.5 flex items-center gap-1"><Clock className="w-3 h-3" /> 更新时间</div>
-            <div className="text-foreground font-medium">{current.createdAt ?? "—"}</div>
+            <div className="text-foreground font-medium">{formatTimestamp(current.createdAt)}</div>
           </div>
         </div>
 
@@ -124,4 +124,11 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
       </div>
     </Modal>
   );
+}
+
+/** 后端时间戳 → 可读格式(去掉 T 与微秒,如 2026-09-10 22:27)。 */
+function formatTimestamp(value?: string): string {
+  if (!value) return "—";
+  const m = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+  return m ? `${m[1]} ${m[2]}` : value;
 }

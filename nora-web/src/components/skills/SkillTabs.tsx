@@ -14,8 +14,8 @@ interface SkillTabsProps {
 
 export function SkillTabs({ activeTab, onTabChange, searchQuery, onSearchChange }: SkillTabsProps) {
   return (
-    <div className="flex items-center justify-between">
-      <div role="tablist" aria-label="技能分类" className="flex gap-1 p-1 bg-muted/50 rounded-lg">
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div role="tablist" aria-label="技能分类" className="flex gap-1 p-1 bg-muted/50 rounded-lg overflow-x-auto no-scrollbar">
         {TABS.map((tab) => (
           <button
             key={tab}
@@ -23,14 +23,14 @@ export function SkillTabs({ activeTab, onTabChange, searchQuery, onSearchChange 
             role="tab"
             aria-selected={activeTab === tab}
             onClick={() => onTabChange(tab)}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${activeTab === tab ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-gray-200/50 dark:hover:bg-gray-700/50"}`}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all whitespace-nowrap ${activeTab === tab ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-gray-200/50 dark:hover:bg-gray-700/50"}`}
           >
             {tab}
           </button>
         ))}
       </div>
 
-      <div className="relative">
+      <div className="relative shrink-0">
         <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3 h-3" />
         <Input
           placeholder="搜索技能名称或描述..."

@@ -20,7 +20,7 @@ export function SkillCard({ skill, onToggle, onOpen }: { skill: Skill; onToggle:
 
       <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${skill.isOfficial ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400" : "bg-muted text-muted-foreground"}`}>
+          <span className={`text-[10px] px-2 py-0.5 rounded font-medium whitespace-nowrap shrink-0 ${skill.isOfficial ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400" : "bg-muted text-muted-foreground"}`}>
             {skill.isOfficial ? "官方" : "自定义"}
           </span>
           {!skill.isOfficial && skill.createdAt && (
@@ -28,7 +28,7 @@ export function SkillCard({ skill, onToggle, onOpen }: { skill: Skill; onToggle:
           )}
         </div>
         {!skill.enabled && <span className="text-[10px] text-muted-foreground">已停用</span>}
-        {skill.enabled && <span className="text-[10px] text-green-500 dark:text-green-400 font-medium">可用</span>}
+        {skill.enabled && <span className="text-[10px] text-green-500 dark:text-green-400 font-medium whitespace-nowrap">可用</span>}
       </div>
     </div>
   );
