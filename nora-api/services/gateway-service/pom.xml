@@ -38,6 +38,16 @@
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
 
+        <!-- nora-common:仅取共享日志基座(logging/nora-logbase.xml)与 logstash JSON 编码器。
+             gateway 是 WebFlux,servlet 版 TraceIdFilter/LoggingAutoConfiguration 不适用
+             (有 @ConditionalOnWebApplication(SERVLET) 守卫),链路追踪由 GatewayTraceFilter 承担;
+             common 的 web 依赖为 provided 不传递,不会把 servlet 栈带进来。 -->
+        <dependency>
+            <groupId>com.nora</groupId>
+            <artifactId>nora-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

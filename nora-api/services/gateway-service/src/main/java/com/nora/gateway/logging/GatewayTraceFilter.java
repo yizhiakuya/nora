@@ -39,6 +39,16 @@ public class GatewayTraceFilter implements WebFilter, GlobalFilter, Ordered {
                 ? incoming
                 : newTraceId();
         exchange.getAttributes().put(TRACE_ATTR, traceId);
+        // 响应头必须在提交前写入:提交后 Header 变为只读,在 doFinally 里 set 会抛
+        // UnsupportedOperationException(默认 onErrorDropped,且挡住其后语句致路由日志缺失)。
+        // 用 beforeCommit 而非直接 set:提交前上游响应头已合并进来,
+        // 此时已带 trace 头(MVC 服务的 TraceIdFilter 会回写)则不重复叠加,否则由网关补齐。
+        exchange.getResponse().beforeCommit(() -> {
+            if (!exchange.getResponse().getHeaders().containsKey(TRACE_HEADER)) {
+                exchange.getResponse().getHeaders().set(TRACE_HEADER, traceId);
+            }
+            return Mono.empty();
+        });
         return chain.filter(exchange);
     }
 
@@ -52,9 +62,6 @@ public class GatewayTraceFilter implements WebFilter, GlobalFilter, Ordered {
         return chain.filter(exchange.mutate().request(mutated).build())
                 .doFinally(signal -> {
                     ServerHttpResponse response = exchange.getResponse();
-                    if (traceId != null) {
-                        response.getHeaders().set(TRACE_HEADER, traceId);
-                    }
                     String uri = exchange.getRequest().getURI().getPath();
                     String status = response.getStatusCode() != null ? String.valueOf(response.getStatusCode().value()) : "?";
                     log.info("{} {} -> {} [trace={}] ({}ms) [{}]",
