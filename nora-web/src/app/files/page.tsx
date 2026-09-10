@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { Search, FolderPlus, CloudUpload } from "lucide-react";
+import { Search, FolderPlus, CloudUpload, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FolderGrid } from "@/components/files/FolderGrid";
@@ -22,12 +22,11 @@ import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { filesApi } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
-/** 文件页范围:我的文件(上传区) / Agent 工作区(agent 的文件系统空间)。 */
-type FileScope = "mine" | "workspace";
-
 export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [scope, setScope] = useState<FileScope>("mine");
+  /** 工作区导航状态:null=文件中心根视图;""=工作区根目录;"memory/..."=子目录。
+   *  工作区是文件系统的一部分——像普通文件夹一样进入,而不是独立 Tab。 */
+  const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
   const files = useFiles((s) => s.files);
   const addFile = useFiles((s) => s.addFile);
   const deleteFiles = useFiles((s) => s.deleteFiles);
@@ -109,12 +108,14 @@ export default function FilesPage() {
       <Header
         breadcrumbs={[
           { label: "工作台", isCurrent: false },
-          { label: "文件中心", isCurrent: false },
-          { label: scope === "mine" ? "全部文件" : "Agent 工作区", isCurrent: true },
+          { label: "文件中心", isCurrent: workspaceDir === null },
+          ...(workspaceDir !== null
+            ? [{ label: "Agent 工作区", isCurrent: true }]
+            : []),
         ]}
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            {scope === "mine" && (
+            {workspaceDir === null && (
             <>
             <div className="relative w-[100px] sm:w-[180px] shrink-0">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3.5 h-3.5" />
@@ -140,33 +141,7 @@ export default function FilesPage() {
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          {/* 范围切换:我的文件(用户上传区) / Agent 工作区(agent 的文件系统空间) */}
-          <div role="tablist" aria-label="文件范围" className="inline-flex gap-1 p-1 bg-muted/50 rounded-lg mb-4 animate-in fade-in">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={scope === "mine"}
-              onClick={() => setScope("mine")}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-all ${
-                scope === "mine" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              我的文件
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={scope === "workspace"}
-              onClick={() => setScope("workspace")}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-all ${
-                scope === "workspace" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Agent 工作区
-            </button>
-          </div>
-
-          {scope === "mine" ? (
+          {workspaceDir === null ? (
             <>
               <div className="flex items-center justify-between mb-4 animate-in fade-in">
                 <h2 className="text-sm font-bold text-foreground">所有文件</h2>
@@ -179,10 +154,20 @@ export default function FilesPage() {
                 onDeleteSelected={handleDeleteSelected}
                 onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
                 onIndex={handleIndexFile}
+                folderRow={{
+                  name: "Agent 工作区",
+                  description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
+                  icon: Bot,
+                  onOpen: () => setWorkspaceDir(""),
+                }}
               />
             </>
           ) : (
-            <WorkspaceBrowser />
+            <WorkspaceBrowser
+              dir={workspaceDir}
+              onNavigate={setWorkspaceDir}
+              onExit={() => setWorkspaceDir(null)}
+            />
           )}
         </div>
       </div>

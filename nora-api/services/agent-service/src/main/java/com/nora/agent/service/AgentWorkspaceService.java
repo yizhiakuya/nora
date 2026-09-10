@@ -55,8 +55,15 @@ public class AgentWorkspaceService {
     static final int MAX_FILE_CHARS = 200_000;
     /** 目录列举上限(条目)。 */
     static final int MAX_LIST_ENTRIES = 200;
-    /** 引导文件(自动注入,顺序固定)。 */
-    static final List<String> BOOTSTRAP_FILES = List.of("AGENTS.md", "SOUL.md", "USER.md", "MEMORY.md");
+    /**
+     * 引导文件按 Hermes 三层提示词结构注入(stable 身份 → context 上下文 → volatile 易变):
+     * SOUL.md 人格(agent 可自行演化——编辑文件即改变下轮行为)、
+     * AGENTS.md 使用约定、USER.md 偏好 + MEMORY.md 耐久事实快照。
+     */
+    static final List<String> IDENTITY_FILES = List.of("SOUL.md");
+    static final List<String> CONTEXT_FILES = List.of("AGENTS.md");
+    static final List<String> VOLATILE_FILES = List.of("USER.md", "MEMORY.md");
+    static final List<String> BOOTSTRAP_FILES = List.of("SOUL.md", "AGENTS.md", "USER.md", "MEMORY.md");
 
     private final Path root;
 
@@ -77,25 +84,25 @@ public class AgentWorkspaceService {
             Files.createDirectories(root);
             Files.createDirectories(root.resolve("memory"));
             seedIfMissing("AGENTS.md", """
-                    # 工作台助手行为指令
+                    # 使用约定(可自行演化:积累到更优做法时直接更新本文件)
 
-                    ## 记忆维护(你的工作区就是你的记忆)
-                    - 学到**稳定偏好/画像事实**(用户是谁、喜欢什么风格):更新 `USER.md`(祈使句、简明)。
-                    - 学到**耐久事实/决定**(项目约定、重要结论):更新 `MEMORY.md`,保持精简(它每轮都注入)。
-                    - 日常观察、进度、临时上下文:追加到 `memory/YYYY-MM-DD.md`(按需读取,不注入)。
-                    - 用户说「记住…」时必须落盘,不能只口头答应;写入前先 read 相关文件避免覆盖。
-                    - 优先追加/最小编辑,避免整文件重写;删除记忆前先向用户确认。
+                    ## 记忆维护(工作区就是你的记忆)
+                    - 学到**稳定偏好/画像事实**:更新 `USER.md`(祈使句、简明)。
+                    - 学到**耐久事实/决定**(项目约定、重要结论):更新 `MEMORY.md`,保持精简(每轮注入)。
+                    - 日常观察、进度、临时上下文:追加到 `memory/YYYY-MM-DD.md`(按需读,不注入)。
+                    - 写入前先 read 相关文件避免覆盖;优先追加/最小编辑;删除记忆前向用户确认。
 
-                    ## 回答规则
-                    - 中文、结论前置、Markdown 紧凑。
-                    - 涉及数据库统计先用 execute_sql 查真实数据;诊断服务异常先 read_service_logs。
-                    - 工具报错如实说明,不编造数据。
+                    ## 工作习惯(从经验中持续补充)
+                    - 涉及数据库统计/查询:先用 execute_sql 查真实数据再回答。
+                    - 诊断服务异常:先 read_service_logs 读相关容器日志,基于真实日志分析。
+                    - 用户教过的方法/踩过的坑:值得复用时沉淀为技能(manage_skill create)。
                     """);
             seedIfMissing("SOUL.md", """
-                    # 人设
+                    # 我的身份(可演化:想调整自己的语气/边界时直接编辑本文件,改动下轮生效)
 
-                    你是 Nora——用户的个人工作台助手。风格:直接、克制、可信。
-                    不谄媚,不空话;不确定就说不确定。边界:涉及不可逆操作先征求用户同意。
+                    我是 Nora——这个工作台里的 AI 助手,也是用户的长期搭档。
+                    风格:直接、克制、可信。不谄媚,不空话;不确定就说不确定。
+                    边界:涉及不可逆操作先征求用户同意;不编造数据与出处。
                     """);
             seedIfMissing("USER.md", """
                     # 用户画像
@@ -395,41 +402,63 @@ public class AgentWorkspaceService {
     // ---------- 引导注入 ----------
 
     /**
-     * 组装每轮注入的系统提示块:四个引导文件(逐文件+总量预算、截断标记、缺失占位)
-     * + memory/ 最近日记清单(只列名不注入正文,agent 需要时自行 read)。
+     * 组装系统提示的工作区块(注入位置:harness 基础提示之后、RAG 片段之前)。
+     *
+     * <p>结构对齐 Hermes 三层提示词装配:身份(SOUL.md,agent 可自行演化) →
+     * 使用约定(AGENTS.md) → 记忆快照(USER.md/MEMORY.md);每层逐文件+总量双预算
+     * 截断、缺失占位;memory/ 日记只列清单不注入正文(按需 read)。
+     * 文件修改只影响后续会话(会话内快照不变,对齐 Hermes 的缓存语义)。
      *
      * @return 注入文本;工作区不可用时返回 null(静默降级)
      */
     public String bootstrapPrompt() {
         try {
             StringBuilder sb = new StringBuilder();
-            sb.append("以下是你的工作区(文件系统上的私有空间,也是你的记忆载体;用 manage_workspace 工具读写)。相对路径=工作区内;绝对路径(如 D:/projects/...)可访问整机——帮用户查看/整理项目文件时直接用,写/删区外文件会请求用户确认:\n");
-            sb.append("工作区根: ").append(root).append("\n");
-            int total = 0;
-            for (String name : BOOTSTRAP_FILES) {
-                String content = readBootstrap(name);
-                if (total >= BOOTSTRAP_TOTAL_CHARS) {
-                    sb.append("\n## ").append(name).append("\n(超出注入预算,已省略;需要时用 manage_workspace read 读取)\n");
-                    continue;
-                }
-                String body = content == null ? "(文件缺失)" : content;
-                if (body.length() > BOOTSTRAP_PER_FILE_CHARS) {
-                    body = body.substring(0, BOOTSTRAP_PER_FILE_CHARS) + "\n…(过长截断)";
-                }
-                int remain = BOOTSTRAP_TOTAL_CHARS - total;
-                if (body.length() > remain) {
-                    body = body.substring(0, Math.max(0, remain)) + "\n…(预算截断)";
-                }
-                total += body.length();
-                sb.append("\n## ").append(name).append('\n').append(body).append('\n');
-            }
+            sb.append("## 你的工作区"
+                    + "\n")
+                    .append("工作区根: ").append(root).append("(文件系统上的记忆载体,用 manage_workspace 读写)")
+                    .append("\n")
+                    .append("相对路径=工作区内;绝对路径(如 D:/projects/...)可访问整机——"
+                            + "帮用户查看/整理项目文件时直接用,写/删区外文件时会请求用户确认。")
+                    .append("\n");
+
+            int[] budget = {BOOTSTRAP_TOTAL_CHARS};
+            sb.append("\n").append("### 身份(SOUL.md——你的可演化人格:想调整自己的语气/边界,直接编辑它)").append("\n");
+            appendBootstrapSection(sb, IDENTITY_FILES, budget);
+            sb.append("\n").append("### 使用约定(AGENTS.md)").append("\n");
+            appendBootstrapSection(sb, CONTEXT_FILES, budget);
+            sb.append("\n").append("### 记忆快照(USER.md 偏好 / MEMORY.md 耐久事实;每轮注入,保持精简)").append("\n");
+            appendBootstrapSection(sb, VOLATILE_FILES, budget);
+
             appendDailyListing(sb);
-            sb.append("\n维护提醒:稳定偏好→USER.md,耐久事实→MEMORY.md,日常笔记→memory/今日.md;"
-                    + "用户说「记住」时必须落盘。\n");
+            sb.append("\n")
+                    .append("记忆维护:稳定偏好→USER.md;耐久事实/决定→MEMORY.md;日常观察/进度→memory/今日.md"
+                            + "(按需读取,不注入)。用户说「记住…」时必须落盘,不能只口头答应。")
+                    .append("\n");
             return sb.toString();
         } catch (Exception e) {
             log.warn("workspace bootstrap inject failed (ignored): {}", e.getMessage());
             return null;
+        }
+    }
+
+    /** 渲染一组引导文件(共享总量预算;逐文件截断+缺失占位)。 */
+    private void appendBootstrapSection(StringBuilder sb, java.util.List<String> names, int[] budget) {
+        for (String name : names) {
+            String content = readBootstrap(name);
+            if (budget[0] <= 0) {
+                sb.append("(预算耗尽,").append(name).append("已省略;需要时用 manage_workspace read 读取)").append("\n");
+                continue;
+            }
+            String body = content == null ? "(文件缺失)" : content;
+            if (body.length() > BOOTSTRAP_PER_FILE_CHARS) {
+                body = body.substring(0, BOOTSTRAP_PER_FILE_CHARS) + "\n" + "…(过长截断)";
+            }
+            if (body.length() > budget[0]) {
+                body = body.substring(0, Math.max(0, budget[0])) + "\n" + "…(预算截断)";
+            }
+            budget[0] -= body.length();
+            sb.append("\n").append("#### ").append(name).append("\n").append(body).append("\n");
         }
     }
 

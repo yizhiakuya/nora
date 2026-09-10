@@ -1,6 +1,7 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye, ChevronRight } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
 import { SelectionResult } from "@/hooks/useSelection";
@@ -9,6 +10,14 @@ import { toast } from "sonner";
 
 type FileSelection = SelectionResult<number>;
 
+/** 特殊文件夹行(如 Agent 工作区):文件系统视图里的"目录",点击进入。 */
+export interface FolderRow {
+  name: string;
+  description?: string;
+  icon?: LucideIcon;
+  onOpen: () => void;
+}
+
 interface FileTableProps {
   files: FileItem[];
   selection: FileSelection;
@@ -16,9 +25,11 @@ interface FileTableProps {
   onOpen: (file: FileItem) => void;
   /** 未索引文件 → 加入知识库 */
   onIndex?: (file: FileItem) => void;
+  /** 置顶显示的文件夹行(文件系统一体化:工作区作为目录出现) */
+  folderRow?: FolderRow;
 }
 
-export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex }: FileTableProps) {
+export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex, folderRow }: FileTableProps) {
   return (
     <>
       {/* Batch Action Bar */}
@@ -59,7 +70,33 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
             </tr>
           </thead>
           <tbody className="text-sm">
-            {files.length === 0 ? (
+            {folderRow && (
+              <tr
+                className="border-b border-border transition-colors group cursor-pointer hover:bg-muted"
+                onClick={folderRow.onOpen}
+                title={folderRow.description}
+              >
+                <td className="p-3 pl-4 w-10" />
+                <td className="p-3 max-w-[200px]">
+                  <div className="flex items-center gap-3">
+                    {folderRow.icon
+                      ? <folderRow.icon className="w-5 h-5 shrink-0 text-blue-500 dark:text-blue-400" />
+                      : <FolderIcon />}
+                    <span className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
+                      {folderRow.name}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/70 truncate hidden md:inline ml-1">{folderRow.description}</span>
+                  </div>
+                </td>
+                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">文件夹</td>
+                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">—</td>
+                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">—</td>
+                <td className="p-3 text-right pr-4">
+                  <ChevronRight className="w-4 h-4 text-muted-foreground inline-block" />
+                </td>
+              </tr>
+            )}
+            {files.length === 0 && !folderRow ? (
               <tr>
                 <td colSpan={6}>
                   <EmptyState icon={Search} title="没有找到匹配的文件" description="换个关键词搜索，或者上传一份新文件吧。" />
@@ -131,5 +168,14 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex 
         </table>
       </div>
     </>
+  );
+}
+
+/** 默认文件夹图标(未提供自定义 icon 时)。 */
+function FolderIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
   );
 }
