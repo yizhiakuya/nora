@@ -28,6 +28,14 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/mcp/**
+        - id: skills
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/skills/**
+        - id: workspace
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/workspace/**
         - id: file
           uri: lb://file-service
           predicates:

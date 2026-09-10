@@ -9,6 +9,9 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - `hooks/useModelProviders` — provider 唯一数据源(Zustand persist + 后端同步)
 - `components/chat/AgentThoughtBlock.tsx` — 思考块(roundIndex 分组;think 行默认展开,用户收起后尊重用户)
 - `components/settings/model/ReasoningLevelConfig.tsx` — per-model 推理等级配置
+- `hooks/useSkills` — 技能唯一数据源(列表走 /api/skills 不带正文;详情按需 loadDetail 拉正文——渐进披露);后端模式 CRUD 乐观更新+失败回滚
+- `components/settings/WorkspaceSettings.tsx` — 设置中心「工作区」:agent 文件系统私有空间(也是记忆载体:USER.md/MEMORY.md 自动注入;memory/ 日记按需读);文件树 + 编辑器 + 保存/删除,人工检查与修正 agent 记忆的入口
+- `lib/services/workspaceApi.ts` — 工作区 API 接入层(stats/files/read/write/delete)
 
 ## 约定
 
@@ -26,5 +29,5 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 
 ```bash
 pnpm exec tsc --noEmit
-pnpm exec vitest run   # 70 用例
+pnpm exec vitest run   # 87 用例
 ```

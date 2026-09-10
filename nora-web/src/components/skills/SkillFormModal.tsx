@@ -1,9 +1,8 @@
-import { Code, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSkillForm, CATEGORIES, AUTH_OPTIONS, SkillFormValues } from "@/hooks/useSkillForm";
+import { useSkillForm, CATEGORIES, SkillFormValues } from "@/hooks/useSkillForm";
 import { Skill } from "@/types";
 
 export type { SkillFormValues };
@@ -16,16 +15,22 @@ interface SkillFormModalProps {
   onSubmit: (values: SkillFormValues) => void;
 }
 
+/**
+ * 技能编辑弹窗(指令型):名称 + 描述(何时用) + 分类 + 指令正文(Markdown)。
+ * 启用后目录注入 agent 上下文,正文由 agent 按需读取遵循。
+ */
 export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillFormModalProps) {
   const isEdit = !!initial;
   const form = useSkillForm(initial ?? null, isOpen);
-  const { name, setName, category, setCategory, schema, setSchema, authType, setAuthType, token, setToken, errors, submit } = form;
+  const { name, setName, description, setDescription, instructions, setInstructions,
+    category, setCategory, errors, submit } = form;
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEdit ? `编辑工具 · ${initial?.name}` : "注册自定义工具 (OpenAPI)"}
+      title={isEdit ? `编辑技能 · ${initial?.name}` : "新建技能"}
+      width="w-[94%] sm:w-[620px]"
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
@@ -37,9 +42,9 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
     >
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-foreground">工具名称</label>
+          <label className="text-xs font-bold text-foreground">技能名称</label>
           <Input
-            placeholder="例如：查询外部实时汇率"
+            placeholder="例如：周报生成"
             className={`h-9 text-sm ${errors.name ? "border-red-400 focus-visible:ring-red-400" : ""}`}
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -47,56 +52,44 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
           {errors.name && <p className="text-[11px] text-red-500 dark:text-red-400">{errors.name}</p>}
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-bold text-foreground">技能分类</label>
-          <Select value={category} onValueChange={setCategory}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="选择分类" />
-            </SelectTrigger>
-            <SelectContent>
-              {CATEGORIES.map((c) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex justify-between items-end">
-            <label className="text-xs font-bold text-foreground">OpenAPI Schema</label>
-            <span className="text-[10px] text-blue-600 dark:text-blue-400 cursor-pointer hover:underline flex items-center gap-1">
-              <Code className="w-3 h-3" /> AI 辅助生成
-            </span>
+        <div className="grid grid-cols-[1fr_180px] gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">一句话描述</label>
+            <Input
+              placeholder="何时该用这个技能（会展示给 AI）"
+              className="h-9 text-sm"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </div>
-          <div className={`bg-[#1e1e1e] rounded-lg p-3 border shadow-inner ${errors.schema ? "border-red-500" : "border-gray-800"}`}>
-            <textarea
-              rows={6}
-              className="w-full bg-transparent text-gray-300 font-mono text-xs leading-relaxed resize-none focus:outline-none custom-scroll"
-              placeholder={'{\n  "openapi": "3.0.0",\n  "info": { "title": "API Name" },\n  "paths": {}\n}'}
-              value={schema}
-              onChange={(e) => setSchema(e.target.value)}
-            ></textarea>
-          </div>
-          {errors.schema && <p className="text-[11px] text-red-500 dark:text-red-400">{errors.schema}</p>}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-bold text-foreground flex items-center gap-1">
-            <Key className="w-3 h-3" /> 鉴权设置 (可选)
-          </label>
-          <div className="flex gap-2">
-            <Select value={authType} onValueChange={setAuthType}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="鉴权方式" />
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">分类</label>
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="选择分类" />
               </SelectTrigger>
               <SelectContent>
-                {AUTH_OPTIONS.map((a) => (
-                  <SelectItem key={a} value={a}>{a}</SelectItem>
+                {CATEGORIES.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Input placeholder="输入 Token..." className="h-9 text-sm flex-1" value={token} onChange={(e) => setToken(e.target.value)} />
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground">技能指令（Markdown）</label>
+          <div className={`bg-[#1e1e1e] rounded-lg p-3 border shadow-inner ${errors.instructions ? "border-red-500" : "border-gray-800"}`}>
+            <textarea
+              rows={9}
+              className="w-full bg-transparent text-gray-300 font-mono text-xs leading-relaxed resize-none focus:outline-none custom-scroll"
+              placeholder={"# 任务步骤\n1. 先做什么\n2. 再做什么\n\n（AI 会在任务相关时读取并遵循这段指令）"}
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+            ></textarea>
+          </div>
+          {errors.instructions && <p className="text-[11px] text-red-500 dark:text-red-400">{errors.instructions}</p>}
+          <p className="text-[10px] text-muted-foreground">提示：对话中直接让 AI「把刚才的流程存成技能」，它也能自动创建。</p>
         </div>
       </div>
     </Modal>

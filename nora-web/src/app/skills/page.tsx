@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
 import { Zap, Search, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,12 @@ export default function SkillsPage() {
   const [editing, setEditing] = useState<Skill | null>(null);
   const [detail, setDetail] = useState<Skill | null>(null);
   const { skills, addSkill, updateSkill, removeSkill, toggleSkill } = useSkills();
+  const syncFromBackend = useSkills((s) => s.syncFromBackend);
+
+  // 后端模式:进入页面拉取服务端技能(agent 也可能在对话中创建技能)
+  useEffect(() => {
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
   const filteredSkills = skills.filter((skill) => {
     const matchesTab = activeTab === "全部" || skill.category === activeTab;
@@ -41,13 +47,18 @@ export default function SkillsPage() {
 
   const handleSubmit = (values: SkillFormValues) => {
     if (editing) {
-      updateSkill(editing.id, values);
-      toast.success(`工具「${values.name}」已更新`);
+      updateSkill(editing.id, {
+        name: values.name,
+        desc: values.description,
+        instructions: values.instructions,
+        category: values.category,
+      });
+      toast.success(`技能「${values.name}」已更新`);
     } else {
       const newSkill: Skill = {
         id: Date.now(),
         name: values.name,
-        desc: "通过 OpenAPI Schema 接入的自定义工具",
+        desc: values.description || "自定义技能",
         icon: Braces,
         color: "text-blue-500 dark:text-blue-400",
         bg: "bg-blue-100 dark:bg-blue-900/50",
@@ -55,11 +66,10 @@ export default function SkillsPage() {
         enabled: true,
         isOfficial: false,
         createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-        schema: values.schema,
-        authType: values.authType,
+        instructions: values.instructions,
       };
       addSkill(newSkill);
-      toast.success(`工具「${values.name}」创建成功`);
+      toast.success(`技能「${values.name}」创建成功`);
     }
     setFormOpen(false);
     setEditing(null);
@@ -71,7 +81,7 @@ export default function SkillsPage() {
         breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "AI 能力", isCurrent: true }]}
         actions={
           <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={openCreate}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 注册工具
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建技能
           </Button>
         }
       />
@@ -81,9 +91,9 @@ export default function SkillsPage() {
           <div className="flex flex-col mb-6 space-y-4 animate-in fade-in slide-in-from-top-4">
             <div>
               <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-                <Zap className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> AI 能力 (Tools)
+                <Zap className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> AI 能力
               </h1>
-              <p className="text-xs text-muted-foreground mt-1">定义 AI 在本工作台能做什么：启停内置能力，或通过 OpenAPI 注册自定义工具。</p>
+              <p className="text-xs text-muted-foreground mt-1">定义 AI 在本工作台能做什么：启停技能（可复用的任务指令）与内置工具。对话中也能让 AI 把流程沉淀成技能。</p>
             </div>
 
             <SkillTabs

@@ -92,6 +92,10 @@ public class ChatOrchestrationService {
     private final ServiceManageClient serviceManageClient;
     private final FileToolClient fileToolClient;
     private final McpServerService mcpServerService;
+    /** Agent 工作区(文件系统上的私有空间;引导文件注入每轮上下文) */
+    private final AgentWorkspaceService agentWorkspaceService;
+    /** 指令型技能(目录注入 + 按需读全文) */
+    private final AgentSkillService agentSkillService;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -108,6 +112,8 @@ public class ChatOrchestrationService {
                                     ServiceManageClient serviceManageClient,
                                     FileToolClient fileToolClient,
                                     McpServerService mcpServerService,
+                                    AgentWorkspaceService agentWorkspaceService,
+                                    AgentSkillService agentSkillService,
                                     @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties) {
@@ -124,6 +130,8 @@ public class ChatOrchestrationService {
         this.serviceManageClient = serviceManageClient;
         this.fileToolClient = fileToolClient;
         this.mcpServerService = mcpServerService;
+        this.agentWorkspaceService = agentWorkspaceService;
+        this.agentSkillService = agentSkillService;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
@@ -144,7 +152,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
+                null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -155,7 +163,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, maxToolRounds, null);
+                null, null, null, null, null, null, null, null, null, maxToolRounds, null);
     }
 
     /**
@@ -461,9 +469,12 @@ public class ChatOrchestrationService {
 
         // loop breaker: same (tool, normalized args) repeated too often.
         // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
-        // 原始 args,避免不同参数被误判为重复调用
+        // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill
+        // 同理(主体在 content/path/instructions 字段,typed input 抽不到)。
+        boolean rawFingerprint = name.startsWith("mcp__")
+                || "manage_workspace".equals(name) || "manage_skill".equals(name);
         String fingerprint = name + "|"
-                + (name.startsWith("mcp__") ? (args == null ? "" : args) : normalizeArgs(name, input));
+                + (rawFingerprint ? (args == null ? "" : args) : normalizeArgs(name, input));
         int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
         if (repeats > LOOP_BLOCK_THRESHOLD) {
             String error = "重复调用已阻断：同样的参数已连续执行 " + (repeats - 1)
@@ -611,6 +622,24 @@ public class ChatOrchestrationService {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, limit, target),
                             description, null, action);
                 }
+                case "manage_workspace" -> {
+                    // 展示路径(根目录 list 无 path,用 dir 兜底)
+                    String p1 = node.path("path").asText(null);
+                    if (p1 == null) {
+                        p1 = node.path("dir").asText(null);
+                    }
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, p1),
+                            description, null, action);
+                }
+                case "manage_skill" -> {
+                    // read/update/remove 用 target(名称或 id);create 用 name
+                    String target = node.path("target").asText(null);
+                    if (target == null) {
+                        target = node.path("name").asText(null);
+                    }
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
+                            description, null, action);
+                }
                 default -> {
                     if (node.has("action") && node.has("service")) {
                         return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
@@ -640,6 +669,8 @@ public class ChatOrchestrationService {
             case "manage_datasource" -> "数据源管理";
             case "manage_service" -> "服务纳管";
             case "read_file" -> "读取文件";
+            case "manage_workspace" -> "工作区文件";
+            case "manage_skill" -> "技能管理";
             default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
         };
     }
@@ -657,6 +688,10 @@ public class ChatOrchestrationService {
         }
         if ("read_file".equals(name)) {
             return input.target() == null ? "?" : input.target();
+        }
+        if ("manage_workspace".equals(name) || "manage_skill".equals(name)) {
+            return (input.target() == null ? "?" : input.target().toLowerCase())
+                    + "#" + (input.limit() == null ? "" : input.limit());
         }
         return "";
     }
@@ -1051,6 +1086,156 @@ public class ChatOrchestrationService {
             }
             return bounded(fileToolClient.preview(Long.parseLong(target)), null);
         }
+        if ("manage_workspace".equals(name)) {
+            if (agentWorkspaceService == null) {
+                return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
+            }
+            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+            if (!java.util.Set.of("list", "read", "write", "append", "delete").contains(action)) {
+                return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / write / append / delete",
+                        null, null, false);
+            }
+            try {
+                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+                String path = a.path("path").asText(null);
+                return new ToolOutcome(switch (action) {
+                    case "list" -> {
+                        List<AgentWorkspaceService.FileEntry> entries =
+                                agentWorkspaceService.list(a.path("dir").asText(null));
+                        if (entries.isEmpty()) {
+                            yield "(空目录)";
+                        }
+                        StringBuilder sb = new StringBuilder("工作区文件(" + path + " 相对根目录):\n");
+                        for (AgentWorkspaceService.FileEntry f : entries) {
+                            sb.append(f.directory() ? "[目录] " : "").append(f.path())
+                                    .append(f.directory() ? "" : " (" + f.size() + "B, " + f.modifiedAt() + ")")
+                                    .append('\n');
+                        }
+                        yield sb.toString();
+                    }
+                    case "read" -> {
+                        if (path == null || path.isBlank()) {
+                            yield "ERROR: 缺少 path 参数(相对路径,如 USER.md 或 memory/2026-09-10.md)";
+                        }
+                        yield agentWorkspaceService.read(path);
+                    }
+                    case "write" -> {
+                        if (path == null || path.isBlank()) {
+                            yield "ERROR: 缺少 path 参数(相对路径)";
+                        }
+                        String content = a.path("content").asText(null);
+                        if (content == null) {
+                            yield "ERROR: 缺少 content 参数(要写入的完整内容;如需保留原内容请先 read)";
+                        }
+                        int written = agentWorkspaceService.write(path, content);
+                        yield "已写入 " + path + "(" + written + " 字符)";
+                    }
+                    case "append" -> {
+                        if (path == null || path.isBlank()) {
+                            yield "ERROR: 缺少 path 参数(相对路径)";
+                        }
+                        String content = a.path("content").asText(null);
+                        if (content == null || content.isBlank()) {
+                            yield "ERROR: 缺少 content 参数(要追加的内容)";
+                        }
+                        int written = agentWorkspaceService.append(path, content);
+                        yield "已追加 " + written + " 字符到 " + path;
+                    }
+                    default -> {
+                        if (path == null || path.isBlank()) {
+                            yield "ERROR: 缺少 path 参数(相对路径;删除不可恢复,请先向用户确认)";
+                        }
+                        agentWorkspaceService.delete(path);
+                        yield "已删除 " + path;
+                    }
+                }, null, null, false);
+            } catch (IllegalArgumentException e) {
+                return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: 工作区操作失败: " + abbreviate(e.getMessage(), 200), null, null, false);
+            }
+        }
+        if ("manage_skill".equals(name)) {
+            if (agentSkillService == null) {
+                return new ToolOutcome("ERROR: 技能能力未启用(服务未配置)", null, null, false);
+            }
+            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+            if (!java.util.Set.of("list", "read", "create", "update", "remove").contains(action)) {
+                return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / create / update / remove", null, null, false);
+            }
+            try {
+                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+                return new ToolOutcome(switch (action) {
+                    case "list" -> {
+                        List<AgentSkillService.SkillView> all = agentSkillService.list();
+                        if (all.isEmpty()) {
+                            yield "(暂无技能)";
+                        }
+                        StringBuilder sb = new StringBuilder("现有技能:\n");
+                        for (AgentSkillService.SkillView s : all) {
+                            sb.append("id=").append(s.id())
+                                    .append(s.enabled() ? "" : " [已停用]")
+                                    .append(" [").append(s.category()).append("] ")
+                                    .append(s.name()).append(": ").append(s.description()).append('\n');
+                        }
+                        yield sb.toString();
+                    }
+                    case "read" -> {
+                        String target = firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                        AgentSkillService.SkillView skill = resolveSkill(target);
+                        if (skill == null) {
+                            yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
+                        }
+                        yield "技能「" + skill.name() + "」完整指令:\n" + skill.instructions();
+                    }
+                    case "create" -> {
+                        String sName = a.path("name").asText(null);
+                        String instr = a.path("instructions").asText(null);
+                        if (sName == null || sName.isBlank()) {
+                            yield "ERROR: 缺少 name 参数(技能名称)";
+                        }
+                        if (instr == null || instr.isBlank()) {
+                            yield "ERROR: 缺少 instructions 参数(技能正文)";
+                        }
+                        if (agentSkillService.getByName(sName.trim()) != null) {
+                            yield "ERROR: 技能名「" + sName.trim() + "」已存在。如需修改用 action=update";
+                        }
+                        AgentSkillService.SkillView created = agentSkillService.create(
+                                sName, a.path("description").asText(null), instr, a.path("category").asText(null));
+                        yield "已创建技能(id=" + created.id() + "): " + created.name();
+                    }
+                    case "update" -> {
+                        String target = firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                        AgentSkillService.SkillView skill = resolveSkill(target);
+                        if (skill == null) {
+                            yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
+                        }
+                        Boolean enabled = a.has("enabled") ? a.path("enabled").asBoolean() : null;
+                        AgentSkillService.SkillView updated = agentSkillService.update(skill.id(),
+                                a.has("name") ? a.path("name").asText(null) : null,
+                                a.has("description") ? a.path("description").asText(null) : null,
+                                a.has("instructions") ? a.path("instructions").asText(null) : null,
+                                a.has("category") ? a.path("category").asText(null) : null,
+                                enabled);
+                        yield "已更新技能(id=" + updated.id() + ", " + (updated.enabled() ? "启用" : "停用") + "): " + updated.name();
+                    }
+                    default -> {
+                        String target = firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                        AgentSkillService.SkillView skill = resolveSkill(target);
+                        if (skill == null) {
+                            yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
+                        }
+                        yield agentSkillService.delete(skill.id()) ? "已删除技能: " + skill.name() : "ERROR: 删除失败";
+                    }
+                }, null, null, false);
+            } catch (IllegalArgumentException e) {
+                return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+            } catch (org.springframework.dao.DuplicateKeyException e) {
+                return new ToolOutcome("ERROR: 技能名已存在,先 action=list 查看现有技能", null, null, false);
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: 技能操作失败: " + abbreviate(e.getMessage(), 200), null, null, false);
+            }
+        }
         // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
         // 输出同样走 bounded 截断与脱敏
         if (mcpServerService != null && name.startsWith("mcp__")) {
@@ -1067,7 +1252,9 @@ public class ChatOrchestrationService {
                 + "read_service_logs（容器日志）、manage_container（容器启停,需批准）、"
                 + "manage_datasource（数据源 list/create/test/schema/remove,create/remove 需批准）、"
                 + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）、"
-                + "read_file（工作台文件 list/read,只读）"
+                + "read_file（工作台文件 list/read,只读）、"
+                + "manage_workspace（工作区文件 list/read/write/append/delete）、"
+                + "manage_skill（技能 list/read/create/update/remove）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
     }
 
@@ -1962,6 +2149,85 @@ public class ChatOrchestrationService {
         ArrayNode fileRequired = fileParams.putArray("required");
         tools.add(fileTool);
 
+        // 工作区文件操作(设计对齐 OpenClaw workspace):agent 的记忆载体是文件,
+        // 工作区就是它的家——USER.md/MEMORY.md/memory 日记由它自己维护。
+        // 全部动作锁定在工作区内(路径校验),LOW 风险,任何档位自动执行。
+        if (agentWorkspaceService != null) {
+        ObjectNode wsTool = objectMapper.createObjectNode();
+        wsTool.put("type", "function");
+        ObjectNode wsFn = wsTool.putObject("function");
+        wsFn.put("name", "manage_workspace");
+        wsFn.put("description", "读写你的工作区(文件系统上的私有空间,也是你的长期记忆)。"
+                + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除。"
+                + "记忆维护约定:稳定偏好→USER.md,耐久事实/决定→MEMORY.md(保持精简,每轮自动注入),"
+                + "日常观察/进度→memory/YYYY-MM-DD.md(按需读取)。用户说「记住…」时必须落盘。"
+                + "示例:{\"action\": \"append\", \"path\": \"memory/2026-09-10.md\", \"content\": \"- 完成了 X\"}");
+        ObjectNode wsParams = wsFn.putObject("parameters");
+        wsParams.put("type", "object");
+        wsParams.put("additionalProperties", false);
+        ObjectNode wsProps = wsParams.putObject("properties");
+        ObjectNode wsActionProp = wsProps.putObject("action");
+        wsActionProp.put("type", "string");
+        wsActionProp.put("description", "list / read / write / append / delete");
+        ObjectNode wsPathProp = wsProps.putObject("path");
+        wsPathProp.put("type", "string");
+        wsPathProp.put("description", "read/write/append/delete 时:工作区内相对路径(如 USER.md、MEMORY.md、memory/2026-09-10.md)");
+        ObjectNode wsDirProp = wsProps.putObject("dir");
+        wsDirProp.put("type", "string");
+        wsDirProp.put("description", "list 时:相对目录(省略=根目录)");
+        ObjectNode wsContentProp = wsProps.putObject("content");
+        wsContentProp.put("type", "string");
+        wsContentProp.put("description", "write/append 时:文件内容(write 会覆盖整文件,先 read 再写)");
+        ObjectNode wsDescProp = wsProps.putObject("description");
+        wsDescProp.put("type", "string");
+        wsDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
+        ArrayNode wsRequired = wsParams.putArray("required");
+        wsRequired.add("action");
+        tools.add(wsTool);
+        }
+
+        // 技能管理:目录已在系统提示注入,read 拉全文遵循;create/update 让 agent
+        // 能把用户教的方法沉淀为可复用技能(闭环自管)。
+        if (agentSkillService != null) {
+        ObjectNode skillTool = objectMapper.createObjectNode();
+        skillTool.put("type", "function");
+        ObjectNode skillFn = skillTool.putObject("function");
+        skillFn.put("name", "manage_skill");
+        skillFn.put("description", "管理用户的技能库(可复用的任务指令)。系统提示里列出了启用技能目录;"
+                + "任务与某技能相关时用 action=read 读它的完整指令并严格遵循;"
+                + "用户教你一套方法并希望以后沿用(\"把刚才的流程存成技能\")时用 action=create 沉淀;"
+                + "list 查看全部技能;update 修改;remove 删除。"
+                + "示例:{\"action\": \"read\", \"target\": \"周报生成\"}");
+        ObjectNode skillParams = skillFn.putObject("parameters");
+        skillParams.put("type", "object");
+        skillParams.put("additionalProperties", false);
+        ObjectNode skillProps = skillParams.putObject("properties");
+        ObjectNode skillActionProp = skillProps.putObject("action");
+        skillActionProp.put("type", "string");
+        skillActionProp.put("description", "list / read / create / update / remove");
+        ObjectNode skillTargetProp = skillProps.putObject("target");
+        skillTargetProp.put("type", "string");
+        skillTargetProp.put("description", "read/update/remove 时:技能名称或数字 id");
+        ObjectNode skillNameProp = skillProps.putObject("name");
+        skillNameProp.put("type", "string");
+        skillNameProp.put("description", "create/update 时:技能名称");
+        ObjectNode skillDescProp = skillProps.putObject("description");
+        skillDescProp.put("type", "string");
+        skillDescProp.put("description", "create/update 时:技能的一句话说明(何时该用这个技能)");
+        ObjectNode skillInstrProp = skillProps.putObject("instructions");
+        skillInstrProp.put("type", "string");
+        skillInstrProp.put("description", "create/update 时:技能正文(Markdown,完整可执行的指令步骤)");
+        ObjectNode skillCategoryProp = skillProps.putObject("category");
+        skillCategoryProp.put("type", "string");
+        skillCategoryProp.put("description", "create/update 时:分类(可选,默认「自定义」)");
+        ObjectNode skillEnabledProp = skillProps.putObject("enabled");
+        skillEnabledProp.put("type", "boolean");
+        skillEnabledProp.put("description", "update 时:启用(true)/停用(false)该技能");
+        ArrayNode skillRequired = skillParams.putArray("required");
+        skillRequired.add("action");
+        tools.add(skillTool);
+        }
+
         // MCP 挂载工具:已启用且完成过 refresh(有 tools_cache)的远程服务器的
         // 工具,命名 mcp__<server>__<tool>;schema/描述来自远端 snapshot。
         // mcpServerService 为 null = 测试便捷构造器,跳过挂载
@@ -2152,15 +2418,40 @@ public class ChatOrchestrationService {
                 || s.contains("token limit") || s.contains("上下文长度");
     }
 
+    /**
+     * 系统提示装配:基础 prompt + 工作区引导(AGENTS/SOUL/USER/MEMORY)+ 技能目录 + RAG 片段。
+     * 工作区/目录注入是 best-effort:不可用时静默跳过,不阻断对话。
+     */
     private String systemPromptWith(List<CitationDto> citations) {
-        if (citations.isEmpty()) {
-            return SYSTEM_PROMPT;
-        }
         StringBuilder sb = new StringBuilder(SYSTEM_PROMPT);
-        sb.append("\n以下是知识库检索到的相关片段：\n");
-        for (CitationDto c : citations) {
-            sb.append("[[").append(c.docName()).append("#chunk").append(c.chunkIndex())
-                    .append("]] ").append(c.snippet()).append('\n');
+        // 全局记忆:跨会话事实/偏好,约束每轮回答
+        if (agentWorkspaceService != null) {
+            try {
+                String bootstrap = agentWorkspaceService.bootstrapPrompt();
+                if (bootstrap != null && !bootstrap.isBlank()) {
+                    sb.append('\n').append(bootstrap);
+                }
+            } catch (Exception e) {
+                log.warn("workspace inject failed (ignored): {}", e.getMessage());
+            }
+        }
+        // 技能目录:列出启用技能的名称/描述,正文由 manage_skill action=read 按需拉取
+        if (agentSkillService != null) {
+            try {
+                String catalog = agentSkillService.catalogBlock();
+                if (catalog != null && !catalog.isBlank()) {
+                    sb.append('\n').append(catalog);
+                }
+            } catch (Exception e) {
+                log.warn("skill catalog inject failed (ignored): {}", e.getMessage());
+            }
+        }
+        if (!citations.isEmpty()) {
+            sb.append("\n以下是知识库检索到的相关片段：\n");
+            for (CitationDto c : citations) {
+                sb.append("[[").append(c.docName()).append("#chunk").append(c.chunkIndex())
+                        .append("]] ").append(c.snippet()).append('\n');
+            }
         }
         return sb.toString();
     }
@@ -2168,6 +2459,45 @@ public class ChatOrchestrationService {
     private static String abbreviateForSse(String text, int max) {
         if (text == null) return "";
         return text.length() <= max ? text : text.substring(0, max) + "…(" + text.length() + " chars)";
+    }
+
+    /** 技能定位:target 是数字 → 按 id,否则按名称(不区分大小写)。 */
+    private AgentSkillService.SkillView resolveSkill(String target) {
+        if (target == null || target.isBlank()) {
+            return null;
+        }
+        String trimmed = target.trim();
+        if (trimmed.matches("\\d+")) {
+            AgentSkillService.SkillView byId = agentSkillService.get(Long.parseLong(trimmed));
+            if (byId != null) {
+                return byId;
+            }
+        }
+        return agentSkillService.getByName(trimmed);
+    }
+
+    private String skillNameList() {
+        List<AgentSkillService.SkillView> all = agentSkillService.list();
+        if (all.isEmpty()) {
+            return "(暂无技能)";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (AgentSkillService.SkillView s : all) {
+            sb.append("- ").append(s.name()).append(s.enabled() ? "" : " [已停用]").append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** 数字 id 解析:非法返回 -1(调用方给引导文案)。 */
+    private static long parseNumericId(String raw) {
+        if (raw == null || !raw.trim().matches("\\d+")) {
+            return -1;
+        }
+        return Long.parseLong(raw.trim());
+    }
+
+    private static String firstNonNull(String a, String b) {
+        return a != null ? a : b;
     }
 
     private static String abbreviate(String text, int max) {        if (text == null) {

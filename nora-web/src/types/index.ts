@@ -12,10 +12,12 @@ export interface Skill {
   isOfficial: boolean;
   /** 自定义技能创建时间（官方技能无） */
   createdAt?: string;
-  /** OpenAPI Schema 原文（自定义技能） */
+  /** OpenAPI Schema 原文（自定义技能；旧版字段，保留兼容） */
   schema?: string;
-  /** 无鉴权 | Bearer Token | API Key */
+  /** 无鉴权 | Bearer Token | API Key（旧版字段，保留兼容） */
   authType?: string;
+  /** 指令正文（指令型技能；列表接口不返回，详情加载后填充） */
+  instructions?: string;
 }
 
 export interface FileItem {

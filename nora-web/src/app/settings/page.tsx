@@ -10,8 +10,9 @@ import { SecuritySettings } from "@/components/settings/SecuritySettings";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 import { EnvVarsSettings } from "@/components/settings/EnvVarsSettings";
 import { NetworkSettings } from "@/components/settings/NetworkSettings";
+import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 
-const TABS = ["通用", "模型管理", "知识库与 AI", "环境变量", "网络", "账号", "安全", "通知"];
+const TABS = ["通用", "模型管理", "知识库与 AI", "工作区", "环境变量", "网络", "账号", "安全", "通知"];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("通用");
@@ -19,7 +20,7 @@ export default function SettingsPage() {
   // 支持 /settings?tab=模型管理 深链（替代原独立页路由）
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get("tab");
-    const valid = ["通用", "模型管理", "知识库与 AI", "环境变量", "网络", "账号", "安全", "通知"];
+    const valid = ["通用", "模型管理", "知识库与 AI", "工作区", "环境变量", "网络", "账号", "安全", "通知"];
     if (tab && valid.includes(tab)) setActiveTab(tab);
   }, []);
 
@@ -66,6 +67,7 @@ export default function SettingsPage() {
               {activeTab === "通用" && <GeneralSettings />}
               {activeTab === "模型管理" && <ModelSettings />}
               {activeTab === "知识库与 AI" && <KnowledgeAISettings />}
+              {activeTab === "工作区" && <WorkspaceSettings />}
               {activeTab === "环境变量" && <EnvVarsSettings />}
               {activeTab === "网络" && <NetworkSettings />}
               {activeTab === "账号" && <AccountSettings />}

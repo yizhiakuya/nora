@@ -25,3 +25,6 @@ node_modules/
 
 # runtime file logs (logback)
 logs/
+
+# agent workspace (private memory: user prefs / agent notes — back up separately)
+agent-workspace/
