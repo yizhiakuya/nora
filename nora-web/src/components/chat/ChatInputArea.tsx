@@ -114,24 +114,24 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                       <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><AtSign className="w-4 h-4" /></Button>
                   </div>
 
-                  <div className="flex min-w-0 flex-1 justify-end gap-2 items-center">
-                      <div className="flex items-center gap-2 px-2 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer">
-                          <Layers className="w-3 h-3 text-muted-foreground" />
-                          <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex">
+                  <div className="flex min-w-0 flex-1 justify-end gap-1.5 items-center">
+                      <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer shrink-0" title={`上下文用量 ${contextPercent}%`}>
+                          <Layers className={`w-3 h-3 shrink-0 ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : "text-muted-foreground"}`} />
+                          <div className="hidden lg:flex w-12 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
                               <div className={`h-full ${contextPercent >= 90 ? "bg-red-500" : contextPercent >= 75 ? "bg-amber-500" : "bg-blue-500"}`} style={{width: `${contextPercent}%`}}></div>
                           </div>
-                          <span className="font-mono">{contextTokens >= 1000 ? `${Math.round(contextTokens / 1000)}k` : contextTokens}/{contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k` : contextLimit}</span>
+                          <span className={`font-mono ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : ""}`}>{contextTokens >= 1000 ? `${Math.round(contextTokens / 1000)}k` : contextTokens}/{contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k` : contextLimit}</span>
                       </div>
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
 
                       {/* 思考等级:仅列出设置页为当前模型启用的等级 */}
                       {onReasoningLevelChange && availableLevels.length > 0 && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground" title="思考等级">
-                              <Brain className="w-3 h-3 mr-1" />
-                              {reasoningLevel ?? "自动"} <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                              <Brain className="w-3 h-3 mr-1 shrink-0" />
+                              {reasoningLevel ?? "自动"} <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-40 rounded-xl">
@@ -163,7 +163,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </DropdownMenu>
                       )}
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
 
                       {/* 三档权限模式 */}
                       {onPermissionModeChange && (
@@ -172,12 +172,12 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                             <Button
                               variant="ghost"
                               size="sm"
-                              className={`h-7 text-xs px-2 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
+                              className={`h-7 text-xs px-2 shrink-0 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
                               title="权限模式"
                             >
-                              <ShieldAlert className="w-3 h-3 mr-1" />
-                              {PERMISSION_MODE_META[permissionMode].label}
-                              <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                              <ShieldAlert className="w-3 h-3 mr-1 shrink-0" />
+                              <span className="truncate">{PERMISSION_MODE_META[permissionMode].label}</span>
+                              <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-72 rounded-xl p-1.5">
@@ -207,12 +207,12 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </DropdownMenu>
                       )}
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800"></div>
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground">
-                            <span className="max-w-[160px] truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 ml-1 text-muted-foreground" />
+                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 shrink">
+                            <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-52 rounded-xl">
