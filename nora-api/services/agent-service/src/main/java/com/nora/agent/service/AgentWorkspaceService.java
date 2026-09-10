@@ -164,6 +164,7 @@ public class AgentWorkspaceService {
         List<FileEntry> entries = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(dir, 1)) {
             stream.filter(p -> !p.equals(dir))
+                    .filter(AgentWorkspaceService::notGitInternal)
                     .sorted(Comparator.comparing(Path::toString))
                     .limit(MAX_LIST_ENTRIES)
                     .forEach(p -> {
@@ -264,6 +265,12 @@ public class AgentWorkspaceService {
         }
     }
 
+    /** 过滤 git 内部路径(工作区常作私有 git 仓库备份,agent 不应看到/写入 .git)。 */
+    static boolean notGitInternal(Path p) {
+        String s = p.toString().replace('\\', '/');
+        return !s.contains("/.git/") && !s.endsWith("/.git");
+    }
+
     private long fileSizeOrZero(Path file) {
         try {
             return Files.size(file);
@@ -353,12 +360,14 @@ public class AgentWorkspaceService {
         }
     }
 
-    /** 供健康检查/前端展示:工作区概览(文件数、总字节)。 */
+    /** 供健康检查/前端展示:工作区概览(文件数、总字节;不含 .git 等隐藏目录)。 */
     public WorkspaceStats stats() {
         long files = 0;
         long bytes = 0;
         try (Stream<Path> stream = Files.walk(root, 4)) {
-            for (Path p : stream.filter(Files::isRegularFile).toList()) {
+            for (Path p : stream.filter(Files::isRegularFile)
+                    .filter(p -> !p.toString().contains("/.git/") && !p.toString().contains("\\.git\\"))
+                    .toList()) {
                 files++;
                 bytes += Files.size(p);
             }
