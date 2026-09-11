@@ -40,7 +40,7 @@ export default function McpPage() {
               </h1>
               <p className="text-xs text-muted-foreground mt-1">
                 接入 MCP(Model Context Protocol)工具服务器——远程(HTTP/SSE)或本地进程(STDIO),
-                扩展 Agent 的能力边界;工具按高风险管控,执行前需确认。
+                扩展 Agent 的能力边界;工具按高风险管控,审批跟随当前权限档位。
               </p>
             </div>
           </div>

@@ -82,27 +82,28 @@ class ChatOrchestrationServiceTest {
 
     @Test
     void riskClassifierTiersMcpManagement() {
-        // MCP 管理:list 只读 LOW;refresh/enable/disable 改变能力面 HIGH;
-        // register(引入外部能力+落库鉴权头)/remove(不可逆)CRITICAL
+        // MCP 管理跟随全局权限档:list 只读 LOW;其余动作(register/remove/
+        // refresh/enable/disable)统一 HIGH——ASK 全问 / ASSIST 询问 / FULL 自动,
+        // 不做单独强制审批
         assertEquals(RiskClassifier.Risk.LOW,
                 RiskClassifier.classify("manage_mcp", "{\"action\": \"list\"}"));
         assertEquals(RiskClassifier.Risk.HIGH,
                 RiskClassifier.classify("manage_mcp", "{\"action\": \"refresh\", \"target\": \"weather\"}"));
         assertEquals(RiskClassifier.Risk.HIGH,
                 RiskClassifier.classify("manage_mcp", "{\"action\": \"disable\", \"target\": \"weather\"}"));
-        assertEquals(RiskClassifier.Risk.CRITICAL,
+        assertEquals(RiskClassifier.Risk.HIGH,
                 RiskClassifier.classify("manage_mcp",
                         "{\"action\": \"register\", \"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}"));
-        assertEquals(RiskClassifier.Risk.CRITICAL,
+        assertEquals(RiskClassifier.Risk.HIGH,
                 RiskClassifier.classify("manage_mcp", "{\"action\": \"remove\", \"target\": \"weather\"}"));
         // action 缺失按未知处理:HIGH
         assertEquals(RiskClassifier.Risk.HIGH, RiskClassifier.classify("manage_mcp", "{}"));
         // 别名归一化(模型受 manage_datasource 词汇影响写 create/delete):
-        // 分类器与执行层必须同一判定——create 必须按 CRITICAL(否则 FULL 档绕过审批)
-        assertEquals(RiskClassifier.Risk.CRITICAL,
+        // 分类器与执行层必须同一判定——create/delete 与 register/remove 同档(HIGH)
+        assertEquals(RiskClassifier.Risk.HIGH,
                 RiskClassifier.classify("manage_mcp",
                         "{\"action\": \"create\", \"name\": \"weather\", \"url\": \"https://x\"}"));
-        assertEquals(RiskClassifier.Risk.CRITICAL,
+        assertEquals(RiskClassifier.Risk.HIGH,
                 RiskClassifier.classify("manage_mcp", "{\"action\": \"delete\", \"target\": \"weather\"}"));
         assertEquals("register", RiskClassifier.normalizeMcpAction("create"));
         assertEquals("remove", RiskClassifier.normalizeMcpAction("DELETE"));

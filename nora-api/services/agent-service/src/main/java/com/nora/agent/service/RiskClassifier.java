@@ -75,17 +75,12 @@ final class RiskClassifier {
             return Risk.HIGH;
         }
         if ("manage_mcp".equals(toolName)) {
-            // MCP 服务器管理:register 把外部服务器能力引入 agent 工具面(且落库鉴权头)、
-            // remove 删除注册且不可逆——均 CRITICAL,任何档位确认;
-            // list 只读 LOW(视图已脱敏);refresh/enable/disable 改变能力挂载面,HIGH
+            // MCP 服务器管理:list 只读 LOW(视图已脱敏);其余动作
+            // (register/remove/refresh/enable/disable)改变 Agent 的工具挂载面,
+            // 统一 HIGH——跟随全局权限档位(ASK 全问 / ASSIST 询问 / FULL 自动),
+            // 不做单独的强制审批;别名归一化与执行层共用,保证判定一致
             String action = normalizeMcpAction(extractAction(argsJson));
-            if ("register".equals(action) || "remove".equals(action)) {
-                return Risk.CRITICAL;
-            }
-            if ("list".equals(action)) {
-                return Risk.LOW;
-            }
-            return Risk.HIGH;
+            return "list".equals(action) ? Risk.LOW : Risk.HIGH;
         }
         if (toolName != null && toolName.startsWith("mcp__")) {
             // MCP 挂载工具:外部服务器能力未知,一律 HIGH——ASSIST 档询问、
@@ -248,8 +243,8 @@ final class RiskClassifier {
     /**
      * manage_mcp action 别名归一化:模型受 manage_datasource 的 CRUD 词汇影响常写
      * create/delete/add/unregister——统一映射到 register/remove。
-     * 分类器与执行分发必须共用此函数,否则两处判定不一致会出审批漏洞
-     * (如 create 在分类器按未知=HIGH、执行层却按 register 真执行,绕过 CRITICAL)。
+     * 分类器与执行分发必须共用此函数,保持判定一致
+     * (create 不能一处按未知处理、另一处按 register 真执行)。
      */
     static String normalizeMcpAction(String action) {
         if (action == null) {

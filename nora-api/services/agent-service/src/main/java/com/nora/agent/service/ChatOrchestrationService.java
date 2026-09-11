@@ -1475,7 +1475,7 @@ public class ChatOrchestrationService {
                 + "read_file（工作台文件 list/read,只读）、"
                 + "manage_workspace（工作区文件 list/read/write/append/delete）、"
                 + "manage_skill（技能 list/read/create/update/remove）、"
-                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,register/remove 需批准）"
+                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,风险跟随权限档位）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
     }
 
@@ -2453,8 +2453,9 @@ public class ChatOrchestrationService {
         }
 
         // MCP 服务器管理:agent 可自管远程工具服务器(注册/启停/刷新/删除),
-        // 与设置页 /api/mcp/servers 共用服务层。register/remove 属 CRITICAL
-        // (引入外部能力/不可逆),任何档位都需用户批准;headers 值不落对话记录。
+        // 与设置页 /api/mcp/servers 共用服务层。风险跟随全局权限档位
+        // (register/remove 等 = HIGH:ASK 全问 / ASSIST 询问 / FULL 自动);
+        // headers/env 值不落对话记录。
         if (mcpServerService != null) {
         ObjectNode mcpTool = objectMapper.createObjectNode();
         mcpTool.put("type", "function");
@@ -2467,7 +2468,7 @@ public class ChatOrchestrationService {
                 + "register 两种形态:①远程——提供 url(可选 transport=STREAMABLE/SSE);"
                 + "②本地进程(STDIO)——提供 command 与 args,如 command=npx, args=[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"D:/docs\"],"
                 + "或 Docker 方式 command=docker, args=[\"run\",\"-i\",\"--rm\",\"镜像名\"];本地方式需本机已装对应运行时。"
-                + "register 和 remove 执行前用户会收到审批请求。"
+                + "按当前权限档位,高风险动作可能要求用户批准。"
                 + "用户说「把 XX MCP 服务器接上/注册一下」时使用。示例:{\"action\": \"register\", "
                 + "\"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
         ObjectNode mcpParams = mcpFn.putObject("parameters");
