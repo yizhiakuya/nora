@@ -11,7 +11,8 @@ import org.springframework.web.client.RestClient;
  * and the RestClient used to call file-service.
  */
 @Configuration
-@EnableConfigurationProperties({EmbeddingProperties.class, FileServiceProperties.class, ProxyProperties.class})
+@EnableConfigurationProperties({EmbeddingProperties.class, FileServiceProperties.class,
+        ProxyProperties.class, RetrievalProperties.class})
 public class RagConfig {
 
     /**

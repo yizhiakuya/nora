@@ -17,7 +17,8 @@ class RagApiRecordsTest {
         assertEquals(8, request.topK());
 
         RetrievalResult result = new RetrievalResult(
-                "pgvector-guide.pdf", 3, 0.87, "HNSW index ...", "files/2026/09/pgvector-guide.pdf");
+                9L, "pgvector-guide.pdf", 3, 0.87, "HNSW index ...", "files/2026/09/pgvector-guide.pdf");
+        assertEquals(9L, result.docId());
         assertEquals("pgvector-guide.pdf", result.docName());
         assertEquals(3, result.chunkIndex());
         assertEquals(0.87, result.score());

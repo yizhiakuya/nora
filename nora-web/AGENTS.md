@@ -51,7 +51,7 @@
 | 域 | 契约文件 | 后端端点 | 状态 |
 |---|---|---|---|
 | 文件 | `filesApi.ts` | `/api/files/**` | ✅ 已接入（上传/列表/删除/预览/索引） |
-| 知识库 RAG | `ragService.ts` | `/api/rag/**` | ✅ 已接入（文档/检索/统计/引用） |
+| 知识库 RAG | `ragService.ts` | `/api/rag/**` | ✅ 已接入（文档/检索/统计/引用/详情/重命名/删除/批量删除/重建索引） |
 | 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval） |
 | 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询） |
 | 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE） |

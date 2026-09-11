@@ -51,8 +51,13 @@ export interface FilePreview {
 // 知识库 / 上下文管线 (RAG Pipeline)
 // ==========================================
 
-/** 摄入来源 */
-export type KnowledgeSource = "file" | "database" | "repo" | "environment" | "chat";
+/**
+ * 摄入来源。
+ * `text` 是对话「保存到知识库」等纯文本入库的来源(后端 rag-service 的
+ * POST /rag/index/text 写 source='text'),此前未列入该联合类型,导致
+ * 文档库按 SOURCE_ORDER 分组时静默丢失这类文档。
+ */
+export type KnowledgeSource = "file" | "database" | "repo" | "environment" | "chat" | "text";
 
 /** 知识文档（已摄入管线的一条记录） */
 export interface KnowledgeDoc {
@@ -105,6 +110,21 @@ export interface RetrievalResult {
   chunkIndex: number;
   score: number;
   snippet: string;
+}
+
+/** 文档的一个分块(详情抽屉展示) */
+export interface KnowledgeChunk {
+  chunkIndex: number;
+  content: string;
+  tokenCount: number;
+  /** 字符数(与 tokenCount 不同量纲,供 UI 展示) */
+  length: number;
+}
+
+/** GET /api/rag/docs/{id} 的返回:文档 + 它的 chunk 正文 */
+export interface DocDetail {
+  doc: KnowledgeDoc;
+  chunks: KnowledgeChunk[];
 }
 
 /** 数据图谱节点关联 */

@@ -401,17 +401,26 @@ public class AgentWorkspaceService {
 
     // ---------- 引导注入 ----------
 
+    /** 单个引导文件的注入信息(供「注入上下文」步骤下发:前端展示真实注入清单+正文)。 */
+    public record BootstrapFileInfo(String path, int bytes, boolean truncated, boolean missing, String content) {
+    }
+
+    /** 引导注入结果:模型可见文本 + 逐文件元数据 + 日记清单(不注入正文)。 */
+    public record BootstrapResult(String text, List<BootstrapFileInfo> files, List<String> dailyNotes) {
+    }
+
     /**
-     * 组装系统提示的工作区块(注入位置:harness 基础提示之后、RAG 片段之前)。
+     * 组装系统提示的工作区块(注入位置:harness 基础提示之后、RAG 片段之前),
+     * 同时返回逐文件元数据(前端「加载长期记忆」步骤展开可见,dsh 的注入可见性模式)。
      *
      * <p>结构对齐 Hermes 三层提示词装配:身份(SOUL.md,agent 可自行演化) →
      * 使用约定(AGENTS.md) → 记忆快照(USER.md/MEMORY.md);每层逐文件+总量双预算
      * 截断、缺失占位;memory/ 日记只列清单不注入正文(按需 read)。
      * 文件修改只影响后续会话(会话内快照不变,对齐 Hermes 的缓存语义)。
      *
-     * @return 注入文本;工作区不可用时返回 null(静默降级)
+     * @return 注入结果;工作区不可用时返回 null(静默降级)
      */
-    public String bootstrapPrompt() {
+    public BootstrapResult bootstrap() {
         try {
             StringBuilder sb = new StringBuilder();
             sb.append("## 你的工作区"
@@ -422,43 +431,62 @@ public class AgentWorkspaceService {
                             + "帮用户查看/整理项目文件时直接用,写/删区外文件时会请求用户确认。")
                     .append("\n");
 
+            List<BootstrapFileInfo> files = new ArrayList<>();
             int[] budget = {BOOTSTRAP_TOTAL_CHARS};
             sb.append("\n").append("### 身份(SOUL.md——你的可演化人格:想调整自己的语气/边界,直接编辑它)").append("\n");
-            appendBootstrapSection(sb, IDENTITY_FILES, budget);
+            appendBootstrapSection(sb, IDENTITY_FILES, budget, files);
             sb.append("\n").append("### 使用约定(AGENTS.md)").append("\n");
-            appendBootstrapSection(sb, CONTEXT_FILES, budget);
+            appendBootstrapSection(sb, CONTEXT_FILES, budget, files);
             sb.append("\n").append("### 记忆快照(USER.md 偏好 / MEMORY.md 耐久事实;每轮注入,保持精简)").append("\n");
-            appendBootstrapSection(sb, VOLATILE_FILES, budget);
+            appendBootstrapSection(sb, VOLATILE_FILES, budget, files);
 
-            appendDailyListing(sb);
+            List<String> dailyNotes = appendDailyListing(sb);
             sb.append("\n")
                     .append("记忆维护:稳定偏好→USER.md;耐久事实/决定→MEMORY.md;日常观察/进度→memory/今日.md"
                             + "(按需读取,不注入)。用户说「记住…」时必须落盘,不能只口头答应。")
                     .append("\n");
-            return sb.toString();
+            return new BootstrapResult(sb.toString(), files, dailyNotes);
         } catch (Exception e) {
             log.warn("workspace bootstrap inject failed (ignored): {}", e.getMessage());
             return null;
         }
     }
 
-    /** 渲染一组引导文件(共享总量预算;逐文件截断+缺失占位)。 */
-    private void appendBootstrapSection(StringBuilder sb, java.util.List<String> names, int[] budget) {
+    /** 兼容入口:只要文本(bootstrap() 的薄包装)。 */
+    public String bootstrapPrompt() {
+        BootstrapResult result = bootstrap();
+        return result == null ? null : result.text();
+    }
+
+    /** 渲染一组引导文件(共享总量预算;逐文件截断+缺失占位),并记录逐文件元数据。 */
+    private void appendBootstrapSection(StringBuilder sb, java.util.List<String> names, int[] budget,
+                                        List<BootstrapFileInfo> files) {
         for (String name : names) {
             String content = readBootstrap(name);
             if (budget[0] <= 0) {
                 sb.append("(预算耗尽,").append(name).append("已省略;需要时用 manage_workspace read 读取)").append("\n");
+                files.add(new BootstrapFileInfo(name, 0, true, content == null, null));
                 continue;
             }
-            String body = content == null ? "(文件缺失)" : content;
+            boolean missing = content == null;
+            String body = missing ? "(文件缺失)" : content;
+            boolean truncated = false;
             if (body.length() > BOOTSTRAP_PER_FILE_CHARS) {
                 body = body.substring(0, BOOTSTRAP_PER_FILE_CHARS) + "\n" + "…(过长截断)";
+                truncated = true;
             }
             if (body.length() > budget[0]) {
                 body = body.substring(0, Math.max(0, budget[0])) + "\n" + "…(预算截断)";
+                truncated = true;
             }
             budget[0] -= body.length();
             sb.append("\n").append("#### ").append(name).append("\n").append(body).append("\n");
+            // bytes = 实际注入的 UTF-8 字节数(前端按 B/KB 展示;中文 3 字节/字符,
+            // 不能用 String.length——那是字符数,会低估展示值)
+            int byteLen = missing ? 0 : body.getBytes(StandardCharsets.UTF_8).length;
+            // content = 模型实际读到的注入正文(前端展开可见;dsh 的 instructions 形态:
+            // 文件清单 + 原文,保留 framing——展示的就是模型读到的,不做二次加工)
+            files.add(new BootstrapFileInfo(name, byteLen, truncated, missing, missing ? null : body));
         }
     }
 
@@ -475,10 +503,11 @@ public class AgentWorkspaceService {
     }
 
     /** memory/ 最近日记:只列文件名与大小(正文按需 read,不占每轮预算)。 */
-    private void appendDailyListing(StringBuilder sb) {
+    /** 追加 memory/ 日记清单(只列文件名,不注入正文);返回清单供元数据上报。 */
+    private List<String> appendDailyListing(StringBuilder sb) {
         Path memoryDir = root.resolve("memory");
         if (!Files.isDirectory(memoryDir)) {
-            return;
+            return List.of();
         }
         try (Stream<Path> stream = Files.list(memoryDir)) {
             List<Path> daily = stream
@@ -486,14 +515,18 @@ public class AgentWorkspaceService {
                     .sorted(Comparator.comparing((Path p) -> p.getFileName().toString()).reversed())
                     .limit(7)
                     .toList();
+            List<String> names = new ArrayList<>();
             if (!daily.isEmpty()) {
                 sb.append("\n## memory/ 最近日记(不自动注入,需要时 read)\n");
                 for (Path p : daily) {
                     sb.append("- memory/").append(p.getFileName()).append(" (")
                             .append(Files.size(p)).append(" B)\n");
+                    names.add("memory/" + p.getFileName());
                 }
             }
+            return names;
         } catch (IOException ignored) {
+            return List.of();
         }
     }
 

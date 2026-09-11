@@ -10,7 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * RAG endpoints, all wrapped in {@link ApiResponse} with camelCase payloads
@@ -164,6 +168,106 @@ public class RagController {
         long docId = indexingService.indexDocument(name, "text", null,
                 (request.text().length() / 1024) + " KB", request.text());
         return ApiResponse.ok(knowledgeDocService.getDoc(docId));
+    }
+
+    /**
+     * Doc detail with its chunks (frontend detail drawer).
+     *
+     * @param id doc id
+     * @return doc plus chunk texts, or 404 when the id is unknown
+     */
+    @GetMapping("/docs/{id}")
+    public ApiResponse<DocDetailView> docDetail(@PathVariable long id) {
+        KnowledgeDocService.KnowledgeDocView doc = knowledgeDocService.getDoc(id);
+        if (doc == null) {
+            throw new BusinessException(404, "知识库文档不存在: " + id);
+        }
+        return ApiResponse.ok(new DocDetailView(doc, knowledgeDocService.listChunks(id)));
+    }
+
+    /**
+     * Renames a doc; chunks and vectors are untouched.
+     *
+     * @param id      doc id
+     * @param request {@code {name}}
+     * @return the updated doc
+     */
+    @PatchMapping("/docs/{id}")
+    public ApiResponse<KnowledgeDocService.KnowledgeDocView> renameDoc(@PathVariable long id,
+                                                                      @RequestBody RenameRequest request) {
+        if (request == null || request.name() == null || request.name().isBlank()) {
+            throw new BusinessException(400, "name is required");
+        }
+        if (!knowledgeDocService.renameDoc(id, request.name())) {
+            throw new BusinessException(404, "知识库文档不存在: " + id);
+        }
+        return ApiResponse.ok(knowledgeDocService.getDoc(id));
+    }
+
+    /**
+     * Deletes a doc and its chunks.
+     *
+     * @param id doc id
+     * @return count of removed docs (0 or 1)
+     */
+    @DeleteMapping("/docs/{id}")
+    public ApiResponse<DeleteResult> deleteDoc(@PathVariable long id) {
+        return ApiResponse.ok(new DeleteResult(knowledgeDocService.deleteDoc(id) ? 1 : 0));
+    }
+
+    /**
+     * Batch delete. Unknown ids are ignored and reported in {@code deleted}.
+     *
+     * @param request {@code {ids:[…]}}
+     * @return count of removed docs
+     */
+    @PostMapping("/docs/delete")
+    public ApiResponse<DeleteResult> deleteDocs(@RequestBody DeleteRequest request) {
+        if (request == null || request.ids() == null || request.ids().isEmpty()) {
+            return ApiResponse.ok(new DeleteResult(0));
+        }
+        return ApiResponse.ok(new DeleteResult(
+                knowledgeDocService.deleteDocs(request.ids().stream().filter(Objects::nonNull).toList())));
+    }
+
+    /**
+     * Re-embeds a doc's stored chunks. Recovers failed docs and refreshes
+     * vectors after an embedding model change.
+     *
+     * @param id doc id
+     * @return the updated doc
+     */
+    @PostMapping("/docs/{id}/reindex")
+    public ApiResponse<KnowledgeDocService.KnowledgeDocView> reindexDoc(@PathVariable long id) {
+        if (knowledgeDocService.getDoc(id) == null) {
+            throw new BusinessException(404, "知识库文档不存在: " + id);
+        }
+        List<String> texts = knowledgeDocService.chunkTexts(id);
+        if (texts.isEmpty()) {
+            throw new BusinessException(422,
+                    "该文档没有可重建的 chunk 正文(源文件已入库时请重新上传): " + id);
+        }
+        indexingService.reindexChunks(id, texts);
+        return ApiResponse.ok(knowledgeDocService.getDoc(id));
+    }
+
+    /** Doc plus its chunks (frontend detail drawer). */
+    public record DocDetailView(
+            KnowledgeDocService.KnowledgeDocView doc,
+            List<KnowledgeDocService.ChunkView> chunks
+    ) {
+    }
+
+    /** PATCH /api/rag/docs/{id} body. */
+    public record RenameRequest(String name) {
+    }
+
+    /** POST /api/rag/docs/delete body. */
+    public record DeleteRequest(List<Long> ids) {
+    }
+
+    /** Delete result; {@code deleted} counts rows actually removed. */
+    public record DeleteResult(int deleted) {
     }
 
     /** POST /api/rag/index/text body. */

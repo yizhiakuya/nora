@@ -30,12 +30,19 @@ public record ChatStepDto(
         String toolName,
         StepInput input,
         StepResult result,
-        Integer roundIndex
+        Integer roundIndex,
+        ContextInfo context
 ) {
 
     /** Convenience constructor for legacy call sites (no structured tool payload). */
     public ChatStepDto(String id, String type, String title, String detail, Long duration, String status) {
-        this(id, type, title, detail, duration, status, null, null, null, null);
+        this(id, type, title, detail, duration, status, null, null, null, null, null);
+    }
+
+    /** Convenience constructor for tool steps (no context payload). */
+    public ChatStepDto(String id, String type, String title, String detail, Long duration, String status,
+                       String toolName, StepInput input, StepResult result, Integer roundIndex) {
+        this(id, type, title, detail, duration, status, toolName, input, result, roundIndex, null);
     }
 
     /**
@@ -71,5 +78,35 @@ public record ChatStepDto(
             Boolean truncated,
             String error
     ) {
+    }
+
+    /**
+     * 上下文注入元数据(dsh 的自描述 source 模式):type=context 的步骤携带
+     * {@code form} 声明信息形态,前端按 form 渲染;未知 form 前端降级为通用展示。
+     *
+     * @param form     信息形态:{@code instructions}(文件注入)/ {@code catalog}(条目目录)
+     * @param kind     生产者标识(如 workspace-bootstrap / skill-catalog),前端无需白名单
+     * @param files    注入文件清单(instructions 形态)
+     * @param entries  目录条目( catalog 形态)
+     * @param dailyNotes 日记清单(只列名不注入正文)
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ContextInfo(
+            String form,
+            String kind,
+            java.util.List<ContextFile> files,
+            java.util.List<ContextEntry> entries,
+            java.util.List<String> dailyNotes
+    ) {
+    }
+
+    /** 一个注入文件:{@code bytes} 为实际注入字节数,truncated=被预算/长度截断,content=模型读到的正文。 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ContextFile(String path, Integer bytes, Boolean truncated, Boolean missing, String content) {
+    }
+
+    /** 一条目录条目(技能目录等):名称 + 描述。 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ContextEntry(String name, String description, String category) {
     }
 }

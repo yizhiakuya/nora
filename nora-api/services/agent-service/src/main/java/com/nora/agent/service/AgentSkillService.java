@@ -99,27 +99,52 @@ public class AgentSkillService {
      * 正文不在此处展开——agent 需要时用 manage_skill action=read 拉取。
      */
     public String catalogBlock() {
-        List<SkillView> enabled = jdbcTemplate.query(
-                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE enabled = TRUE ORDER BY updated_at DESC, id DESC",
-                (rs, i) -> map(rs));
+        CatalogBundle bundle = catalogBundle();
+        return bundle == null ? null : bundle.text();
+    }
+
+    /** 目录条目(结构化,供「注入上下文」步骤下发:dsh 的 catalog 形态)。 */
+    public record CatalogEntry(String name, String description, String category) {
+    }
+
+    /** 目录文本 + 结构化条目(同一次查询产出;系统提示与注入步骤共用)。 */
+    public record CatalogBundle(String text, List<CatalogEntry> entries) {
+    }
+
+    /**
+     * 一次查询产出目录文本与结构化条目;无启用技能返回 null。
+     * 文本给模型(渐进披露:只列名称+描述,正文按需 read),条目给前端注入步骤展示。
+     */
+    public CatalogBundle catalogBundle() {
+        List<SkillView> enabled = enabledSkills();
         if (enabled.isEmpty()) {
             return null;
         }
         StringBuilder sb = new StringBuilder(
                 "以下是用户启用的技能(Skill)目录。当任务与某个技能相关时,先用 manage_skill 工具 action=read 读取它的完整指令并严格遵循:\n");
+        List<CatalogEntry> entries = new java.util.ArrayList<>();
         int count = 0;
         for (SkillView s : enabled) {
             if (count >= MAX_CATALOG_ENTRIES) {
                 break;
             }
-            String desc = s.description() == null || s.description().isBlank() ? "(无描述)" : s.description();
-            if (desc.length() > CATALOG_DESC_CHARS) {
-                desc = desc.substring(0, CATALOG_DESC_CHARS) + "…";
-            }
+            String desc = displayDescription(s);
             sb.append("- ").append(s.name()).append(" [").append(s.category()).append("]: ").append(desc).append('\n');
+            entries.add(new CatalogEntry(s.name(), desc, s.category()));
             count++;
         }
-        return sb.toString();
+        return new CatalogBundle(sb.toString(), entries);
+    }
+
+    private List<SkillView> enabledSkills() {
+        return jdbcTemplate.query(
+                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE enabled = TRUE ORDER BY updated_at DESC, id DESC",
+                (rs, i) -> map(rs));
+    }
+
+    private static String displayDescription(SkillView s) {
+        String desc = s.description() == null || s.description().isBlank() ? "(无描述)" : s.description();
+        return desc.length() > CATALOG_DESC_CHARS ? desc.substring(0, CATALOG_DESC_CHARS) + "…" : desc;
     }
 
     private static SkillView map(java.sql.ResultSet rs) throws java.sql.SQLException {

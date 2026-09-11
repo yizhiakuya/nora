@@ -9,6 +9,7 @@ export const SOURCE_META: Record<KnowledgeSource, { label: string; icon: LucideI
   repo:        { label: "代码仓库", icon: FileCode,      color: "text-purple-600 dark:text-purple-400", bg: "bg-purple-100 dark:bg-purple-900/50" },
   environment: { label: "环境配置", icon: Server,        color: "text-green-600 dark:text-green-400",   bg: "bg-green-100 dark:bg-green-900/50" },
   chat:        { label: "对话产出", icon: MessageSquare,  color: "text-teal-600 dark:text-teal-400",     bg: "bg-teal-100 dark:bg-teal-900/50" },
+  text:        { label: "文本保存", icon: MessageSquare,  color: "text-teal-600 dark:text-teal-400",     bg: "bg-teal-100 dark:bg-teal-900/50" },
 };
 
 export const SOURCE_LABEL: Record<KnowledgeSource, string> = {
@@ -17,4 +18,5 @@ export const SOURCE_LABEL: Record<KnowledgeSource, string> = {
   repo: "代码仓库",
   environment: "环境配置",
   chat: "对话产出",
+  text: "文本保存",
 };

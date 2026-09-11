@@ -8,6 +8,7 @@ import com.nora.agent.service.ApprovalService;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
 import com.nora.agent.service.PermissionMode;
+import com.nora.agent.service.TurnStreamRegistry;
 import com.nora.common.logging.TraceContext;
 import com.nora.common.response.ApiResponse;
 import org.slf4j.Logger;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -53,6 +55,7 @@ public class AgentController {
     private final ChatStoreService chatStoreService;
     private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
+    private final TurnStreamRegistry turnStreams;
     private final ExecutorService chatExecutor = Executors.newCachedThreadPool();
     /** 进行中的轮次,按会话注册;「停止生成」据此中断上游 HTTP 读(省 token) */
     private final java.util.concurrent.ConcurrentMap<String, java.util.concurrent.Future<?>> activeTurns =
@@ -61,18 +64,20 @@ public class AgentController {
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
                            ObjectMapper objectMapper) {
-        this(orchestrationService, chatStoreService, null, objectMapper);
+        this(orchestrationService, chatStoreService, null, objectMapper, new TurnStreamRegistry());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
                            ApprovalService approvalService,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           TurnStreamRegistry turnStreams) {
         this.orchestrationService = orchestrationService;
         this.chatStoreService = chatStoreService;
         this.approvalService = approvalService;
         this.objectMapper = objectMapper;
+        this.turnStreams = turnStreams;
     }
 
     @GetMapping("/health")
@@ -231,6 +236,103 @@ public class AgentController {
         return ApiResponse.ok(approvalService.pendingFor(sessionId));
     }
 
+    /**
+     * Live-turn probe for reconnects: does the session have an in-flight turn,
+     * and what did it already emit? The client diffs this against its local
+     * message tail to rebuild the streaming UI (isTyping, steps, partial
+     * answer) without waiting for the turn to finish.
+     */
+    @GetMapping("/sessions/{sessionId}/turn/live")
+    public ApiResponse<LiveTurnView> liveTurn(@PathVariable String sessionId) {
+        var turn = turnStreams.get(sessionId);
+        if (turn == null) {
+            return ApiResponse.ok(new LiveTurnView(false, null, null, 0, null, null, 0));
+        }
+        var buffer = turn.snapshotAfter(0);
+        return ApiResponse.ok(new LiveTurnView(
+                !turn.isFinished(),
+                turn.content,
+                turn.startedAtMs,
+                buffer.size(),
+                buffer.isEmpty() ? null : buffer.get(buffer.size() - 1),
+                turn.turnId,
+                turn.lastSeq()));
+    }
+    /**
+     * SSE attach to a live turn: replays the buffered events first, then
+     * follows in real time until {@code done}/{@code error}.
+     *
+     * <p>Reconnect/resume protocol: every event carries {@code id:<seq>} (the
+     * per-turn monotonic sequence). A reconnecting EventSource sends
+     * {@code Last-Event-ID: <turnId>:<lastSeq>}; events after that seq are
+     * replayed, so a dropped connection resumes exactly where it stopped with
+     * no gaps and no duplicates.
+     *
+     * <p>Ordering is guaranteed by fencing the two sources of events: while the
+     * replay drain runs (synchronized on the turn), live appends block; the
+     * subscription is activated only after the drain completes. Events can
+     * therefore never overtake or duplicate each other.
+     */
+    @GetMapping(value = "/sessions/{sessionId}/turn/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter attachTurnStream(
+            @PathVariable String sessionId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
+        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+        var turn = turnStreams.get(sessionId);
+        if (turn == null) {
+            // 无进行中轮次:立刻收尾,前端据此走普通历史加载
+            try {
+                emitter.send(SseEmitter.event().name("idle").data("{\"live\":false}"));
+            } catch (IOException ignored) {
+                // client gone
+            }
+            emitter.complete();
+            return emitter;
+        }
+        // 解析 Last-Event-ID("turnId:seq"):仅当属于本轮时才作增量游标,
+        // 陈旧轮的游标对新一轮无意义,必须从 0 全量回放
+        long afterSeq = 0;
+        if (lastEventId != null) {
+            int sep = lastEventId.lastIndexOf(':');
+            if (sep > 0 && lastEventId.substring(0, sep).equals(turn.turnId)) {
+                try {
+                    afterSeq = Math.max(0, Long.parseLong(lastEventId.substring(sep + 1)));
+                } catch (NumberFormatException ignored) {
+                    // 坏游标按全量回放处理
+                }
+            }
+        }
+        java.util.Set<Long> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        java.util.function.Consumer<TurnStreamRegistry.TurnEvent> forward = event -> {
+            // exactly-once:回放与实况可能短暂重叠(finish 后的新订阅),seq 去重兜底;
+            // id 下发给客户端作断线续传游标
+            if (seen.add(event.seq())) {
+                sendRaw(emitter, event.event(), event.json(), event.seq());
+            }
+        };
+        // 回放 drain 与实况订阅在同一把锁内原子完成:drain 里没有的事件必然
+        // 会走订阅到达,实况事件不可能插队到更早的缓冲事件之前
+        java.util.List<TurnStreamRegistry.TurnEvent> backlog;
+        try {
+            backlog = turn.subscribeDraining(afterSeq, forward);
+            for (TurnStreamRegistry.TurnEvent e : backlog) {
+                forward.accept(e);
+            }
+        } catch (Exception e) {
+            log.debug("turn replay failed for {}: {}", sessionId, e.getMessage());
+            emitter.complete();
+            return emitter;
+        }
+        // subscribeDraining 之后 turn 可能已 finish(终态事件在 drain 后、
+        // finished 置位前入缓冲,订阅者已能收到;此处兜底关闭 emitter)
+        if (turn.isFinished()) {
+            emitter.complete();
+        }
+        emitter.onCompletion(() -> turn.unsubscribe(forward));
+        emitter.onTimeout(() -> turn.unsubscribe(forward));
+        return emitter;
+    }
+
     /** Chat history of one session, oldest first (frontend ChatMessage[]). */
     @GetMapping("/sessions/{sessionId}/messages")
     public List<ChatStoreService.StoredMessage> messages(@PathVariable String sessionId) {
@@ -270,6 +372,9 @@ public class AgentController {
 
     private void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
                              com.nora.agent.service.PermissionMode permissionMode, SseEmitter emitter) {
+        // 每轮注册 live turn:事件进有界缓冲,SSE 断开(刷新/切页)后可重连回放;
+        // 编排线程不受断开影响,收尾照常落库
+        TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content);
         try {
             chatStoreService.ensureSession(sessionId, content);
             chatStoreService.saveMessage(sessionId, "user", content, null, null);
@@ -296,12 +401,14 @@ public class AgentController {
                             try { chatStoreService.saveStep(sessionId, stepIndex[0]++, step); }
                             catch (Exception e) { log.warn("failed to persist agent step: {}", e.getMessage()); }
                             send(emitter, "step", step);
+                            turnStreams.publish(liveTurn, "step", toJson(step));
                         }
 
                         @Override
                         public void delta(String token) {
                             answer.append(token);
                             send(emitter, "delta", new DeltaPayload(token));
+                            turnStreams.publish(liveTurn, "delta", toJson(new DeltaPayload(token)));
                         }
 
                         @Override
@@ -310,17 +417,21 @@ public class AgentController {
                             int key = roundIndex == null ? Integer.MAX_VALUE : roundIndex;
                             reasoningBuffers.computeIfAbsent(key, k -> new StringBuilder()).append(token);
                             send(emitter, "reasoning_delta", new ReasoningDeltaPayload(roundIndex, token));
+                            turnStreams.publish(liveTurn, "reasoning_delta",
+                                    toJson(new ReasoningDeltaPayload(roundIndex, token)));
                         }
 
                         @Override
                         public void approvalRequired(com.nora.agent.dto.ApprovalRequestDto request) {
                             send(emitter, "approval_required", request);
+                            turnStreams.publish(liveTurn, "approval_required", toJson(request));
                         }
 
                         @Override
                         public void sources(List<CitationDto> found) {
                             citations.addAll(found);
                             send(emitter, "sources", found);
+                            turnStreams.publish(liveTurn, "sources", toJson(found));
                         }
                     });
             if (turnFuture == null) {
@@ -346,10 +457,12 @@ public class AgentController {
                             } catch (Exception reflectionError) {
                                 log.warn("failed to persist agent reflection for {}: {}", sessionId, reflectionError.getMessage());
                             }
+                            String errorJson = toJson(new ErrorPayload(error.getMessage()));
+                            turnStreams.publish(liveTurn, "error", errorJson);
                             try {
                                 emitter.send(SseEmitter.event()
                                         .name("error")
-                                        .data(toJson(new ErrorPayload(error.getMessage()))));
+                                        .data(errorJson, MediaType.APPLICATION_JSON));
                             } catch (IOException ignored) {
                                 // client gone
                             }
@@ -380,6 +493,14 @@ public class AgentController {
                         // accounting summed across tool rounds (null when relay omits it);
                         // contextWindow/promptTokens feed the frontend context meter
                         if (!userCancelled) {
+                            String doneJson = toJson(new DonePayload(UUID.randomUUID().toString(),
+                                    durationMs,
+                                    usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
+                                    answerText.length(),
+                                    turn != null ? turn.contextWindow() : null,
+                                    turn != null ? turn.promptTokens() : null,
+                                    turn != null ? turn.ttftMs() : null));
+                            turnStreams.publish(liveTurn, "done", doneJson);
                             send(emitter, "done", new DonePayload(UUID.randomUUID().toString(),
                                     durationMs,
                                     usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
@@ -392,8 +513,11 @@ public class AgentController {
                     });
         } catch (Exception e) {
             log.error("chat turn failed for session {}: {}", sessionId, e.getMessage(), e);
+            turnStreams.publish(liveTurn, "error", toJson(new ErrorPayload(e.getMessage())));
             send(emitter, "error", new ErrorPayload(e.getMessage()));
             emitter.complete();
+        } finally {
+            turnStreams.finish(sessionId, liveTurn);
         }
     }
 
@@ -415,6 +539,19 @@ public class AgentController {
         }
     }
 
+    /**
+     * 发送已序列化的 JSON(TurnEvent 回放路径),不再二次 toJson。
+     * {@code id:<seq>} 供 EventSource 断线续传:浏览器重连时自动带上
+     * Last-Event-ID,服务端据此增量回放,不重不漏。
+     */
+    private void sendRaw(SseEmitter emitter, String event, String json, long seq) {
+        try {
+            emitter.send(SseEmitter.event().id(String.valueOf(seq)).name(event).data(json, MediaType.APPLICATION_JSON));
+        } catch (IOException | IllegalStateException e) {
+            log.debug("SSE replay send failed (client disconnected?): {}", e.getMessage());
+        }
+    }
+
     private static String abbreviate(String s, int max) {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, max) + "…(" + s.length() + " chars)";
@@ -426,6 +563,17 @@ public class AgentController {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    /** GET /sessions/{id}/turn/live 响应:lastEvent 供增量续传(前端按游标去重)。 */
+    public record LiveTurnView(
+            boolean running,
+            String content,
+            Long startedAtMs,
+            int bufferedEvents,
+            TurnStreamRegistry.TurnEvent lastEvent,
+            String turnId,
+            long lastSeq) {
     }
 
     /** POST /api/chat/sessions/{id}/messages body. */

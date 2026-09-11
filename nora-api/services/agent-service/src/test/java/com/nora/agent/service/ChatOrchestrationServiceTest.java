@@ -264,9 +264,153 @@ class ChatOrchestrationServiceTest {
     }
 
     @Test
+    void emitsWorkspaceContextStepWithPerFileMetadata() throws Exception {
+        // 工作区注入可见(dsh 模式):s-context-memory 步骤携带逐文件元数据 + 日记清单
+        java.nio.file.Path wsDir = java.nio.file.Files.createTempDirectory("nora-ws-ctx");
+        try {
+            AgentWorkspaceService workspace = new AgentWorkspaceService(wsDir.toString());
+            workspace.write("memory/2026-09-11.md", "note");
+            ChatOrchestrationService svc = new ChatOrchestrationService(
+                    new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
+                    ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+                    null, null, null, null, null, null, null, workspace, null, 5, null);
+            when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
+
+            List<ChatStepDto> steps = new java.util.ArrayList<>();
+            svc.chat("hi", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
+                @Override public void step(ChatStepDto step) { steps.add(step); }
+                @Override public void delta(String token) { }
+                @Override public void sources(List<CitationDto> citations) { }
+            });
+
+            ChatStepDto context = steps.stream()
+                    .filter(s -> "s-context-memory".equals(s.id())).findFirst().orElseThrow();
+            assertEquals("context", context.type());
+            assertEquals("completed", context.status());
+            assertEquals("instructions", context.context().form());
+            assertEquals("workspace-bootstrap", context.context().kind());
+            assertEquals(4, context.context().files().size(), "SOUL/AGENTS/USER/MEMORY");
+            assertEquals(List.of("memory/2026-09-11.md"), context.context().dailyNotes());
+        } finally {
+            try (var walk = java.nio.file.Files.walk(wsDir)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                    try { java.nio.file.Files.deleteIfExists(p); } catch (java.io.IOException ignored) { }
+                });
+            }
+        }
+    }
+
+    @Test
+    void emitsSkillCatalogContextStepWhenSkillsEnabled() throws Exception {
+        // 技能目录注入可见(catalog 形态):条目来自 AgentSkillService.catalogBundle()
+        AgentSkillService skills = org.mockito.Mockito.mock(AgentSkillService.class);
+        when(skills.catalogBundle()).thenReturn(new AgentSkillService.CatalogBundle(
+                "以下是用户启用的技能(Skill)目录。\n- 周报生成 [计算]: 按模板生成周报\n",
+                List.of(new AgentSkillService.CatalogEntry("周报生成", "按模板生成周报", "计算"))));
+        ChatOrchestrationService svc = new ChatOrchestrationService(
+                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
+                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+                null, null, null, null, null, null, null, null, skills, 5, null);
+        when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
+
+        List<ChatStepDto> steps = new java.util.ArrayList<>();
+        svc.chat("hi", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
+            @Override public void step(ChatStepDto step) { steps.add(step); }
+            @Override public void delta(String token) { }
+            @Override public void sources(List<CitationDto> citations) { }
+        });
+
+        ChatStepDto context = steps.stream()
+                .filter(s -> "s-context-skills".equals(s.id())).findFirst().orElseThrow();
+        assertEquals("context", context.type());
+        assertEquals("catalog", context.context().form());
+        assertEquals("skill-catalog", context.context().kind());
+        assertEquals(1, context.context().entries().size());
+        assertEquals("周报生成", context.context().entries().get(0).name());
+    }
+
+    @Test
+    void contextStepsNeverLeakIntoModelHistoryAndSystemPromptAppearsOnce() throws Exception {
+        // 回归锁(防上下文重叠):注入只在请求里出现一次——
+        // 1) 历史装配只取 content,落库的 context 步骤(steps 列,含注入正文)绝不回灌给模型;
+        // 2) system 消息每请求仅一条(多轮工具循环复用同一 messages 数组,不重复 append)。
+        // 若未来有人把 steps 内容拼进历史,marker 会出现两次 → 此测试失败。
+        java.nio.file.Path wsDir = java.nio.file.Files.createTempDirectory("nora-ws-nodup");
+        try {
+            // ASCII marker:避开 JSON 转义干扰,计数即证据
+            String marker = "MARKER-LONGMEM-UNIQUE-42";
+            java.nio.file.Files.writeString(wsDir.resolve("MEMORY.md"), marker);
+            AgentWorkspaceService workspace = new AgentWorkspaceService(wsDir.toString());
+            ChatOrchestrationService svc = new ChatOrchestrationService(
+                    new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
+                    ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+                    null, null, null, null, null, null, null, workspace, null, 5, null);
+
+            // 上一轮已落库的助手消息:content=回答正文;steps 携带注入正文(与系统提示同源)
+            List<ChatStepDto> persisted = List.of(new ChatStepDto("s-context-memory", "context",
+                    "加载长期记忆", "注入 4 个文件", 0L, "completed", null, null, null, 0,
+                    new ChatStepDto.ContextInfo("instructions", "workspace-bootstrap",
+                            List.of(new ChatStepDto.ContextFile("MEMORY.md",
+                                    marker.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                                    false, false, marker)),
+                            null, List.of())));
+            List<ChatStoreService.StoredMessage> history = List.of(
+                    new ChatStoreService.StoredMessage("user", "第一问", null, null),
+                    new ChatStoreService.StoredMessage("assistant", "第一答", persisted, null));
+
+            // buildMessages 是私有装配方法:反射直调,拿真实请求消息数组
+            Class<?> promptResultClass = Class.forName(
+                    "com.nora.agent.service.ChatOrchestrationService$SystemPromptResult");
+            Object promptOut = java.lang.reflect.Array.newInstance(promptResultClass, 1);
+            var method = ChatOrchestrationService.class.getDeclaredMethod("buildMessages",
+                    String.class, List.class, List.class, List.class, ContextBudget.class, promptOut.getClass());
+            method.setAccessible(true);
+            List<?> messages = (List<?>) method.invoke(svc, "第二问", history, List.of(), List.of(),
+                    new ContextBudget(null), promptOut);
+
+            List<String> json = new java.util.ArrayList<>();
+            for (Object m : messages) {
+                var nodeAccessor = m.getClass().getDeclaredMethod("node");
+                nodeAccessor.setAccessible(true);
+                json.add(nodeAccessor.invoke(m).toString());
+            }
+
+            // 1) system 消息唯一
+            assertEquals(1, json.stream().filter(j -> j.contains("\"role\":\"system\"")).count(),
+                    "每请求仅一条 system 消息(工具轮复用同一数组,不重复注入)");
+            // 2) 注入正文(marker)在整个请求中恰好出现一次:来自系统提示的文件注入;
+            //    落库 context 步骤里的同源正文不得再出现一次(历史回灌 = 重叠)
+            int markerHits = json.stream().mapToInt(j -> countOccurrences(j, marker)).sum();
+            assertEquals(1, markerHits,
+                    "注入正文在请求中恰好一次:context 步骤载荷绝不回灌历史(否则上下文重叠)");
+            // 3) 历史回答正文照常装配(排除因过度裁剪而让断言假通过)
+            assertTrue(json.stream().anyMatch(j -> j.contains("第一答")), "历史 assistant content 正常装配");
+            // 4) 步骤元数据(生产侧标识)不进请求
+            assertTrue(json.stream().noneMatch(j -> j.contains("workspace-bootstrap")),
+                    "context 步骤元数据绝不进请求");
+        } finally {
+            try (var walk = java.nio.file.Files.walk(wsDir)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                    try { java.nio.file.Files.deleteIfExists(p); } catch (java.io.IOException ignored) { }
+                });
+            }
+        }
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        for (int idx = haystack.indexOf(needle); idx >= 0; idx = haystack.indexOf(needle, idx + needle.length())) {
+            count++;
+        }
+        return count;
+    }
+
+    @Test
     void emitsRetrievalStepAndSourcesWhenRagReturnsHits() {
         List<CitationDto> citations = List.of(
-                new CitationDto("arch.md", "file", 2, 0.9, "pgvector provides cosine search"));
+                new CitationDto(11L, "arch.md", "file", 2, 0.9, "pgvector provides cosine search"));
         when(ragRetrievalClient.search("向量检索", 6)).thenReturn(citations);
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();

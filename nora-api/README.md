@@ -22,7 +22,7 @@ Nora 个人工作台 Java 后端。设计文档见 [docs/](docs/)：
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | Phase 0 基础设施 | ✅ 已完成 | 16 个 Maven 模块、docker-compose dev-basic（PG+pgvector / Redis / Nacos）、gateway 6 条路由 |
-| Phase 1 RAG 链路 | ✅ 已完成 | file-service（Tika 解析）+ rag-service（分块 / Jina v3 1024 维 / pgvector HNSW） |
+| Phase 1 RAG 链路 | ✅ 已完成 | file-service（Tika 解析）+ rag-service（分块 / Jina v3 1024 维 / pgvector HNSW + pg_trgm 混合检索） |
 | Phase 2 Agent 链路 | 🔄 收尾中 | SSE ReAct 循环、工具调用、会话持久化、模型 Provider 管理已完成；**高风险审批流已开发未提交** |
 | Phase 3 数据源 + 任务 | 🟡 部分完成 | datasource-service、automation-service 已上线；**通知 SSE（3.5）未实现** |
 | Phase 4 环境控制台 | 🟡 部分完成 | env-service 容器管理与日志 SSE 已完成；**诊断 → 自动修复任务（4.4）未打通** |
@@ -35,7 +35,7 @@ Nora 个人工作台 Java 后端。设计文档见 [docs/](docs/)：
 |------|------|---------|
 | gateway-service | 8080 | 路由 `/api/{chat,files,rag,datasources,automations,environment}/**` |
 | file-service | 8081 | `POST /files/upload`、`GET /files`、`DELETE /files`、`GET /files/{id}/preview`、`POST /files/{id}/index`、`POST /files/{id}/indexed` |
-| rag-service | 8082 | `POST /rag/index`、`GET /rag/docs`、`GET /rag/index/stats`、`POST /rag/search`、`POST /rag/citations` |
+| rag-service | 8082 | `POST /rag/index`、`POST /rag/index/text`、`GET /rag/docs`、`GET /rag/docs/{id}`(详情含 chunks)、`PATCH /rag/docs/{id}`(重命名)、`DELETE /rag/docs/{id}`、`POST /rag/docs/delete`(批量)、`POST /rag/docs/{id}/reindex`(重建向量)、`GET /rag/index/stats`、`POST /rag/search`、`POST /rag/citations` |
 | agent-service | — | `POST /chat`（SSE）、`POST /chat/approvals/{token}`、`GET /chat/sessions`、`GET /chat/sessions/{id}/messages`、`GET /chat/sessions/{id}/approvals`、`DELETE /chat/sessions/{id}`、`/models` CRUD + `/{id}/test` |
 | datasource-service | — | 连接 CRUD、`POST /{id}/test`、`GET /{id}/schema`、`POST /{id}/query`、`POST /{id}/execute`、`GET /{id}/history` |
 | env-service | — | `GET /services`、start / stop / restart、`GET /logs` |
@@ -77,6 +77,11 @@ Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local
   事件总线（outbox + MQ）推迟到后续阶段，代码中已注明。
 - **Embedding 维度 1024**：v1 文档写 1536（OpenAI），实际使用 `jina-embeddings-v3` 上限 1024，迁移脚本中已注明。
 - **Dubbo 未在 Phase 1/2 启用**：跨服务调用走 REST + Nacos 服务发现，Dubbo 随后续阶段引入。
+- **检索为混合检索（向量 + pg_trgm）**：`V3__hybrid_search.sql` 引入 `pg_trgm` 扩展，
+  关键词侧用 `strict_word_similarity`（免中文分词），与向量侧按权重 RRF 融合
+  （`nora.retrieval.*`）。`pg_trgm` 缺失时自动降级为纯向量，不影响服务启动。
+  相似度下限 `min-score` 默认 `0.45`，为 jina-embeddings-v3 在本语料上的实测值
+  （相关 ~0.46–0.76 / 无关 ~0.31–0.42）；换 embedding 模型后需重新标定，否则可能全砍或全放。
 
 ## 前端对接
 

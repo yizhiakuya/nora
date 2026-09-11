@@ -6,6 +6,7 @@ node_modules/
 
 # assistant workspace memory (local only)
 .workbuddy/
+.workbuddy-ai/
 
 # misc
 .DS_Store

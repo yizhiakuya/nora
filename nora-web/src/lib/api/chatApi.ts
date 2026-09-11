@@ -19,9 +19,43 @@ export interface ChatStepResult {
   error?: string;
 }
 
+/** 注入文件清单条目(注入上下文步骤,instructions 形态) */
+export interface ContextFile {
+  path: string;
+  /** 实际注入字节数 */
+  bytes?: number;
+  /** 被长度/预算截断 */
+  truncated?: boolean;
+  /** 文件缺失(注入占位符) */
+  missing?: boolean;
+  /** 模型实际读到的注入正文(展开可查看) */
+  content?: string;
+}
+
+/** 目录条目(注入上下文步骤,catalog 形态;如技能目录) */
+export interface ContextEntry {
+  name: string;
+  description?: string;
+  category?: string;
+}
+
+/**
+ * 注入上下文元数据(dsh 自描述模式):form 声明信息形态,前端按 form 渲染;
+ * 未知 form 降级为通用展示(不丢内容)。
+ */
+export interface ChatStepContext {
+  form?: "instructions" | "catalog" | string;
+  /** 生产者标识(如 workspace-bootstrap / skill-catalog) */
+  kind?: string;
+  files?: ContextFile[];
+  entries?: ContextEntry[];
+  /** 日记清单(只列名不注入正文) */
+  dailyNotes?: string[];
+}
+
 export interface ChatStep {
   id: string;
-  type: "think" | "tool";
+  type: "think" | "tool" | "context";
   title: string;
   detail?: string;
   duration?: string;
@@ -32,7 +66,9 @@ export interface ChatStep {
   input?: ChatStepInput;
   /** 结构化结果:输出内容、行数、截断标记、失败原因 */
   result?: ChatStepResult;
-  /** ReAct 轮次;0 表示 RAG 检索,1+ 表示模型工具轮 */
+  /** 注入上下文元数据(context 类型步骤才有) */
+  context?: ChatStepContext;
+  /** ReAct 轮次;0 表示 RAG 检索/上下文注入,1+ 表示模型工具轮 */
   roundIndex?: number;
 }
 

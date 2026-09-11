@@ -7,7 +7,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - `lib/api/client.ts` — 统一请求:envelope(`{code,data,message}`,code=0 成功)、默认 30s 超时(调用方显式传 signal 时以其为准)、`USE_BACKEND` 开关(VITE_USE_BACKEND=true 走真实后端)
 - `lib/api/agentApi.ts` — SSE 解析(reasoning_delta 聚合为 s-reasoning-N step)
 - `hooks/useModelProviders` — provider 唯一数据源(Zustand persist + 后端同步)
-- `components/chat/AgentThoughtBlock.tsx` — 思考块(roundIndex 分组;think 行默认展开,用户收起后尊重用户)
+- `components/chat/AgentThoughtBlock.tsx` — 思考块(roundIndex 分组;think 行默认展开,用户收起后尊重用户);`ContextRow` 渲染注入上下文步骤(dsh 模式:form=instructions 显示文件清单+日记清单,**文件行可点击展开注入正文**;form=catalog 显示技能条目;折叠一行摘要,展开只读;未知 form 降级通用展示)
 - `components/settings/model/ReasoningLevelConfig.tsx` — per-model 推理等级配置
 - `hooks/useSkills` — 技能唯一数据源(列表走 /api/skills 不带正文;详情按需 loadDetail 拉正文——渐进披露);后端模式 CRUD 乐观更新+失败回滚
 - `components/files/WorkspaceBrowser.tsx` — 文件页内的「Agent 工作区」文件夹浏览器(文件系统一体化:普通文件夹形态,点击进入/面包屑导航/文件编辑器);`app/files/page.tsx` 持 `workspaceDir` 状态(null=根视图)

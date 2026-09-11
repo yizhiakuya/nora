@@ -17,6 +17,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -49,10 +52,126 @@ class RagControllerTest {
         assertEquals("ok", controller.health());
     }
 
+    // ===================== 文档 CRUD =====================
+
+    @Test
+    void docDetailReturnsDocWithChunks() {
+        KnowledgeDocService.KnowledgeDocView doc = docView(7L, "架构.md");
+        when(knowledgeDocService.getDoc(7L)).thenReturn(doc);
+        when(knowledgeDocService.listChunks(7L))
+                .thenReturn(List.of(new KnowledgeDocService.ChunkView(0, "正文", 3, 2)));
+
+        ApiResponse<RagController.DocDetailView> response = controller.docDetail(7L);
+
+        assertEquals(0, response.code());
+        assertEquals("架构.md", response.data().doc().name());
+        assertEquals(1, response.data().chunks().size());
+    }
+
+    @Test
+    void docDetailRejectsUnknownId() {
+        when(knowledgeDocService.getDoc(404L)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> controller.docDetail(404L));
+
+        assertEquals(404, ex.getCode());
+    }
+
+    @Test
+    void renameTrimsAndReturnsUpdatedDoc() {
+        when(knowledgeDocService.renameDoc(5L, "新名")).thenReturn(true);
+        when(knowledgeDocService.getDoc(5L)).thenReturn(docView(5L, "新名"));
+
+        ApiResponse<KnowledgeDocService.KnowledgeDocView> response =
+                controller.renameDoc(5L, new RagController.RenameRequest("新名"));
+
+        assertEquals(0, response.code());
+        assertEquals("新名", response.data().name());
+    }
+
+    @Test
+    void renameRejectsBlankName() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> controller.renameDoc(5L, new RagController.RenameRequest("  ")));
+
+        assertEquals(400, ex.getCode());
+        verify(knowledgeDocService, never()).renameDoc(anyLong(), anyString());
+    }
+
+    @Test
+    void renameRejectsUnknownId() {
+        when(knowledgeDocService.renameDoc(anyLong(), anyString())).thenReturn(false);
+
+        assertThrows(BusinessException.class,
+                () -> controller.renameDoc(9L, new RagController.RenameRequest("x")));
+    }
+
+    @Test
+    void deleteReturnsRemovedCount() {
+        when(knowledgeDocService.deleteDoc(6L)).thenReturn(true);
+
+        assertEquals(1, controller.deleteDoc(6L).data().deleted());
+    }
+
+    @Test
+    void batchDeleteReturnsRemovedCount() {
+        when(knowledgeDocService.deleteDocs(List.of(1L, 2L))).thenReturn(2);
+
+        assertEquals(2, controller.deleteDocs(
+                new RagController.DeleteRequest(List.of(1L, 2L))).data().deleted());
+    }
+
+    @Test
+    void batchDeleteIgnoresNullIdsAndEmptyBody() {
+        assertEquals(0, controller.deleteDocs(null).data().deleted());
+        assertEquals(0, controller.deleteDocs(
+                new RagController.DeleteRequest(List.of())).data().deleted());
+        verify(knowledgeDocService, never()).deleteDocs(anyList());
+    }
+
+    @Test
+    void reindexRejectsUnknownId() {
+        when(knowledgeDocService.getDoc(11L)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> controller.reindexDoc(11L));
+
+        assertEquals(404, ex.getCode());
+        verify(indexingService, never()).reindexChunks(anyLong(), anyList());
+    }
+
+    @Test
+    void reindexRejectsDocWithoutChunkText() {
+        when(knowledgeDocService.getDoc(12L)).thenReturn(docView(12L, "empty.md"));
+        when(knowledgeDocService.chunkTexts(12L)).thenReturn(List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> controller.reindexDoc(12L));
+
+        assertEquals(422, ex.getCode());
+        verify(indexingService, never()).reindexChunks(anyLong(), anyList());
+    }
+
+    @Test
+    void reindexRebuildsFromStoredChunks() {
+        when(knowledgeDocService.getDoc(13L)).thenReturn(docView(13L, "a.md"));
+        when(knowledgeDocService.chunkTexts(13L)).thenReturn(List.of("第一段"));
+        when(knowledgeDocService.getDoc(13L)).thenReturn(docView(13L, "a.md"));
+
+        ApiResponse<KnowledgeDocService.KnowledgeDocView> response = controller.reindexDoc(13L);
+
+        assertEquals(0, response.code());
+        // 复用已存 chunk 正文重建向量,不需要原始文件
+        verify(indexingService).reindexChunks(13L, List.of("第一段"));
+    }
+
+    private static KnowledgeDocService.KnowledgeDocView docView(long id, String name) {
+        return new KnowledgeDocService.KnowledgeDocView(
+                id, name, "file", 1, "indexed", "1 KB", "2026-09-10 10:00", 0);
+    }
+
     @Test
     void searchWrapsResultsInEnvelope() {
         List<RetrievalResult> results = List.of(
-                new RetrievalResult("Redis配置.md", 3, 0.91, "maxmemory 2gb", "file"));
+                new RetrievalResult(4L, "Redis配置.md", 3, 0.91, "maxmemory 2gb", "file"));
         when(retrievalService.search("redis", 8)).thenReturn(results);
 
         ApiResponse<List<RetrievalResult>> response =

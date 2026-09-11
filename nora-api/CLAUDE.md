@@ -7,6 +7,8 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 ## agent-service 关键链路
 
 - **对话入口** `AgentController POST /api/chat/sessions/{id}/messages`,body `{content, model, reasoningLevel, permissionMode}`;SSE 事件:`step`/`delta`/`reasoning_delta`/`sources`/`approval_required`/`done`/`error`
+- **注入可见性(dsh 模式)**:每轮在检索步骤后下发 `type=context` 步骤——`s-context-memory`(form=instructions,工作区引导 SOUL/AGENTS/USER/MEMORY 逐文件元数据+注入正文 + 日记清单)、`s-context-skills`(form=catalog,启用技能条目);`ChatStepDto.context` 携带 `{form,kind,files|entries,dailyNotes}`,form 是 producer 声明的信息形态,前端按 form 渲染、未知 form 降级通用展示。文件 `bytes` 为实际注入的 **UTF-8 字节数**(非字符数),`content` 是模型实际读到的注入正文(前端文件行点击展开可见)。注入内容仍进系统提示(`systemPromptWith`),context 步骤只是让注入对用户可见
+- **断线重连(后台持续运行)**:SSE 断开不影响编排线程;每轮注册 `TurnStreamRegistry`(内存事件缓冲,step/delta/sources/approval 全量,上限 8000),事件双写(直发+入缓冲)。`GET /sessions/{id}/turn/live` 探测进行中轮次(含缓冲事件数/最后事件),`GET /sessions/{id}/turn/stream`(SSE)先回放缓冲再实时续推直至 done/error,无轮次发 `idle` 即关。前端卸载**不 abort**(切页后端照跑),挂载时探测 live 轮接流恢复;「停止生成」仍走 cancel(真中断)
 - **审批** `POST /api/chat/approvals/{token}?sessionId={id}` body `{approved}`;服务端内存保存一次性 token,120 秒超时自动拒绝;模型文字同意不算批准
 - **权限三档** `PermissionMode`:ASK(每次询问) / ASSIST(只读自动,写 SQL/容器控制询问) / FULL(全自动);RiskClassifier 第三档 CRITICAL(删数据源、注册/删纳管源)任何档位都强制审批
 - **高风险工具**:`execute_write_sql` 经 RiskClassifier → datasource `POST /api/datasources/{id}/execute` → WriteGuard 只允许单条写语句;`manage_container` 调 env-service;`manage_datasource`(list/create/test/schema/remove)与 `manage_service`(纳管源 register/enable/disable/remove/list)走各自管理端点,create 后自动 test,密码不落对话记录;`read_file` 读工作台文件(file-service,先 list 拿 id 再读)

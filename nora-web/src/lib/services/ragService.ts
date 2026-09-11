@@ -1,12 +1,13 @@
 import {
   Citation,
+  DocDetail,
   IndexStats,
   KnowledgeDoc,
-  KnowledgeSource,
   RetrievalResult,
 } from "@/types";
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
+import { SOURCE_LABEL } from "@/lib/knowledgeSourceMeta";
 
 /**
  * RAG 服务层（前端 Mock 实现 + 后端 API 接入）。
@@ -61,14 +62,6 @@ function snippetFor(doc: KnowledgeDoc, query: string): string {
   const meta = SOURCE_LABEL[doc.source] ?? doc.source;
   return `…来自「${doc.name}」（${meta}）的片段，与「${query}」相关…`;
 }
-
-const SOURCE_LABEL: Record<KnowledgeSource, string> = {
-  file: "文件上传",
-  database: "数据库",
-  repo: "代码仓库",
-  environment: "环境配置",
-  chat: "对话产出",
-};
 
 /**
  * 根据查询在文档列表中检索，返回按分数降序的召回结果。
@@ -183,4 +176,43 @@ export async function saveTextAsync(name: string, text: string): Promise<Knowled
     body: JSON.stringify({ name, text }),
   });
   return doc ?? null;
+}
+
+// ==========================================
+// 文档 CRUD(知识库文档库)
+// ==========================================
+
+/** GET /api/rag/docs/{id} → 文档详情 + chunk 正文列表 */
+export async function fetchDocDetail(id: number): Promise<DocDetail> {
+  return requestJson<DocDetail>(`/rag/docs/${id}`);
+}
+
+/** PATCH /api/rag/docs/{id} → 重命名(不动 chunk 与向量,便宜且安全) */
+export async function renameDoc(id: number, name: string): Promise<KnowledgeDoc> {
+  return requestJson<KnowledgeDoc>(`/rag/docs/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** DELETE /api/rag/docs/{id} → 删除单条(chunk 由外键级联删除) */
+export async function deleteDoc(id: number): Promise<void> {
+  await requestJson<void>(`/rag/docs/${id}`, { method: "DELETE" });
+}
+
+/**
+ * POST /api/rag/docs/delete → 批量删除。
+ * 走 POST 而非 DELETE:批量 id 放 body 更稳(DELETE 带 body 在部分代理/网关会被丢)。
+ */
+export async function deleteDocs(ids: number[]): Promise<number> {
+  const res = await requestJson<{ deleted: number }>("/rag/docs/delete", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+  return res?.deleted ?? 0;
+}
+
+/** POST /api/rag/docs/{id}/reindex → 用已存 chunk 正文重建向量(换模型/失败恢复) */
+export async function reindexDoc(id: number): Promise<KnowledgeDoc> {
+  return requestJson<KnowledgeDoc>(`/rag/docs/${id}/reindex`, { method: "POST" });
 }

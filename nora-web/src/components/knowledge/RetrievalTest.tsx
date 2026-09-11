@@ -15,6 +15,7 @@ const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
   repo: FileCode,
   environment: Server,
   chat: MessageSquare,
+  text: MessageSquare,
 };
 
 function ScoreColor({ score }: { score: number }) {

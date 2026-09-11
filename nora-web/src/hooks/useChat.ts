@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ChatMessage, type ChatResponder, type PermissionMode } from "@/lib/api/chatApi";
-import { AgentAPI, cancelTurnOnBackend, fetchAgentSettings, saveAgentSettings, truncateMessagesFrom } from "@/lib/api/agentApi";
+import { AgentAPI, attachLiveTurnStream, cancelTurnOnBackend, fetchAgentSettings, fetchLiveTurn, saveAgentSettings, truncateMessagesFrom, normalizeStep } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
 import { useModelProviders } from "./useModelProviders";
@@ -85,8 +85,11 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      // 卸载时中断进行中的流(切会话/离开页面),避免孤儿流更新
-      abortRef.current?.abort();
+      // 卸载(切会话/切页)只断开本地事件流:后端编排线程继续跑,事件进
+      // TurnStreamRegistry 缓冲;回到本会话时由 live-turn 恢复逻辑回放接续。
+      // 这里不再 abort——中断等于把进行中的轮次杀掉(旧实现的不可恢复问题)。
+      // 真正的「停止生成」走 stopGenerating(显式 abort + 后端 cancel)。
+      abortRef.current = null;
     };
   }, []);
 
@@ -139,6 +142,129 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
     if (!mountedRef.current) return; // 卸载后忽略流式更新
     setMessages((prev) => prev.map((msg) => (msg.id === id ? { ...msg, ...partial } : msg)));
   }, []);
+
+  /**
+   * 进行中轮次恢复:刷新/切页回来时,后端那一轮还在跑(事件进 TurnStreamRegistry
+   * 缓冲)。探测到 live 轮就接上事件流,重建一条流式中的 assistant 消息;
+   * done 后由持久化写回自然收敛进会话 store。
+   * 仅 USE_BACKEND 且本会话无本地流式时执行(避免与挂载中的流双开)。
+   */
+  useEffect(() => {
+    if (!USE_BACKEND || !sessionId) return;
+    if (isSending) return; // 本地正在流式:轮次是本组件自己发起的,无需恢复
+    let cancelled = false;
+    let detach: (() => void) | null = null;
+
+    (async () => {
+      // 串行等 loadHistory 先落地(激活会话时异步拉取):恢复占位消息写进
+      // 本地 messages 后,loadHistory 的全量替换会把它冲掉,后续 delta 全部
+      // 落空——固定 sleep 是赌运气,这里直接等它真正完成(300ms 兜底防它
+      // 因守卫提前 return)
+      await Promise.race([
+        useChatSessions.getState().loadHistory(sessionId),
+        new Promise((r) => setTimeout(r, 300)),
+      ]);
+      if (cancelled) return;
+      let info;
+      try {
+        info = await fetchLiveTurn(sessionId);
+      } catch {
+        return; // 后端不可达:按无轮次处理
+      }
+      if (cancelled || !info?.running) return;
+      // 双保险:store 里这条会话若已有流式中的消息(理论不可能,挂载即无),跳过
+      const recoverId = `live-${sessionId}`;
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== recoverId),
+        {
+          id: recoverId,
+          role: "assistant",
+          content: "",
+          timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          isTyping: true,
+          startedAtMs: info.startedAtMs ?? Date.now(),
+          steps: [],
+        },
+      ]);
+      setIsSending(true);
+      detach = attachLiveTurnStream(sessionId, {
+        onStep: (s) => {
+          const normalized = normalizeStep(s, 0);
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== recoverId) return m;
+            const steps = m.steps ?? [];
+            const idx = steps.findIndex((x) => x.id === normalized.id);
+            const next = idx >= 0
+              ? steps.map((x, i) => (i === idx ? normalized : x))
+              : [...steps, normalized];
+            return { ...m, steps: next };
+          }));
+        },
+        onDelta: (c) => {
+          setMessages((prev) => prev.map((m) => (m.id === recoverId
+            ? { ...m, content: m.content + c }
+            : m)));
+        },
+        onReasoningDelta: (roundIndex, c) => {
+          const id = `s-reasoning-${roundIndex ?? "final"}`;
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== recoverId) return m;
+            const steps = m.steps ?? [];
+            const idx = steps.findIndex((x) => x.id === id);
+            const next = idx >= 0
+              ? steps.map((x, i) => (i === idx ? { ...x, detail: (x.detail ?? "") + c, status: "running" as const } : x))
+              : [...steps, {
+                  id,
+                  type: "think" as const,
+                  title: "推理过程",
+                  detail: c,
+                  status: "running" as const,
+                  roundIndex: roundIndex ?? undefined,
+                }];
+            return { ...m, steps: next };
+          }));
+        },
+        onSources: (citations) => {
+          setMessages((prev) => prev.map((m) => (m.id === recoverId ? { ...m, sources: citations } : m)));
+        },
+        onApproval: (approval) => {
+          updateMessage(recoverId, { approval });
+        },
+        onDone: () => {
+          // 轮次结束:去 typing 态;服务端已落库,主动拉历史收敛终态
+          // (直接 loadHistory 会被本会话本地写版本闸门丢弃——恢复消息刚写回
+          // store;这里先移除恢复占位再拉,写回的是删除后的数组,闸门不触发)
+          updateMessage(recoverId, { isTyping: false });
+          setMessages((prev) => prev.filter((m) => m.id !== recoverId));
+          lastSavedRef.current = null; // 允许下一次 store→本地 收编
+          setIsSending(false);
+          void useChatSessions.getState().loadHistory(sessionId);
+        },
+        onError: (msg) => {
+          const friendly = humanizeError(msg);
+          updateMessage(recoverId, {
+            error: friendly.message,
+            errorHint: friendly.hint,
+            errorKind: friendly.kind,
+            errorRaw: friendly.raw,
+            isTyping: false,
+          });
+          setIsSending(false);
+        },
+        onIdle: () => {
+          // 无进行中轮次(竞态:探测到 live 但连接时已结束):移除占位,
+          // 由 loadHistory 拉到已落库的最终消息
+          setMessages((prev) => prev.filter((m) => m.id !== recoverId));
+          setIsSending(false);
+        },
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, [sessionId, isSending, updateMessage]);
 
   /** 核心发送逻辑:复用于 sendMessage 与 regenerate */
   const runTurn = useCallback(

@@ -28,37 +28,74 @@ const SOURCE_ICON: Record<string, React.ElementType> = {
   repo: FileCode,
   environment: Server,
   chat: MessageSquare,
+  text: MessageSquare,
 };
 
+/**
+ * 低置信度阈值:与后端 nora.retrieval.min-score(0.45)保持同一数值。
+ * 低于它的结果本不该出现(后端 floor 已滤),出现即说明后端配置漂移,
+ * 前端照常标黄提醒;两处数值必须一起改。
+ */
+const LOW_SCORE_THRESHOLD = 0.45;
+
+/**
+ * 引用来源：默认折叠为一行(避免长片段挤占回答空间),点击展开看片段详情。
+ * 与思考块一致:ChevronDown 旋转表示开合,展开后带最大高度与滚动。
+ */
 function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["sources"]> }) {
+  const [open, setOpen] = useState(false);
+  // 折叠态用去重后的文档名做摘要,多个 chunk 命中同一文档时不重复罗列
+  const docNames = Array.from(new Set(sources.map((s) => s.docName).filter(Boolean)));
+  const hasLowScore = sources.some((s) => s.score < LOW_SCORE_THRESHOLD);
+
   return (
     <div className="relative animate-in fade-in slide-in-from-bottom-2">
       <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-purple-50 dark:bg-purple-950/40 border border-purple-100 dark:border-purple-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)] dark:shadow-[0_0_0_2px_rgba(17,24,39,1)]">
         <BookOpen className="w-[10px] h-[10px] text-purple-500 dark:text-purple-400" />
       </div>
       <div className="pt-0.5">
-        <div className="text-[10px] text-muted-foreground mb-2">引用来源 · {sources.length} 个知识库片段 {sources.some((s) => s.score < 0.5) && <span className="text-amber-600 dark:text-amber-400">· 含低置信度内容</span>}</div>
-        <div className="space-y-2">
-          {sources.map((s, i) => {
-            const Icon = SOURCE_ICON[s.source] ?? FileText;
-            return (
-              <div key={i} className="bg-card border border-border rounded-xl p-3 relative overflow-hidden">
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-purple-500" style={{ opacity: s.score }} />
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Icon className="w-3 h-3 text-purple-500 dark:text-purple-400 shrink-0" />
-                    <span className="text-xs font-medium text-foreground truncate">{s.docName}</span>
-                    <span className="text-[9px] text-muted-foreground shrink-0">chunk #{s.chunkIndex}</span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="group flex items-center gap-1.5 w-full text-left cursor-pointer"
+        >
+          <span className="text-[10px] text-muted-foreground group-hover:text-foreground transition-colors shrink-0">
+            引用来源 · {sources.length} 个知识库片段
+          </span>
+          {hasLowScore && (
+            <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">· 含低置信度内容</span>
+          )}
+          {!open && docNames.length > 0 && (
+            <span className="text-[10px] text-muted-foreground/70 truncate min-w-0">
+              {docNames.join("、")}
+            </span>
+          )}
+          <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform shrink-0 ${open ? "" : "-rotate-90"}`} />
+        </button>
+        {open && (
+          <div className="space-y-2 mt-2 max-h-80 overflow-auto">
+            {sources.map((s, i) => {
+              const Icon = SOURCE_ICON[s.source] ?? FileText;
+              return (
+                <div key={i} className="bg-card border border-border rounded-xl p-3 relative overflow-hidden">
+                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-purple-500" style={{ opacity: s.score }} />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Icon className="w-3 h-3 text-purple-500 dark:text-purple-400 shrink-0" />
+                      <span className="text-xs font-medium text-foreground truncate">{s.docName}</span>
+                      <span className="text-[9px] text-muted-foreground shrink-0">chunk #{s.chunkIndex}</span>
+                    </div>
+                    <span className={`text-[9px] font-bold ${s.score < LOW_SCORE_THRESHOLD ? "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/40" : "text-purple-600 bg-purple-50 dark:text-purple-400 dark:bg-purple-950/40"} px-1.5 py-0.5 rounded-full tabular-nums shrink-0`}>
+                      {(s.score * 100).toFixed(0)}%
+                    </span>
                   </div>
-                  <span className={`text-[9px] font-bold ${s.score < 0.5 ? "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/40" : "text-purple-600 bg-purple-50 dark:text-purple-400 dark:bg-purple-950/40"} px-1.5 py-0.5 rounded-full tabular-nums shrink-0`}>
-                    {(s.score * 100).toFixed(0)}%
-                  </span>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">{s.snippet}</p>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">{s.snippet}</p>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

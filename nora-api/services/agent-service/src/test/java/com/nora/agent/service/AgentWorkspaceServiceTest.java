@@ -108,6 +108,48 @@ class AgentWorkspaceServiceTest {
     }
 
     @Test
+    void bootstrapReportsPerFileMetadataForContextStep() {
+        service.write("memory/2026-09-10.md", "daily note");
+        AgentWorkspaceService.BootstrapResult result = service.bootstrap();
+
+        // 逐文件元数据(前端「加载长期记忆」步骤展开可见):4 个引导文件 + 日记清单
+        assertEquals(4, result.files().size(), "SOUL/AGENTS/USER/MEMORY 四件套");
+        assertTrue(result.files().stream().allMatch(f -> !f.missing() && !f.truncated()),
+                "默认种子文件都完整注入");
+        assertTrue(result.files().stream().anyMatch(f -> f.path().equals("MEMORY.md") && f.bytes() > 0),
+                "MEMORY.md 带真实注入字节数");
+        // 正文随元数据下发:前端文件行展开显示模型实际读到的内容(dsh 的 instructions 形态)
+        AgentWorkspaceService.BootstrapFileInfo memory = result.files().stream()
+                .filter(f -> f.path().equals("MEMORY.md")).findFirst().orElseThrow();
+        assertTrue(memory.content().contains("长期记忆"), "注入正文可见");
+        assertEquals(List.of("memory/2026-09-10.md"), result.dailyNotes(), "日记只列清单不注入正文");
+    }
+
+    @Test
+    void bootstrapReportsUtf8BytesNotCharCount() throws Exception {
+        // 中文 3 字节/字符:bytes 必须是 UTF-8 字节数,与文件实际大小一致(前端按 B/KB 展示)
+        Files.writeString(tmp.resolve("MEMORY.md"), "中文记忆");
+        AgentWorkspaceService.BootstrapResult result = service.bootstrap();
+
+        AgentWorkspaceService.BootstrapFileInfo memory = result.files().stream()
+                .filter(f -> f.path().equals("MEMORY.md")).findFirst().orElseThrow();
+        assertEquals("中文记忆".getBytes(java.nio.charset.StandardCharsets.UTF_8).length, memory.bytes());
+    }
+
+    @Test
+    void bootstrapMarksOversizedFileAsTruncated() throws Exception {
+        Files.writeString(tmp.resolve("MEMORY.md"),
+                "m".repeat(AgentWorkspaceService.BOOTSTRAP_PER_FILE_CHARS + 2_000));
+        AgentWorkspaceService.BootstrapResult result = service.bootstrap();
+
+        AgentWorkspaceService.BootstrapFileInfo memory = result.files().stream()
+                .filter(f -> f.path().equals("MEMORY.md")).findFirst().orElseThrow();
+        assertTrue(memory.truncated(), "超长文件在元数据里标截断");
+        assertTrue(memory.bytes() <= AgentWorkspaceService.BOOTSTRAP_PER_FILE_CHARS + 100,
+                "bytes 是实际注入量(截断后)");
+    }
+
+    @Test
     void bootstrapTruncatesOversizedFile() throws Exception {
         Files.writeString(tmp.resolve("MEMORY.md"),
                 "m".repeat(AgentWorkspaceService.BOOTSTRAP_PER_FILE_CHARS + 2_000));

@@ -280,7 +280,11 @@ public class ChatOrchestrationService {
         // 系统性上下文预算(设计见 docs/context-management-design.md):
         // 会话级裁剪 + 轮内微压缩 + 超限恢复,统一走 ContextBudget
         ContextBudget budget = new ContextBudget(resolved.contextWindow());
-        List<WireMessage> messages = buildMessages(userMessage, history, citations, reflections, budget);
+        SystemPromptResult[] promptOut = new SystemPromptResult[1];
+        List<WireMessage> messages = buildMessages(userMessage, history, citations, reflections, budget, promptOut);
+        // 注入可见性(dsh 模式):把本轮注入的记忆/技能清单作为步骤下发,
+        // 前端时间线可展开查看真实注入内容;无注入时静默跳过
+        emitContextSteps(promptOut[0], eventConsumer);
         final String reasoningLevel = resolved.effectiveReasoningLevel();
         String toolOutcome = null;
         final int[] roundsUsed = {0};
@@ -2294,9 +2298,12 @@ public class ChatOrchestrationService {
                                             List<ChatStoreService.StoredMessage> history,
                                             List<CitationDto> citations,
                                             List<String> reflections,
-                                            ContextBudget budget) {
+                                            ContextBudget budget,
+                                            SystemPromptResult[] promptOut) {
         List<WireMessage> messages = new ArrayList<>();
-        String systemPrompt = systemPromptWith(citations);
+        SystemPromptResult prompt = systemPromptWith(citations);
+        promptOut[0] = prompt;
+        String systemPrompt = prompt.text();
         messages.add(WireMessage.system(objectMapper, systemPrompt));
         String reflectionBlock = reflections == null || reflections.isEmpty() ? null
                 : "此前类似任务的失败反思（仅作参考）：\n- " + String.join("\n- ", reflections);
@@ -2450,15 +2457,20 @@ public class ChatOrchestrationService {
     /**
      * 系统提示装配:基础 prompt + 工作区引导(AGENTS/SOUL/USER/MEMORY)+ 技能目录 + RAG 片段。
      * 工作区/目录注入是 best-effort:不可用时静默跳过,不阻断对话。
+     *
+     * <p>返回文本与注入元数据(工作区文件清单/日记清单/技能条目):调用方据此下发
+     * 「注入上下文」步骤,前端可展开查看真实注入内容(dsh 的注入可见性模式)。
      */
-    private String systemPromptWith(List<CitationDto> citations) {
+    private SystemPromptResult systemPromptWith(List<CitationDto> citations) {
         StringBuilder sb = new StringBuilder(SYSTEM_PROMPT);
+        AgentWorkspaceService.BootstrapResult workspaceBootstrap = null;
+        AgentSkillService.CatalogBundle skillCatalog = null;
         // 全局记忆:跨会话事实/偏好,约束每轮回答
         if (agentWorkspaceService != null) {
             try {
-                String bootstrap = agentWorkspaceService.bootstrapPrompt();
-                if (bootstrap != null && !bootstrap.isBlank()) {
-                    sb.append('\n').append(bootstrap);
+                workspaceBootstrap = agentWorkspaceService.bootstrap();
+                if (workspaceBootstrap != null && !workspaceBootstrap.text().isBlank()) {
+                    sb.append('\n').append(workspaceBootstrap.text());
                 }
             } catch (Exception e) {
                 log.warn("workspace inject failed (ignored): {}", e.getMessage());
@@ -2467,9 +2479,9 @@ public class ChatOrchestrationService {
         // 技能目录:列出启用技能的名称/描述,正文由 manage_skill action=read 按需拉取
         if (agentSkillService != null) {
             try {
-                String catalog = agentSkillService.catalogBlock();
-                if (catalog != null && !catalog.isBlank()) {
-                    sb.append('\n').append(catalog);
+                skillCatalog = agentSkillService.catalogBundle();
+                if (skillCatalog != null && !skillCatalog.text().isBlank()) {
+                    sb.append('\n').append(skillCatalog.text());
                 }
             } catch (Exception e) {
                 log.warn("skill catalog inject failed (ignored): {}", e.getMessage());
@@ -2482,7 +2494,45 @@ public class ChatOrchestrationService {
                         .append("]] ").append(c.snippet()).append('\n');
             }
         }
-        return sb.toString();
+        return new SystemPromptResult(sb.toString(), workspaceBootstrap, skillCatalog);
+    }
+
+    /** 系统提示文本 + 注入元数据(下发「注入上下文」步骤用;null = 该来源未注入)。 */
+    private record SystemPromptResult(String text,
+                                      AgentWorkspaceService.BootstrapResult workspace,
+                                      AgentSkillService.CatalogBundle skills) {
+    }
+
+    /**
+     * 下发「注入上下文」步骤(dsh 模式:注入内容对用户可见,自描述 form 声明信息形态)。
+     * 工作区引导 → form=instructions;技能目录 → form=catalog。无注入时静默跳过。
+     */
+    private void emitContextSteps(SystemPromptResult prompt, ChatEventConsumer eventConsumer) {
+        if (prompt.workspace() != null && !prompt.workspace().files().isEmpty()) {
+            List<ChatStepDto.ContextFile> files = prompt.workspace().files().stream()
+                    .map(f -> new ChatStepDto.ContextFile(f.path(), f.bytes(), f.truncated(), f.missing(), f.content()))
+                    .toList();
+            int injected = prompt.workspace().files().stream()
+                    .filter(f -> !f.missing() && !f.truncated())
+                    .toList().size();
+            String detail = "注入 " + injected + " 个文件"
+                    + (prompt.workspace().dailyNotes().isEmpty()
+                            ? ""
+                            : " + " + prompt.workspace().dailyNotes().size() + " 篇日记清单");
+            eventConsumer.step(new ChatStepDto("s-context-memory", "context", "加载长期记忆", detail,
+                    0L, "completed", null, null, null, 0,
+                    new ChatStepDto.ContextInfo("instructions", "workspace-bootstrap",
+                            files, null, prompt.workspace().dailyNotes())));
+        }
+        if (prompt.skills() != null && !prompt.skills().entries().isEmpty()) {
+            List<ChatStepDto.ContextEntry> entries = prompt.skills().entries().stream()
+                    .map(e -> new ChatStepDto.ContextEntry(e.name(), e.description(), e.category()))
+                    .toList();
+            eventConsumer.step(new ChatStepDto("s-context-skills", "context", "加载技能目录",
+                    "启用 " + entries.size() + " 个技能（正文按需读取）",
+                    0L, "completed", null, null, null, 0,
+                    new ChatStepDto.ContextInfo("catalog", "skill-catalog", null, entries, null)));
+        }
     }
 
     private static String abbreviateForSse(String text, int max) {

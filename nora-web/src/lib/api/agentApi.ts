@@ -21,9 +21,18 @@ interface StepInputPayload {
   target?: string;
 }
 
+/** 注入上下文元数据(后端 ChatStepDto.ContextInfo) */
+interface StepContextPayload {
+  form?: string;
+  kind?: string;
+  files?: { path: string; bytes?: number; truncated?: boolean; missing?: boolean; content?: string }[];
+  entries?: { name: string; description?: string; category?: string }[];
+  dailyNotes?: string[];
+}
+
 interface StepPayload {
   id?: string;
-  type?: "think" | "tool";
+  type?: "think" | "tool" | "context";
   title?: string;
   detail?: string;
   duration?: string | number;
@@ -31,6 +40,7 @@ interface StepPayload {
   toolName?: string;
   input?: StepInputPayload;
   result?: StepResultPayload;
+  context?: StepContextPayload;
   roundIndex?: number;
 }
 
@@ -60,7 +70,7 @@ interface DonePayload {
 }
 interface ErrorPayload { message?: string }
 
-function normalizeStep(step: StepPayload, index: number): ChatStep {
+export function normalizeStep(step: StepPayload, index: number): ChatStep {
   const title = step.title === "调用工具 execute_sql" ? "查询数据库" : step.title === "调用工具 read_service_logs" ? "读取服务日志" : step.title;
   const duration =
     typeof step.duration === "number" ? `${(step.duration / 1000).toFixed(2)}s` : step.duration;
@@ -75,6 +85,7 @@ function normalizeStep(step: StepPayload, index: number): ChatStep {
     toolName: step.toolName,
     input: step.input,
     result: step.result,
+    context: step.context,
     roundIndex: step.roundIndex,
   };
 }
@@ -196,6 +207,16 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         if (pendingApproval && normalized.id === pendingApproval.stepId) {
           pendingApproval = undefined;
           onUpdate({ approval: undefined });
+        }
+        // 其它推理步骤仍在 running = 那一轮 LLM 已结束却没收到结算事件
+        // (部分模型轮无文字 delta,推理步骤会一直挂着)。工具/新步骤到来即
+        // 视为该轮推理完成,防止「思考中…」跨工具轮永久展开。
+        // 若同一步骤随后又有 reasoning_delta,会自然置回 running。
+        for (let i = 0; i < steps.length; i++) {
+          if (steps[i].status === "running" && steps[i].type === "think"
+              && steps[i].id !== normalized.id) {
+            steps[i] = { ...steps[i], status: "completed" };
+          }
         }
         const existingIndex = steps.findIndex((step) => step.id === normalized.id);
         if (existingIndex >= 0) steps[existingIndex] = normalized;
@@ -360,6 +381,100 @@ export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
 export async function truncateMessagesFrom(sessionId: string, index: number): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${index}`, { method: "DELETE", signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`truncateMessagesFrom failed: ${res.status}`);
+}
+
+/** GET /chat/sessions/{id}/turn/live → 会话是否有进行中轮次及其已缓冲事件 */
+export async function fetchLiveTurn(sessionId: string): Promise<LiveTurnInfo> {
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/live`, { signal: defaultTimeoutSignal() });
+  if (!res.ok) throw new Error(`fetchLiveTurn failed: ${res.status}`);
+  const envelope = await res.json() as { code: number; data: LiveTurnInfo; message: string };
+  return envelope.data ?? { running: false };
+}
+
+export interface LiveTurnInfo {
+  running: boolean;
+  /** 本轮用户消息(用于校验与本地消息流对齐) */
+  content?: string | null;
+  startedAtMs?: number | null;
+  bufferedEvents?: number;
+  lastEvent?: { event: string; json: string } | null;
+  /** 本轮唯一 id:SSE 事件 id 协议为 "turnId:seq",Last-Event-ID 续传按它圈定轮次 */
+  turnId?: string | null;
+  /** 本轮目前已发出的最大事件序号 */
+  lastSeq?: number | null;
+}
+
+/**
+ * 订阅进行中轮次的事件流(断线重连/切页返回):
+ * 服务端先回放已缓冲事件,再实时推送直至 done/error;无进行中轮次时发 `idle` 后关闭。
+ * 每个事件带单调递增的 SSE id(序号):EventSource 传输层断线自动重连时,
+ * 浏览器自动携带 Last-Event-ID,服务端只回放该序号之后的事件——重连不重不漏,
+ * 不会出现旧实现「全量回放 → 文本重复追加」的问题。
+ * 返回清理函数(关闭 EventSource)。
+ */
+export function attachLiveTurnStream(
+  sessionId: string,
+  handlers: {
+    onStep?: (s: StepPayload) => void;
+    onDelta?: (c: string) => void;
+    onReasoningDelta?: (roundIndex: number | null, c: string) => void;
+    onSources?: (c: Citation[]) => void;
+    onApproval?: (a: ApprovalRequest) => void;
+    onDone?: (p?: unknown) => void;
+    onError?: (msg: string) => void;
+    onIdle?: () => void;
+  }
+): () => void {
+  // EventSource 只支持 GET,SSE 端点恰好是 GET;token 无需鉴权(本地单用户部署)
+  const es = new EventSource(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/stream`);
+  es.addEventListener("step", (e) => {
+    const p = safeParse<StepPayload>((e as MessageEvent).data);
+    if (p) handlers.onStep?.(p);
+  });
+  es.addEventListener("delta", (e) => {
+    const p = safeParse<{ content?: string }>((e as MessageEvent).data);
+    if (p?.content) handlers.onDelta?.(p.content);
+  });
+  es.addEventListener("reasoning_delta", (e) => {
+    const p = safeParse<{ roundIndex: number | null; content: string }>((e as MessageEvent).data);
+    if (p?.content) handlers.onReasoningDelta?.(p.roundIndex ?? null, p.content);
+  });
+  es.addEventListener("sources", (e) => {
+    const p = safeParse<Citation[]>((e as MessageEvent).data);
+    if (p) handlers.onSources?.(p);
+  });
+  es.addEventListener("approval_required", (e) => {
+    const p = safeParse<ApprovalRequest>((e as MessageEvent).data);
+    if (p) handlers.onApproval?.(p);
+  });
+  es.addEventListener("done", (e) => {
+    handlers.onDone?.(safeParse((e as MessageEvent).data));
+    es.close();
+  });
+  es.addEventListener("error", (e) => {
+    // 服务端 error 事件(带 data)与传输层错误(EventSource 自动重连)共用 event name:
+    // 有 data 是业务错误;无 data 是连接断开,EventSource 会自动重连,不关闭
+    const data = (e as MessageEvent).data;
+    if (data) {
+      const p = safeParse<{ message?: string }>(data);
+      handlers.onError?.(p?.message ?? "未知错误");
+      es.close();
+    }
+  });
+  es.addEventListener("idle", () => {
+    handlers.onIdle?.();
+    es.close();
+  });
+  return () => es.close();
+}
+
+function safeParse<T>(data: string | undefined): T | undefined {
+  if (!data) return undefined;
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 /** GET /chat/settings → agent 全局设置(权限模式/默认模型/思考等级覆写) */
