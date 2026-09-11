@@ -2,13 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, RefreshCw, Loader2, Server as ServerIcon, Plug, Search } from "lucide-react";
+import { Trash2, RefreshCw, Loader2, Server as ServerIcon, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   fetchMcpServers,
-  createMcpServer,
   deleteMcpServer,
   setMcpServerEnabled,
   refreshMcpServer,
@@ -23,28 +21,14 @@ const STATUS_META: Record<McpServer["status"], { label: string; className: strin
 };
 
 /**
- * MCP 服务器管理页主体(侧边栏「MCP」→ /mcp):注册远程 MCP 工具服务器、
- * 测试连接(refresh 拉取 tools/list 并缓存)、启停、删除。
- * 设计语言对齐 AI 能力页:页头主操作按钮(由页面传入 formOpen)+ 卡片网格。
+ * MCP 服务器管理页主体(侧边栏「MCP」→ /mcp):注册(页头按钮 → 弹窗,
+ * 对齐数据源/技能页)、测试连接(refresh 拉取 tools/list 并缓存)、启停、删除。
+ * listVersion 变化(注册成功)时重新拉取列表。
  */
-export function McpManager({ formOpen, onFormToggle }: {
-  formOpen: boolean;
-  onFormToggle: (open: boolean) => void;
-}) {
+export function McpManager({ listVersion }: { listVersion: number }) {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [newName, setNewName] = useState("");
-  const [newUrl, setNewUrl] = useState("");
-  const [newTransport, setNewTransport] = useState<"STREAMABLE" | "SSE" | "STDIO">("STREAMABLE");
-  const [newHeaderKey, setNewHeaderKey] = useState("");
-  const [newHeaderValue, setNewHeaderValue] = useState("");
-  // STDIO:命令 + 参数(空格分隔输入,提交时按引号/空格拆分为数组)+ env
-  const [newCommand, setNewCommand] = useState("");
-  const [newArgs, setNewArgs] = useState("");
-  const [newEnvKey, setNewEnvKey] = useState("");
-  const [newEnvValue, setNewEnvValue] = useState("");
-  const [adding, setAdding] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -60,7 +44,7 @@ export function McpManager({ formOpen, onFormToggle }: {
   useEffect(() => {
     if (USE_BACKEND) void reload();
     else setLoading(false);
-  }, [reload]);
+  }, [reload, listVersion]);
 
   const withBusy = async (id: number, action: () => Promise<void>, okMsg?: string) => {
     setBusyId(id);
@@ -73,80 +57,6 @@ export function McpManager({ formOpen, onFormToggle }: {
       // 失败也要刷新:后端会把 status=error + detail 落库,卡片要同步显示
       await reload();
       setBusyId(null);
-    }
-  };
-
-  /** 拆分参数输入:支持双引号包裹(空格保留),否则按空白切分 */
-  const splitArgs = (raw: string): string[] => {
-    const out: string[] = [];
-    let cur = "";
-    let inQuote = false;
-    for (const ch of raw.trim()) {
-      if (ch === '"') {
-        inQuote = !inQuote;
-      } else if (!inQuote && /\s/.test(ch)) {
-        if (cur) { out.push(cur); cur = ""; }
-      } else {
-        cur += ch;
-      }
-    }
-    if (cur) out.push(cur);
-    return out;
-  };
-
-  const handleAdd = async () => {
-    const name = newName.trim();
-    if (!name) return void toast.error("请填写服务器名称");
-    if (newTransport === "STDIO") {
-      const command = newCommand.trim();
-      if (!command) return void toast.error("请填写启动命令(如 npx / node / docker)");
-      const env: Record<string, string> = {};
-      if (newEnvKey.trim() || newEnvValue.trim()) {
-        if (!newEnvKey.trim() || !newEnvValue.trim()) {
-          return void toast.error("环境变量的键和值需同时填写,或都留空");
-        }
-        env[newEnvKey.trim()] = newEnvValue.trim();
-      }
-      setAdding(true);
-      try {
-        await createMcpServer({
-          name,
-          transport: "STDIO",
-          command,
-          args: splitArgs(newArgs),
-          env,
-        });
-        toast.success(`服务器「${name}」已添加,点击「测试连接」启动进程并拉取工具列表`);
-        onFormToggle(false);
-        setNewName(""); setNewCommand(""); setNewArgs(""); setNewEnvKey(""); setNewEnvValue("");
-        await reload();
-      } catch (e) {
-        toast.error(`添加失败：${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        setAdding(false);
-      }
-      return;
-    }
-    const url = newUrl.trim();
-    if (!/^https?:\/\//.test(url)) return void toast.error("URL 必须以 http(s):// 开头");
-    const headers: Record<string, string> = {};
-    if (newHeaderKey.trim() || newHeaderValue.trim()) {
-      if (!newHeaderKey.trim() || !newHeaderValue.trim()) {
-        return void toast.error("Header 的键和值需同时填写,或都留空");
-      }
-      headers[newHeaderKey.trim()] = newHeaderValue.trim();
-    }
-    setAdding(true);
-    try {
-      await createMcpServer({ name, url, transport: newTransport, headers });
-      toast.success(`服务器「${name}」已添加,点击「测试连接」拉取工具列表`);
-      onFormToggle(false);
-      setNewName(""); setNewUrl(""); setNewHeaderKey(""); setNewHeaderValue("");
-      await reload();
-    } catch (e) {
-      toast.error(`添加失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setAdding(false);
     }
   };
 
@@ -193,90 +103,6 @@ export function McpManager({ formOpen, onFormToggle }: {
           </div>
         ))}
       </div>
-
-      {/* 添加表单(页头按钮展开) */}
-      {formOpen && (
-        <div className="rounded-xl border border-border bg-card dark:bg-card shadow-sm p-5 space-y-4 animate-in fade-in slide-in-from-top-2">
-          <div className="text-sm font-medium text-foreground">注册 MCP 服务器</div>
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-            <div className="md:col-span-3">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">名称</label>
-              <Input placeholder="例如:search-tools" className="h-9 text-sm bg-background" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            </div>
-            <div className="md:col-span-6">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">
-                {newTransport === "STDIO" ? "启动命令" : "URL"}
-              </label>
-              {newTransport === "STDIO" ? (
-                <Input placeholder="npx / node / docker / uvx" className="h-9 text-sm font-mono bg-background" value={newCommand} onChange={(e) => setNewCommand(e.target.value)} />
-              ) : (
-                <Input placeholder="https://mcp.example.com/mcp" className="h-9 text-sm font-mono bg-background" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} />
-              )}
-            </div>
-            <div className="md:col-span-3">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">传输协议</label>
-              <div className="flex gap-2">
-                {(["STREAMABLE", "SSE", "STDIO"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setNewTransport(t)}
-                    className={`flex-1 h-9 rounded-md border text-xs font-medium transition-colors ${
-                      newTransport === t
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {t === "STREAMABLE" ? "HTTP" : t}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          {newTransport === "STDIO" && (
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-              <div className="md:col-span-6">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">命令参数(可选,空格分隔;含空格用引号)</label>
-                <Input placeholder='-y @modelcontextprotocol/server-filesystem "D:/docs"' className="h-9 text-sm font-mono bg-background" value={newArgs} onChange={(e) => setNewArgs(e.target.value)} />
-              </div>
-              <div className="md:col-span-3">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">环境变量(可选)</label>
-                <Input placeholder="API_KEY" className="h-9 text-sm font-mono bg-background" value={newEnvKey} onChange={(e) => setNewEnvKey(e.target.value)} />
-              </div>
-              <div className="md:col-span-3">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">值</label>
-                <Input placeholder="sk-…" type="password" className="h-9 text-sm font-mono bg-background" value={newEnvValue} onChange={(e) => setNewEnvValue(e.target.value)} />
-              </div>
-            </div>
-          )}
-          {newTransport !== "STDIO" && (
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-              <div className="md:col-span-4">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">认证 Header(可选)</label>
-                <Input placeholder="Authorization" className="h-9 text-sm font-mono bg-background" value={newHeaderKey} onChange={(e) => setNewHeaderKey(e.target.value)} />
-              </div>
-              <div className="md:col-span-5">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">值</label>
-                <Input placeholder="Bearer sk-…" type="password" className="h-9 text-sm font-mono bg-background" value={newHeaderValue} onChange={(e) => setNewHeaderValue(e.target.value)} />
-              </div>
-              <div className="md:col-span-3 flex gap-2 justify-end">
-                <Button size="sm" variant="outline" className="h-9 px-4 text-xs" onClick={() => onFormToggle(false)}>取消</Button>
-                <Button size="sm" className="h-9 px-4 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white" disabled={adding} onClick={() => void handleAdd()}>
-                  {adding ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />} 注册
-                </Button>
-              </div>
-            </div>
-          )}
-          {newTransport === "STDIO" && (
-            <div className="flex gap-2 justify-end">
-              <Button size="sm" variant="outline" className="h-9 px-4 text-xs" onClick={() => onFormToggle(false)}>取消</Button>
-              <Button size="sm" className="h-9 px-4 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white" disabled={adding} onClick={() => void handleAdd()}>
-                {adding ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />} 注册
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* 服务器卡片网格 */}
       {loading ? (
