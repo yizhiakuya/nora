@@ -103,6 +103,8 @@ public class ChatOrchestrationService {
     private final AgentWorkspaceService agentWorkspaceService;
     /** 指令型技能(目录注入 + 按需读全文) */
     private final AgentSkillService agentSkillService;
+    /** 本机终端执行(run_command 工具;可空=测试构造器不接) */
+    private final TerminalService terminalService;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -121,6 +123,7 @@ public class ChatOrchestrationService {
                                     McpServerService mcpServerService,
                                     AgentWorkspaceService agentWorkspaceService,
                                     AgentSkillService agentSkillService,
+                                    TerminalService terminalService,
                                     @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties) {
@@ -139,6 +142,7 @@ public class ChatOrchestrationService {
         this.mcpServerService = mcpServerService;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
+        this.terminalService = terminalService;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
@@ -159,7 +163,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
+                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null);
     }
 
     /** Test entry: explicit max tool rounds, no provider store. */
@@ -170,7 +174,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, maxToolRounds, null);
+                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null);
     }
 
     /**
@@ -482,10 +486,10 @@ public class ChatOrchestrationService {
         // loop breaker: same (tool, normalized args) repeated too often.
         // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
         // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill/
-        // manage_mcp 同理(主体在 content/path/instructions/url 字段,typed input 抽不到)。
+        // manage_mcp/run_command 同理(主体在 content/path/instructions/url/command 字段)。
         boolean rawFingerprint = name.startsWith("mcp__")
                 || "manage_workspace".equals(name) || "manage_skill".equals(name)
-                || "manage_mcp".equals(name);
+                || "manage_mcp".equals(name) || "run_command".equals(name);
         String fingerprint = name + "|"
                 + (rawFingerprint ? (args == null ? "" : args) : normalizeArgs(name, input));
         int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
@@ -653,6 +657,13 @@ public class ChatOrchestrationService {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
                 }
+                case "run_command" -> {
+                    // 命令原文放 target 字段(折叠行与审批卡都要完整可见);
+                    // cwd 不进 typed input(避免误当"目标"显示)
+                    String cmd = node.path("command").asText(null);
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, cmd),
+                            description, null, action);
+                }
                 default -> {
                     if (node.has("action") && node.has("service")) {
                         return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
@@ -685,6 +696,7 @@ public class ChatOrchestrationService {
             case "manage_workspace" -> "工作区文件";
             case "manage_skill" -> "技能管理";
             case "manage_mcp" -> "MCP 服务器管理";
+            case "run_command" -> "运行命令";
             default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
         };
     }
@@ -703,7 +715,8 @@ public class ChatOrchestrationService {
         if ("read_file".equals(name)) {
             return input.target() == null ? "?" : input.target();
         }
-        if ("manage_workspace".equals(name) || "manage_skill".equals(name) || "manage_mcp".equals(name)) {
+        if ("manage_workspace".equals(name) || "manage_skill".equals(name) || "manage_mcp".equals(name)
+                || "run_command".equals(name)) {
             return (input.target() == null ? "?" : input.target().toLowerCase())
                     + "#" + (input.limit() == null ? "" : input.limit());
         }
@@ -829,6 +842,21 @@ public class ChatOrchestrationService {
                     target = parsed.input().target() == null ? "?" : parsed.input().target();
                     risk = "对 MCP 服务器执行 " + action + " 操作";
                 }
+            }
+            case "run_command" -> {
+                actionType = "terminal_command";
+                JsonNode a = parseArgsSafe(rawArgs);
+                String cmd = a.path("command").asText("?");
+                String cwd = a.path("cwd").asText(null);
+                Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
+                String shell = a.path("shell").asText(null);
+                // 命令原文完整展示(与 Claude Code 同款防线:用户审的就是将执行的)
+                target = abbreviate(cmd, 60);
+                detail = "命令: " + cmd
+                        + (cwd != null ? "\n工作目录: " + cwd : "\n工作目录: 工作区根")
+                        + (shell != null ? "\nShell: " + shell : "")
+                        + (timeout != null ? "\n超时: " + timeout + "s" : "");
+                risk = "命令将在本机以当前用户权限执行,可能有文件/网络副作用";
             }
             case "manage_workspace" -> {
                 actionType = "workspace_file";
@@ -1456,6 +1484,26 @@ public class ChatOrchestrationService {
                 return new ToolOutcome("ERROR: MCP 操作失败: " + abbreviate(e.getMessage(), 200), null, null, false);
             }
         }
+        // 本机终端:非交互命令;输出走 bounded 截断与脱敏
+        if ("run_command".equals(name)) {
+            if (terminalService == null) {
+                return new ToolOutcome("ERROR: 终端能力未启用(服务未配置)", null, null, false);
+            }
+            try {
+                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+                String cmd = a.path("command").asText(null);
+                String cwdArg = a.path("cwd").asText(null);
+                Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
+                String shell = a.path("shell").asText(null);
+                TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell);
+                return bounded(r.render(), summarizeCommand(r));
+            } catch (IllegalArgumentException e) {
+                // 参数/启动错误:可自纠错误回给模型
+                return new ToolOutcome("ERROR: " + abbreviate(e.getMessage(), 300), null, null, false);
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: 命令执行失败: " + abbreviate(e.getMessage(), 200), null, null, false);
+            }
+        }
         // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
         // 输出同样走 bounded 截断与脱敏
         if (mcpServerService != null && name.startsWith("mcp__")) {
@@ -1475,8 +1523,20 @@ public class ChatOrchestrationService {
                 + "read_file（工作台文件 list/read,只读）、"
                 + "manage_workspace（工作区文件 list/read/write/append/delete）、"
                 + "manage_skill（技能 list/read/create/update/remove）、"
-                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,风险跟随权限档位）"
+                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,风险跟随权限档位）、"
+                + "run_command（本机终端非交互命令,风险跟随权限档位）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
+    }
+
+    /** 命令结果的一行摘要:exit code + 耗时(供折叠行展示)。 */
+    private static String summarizeCommand(TerminalService.RunResult r) {
+        if (r.cancelled()) {
+            return "命令已取消";
+        }
+        if (r.timedOut()) {
+            return "命令超时 " + r.timeoutSec() + "s(已终止)";
+        }
+        return "exit " + r.exitCode() + ", " + r.durationMs() + "ms";
     }
 
     /**
@@ -2509,6 +2569,45 @@ public class ChatOrchestrationService {
         ArrayNode mcpRequired = mcpParams.putArray("required");
         mcpRequired.add("action");
         tools.add(mcpTool);
+        }
+
+        // 本机终端:非交互命令执行(构建/测试/git/包管理等);默认 cwd=工作区。
+        // 风险 HIGH(跟随全局档位):ASK 全问 / ASSIST 询问 / FULL 自动。
+        // terminalService 为 null = 测试便捷构造器,跳过挂载
+        if (terminalService != null) {
+        ObjectNode cmdTool = objectMapper.createObjectNode();
+        cmdTool.put("type", "function");
+        ObjectNode cmdFn = cmdTool.putObject("function");
+        cmdFn.put("name", "run_command");
+        cmdFn.put("description", "在本机终端运行一条非交互命令(构建/测试/git/npm/pip/查进程等)。"
+                + "工作目录默认是你的工作区;相对 cwd 相对工作区解析,绝对 cwd 可指向整机任意目录。"
+                + "Windows 默认 PowerShell,也可显式 shell=bash(git bash)。"
+                + "注意:命令无 TTY——不要运行交互式程序(vim/需要输入确认的),会挂起到超时;"
+                + "长时间命令(构建/下载)显式传更大的 timeout(秒,上限 300);"
+                + "运行前用户会按权限档位收到审批请求。示例:{\"command\": \"npm test\", \"cwd\": \"D:/projects/app\"}");
+        ObjectNode cmdParams = cmdFn.putObject("parameters");
+        cmdParams.put("type", "object");
+        cmdParams.put("additionalProperties", false);
+        ObjectNode cmdProps = cmdParams.putObject("properties");
+        ObjectNode cmdCommandProp = cmdProps.putObject("command");
+        cmdCommandProp.put("type", "string");
+        cmdCommandProp.put("description", "要执行的命令(单条,非交互;支持管道/重定向)");
+        ObjectNode cmdCwdProp = cmdProps.putObject("cwd");
+        cmdCwdProp.put("type", "string");
+        cmdCwdProp.put("description", "工作目录(可选):相对=工作区内(如 my-project);绝对=整机(如 D:/projects/app);省略=工作区根");
+        ObjectNode cmdTimeoutProp = cmdProps.putObject("timeout");
+        cmdTimeoutProp.put("type", "integer");
+        cmdTimeoutProp.put("description", "超时秒数(可选,默认 60,上限 300);构建/安装类给 120-300");
+        ObjectNode cmdShellProp = cmdProps.putObject("shell");
+        cmdShellProp.put("type", "string");
+        cmdShellProp.put("description", "powershell(默认)或 bash(需要 git bash);省略=平台默认");
+        ObjectNode cmdDescProp = cmdProps.putObject("description");
+        cmdDescProp.put("type", "string");
+        cmdDescProp.put("description", "一句话描述这次命令要做什么,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
+                + "正例:「运行单元测试」「查看 git 状态」;反例:不要用「执行命令」这类泛化描述");
+        ArrayNode cmdRequired = cmdParams.putArray("required");
+        cmdRequired.add("command");
+        tools.add(cmdTool);
         }
 
         // MCP 挂载工具:已启用且完成过 refresh(有 tools_cache)的远程服务器的

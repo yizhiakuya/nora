@@ -20,6 +20,11 @@ function argsPreview(step: ChatStep): string {
     const sql = step.input.sql.replace(/\s+/g, " ").trim();
     return sql.length > 56 ? `${sql.slice(0, 56)}…` : sql;
   }
+  if (step.toolName === "run_command" && step.input?.target) {
+    // 命令原文(后端把 command 放进 target);折叠行只给一瞥,审批卡/展开可见全文
+    const cmd = step.input.target.replace(/\s+/g, " ").trim();
+    return cmd.length > 64 ? `${cmd.slice(0, 64)}…` : cmd;
+  }
   if (step.toolName === "manage_datasource" || step.toolName === "manage_service" || step.toolName === "manage_mcp") {
     // 无 action 上下文时(历史持久化缺 action)退回 target
     return [step.input?.target].filter(Boolean).join(" ") || "";

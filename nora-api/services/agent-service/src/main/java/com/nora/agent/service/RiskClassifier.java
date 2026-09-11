@@ -82,6 +82,12 @@ final class RiskClassifier {
             String action = normalizeMcpAction(extractAction(argsJson));
             return "list".equals(action) ? Risk.LOW : Risk.HIGH;
         }
+        if ("run_command".equals(toolName)) {
+            // 本机终端:一律 HIGH(跟随全局档位——ASK 全问 / ASSIST 询问 / FULL 自动)。
+            // 不做命令解析白名单:那是假安全(管道/子 shell/编码绕过随手可得),
+            // 真正的防线是审批卡完整展示命令 + 用户档位选择。
+            return Risk.HIGH;
+        }
         if (toolName != null && toolName.startsWith("mcp__")) {
             // MCP 挂载工具:外部服务器能力未知,一律 HIGH——ASSIST 档询问、
             // FULL 档放行、无人值守通道按设计放行(见 CLAUDE.md 高风险工具节)

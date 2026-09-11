@@ -125,6 +125,21 @@ describe("AgentThoughtBlock ToolRow", () => {
     expect(screen.getByText("manage_mcp")).toBeTruthy();
     expect(screen.getByText("megumin")).toBeTruthy();
   });
+
+  it("run_command 步骤显示命令预览", () => {
+    const cmdStep: ChatStep = {
+      id: "s-tool-cmd",
+      type: "tool",
+      title: "运行单元测试",
+      status: "completed",
+      toolName: "run_command",
+      input: { target: "npm test" },
+      result: { content: "PASS\n---\n(exit code: 0, 1200ms, cwd: /workspace)" },
+    };
+    render(<AgentThoughtBlock steps={[cmdStep]} />);
+    expect(screen.getByText("run_command")).toBeTruthy();
+    expect(screen.getByText("npm test")).toBeTruthy();
+  });
 });
 
 describe("AgentThoughtBlock ReasoningRow", () => {

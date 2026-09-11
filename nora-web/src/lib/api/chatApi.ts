@@ -5,7 +5,7 @@ export interface ChatStepInput {
   sql?: string;
   service?: string;
   limit?: number;
-  /** manage_datasource / manage_service / manage_mcp 的操作对象(数据源名/id、纳管源名/id、MCP 服务器名/id) */
+  /** manage_datasource / manage_service / manage_mcp 的操作对象(数据源名/id、纳管源名/id、MCP 服务器名/id);run_command 时存命令原文 */
   target?: string;
 }
 

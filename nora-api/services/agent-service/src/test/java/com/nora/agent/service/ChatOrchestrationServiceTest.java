@@ -111,6 +111,16 @@ class ChatOrchestrationServiceTest {
     }
 
     @Test
+    void riskClassifierTiersRunCommand() {
+        // 本机终端:一律 HIGH(跟随全局档位)——不做命令白名单(假安全)
+        assertEquals(RiskClassifier.Risk.HIGH,
+                RiskClassifier.classify("run_command", "{\"command\": \"npm test\"}"));
+        assertEquals(RiskClassifier.Risk.HIGH,
+                RiskClassifier.classify("run_command", "{\"command\": \"rm -rf /\"}"));
+        assertEquals(RiskClassifier.Risk.HIGH, RiskClassifier.classify("run_command", "{}"));
+    }
+
+    @Test
     void mcpValidatorsGiveActionableErrors() {
         // action 白名单
         assertTrue(RiskClassifier.validateMcpAction("drop") != null);
@@ -259,7 +269,7 @@ class ChatOrchestrationServiceTest {
         return new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                null, null, null, null, null, null, mcp, null, null, 5, null);
+                null, null, null, null, null, null, mcp, null, null, null, 5, null);
     }
 
     /** Invokes parseArgs + executeTool (both private) for one tool call. */
@@ -468,7 +478,7 @@ class ChatOrchestrationServiceTest {
             ChatOrchestrationService svc = new ChatOrchestrationService(
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                    null, null, null, null, null, null, null, workspace, null, 5, null);
+                    null, null, null, null, null, null, null, workspace, null, null, 5, null);
             when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
                     org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
 
@@ -506,7 +516,7 @@ class ChatOrchestrationServiceTest {
         ChatOrchestrationService svc = new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                null, null, null, null, null, null, null, null, skills, 5, null);
+                null, null, null, null, null, null, null, null, skills, null, 5, null);
         when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
 
@@ -541,7 +551,7 @@ class ChatOrchestrationServiceTest {
             ChatOrchestrationService svc = new ChatOrchestrationService(
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                    null, null, null, null, null, null, null, workspace, null, 5, null);
+                    null, null, null, null, null, null, null, workspace, null, null, 5, null);
 
             // 上一轮已落库的助手消息:content=回答正文;steps 携带注入正文(与系统提示同源)
             List<ChatStepDto> persisted = List.of(new ChatStepDto("s-context-memory", "context",

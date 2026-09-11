@@ -64,6 +64,7 @@ needApproval = mode == ASK
 | `manage_mcp` | refresh/enable/disable/register/remove | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH） |
 | `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守通道放行 |
 | `manage_skill` | list/read/create/update/remove | LOW | 纯数据操作（技能库），无系统副作用 |
+| `run_command` | — | HIGH | 本机终端非交互命令（构建/测试/git/包管理）；不做命令白名单（假安全），防线=审批卡完整展示命令+档位选择 |
 
 **MCP 管理特例说明**（2026-09-11 定）：
 - `manage_mcp` 的 register/remove 曾定 CRITICAL，导致 FULL 档下注册仍弹审批——与全局档位语义脱节，用户要求改为跟随全局
@@ -91,6 +92,7 @@ needApproval = mode == ASK
 | `service_manage` | manage_service | register 按 kind 显示对应字段；remove 提示不再监控 |
 | `mcp_manage` | manage_mcp | register：**STDIO 显示完整命令行**（装的什么包一眼可见）/ 远程显示 url+header 键名；remove 提示工具立即不可用 |
 | `workspace_file` | manage_workspace | 路径 + 内容预览（截断 200 字）+ 区外警告 |
+| `terminal_command` | run_command | **命令原文完整展示** + cwd + shell + 超时（用户审的就是将执行的） |
 | `mcp_tool` | mcp__* | 服务器名 + 参数（截断 400 字） |
 
 ## 6. 已知边界与设计取舍
@@ -109,3 +111,23 @@ needApproval = mode == ASK
 - **token 边界**：只在服务端内存与 `mcp_server.headers`（连接必需，API 回读走 `maskValues` 脱敏）中出现；日志不打印；OAuth 端点的 HTTP 走出站代理（`ProxySettingsHolder`，与 LLM 调用同一套）
 - **登录完成语义**：创建或**更新已有 github 服务器**（evict 连接池 → 更新 url/headers → 启用 → refresh）；连接测试失败不丢凭据（warning 提示，可稍后测试连接重试）
 - **npm 包已弃用**：`@modelcontextprotocol/server-github` 官方标记 deprecated——GitHub MCP 统一用远程端点；本地 stdio 版仅遗留场景保留
+
+## 8. 本机终端 run_command（2026-09-11）
+
+**能力**：agent 在本机执行非交互命令（构建/测试/git/npm/pip/查进程），对齐 Claude Code / Codex 的终端工具。
+
+**参数**：`command`（必填，≤8000 字符）· `cwd`（默认工作区；相对=区内、绝对=整机）· `timeout`（默认 60s、上限 300s）· `shell`（powershell 默认 / bash 可选）
+
+**安全模型**（与全局档位一致）：
+- 风险一律 **HIGH**——ASK 全问 / ASSIST 询问 / FULL 自动；**不做命令白名单**（管道/子 shell/编码绕过随手可得，白名单是假安全还给错误信心）
+- 审批卡**完整展示命令原文** + cwd + shell + 超时（与 Claude Code 同款防线：用户审的就是将执行的）
+- 无人值守通道（automation）：HIGH 按设计放行——定时任务可跑命令（需要禁止时改 `RiskClassifier` 一行）
+
+**实现要点**（`TerminalService`）：
+- Windows 默认 PowerShell，命令经 **`-EncodedCommand`（Base64 UTF-16LE）** 传入——引号/换行/美元符全部免转义
+- **编码**：强制 `[Console]::OutputEncoding=UTF8`（中文 Windows 默认 GBK 乱码）；**`$ProgressPreference='SilentlyContinue'` + `stripClixml` 按行过滤**——实测 npm 首次运行进度会被 PowerShell 序列化成 CLIXML 噪音污染模型上下文
+- bash 优先 git bash 固定路径（`C:/Program Files/Git/bin/bash.exe`）——Windows 裸 `bash` 会解析到 WSL 转发器（无发行版时报 `execvpe(/bin/bash) failed`）
+- **超时/取消杀进程树**：taskkill /T + 后代句柄快照兜底（与 MCP STDIO 同一套机制）；「停止生成」中断编排线程 → 命令被终止（`cancelled` 标记）
+- 输出有界：原始 200K 字节截断，展示层 `bounded()` 再截到 30K/10K；exit code 如实报告（`render()` 附脚注）
+- **无 TTY**：交互式程序（vim/需要输入）会挂起到超时——工具描述已明确警告模型
+- 默认 cwd = 工作区（与 `manage_workspace` 同语义）；绝对 cwd 不硬拦（命令本身就能 cd，拦 cwd 是假安全）
