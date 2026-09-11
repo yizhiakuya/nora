@@ -1,38 +1,52 @@
 # Nora Agent 实施规格
 
+> **2026-09-11 注**：本文记录最初（Phase 1）的执行协议设计，部分数字已演进
+> （轮次上限、截断预算、工具清单均已变化）。**权限与工具的现行权威参考**：
+> [`agent-permission-and-tools-design.md`](./agent-permission-and-tools-design.md)
+> （权限三档 / 风险三级 / 全部工具分级 / 脱敏边界）。
+> 上下文预算现行设计：`context-management-design.md`。
+
 ## 目标
 
-Agent 负责开放式对话与只读诊断；文件索引、自动任务调度等固定流程由服务代码编排。单轮请求使用单线程 ReAct，最多 5 个工具轮次。
+Agent 负责开放式对话与只读诊断；文件索引、自动任务调度等固定流程由服务代码编排。单轮请求使用单线程 ReAct，最多 5 个工具轮次（**现为 `nora.agent.max-tool-rounds` 可配，默认 10**）。
 
 ## 一轮执行协议
 
 1. 校验输入长度（1–8000 字符），建立 traceId。
 2. 调用 RAG 检索，推送 step(tool) 与 sources。
-3. 带最近 6 条消息调用模型；模型只能选择已声明工具。
+3. 带最近 6 条消息调用模型（**现为全量历史 + 三级上下文预算裁剪，见 context-management-design.md**）；模型只能选择已声明工具。
 4. 工具输入先过 Guardrail：SQL 仅允许单条 SELECT/SHOW/EXPLAIN，日志服务名必须来自服务注册表，limit 限制为 1–100。
-5. 工具输出执行脱敏和 8KB 截断，再回填模型；每次调用都推送 step。
+5. 工具输出执行脱敏和 8KB 截断（**现为 30K 成功/10K 失败预算 + 脱敏，见 `bounded()`**），再回填模型；每次调用都推送 step。
 6. 无工具调用时生成最终回答；最终回答不得声称未执行的查询结果。
 7. 任意异常推送 step(status=failed) 和 error，保存失败消息，保证 SSE done 收尾。
 
 ## 工具契约
+
+> 现行完整工具清单（12+ 个工具与风险分级）见
+> [`agent-permission-and-tools-design.md`](./agent-permission-and-tools-design.md) 第 3 节。
+
+初版契约：
 
 | 工具 | 输入 | 输出 |
 |---|---|---|
 | execute_sql | sql | 列名、最多 50 行、耗时、截断标记 |
 | read_service_logs | service, limit | 去 DEBUG 后的日志、错误计数、截断标记 |
 
-高风险写操作暂不暴露给 Agent。创建自动任务必须由用户在 UI 明确提交，后续再增加审批节点。
+高风险写操作暂不暴露给 Agent（**已过时：现有 execute_write_sql / manage_container / manage_datasource / manage_service / manage_mcp 等高风险工具，全部走审批门**）。创建自动任务必须由用户在 UI 明确提交。
 
 ## 高风险审批协议
 
-任何检测到 DDL、批量删除、容器停止/重启或任务创建请求时，Agent 必须返回 `approval_required` 事件，并暂停当前执行。事件包含操作类型、目标、参数摘要和风险说明；只有用户在前端明确点击批准后，后端才允许继续。模型文本中的“同意”不视为批准，审批状态必须由服务端保存并绑定 sessionId、stepId 和一次性 approvalToken。
+任何检测到 DDL、批量删除、容器停止/重启或任务创建请求时，Agent 必须返回 `approval_required` 事件，并暂停当前执行。事件包含操作类型、目标、参数摘要和风险说明；只有用户在前端明确点击批准后，后端才允许继续。模型文本中的"同意"不视为批准，审批状态必须由服务端保存并绑定 sessionId、stepId 和一次性 approvalToken。
+
+**现行实现**：判定在 harness 层 `RiskClassifier`（LOW/HIGH/CRITICAL × ASK/ASSIST/FULL 三档，
+无人值守通道 CRITICAL 硬拒，120s 超时自动拒绝）——完整规格见权威文档第 1–2 节。
 
 ## 记忆与恢复
 
-- 会话短期记忆取最近 6 条消息，避免上下文无限增长。
+- 会话短期记忆取最近 6 条消息（**现为全量 + 预算压缩**），避免上下文无限增长。
 - 每轮保存完整用户消息、助手回答、工具步骤和引用来源。
 - 工具失败时保存结构化错误；下一轮提示模型参考上次失败原因。
-- SSE 断开不取消后端执行，结果仍持久化；客户端可通过消息历史恢复。
+- SSE 断开不取消后端执行，结果仍持久化；客户端可通过消息历史恢复（**现另有 `TurnStreamRegistry` 断线重连回放，见 nora-api/CLAUDE.md**）。
 
 ## 前端验收标准
 
@@ -41,9 +55,9 @@ Agent 负责开放式对话与只读诊断；文件索引、自动任务调度�
 - 没有模型配置时返回明确配置提示，不返回空白消息。
 - 流结束必须收到 done；无内容响应视为失败。
 
-## 后续实现顺序
+## 后续实现顺序（初版，已完成）
 
-1. 将 agent_step 持久化从轮次结束移到每个事件发送处。
-2. 增加 SQL / 日志 Guardrail 与单元测试。
-3. 为模型未配置、上游超时、SSE 中断增加集成测试。
-4. 增加 traceId 和结构化日志.
+1. ~~将 agent_step 持久化从轮次结束移到每个事件发送处~~ ✅
+2. ~~增加 SQL / 日志 Guardrail 与单元测试~~ ✅
+3. ~~为模型未配置、上游超时、SSE 中断增加集成测试~~ ✅
+4. ~~增加 traceId 和结构化日志~~ ✅

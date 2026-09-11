@@ -55,5 +55,6 @@ agent-service → sub2api 中转 `http://192.168.0.109:28765/v1`(内网直连);p
 
 ## 文档
 
-- `docs/agent-implementation-spec.md` — 执行协议/审批协议规格
+- `docs/agent-permission-and-tools-design.md` — **权限/风险/工具权威参考**(改 RiskClassifier/toolsSpec/审批前必读,改后同步)
+- `docs/agent-implementation-spec.md` — 执行协议/审批协议规格(初版设计,数字已演进)
 - `docs/harness-tool-calling-research-2026-09-05.md` — harness 调研
