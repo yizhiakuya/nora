@@ -50,13 +50,22 @@ public record ChatStepDto(
      *
      * @param target  manage_datasource / manage_service 的操作对象(数据源名/id、
      *                纳管源名/id);null 表示其余工具
+     * @param rawArgs 脱敏后的原始参数 JSON(scrubArgsForLog)。仅用于跨轮
+     *                历史重建(wire 层 tool_calls.arguments 需要完整原参),
+     *                前端展示仍用上面的类型化字段;旧数据为 null 时重建退化为
+     *                文本历史(兼容)。不存凭据明文。
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record StepInput(String sql, String service, Integer limit, String target) {
+    public record StepInput(String sql, String service, Integer limit, String target, String rawArgs) {
 
         /** Back-compat constructor for existing call sites (no target). */
         public StepInput(String sql, String service, Integer limit) {
-            this(sql, service, limit, null);
+            this(sql, service, limit, null, null);
+        }
+
+        /** Back-compat constructor (target, no raw args). */
+        public StepInput(String sql, String service, Integer limit, String target) {
+            this(sql, service, limit, target, null);
         }
     }
 

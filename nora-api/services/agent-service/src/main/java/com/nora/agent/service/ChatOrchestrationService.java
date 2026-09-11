@@ -57,8 +57,7 @@ public class ChatOrchestrationService {
     private static final String SYSTEM_PROMPT = """
             你是 Nora 个人工作台中的 AI 助手。以下为协议约定(优先级最高,始终遵守):
             1. 引用知识库来源时必须使用 [[docName]] 标记(渲染协议)。
-            2. 需要真实数据或执行操作时,直接调用相应工具,不要凭记忆编造,也不要只描述计划而不行动;
-               工具返回错误时如实说明。
+            2. 需要真实数据或执行操作时,直接调用相应工具——不要凭记忆编造,不要虚构工具执行结果或报错,也不要只描述计划而不行动;工具返回错误时如实说明。
             3. 你的语气、风格与工作习惯定义在下方工作区的 SOUL.md 与 AGENTS.md 中——它们是
                你的可演化指令:self-evolution 是预期行为,想调整行为方式时直接编辑对应文件。
             4. 用户说「记住…」时必须写入工作区文件落盘,不能只口头答应。
@@ -471,7 +470,11 @@ public class ChatOrchestrationService {
                               String sessionId,
                               ChatEventConsumer eventConsumer) {
         ParsedArgs parsed = parseArgs(name, args);
-        ChatStepDto.StepInput input = parsed.input();
+        // 跨轮历史重建(对齐 Claude Code/Codex「工具链即历史」):step 持久化脱敏后的
+        // 原始参数,下一轮把它重放为 wire 层 assistant(tool_calls)+tool(result) 对——
+        // 模型看到自己真实的调用记录,而不是"纯文本声称跑过命令"(实测:缺失工具链
+        // 结构时弱模型会续写编造工具结果)。脱敏与日志同口径,不存凭据明文。
+        ChatStepDto.StepInput input = withRawArgs(parsed.input(), args);
         // Claude Code pattern: the model fills the display title via the
         // description arg (imperative, no subjective words); fall back to
         // the tool name when it omits one
@@ -2690,22 +2693,118 @@ public class ChatOrchestrationService {
         int from = historyEnd;
         while (from > 0) {
             ChatStoreService.StoredMessage prev = history.get(from - 1);
-            int cost = ContextBudget.estimateTokens(prev.content()) + 8;
+            int cost = wireCostOf(prev);
             if (used + cost > historyBudget && from < historyEnd) break; // 至少保留 1 条
             used += cost;
             from--;
             if (historyEnd - from >= 40) break; // 条数硬上限,防御超长单条
         }
         for (int i = from; i < historyEnd; i++) {
-            ChatStoreService.StoredMessage msg = history.get(i);
-            if ("user".equals(msg.role())) {
-                messages.add(WireMessage.user(objectMapper, msg.content()));
-            } else if ("assistant".equals(msg.role()) && msg.content() != null && !msg.content().isBlank()) {
-                messages.add(WireMessage.assistant(objectMapper, msg.content()));
-            }
+            appendHistoryMessage(messages, history.get(i));
         }
         messages.add(WireMessage.user(objectMapper, userMessage));
         return messages;
+    }
+
+    /**
+     * 把一条持久化历史消息按 wire 结构重建进请求(对齐 Claude Code/Codex 的
+     * 「工具链即历史」):assistant 消息若带可重建的工具步骤(有 toolName +
+     * 脱敏原始参数 + 终态结果),按 roundIndex 逐轮重放为
+     * assistant(tool_calls)+ tool(result) 对,最后附回答文本——模型看到
+     * 自己真实的调用记录与「调用→结果」节奏,而不是被剥掉结构的纯文本
+     * 总结(实测:缺失该结构时弱模型会续写编造工具结果)。
+     * 旧数据(无 rawArgs)优雅退化为纯文本,不产生孤儿 tool 消息。
+     */
+    private void appendHistoryMessage(List<WireMessage> messages, ChatStoreService.StoredMessage msg) {
+        if ("user".equals(msg.role())) {
+            messages.add(WireMessage.user(objectMapper, msg.content()));
+            return;
+        }
+        if (!"assistant".equals(msg.role())) {
+            return;
+        }
+        String content = msg.content() == null ? "" : msg.content();
+        List<ChatStepDto> toolSteps = rebuildableToolSteps(msg.steps());
+        if (toolSteps.isEmpty()) {
+            if (!content.isBlank()) {
+                messages.add(WireMessage.assistant(objectMapper, content));
+            }
+            return;
+        }
+        // 按轮次分组:同一轮的多工具调用是一批(assistant 一条 + 多个 tool 结果)
+        java.util.LinkedHashMap<Integer, List<ChatStepDto>> byRound = new java.util.LinkedHashMap<>();
+        for (ChatStepDto step : toolSteps) {
+            byRound.computeIfAbsent(step.roundIndex(), k -> new ArrayList<>()).add(step);
+        }
+        for (List<ChatStepDto> roundSteps : byRound.values()) {
+            ObjectNode assistant = objectMapper.createObjectNode();
+            assistant.put("role", "assistant");
+            assistant.put("content", "");
+            ArrayNode calls = assistant.putArray("tool_calls");
+            for (ChatStepDto step : roundSteps) {
+                ObjectNode call = calls.addObject();
+                call.put("id", step.id());
+                call.put("type", "function");
+                ObjectNode fn = call.putObject("function");
+                fn.put("name", step.toolName());
+                fn.put("arguments", step.input().rawArgs());
+            }
+            messages.add(new WireMessage(assistant));
+            for (ChatStepDto step : roundSteps) {
+                ObjectNode toolMsg = objectMapper.createObjectNode();
+                toolMsg.put("role", "tool");
+                toolMsg.put("tool_call_id", step.id());
+                toolMsg.put("content", toolResultText(step));
+                messages.add(new WireMessage(toolMsg));
+            }
+        }
+        if (!content.isBlank()) {
+            messages.add(WireMessage.assistant(objectMapper, content));
+        }
+    }
+
+    /** 可重建为 wire tool_call 的步骤:工具名 + 脱敏原始参数齐备(结果缺省也有占位)。 */
+    private static List<ChatStepDto> rebuildableToolSteps(List<ChatStepDto> steps) {
+        if (steps == null || steps.isEmpty()) {
+            return List.of();
+        }
+        return steps.stream()
+                .filter(s -> "tool".equals(s.type())
+                        && s.toolName() != null && !s.toolName().isBlank()
+                        && s.input() != null && s.input().rawArgs() != null && !s.input().rawArgs().isBlank())
+                .toList();
+    }
+
+    /** 重放给模型的工具结果文本:成功用 content;declined/失败无 content 时用 error(与轮内回填同语义)。 */
+    private static String toolResultText(ChatStepDto step) {
+        ChatStepDto.StepResult result = step.result();
+        if (result == null) {
+            return "(no output)";
+        }
+        if (result.content() != null) {
+            return result.content();
+        }
+        if (result.error() != null) {
+            return "ERROR: " + result.error();
+        }
+        return "(no output)";
+    }
+
+    /** 一条历史消息重建后的 wire token 估算(含工具链;预算循环用,与 messageTokens 同口径)。 */
+    private static int wireCostOf(ChatStoreService.StoredMessage msg) {
+        if ("user".equals(msg.role())) {
+            return ContextBudget.estimateTokens(msg.content()) + 8;
+        }
+        if (!"assistant".equals(msg.role())) {
+            return 8;
+        }
+        int cost = ContextBudget.estimateTokens(msg.content() == null ? "" : msg.content()) + 8;
+        for (ChatStepDto step : rebuildableToolSteps(msg.steps())) {
+            cost += ContextBudget.estimateTokens(step.toolName())
+                    + ContextBudget.estimateTokens(step.input().rawArgs())
+                    + ContextBudget.estimateTokens(toolResultText(step)) + 24;
+        }
+        return cost;
     }
 
     /** 轮内微压缩永不触碰的尾部消息数(最近一轮工具往返 + 余量)。 */
@@ -2943,6 +3042,29 @@ public class ChatOrchestrationService {
      * 工具调用日志的 args 脱敏:凭据类字段(headers 的值、password、token 等)
      * 替换为 ***。值只传给服务层,任何日志/步骤/审批明细都不得出现明文。
      */
+    /** 单条工具参数重放上限:超过则不附 rawArgs(该步退化为文本历史,防病态超长参数)。 */
+    private static final int MAX_REPLAY_ARGS_CHARS = 20_000;
+
+    /** 把脱敏后的原始参数附到 typed input 上(跨轮历史重建用;null/空/非法 = 不附)。 */
+    private ChatStepDto.StepInput withRawArgs(ChatStepDto.StepInput input, String args) {
+        if (input == null || args == null || args.isBlank()) {
+            return input;
+        }
+        try {
+            // 只有合法 JSON 对象才能作为 tool_calls.arguments 重放
+            if (!objectMapper.readTree(args).isObject()) {
+                return input;
+            }
+        } catch (Exception e) {
+            return input;
+        }
+        String raw = scrubArgsForLog(args);
+        if (raw.length() > MAX_REPLAY_ARGS_CHARS) {
+            return input;
+        }
+        return new ChatStepDto.StepInput(input.sql(), input.service(), input.limit(), input.target(), raw);
+    }
+
     private String scrubArgsForLog(String args) {
         if (args == null || args.isBlank()) {
             return "{}";

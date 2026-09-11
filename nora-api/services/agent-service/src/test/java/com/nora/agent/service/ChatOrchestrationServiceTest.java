@@ -159,6 +159,137 @@ class ChatOrchestrationServiceTest {
     }
 
     @Test
+    void toolStepsPersistScrubbedRawArgsForHistoryReplay() throws Exception {
+        // 跨轮历史重建的前提:step 持久化脱敏原始参数;凭据不落库、非法 JSON 不附
+        Map<String, Integer> fingerprints = new java.util.HashMap<>();
+        List<ChatStepDto> steps = new java.util.ArrayList<>();
+        ChatOrchestrationService.ChatEventConsumer consumer = new NoopConsumer() {
+            @Override
+            public void step(ChatStepDto step) { steps.add(step); }
+        };
+        invokeEmit(service, "s-call-r1", "manage_mcp",
+                "{\"action\":\"register\",\"name\":\"weather\",\"url\":\"https://x\","
+                        + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}",
+                fingerprints, new java.util.ArrayList<>(), 1, consumer);
+
+        ChatStepDto toolStep = steps.stream()
+                .filter(s -> "s-call-r1".equals(s.id()) && s.result() != null).findFirst().orElseThrow();
+        String raw = toolStep.input().rawArgs();
+        assertTrue(raw != null && !raw.isBlank(), "rawArgs persisted for replay");
+        assertTrue(!raw.contains("secret123"), "凭据不得随 rawArgs 落库");
+        assertTrue(raw.contains("\"name\":\"weather\""), "非凭据参数完整保留");
+        // 非法 JSON 参数不附 rawArgs(该步退化为文本历史,不产生非法 wire 调用)
+        List<ChatStepDto> steps2 = new java.util.ArrayList<>();
+        invokeEmit(service, "s-call-r2", "execute_sql", "not-json", new java.util.HashMap<>(),
+                new java.util.ArrayList<>(), 1, new NoopConsumer() {
+                    @Override
+                    public void step(ChatStepDto step) { steps2.add(step); }
+                });
+        ChatStepDto invalid = steps2.stream()
+                .filter(s -> "s-call-r2".equals(s.id()) && s.result() != null).findFirst().orElseThrow();
+        assertTrue(invalid.input().rawArgs() == null, "invalid JSON args are not replayed");
+    }
+
+    @Test
+    void historyRebuildsToolChainAsWireMessages() throws Exception {
+        // 核心防幻觉机制:历史里的工具步骤重建为 assistant(tool_calls)+tool(result)
+        // 对(对齐 Claude Code/Codex 的「工具链即历史」),模型看到真实调用记录
+        ChatStepDto toolStep = new ChatStepDto("s-call-0-abc", "tool", "运行命令", "exit 0, 100ms",
+                100L, "completed", "run_command",
+                new ChatStepDto.StepInput(null, null, null, "echo hi", "{\"command\":\"echo hi\"}"),
+                new ChatStepDto.StepResult("hi\n", null, null, 2, false, null), 1);
+        List<ChatStoreService.StoredMessage> history = List.of(
+                new ChatStoreService.StoredMessage("user", "跑一下 echo", null, null),
+                new ChatStoreService.StoredMessage("assistant", "已执行,输出 hi", List.of(toolStep), null));
+
+        List<?> messages = invokeBuildMessages(service, "再跑一次", history);
+
+        List<String> json = new java.util.ArrayList<>();
+        for (Object m : messages) {
+            var nodeAccessor = m.getClass().getDeclaredMethod("node");
+            nodeAccessor.setAccessible(true);
+            json.add(nodeAccessor.invoke(m).toString());
+        }
+        // assistant 工具轮:tool_calls 携带 id/name/arguments(原始参数重放)
+        assertTrue(json.stream().anyMatch(j -> j.contains("\"tool_calls\"") && j.contains("run_command")
+                        && j.contains("echo hi")),
+                "history assistant carries replayed tool_calls");
+        // tool 结果消息:tool_call_id 与调用配对
+        assertTrue(json.stream().anyMatch(j -> j.contains("\"role\":\"tool\"")
+                        && j.contains("\"tool_call_id\":\"s-call-0-abc\"")
+                        && j.contains("hi\\n")),
+                "tool result replayed with matching tool_call_id");
+        // 顺序:assistant(tool_calls) 在 tool 结果之前(配对校验要求)
+        int callIdx = -1, resultIdx = -1;
+        for (int i = 0; i < json.size(); i++) {
+            if (json.get(i).contains("\"tool_calls\"")) callIdx = i;
+            if (json.get(i).contains("\"role\":\"tool\"")) resultIdx = i;
+        }
+        assertTrue(callIdx >= 0 && resultIdx > callIdx, "tool_calls precede its result");
+    }
+
+    @Test
+    void historyWithoutRawArgsDegradesToPlainText() throws Exception {
+        // 旧数据(升级前落库,无 rawArgs):退化为纯文本,绝不产生孤儿 tool 消息
+        ChatStepDto legacyStep = new ChatStepDto("s-call-0-old", "tool", "运行命令", "exit 0",
+                50L, "completed", "run_command",
+                new ChatStepDto.StepInput(null, null, null, "echo hi"),
+                new ChatStepDto.StepResult("hi\n", null, null, null, false, null), 1);
+        List<ChatStoreService.StoredMessage> history = List.of(
+                new ChatStoreService.StoredMessage("assistant", "旧回答", List.of(legacyStep), null));
+
+        List<?> messages = invokeBuildMessages(service, "新问题", history);
+
+        List<String> json = new java.util.ArrayList<>();
+        for (Object m : messages) {
+            var nodeAccessor = m.getClass().getDeclaredMethod("node");
+            nodeAccessor.setAccessible(true);
+            json.add(nodeAccessor.invoke(m).toString());
+        }
+        assertTrue(json.stream().noneMatch(j -> j.contains("\"role\":\"tool\"")),
+                "legacy steps never produce orphan tool messages");
+        assertTrue(json.stream().noneMatch(j -> j.contains("\"tool_calls\"")),
+                "legacy steps never produce tool_calls without replayable args");
+        assertTrue(json.stream().anyMatch(j -> j.contains("旧回答")), "assistant text still assembled");
+    }
+
+    @Test
+    void declinedToolStepReplaysErrorAsToolResult() throws Exception {
+        // 被拒绝/熔断的调用也要重放(失败即证据):无 content 时用 error 文本回填
+        ChatStepDto declined = new ChatStepDto("s-call-0-dec", "tool", "运行命令", "已拦截",
+                10L, "declined", "run_command",
+                new ChatStepDto.StepInput(null, null, null, "rm -rf", "{\"command\":\"rm -rf\"}"),
+                new ChatStepDto.StepResult(null, null, null, null, false, "用户未批准该操作"), 1);
+        List<ChatStoreService.StoredMessage> history = List.of(
+                new ChatStoreService.StoredMessage("assistant", "未执行", List.of(declined), null));
+
+        List<?> messages = invokeBuildMessages(service, "继续", history);
+
+        List<String> json = new java.util.ArrayList<>();
+        for (Object m : messages) {
+            var nodeAccessor = m.getClass().getDeclaredMethod("node");
+            nodeAccessor.setAccessible(true);
+            json.add(nodeAccessor.invoke(m).toString());
+        }
+        assertTrue(json.stream().anyMatch(j -> j.contains("\"role\":\"tool\"")
+                        && j.contains("用户未批准该操作")),
+                "declined step replays its error text as the tool result");
+    }
+
+    /** buildMessages 反射调用(私有装配方法):返回 wire 消息列表。 */
+    private List<?> invokeBuildMessages(ChatOrchestrationService svc, String userMessage,
+                                        List<ChatStoreService.StoredMessage> history) throws Exception {
+        Class<?> promptResultClass = Class.forName(
+                "com.nora.agent.service.ChatOrchestrationService$SystemPromptResult");
+        Object promptOut = java.lang.reflect.Array.newInstance(promptResultClass, 1);
+        var method = ChatOrchestrationService.class.getDeclaredMethod("buildMessages",
+                String.class, List.class, List.class, List.class, ContextBudget.class, promptOut.getClass());
+        method.setAccessible(true);
+        return (List<?>) method.invoke(svc, userMessage, history, List.of(), List.of(),
+                new ContextBudget(null), promptOut);
+    }
+
+    @Test
     void mcpToolListRendersServersAndGuardsUnknownAction() throws Exception {
         McpServerService mcp = mock(McpServerService.class);
         when(mcp.list()).thenReturn(List.of(new McpServerService.ServerView(

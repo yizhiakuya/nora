@@ -20,9 +20,21 @@ ContextBudget (度量核心)
 
 | 层 | 位置 | 机制 |
 |---|---|---|
-| 会话历史装配 | `buildMessages` | 固定层（system+RAG+反思+新消息）之外的 token 预算 = 触发线 − 输出预留 − 固定开销；历史从新到旧装入，至少 1 条，硬上限 40 条 |
+| 会话历史装配 | `buildMessages` | 固定层（system+RAG+反思+新消息）之外的 token 预算 = 触发线 − 输出预留 − 固定开销；历史从新到旧装入，至少 1 条，硬上限 40 条；**工具链按 wire 结构重建**（见下） |
 | 轮内微压缩 | `compactForRound` | 每轮请求前预估 prompt；超触发线把**最旧的工具结果**就地改写为头 800+尾 200 摘录（失败只留头 400）。只改 content，role/tool_call_id 不动（OpenAI 配对校验不破）；最近 6 条消息永不触碰 |
 | 超限恢复 | `isContextOverflow` + force 压缩 | 上游报 context length 错误时硬压缩到恢复线（60%）重试一次——防线上 400 翻车 |
+
+### 工具链历史重建（2026-09-12）
+
+**问题**：跨轮历史只装配 `content` 纯文本，工具调用结构被剥离——模型看到的是「自己声称跑过命令」而不是真实的 `tool_calls + tool result`。实测（deepseek-v4.1-flash）连续编造工具结果/报错（含虚构「sandbox 拦截」），因为历史里「文本即可声称结果」的模式被续写。
+
+**对齐**：Claude Code / Codex 均把工具调用+结果作为一等公民全量重放（「回填即历史」），压缩只截内容不拆结构（Manus：「擦掉失败就擦掉了证据」）。
+
+**实现**：
+- 工具步骤持久化脱敏后的原始参数 `StepInput.rawArgs`（`scrubArgsForLog` 同口径；非法 JSON / 超 20K 不附；旧数据 null 优雅退化为纯文本）
+- `appendHistoryMessage` 按 `roundIndex` 分组重放为 `assistant(tool_calls) + tool(result)` 对，终态回答文本附在最后；declined/failed 无 content 时用 error 文本回填
+- 预算循环 `wireCostOf` 把重建后的工具链计入 token 估算（与 `messageTokens` 同口径）
+- Responses 协议路径（`function_call`/`function_call_output`）天然兼容同一重建结构
 
 ### 计量闭环
 

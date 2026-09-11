@@ -19,6 +19,8 @@ interface StepInputPayload {
   service?: string;
   limit?: number;
   target?: string;
+  /** 服务端跨轮历史重建用的脱敏原始参数;UI 不用,normalizeStep 剥离 */
+  rawArgs?: string;
 }
 
 /** 注入上下文元数据(后端 ChatStepDto.ContextInfo) */
@@ -74,6 +76,9 @@ export function normalizeStep(step: StepPayload, index: number): ChatStep {
   const title = step.title === "调用工具 execute_sql" ? "查询数据库" : step.title === "调用工具 read_service_logs" ? "读取服务日志" : step.title;
   const duration =
     typeof step.duration === "number" ? `${(step.duration / 1000).toFixed(2)}s` : step.duration;
+  // rawArgs 是服务端跨轮历史重建字段(脱敏原始参数),UI 各展示位都不用——
+  // 剥离后再透传,避免通用工具的 JSON 详情里重复显示参数
+  const { rawArgs: _rawArgs, ...displayInput } = step.input ?? {};
 
   return {
     id: step.id ?? String(index + 1),
@@ -83,7 +88,7 @@ export function normalizeStep(step: StepPayload, index: number): ChatStep {
     duration,
     status: step.status ?? "running",
     toolName: step.toolName,
-    input: step.input,
+    input: step.input ? displayInput : undefined,
     result: step.result,
     context: step.context,
     roundIndex: step.roundIndex,

@@ -141,6 +141,8 @@ Trace 模型(LangSmith/Langfuse/OpenAI SDK 共识):trace=会话,span 树=LLM 调
 
 Nora 现状:单线程 ReAct 最多 5 轮;SSE 事件 step(running/completed/failed)/delta/sources/done/error;step id `s-tool-N` / `s-tool-N-call-M`;Guardrail(SQL 仅单条 SELECT/SHOW/EXPLAIN、服务名白名单、limit 1–100);工具输出脱敏 + 8KB 截断;短期记忆取最近 6 条;审批协议已 spec 未实现。
 
+> **2026-09-12 更新**:跨轮工具链重建已实现(见 `context-management-design.md`)——工具步骤持久化脱敏 rawArgs,历史装配时重放为 `assistant(tool_calls)+tool(result)` 对。此前的「只装配 content 纯文本」在实测中导致弱模型编造工具结果(deepseek-v4.1-flash 虚构 sandbox 拦截),属 P0 级缺陷,已修复。其余 P0/P1 项(截断对标、错误三段式、终态三值、done 计量、schema 纪律)此前已陆续落地。
+
 ### P0 — 直接可改(不动架构)
 1. **截断对标**:8KB 统一截断改为「成功 30K 字符 / 失败 10K 字符头尾摘录」;超限时保留头部预览,落盘路径或给「用 read 工具/分页续读」的指针;SQL 结果已有 50 行限制,补截断标记字段(truncated: true)。
 2. **错误三段式**:Guardrail 拒绝信息改为 `拒绝了什么 + 违反哪条规则 + 正确示例`(如「仅允许单条 SELECT;示例:SELECT * FROM t LIMIT 10」);工具失败回填模型而不是只推 step(failed)。
