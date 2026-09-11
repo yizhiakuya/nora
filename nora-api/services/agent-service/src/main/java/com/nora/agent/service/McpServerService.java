@@ -125,6 +125,26 @@ public class McpServerService {
                 && jdbcTemplate.update("UPDATE mcp_server SET enabled = ? WHERE id = ?", enabled, id) > 0;
     }
 
+    /**
+     * Resolves a server by numeric id or exact name (masked view).
+     * Used by the agent's {@code manage_mcp} tool for enable/disable/
+     * refresh/remove targets; null when not found.
+     */
+    public ServerView findByNameOrId(String target) {
+        if (target == null || target.isBlank()) {
+            return null;
+        }
+        String t = target.trim();
+        if (t.matches("\\d+")) {
+            ServerView byId = queryOne("SELECT id, name, url, transport, headers, enabled, status, status_detail, tools_cache"
+                    + " FROM mcp_server WHERE id = ?", Long.parseLong(t));
+            if (byId != null) {
+                return byId;
+            }
+        }
+        return getByName(t);
+    }
+
     /** Fetches one raw row (headers raw — internal use only). */
     public RawServer rawById(long id) {
         List<RawServer> rows = jdbcTemplate.query(
@@ -408,13 +428,23 @@ public class McpServerService {
     }
 
     private ServerView getByName(String name) {
-        List<ServerView> rows = jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, enabled, status, status_detail, tools_cache FROM mcp_server WHERE name = ?",
+        return queryOne("SELECT id, name, url, transport, headers, enabled, status, status_detail, tools_cache"
+                + " FROM mcp_server WHERE name = ?", name);
+    }
+
+    /** Exact-name lookup (public: register duplicate check in the agent tool). */
+    public ServerView findByName(String name) {
+        return name == null || name.isBlank() ? null : getByName(name.trim());
+    }
+
+    /** Shared single-row lookup returning the masked view. */
+    private ServerView queryOne(String sql, Object arg) {
+        List<ServerView> rows = jdbcTemplate.query(sql,
                 (rs, i) -> new ServerView(rs.getLong("id"), rs.getString("name"), rs.getString("url"),
                         rs.getString("transport"), maskHeaders(rs.getString("headers")),
                         rs.getBoolean("enabled"), rs.getString("status"), rs.getString("status_detail"),
                         toolCount(rs.getString("tools_cache"))),
-                name);
+                arg);
         return rows.isEmpty() ? null : rows.get(0);
     }
 

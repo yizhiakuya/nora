@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -77,6 +78,140 @@ class ChatOrchestrationServiceTest {
         // 原有工具的档位不变
         assertEquals(RiskClassifier.Risk.HIGH, RiskClassifier.classify("execute_write_sql", "{}"));
         assertEquals(RiskClassifier.Risk.LOW, RiskClassifier.classify("execute_sql", "{}"));
+    }
+
+    @Test
+    void riskClassifierTiersMcpManagement() {
+        // MCP 管理:list 只读 LOW;refresh/enable/disable 改变能力面 HIGH;
+        // register(引入外部能力+落库鉴权头)/remove(不可逆)CRITICAL
+        assertEquals(RiskClassifier.Risk.LOW,
+                RiskClassifier.classify("manage_mcp", "{\"action\": \"list\"}"));
+        assertEquals(RiskClassifier.Risk.HIGH,
+                RiskClassifier.classify("manage_mcp", "{\"action\": \"refresh\", \"target\": \"weather\"}"));
+        assertEquals(RiskClassifier.Risk.HIGH,
+                RiskClassifier.classify("manage_mcp", "{\"action\": \"disable\", \"target\": \"weather\"}"));
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_mcp",
+                        "{\"action\": \"register\", \"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}"));
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_mcp", "{\"action\": \"remove\", \"target\": \"weather\"}"));
+        // action 缺失按未知处理:HIGH
+        assertEquals(RiskClassifier.Risk.HIGH, RiskClassifier.classify("manage_mcp", "{}"));
+        // 别名归一化(模型受 manage_datasource 词汇影响写 create/delete):
+        // 分类器与执行层必须同一判定——create 必须按 CRITICAL(否则 FULL 档绕过审批)
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_mcp",
+                        "{\"action\": \"create\", \"name\": \"weather\", \"url\": \"https://x\"}"));
+        assertEquals(RiskClassifier.Risk.CRITICAL,
+                RiskClassifier.classify("manage_mcp", "{\"action\": \"delete\", \"target\": \"weather\"}"));
+        assertEquals("register", RiskClassifier.normalizeMcpAction("create"));
+        assertEquals("remove", RiskClassifier.normalizeMcpAction("DELETE"));
+        assertEquals("refresh", RiskClassifier.normalizeMcpAction("refresh"));
+    }
+
+    @Test
+    void mcpValidatorsGiveActionableErrors() {
+        // action 白名单
+        assertTrue(RiskClassifier.validateMcpAction("drop") != null);
+        assertEquals(null, RiskClassifier.validateMcpAction("refresh"));
+        // 名称规则与设置页注册一致:字符集 + 不能含连续下划线(挂载名约束)
+        assertTrue(RiskClassifier.validateMcpRegister("bad name", "https://x", null) != null);
+        assertTrue(RiskClassifier.validateMcpRegister("a__b", "https://x", null) != null);
+        assertTrue(RiskClassifier.validateMcpRegister("ok_name-1", "ftp://x", null) != null);
+        assertTrue(RiskClassifier.validateMcpRegister("ok", "https://x", "HTTP") != null);
+        assertEquals(null, RiskClassifier.validateMcpRegister("weather", "https://x", "sse"));
+        assertEquals(null, RiskClassifier.validateMcpRegister("weather", "http://192.168.0.9:8080/mcp", null));
+    }
+
+    @Test
+    void scrubArgsForLogMasksCredentialValues() throws Exception {
+        var method = ChatOrchestrationService.class.getDeclaredMethod("scrubArgsForLog", String.class);
+        method.setAccessible(true);
+        // headers 值(headers 的键保留、值替换);name/url 等非凭据字段原样
+        String scrubbed = (String) method.invoke(service,
+                "{\"action\":\"register\",\"name\":\"weather\",\"url\":\"https://x\","
+                        + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}");
+        assertTrue(!scrubbed.contains("secret123"), "鉴权头值不得进日志");
+        assertTrue(scrubbed.contains("\"name\":\"weather\""), "非凭据字段保留");
+        assertTrue(scrubbed.contains("***"));
+        // password/token 类字段同样脱敏(manage_datasource create 的既有泄漏点)
+        String scrubbed2 = (String) method.invoke(service, "{\"action\":\"create\",\"password\":\"hunter2\"}");
+        assertTrue(!scrubbed2.contains("hunter2"), "密码不得进日志");
+        // 非法 JSON 原样返回,不炸日志行
+        assertEquals("not json", method.invoke(service, "not json"));
+    }
+
+    @Test
+    void mcpToolListRendersServersAndGuardsUnknownAction() throws Exception {
+        McpServerService mcp = mock(McpServerService.class);
+        when(mcp.list()).thenReturn(List.of(new McpServerService.ServerView(
+                1L, "megumin", "http://192.168.0.9:8080/mcp", "STREAMABLE", null,
+                true, "connected", null, 3)));
+        ChatOrchestrationService svc = buildWithMcp(mcp);
+
+        // 非法 action 拒绝(白名单)
+        ChatOrchestrationService.ToolOutcome bad = invokeExecute(svc, "manage_mcp", "{\"action\": \"drop\"}");
+        assertTrue(bad.content().startsWith("ERROR:"), "非法 action 拒绝");
+        assertTrue(bad.content().contains("list / refresh"), "错误信息含可用动作");
+
+        // list 渲染服务器行(名称/状态/工具数)
+        ChatOrchestrationService.ToolOutcome list = invokeExecute(svc, "manage_mcp", "{\"action\": \"list\"}");
+        assertTrue(list.content().contains("megumin"));
+        assertTrue(list.content().contains("connected"));
+        assertTrue(list.content().contains("工具数 3"));
+    }
+
+    @Test
+    void mcpRegisterTestsConnectionAndKeepsRegistrationOnFailure() throws Exception {
+        McpServerService mcp = mock(McpServerService.class);
+        when(mcp.create("weather", "https://mcp.example.com/mcp", null, null)).thenReturn(
+                new McpServerService.ServerView(7L, "weather", "https://mcp.example.com/mcp",
+                        "STREAMABLE", null, true, "untested", null, 0));
+        when(mcp.refresh(7L)).thenThrow(new IllegalStateException("connect timeout"));
+        ChatOrchestrationService svc = buildWithMcp(mcp);
+
+        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+                "{\"action\": \"register\", \"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
+        assertTrue(out.content().contains("已注册 MCP 服务器"), "注册成功如实报告");
+        assertTrue(out.content().contains("连接测试失败"), "连接失败如实报告");
+        assertTrue(out.content().contains("注册已保留"), "失败不回滚注册(对齐 create 后自动 test 语义)");
+        assertTrue(out.content().contains("connect timeout"), "失败原因透出");
+    }
+
+    @Test
+    void mcpRegisterAliasCreateExecutesRegisterPath() throws Exception {
+        // 模型写 action=create(别名)时,执行层按 register 真执行——与分类器同一归一化
+        McpServerService mcp = mock(McpServerService.class);
+        when(mcp.create("alias-mcp", "https://x/mcp", null, null)).thenReturn(
+                new McpServerService.ServerView(9L, "alias-mcp", "https://x/mcp",
+                        "STREAMABLE", null, true, "untested", null, 0));
+        when(mcp.refresh(9L)).thenReturn(List.of());
+        ChatOrchestrationService svc = buildWithMcp(mcp);
+
+        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+                "{\"action\": \"create\", \"name\": \"alias-mcp\", \"url\": \"https://x/mcp\"}");
+        assertTrue(out.content().contains("已注册 MCP 服务器"), "create 别名走 register 路径");
+        org.mockito.Mockito.verify(mcp).create("alias-mcp", "https://x/mcp", null, null);
+    }
+
+    /** Builds a service with only the MCP registry wired (17-arg constructor). */
+    private ChatOrchestrationService buildWithMcp(McpServerService mcp) {
+        return new ChatOrchestrationService(
+                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
+                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+                null, null, null, null, null, null, mcp, null, null, 5, null);
+    }
+
+    /** Invokes parseArgs + executeTool (both private) for one tool call. */
+    private ChatOrchestrationService.ToolOutcome invokeExecute(ChatOrchestrationService svc,
+                                                               String tool, String args) throws Exception {
+        var parse = ChatOrchestrationService.class.getDeclaredMethod("parseArgs", String.class, String.class);
+        parse.setAccessible(true);
+        Object parsed = parse.invoke(svc, tool, args);
+        var exec = ChatOrchestrationService.class.getDeclaredMethod("executeTool",
+                String.class, String.class, parsed.getClass());
+        exec.setAccessible(true);
+        return (ChatOrchestrationService.ToolOutcome) exec.invoke(svc, tool, args, parsed);
     }
 
     @Test

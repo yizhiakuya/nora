@@ -12,6 +12,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **审批** `POST /api/chat/approvals/{token}?sessionId={id}` body `{approved}`;服务端内存保存一次性 token,120 秒超时自动拒绝;模型文字同意不算批准
 - **权限三档** `PermissionMode`:ASK(每次询问) / ASSIST(只读自动,写 SQL/容器控制询问) / FULL(全自动);RiskClassifier 第三档 CRITICAL(删数据源、注册/删纳管源)任何档位都强制审批
 - **高风险工具**:`execute_write_sql` 经 RiskClassifier → datasource `POST /api/datasources/{id}/execute` → WriteGuard 只允许单条写语句;`manage_container` 调 env-service;`manage_datasource`(list/create/test/schema/remove)与 `manage_service`(纳管源 register/enable/disable/remove/list)走各自管理端点,create 后自动 test,密码不落对话记录;`read_file` 读工作台文件(file-service,先 list 拿 id 再读)
+- **MCP 管理**:agent 侧 `manage_mcp`(list/refresh/enable/disable/register/remove)与设置页 `/api/mcp/servers` 共用 `McpServerService`——register 后自动 refresh(测试连接+拉工具清单,失败不回滚注册),list 视图 headers 已脱敏,register 的 headers 值只传服务层(日志经 `scrubArgsForLog` 脱敏、步骤只存 target、不落库);风险分级:list=LOW、refresh/enable/disable=HIGH、register/remove=CRITICAL(无人值守通道拒 register/remove)
 - **无人值守通道**:`/api/chat/agent/run`(automation)无会话=无审批,CRITICAL 工具在该通道直接 declined;HIGH 按设计放行
 - **编排** `ChatOrchestrationService.chat()`:RAG 检索 → 每轮 `streamTurn` 真流式(JDK HttpClient 逐行读上游 SSE,tool_calls 增量累积到流结束再执行)→ `streamFinalAnswer` 兜底
 - **usage**:上游最后 chunk(空 choices)带真实 token,跨工具轮累加后 `done.usage` 下发

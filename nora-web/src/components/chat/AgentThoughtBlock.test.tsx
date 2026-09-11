@@ -109,6 +109,24 @@ describe("AgentThoughtBlock ContextRow", () => {
   });
 });
 
+describe("AgentThoughtBlock ToolRow", () => {
+  it("manage_mcp 步骤显示目标服务器预览", () => {
+    const mcpStep: ChatStep = {
+      id: "s-tool-mcp",
+      type: "tool",
+      title: "MCP 服务器管理",
+      status: "completed",
+      toolName: "manage_mcp",
+      input: { target: "megumin" },
+      result: { content: "已连接「megumin」,发现 3 个工具" },
+    };
+    render(<AgentThoughtBlock steps={[mcpStep]} />);
+    // 折叠行:工具名 + 目标预览
+    expect(screen.getByText("manage_mcp")).toBeTruthy();
+    expect(screen.getByText("megumin")).toBeTruthy();
+  });
+});
+
 describe("AgentThoughtBlock ReasoningRow", () => {
   it("running 时默认折叠(正文不展开)", () => {
     render(<AgentThoughtBlock steps={[runningThink]} />);

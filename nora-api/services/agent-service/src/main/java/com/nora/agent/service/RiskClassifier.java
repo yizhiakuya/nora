@@ -73,6 +73,19 @@ final class RiskClassifier {
             }
             return Risk.HIGH;
         }
+        if ("manage_mcp".equals(toolName)) {
+            // MCP 服务器管理:register 把外部服务器能力引入 agent 工具面(且落库鉴权头)、
+            // remove 删除注册且不可逆——均 CRITICAL,任何档位确认;
+            // list 只读 LOW(视图已脱敏);refresh/enable/disable 改变能力挂载面,HIGH
+            String action = normalizeMcpAction(extractAction(argsJson));
+            if ("register".equals(action) || "remove".equals(action)) {
+                return Risk.CRITICAL;
+            }
+            if ("list".equals(action)) {
+                return Risk.LOW;
+            }
+            return Risk.HIGH;
+        }
         if (toolName != null && toolName.startsWith("mcp__")) {
             // MCP 挂载工具:外部服务器能力未知,一律 HIGH——ASSIST 档询问、
             // FULL 档放行、无人值守通道按设计放行(见 CLAUDE.md 高风险工具节)
@@ -215,6 +228,55 @@ final class RiskClassifier {
         String normalized = action.trim().toLowerCase(Locale.ROOT);
         if (!Set.of("list", "register", "enable", "disable", "remove").contains(normalized)) {
             return "拒绝执行「" + action + "」：action 只允许 list / register / enable / disable / remove";
+        }
+        return null;
+    }
+
+    /** manage_mcp 动作白名单。 */
+    static String validateMcpAction(String action) {
+        if (action == null || action.isBlank()) {
+            return "拒绝执行：缺少 action 参数。可用值:list / refresh / enable / disable / register / remove";
+        }
+        String normalized = normalizeMcpAction(action);
+        if (!Set.of("list", "refresh", "enable", "disable", "register", "remove").contains(normalized)) {
+            return "拒绝执行「" + action + "」：action 只允许 list / refresh / enable / disable / register / remove";
+        }
+        return null;
+    }
+
+    /**
+     * manage_mcp action 别名归一化:模型受 manage_datasource 的 CRUD 词汇影响常写
+     * create/delete/add/unregister——统一映射到 register/remove。
+     * 分类器与执行分发必须共用此函数,否则两处判定不一致会出审批漏洞
+     * (如 create 在分类器按未知=HIGH、执行层却按 register 真执行,绕过 CRITICAL)。
+     */
+    static String normalizeMcpAction(String action) {
+        if (action == null) {
+            return "";
+        }
+        String a = action.trim().toLowerCase(Locale.ROOT);
+        return switch (a) {
+            case "create", "add", "install" -> "register";
+            case "delete", "unregister", "uninstall" -> "remove";
+            default -> a;
+        };
+    }
+
+    /** manage_mcp register 参数校验:名称规则与设置页注册一致(挂载名约束)。 */
+    static String validateMcpRegister(String name, String url, String transport) {
+        if (name == null || name.isBlank()) {
+            return "拒绝执行：缺少 name 参数(MCP 服务器名称)";
+        }
+        if (!name.trim().matches("^[a-zA-Z0-9_-]+$") || name.trim().contains("__")) {
+            return "拒绝执行：服务器名只能包含字母、数字、下划线、连字符,且不能含连续下划线"
+                    + "(挂载工具名 mcp__<server>__<tool> 的约束)";
+        }
+        if (url == null || !url.trim().startsWith("http")) {
+            return "拒绝执行：缺少合法 url(http(s):// 地址)";
+        }
+        String t = transport == null || transport.isBlank() ? "STREAMABLE" : transport.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("STREAMABLE", "SSE").contains(t)) {
+            return "拒绝执行：transport 只支持 STREAMABLE / SSE(当前:" + transport + ")";
         }
         return null;
     }

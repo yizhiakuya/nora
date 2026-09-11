@@ -20,7 +20,7 @@ function argsPreview(step: ChatStep): string {
     const sql = step.input.sql.replace(/\s+/g, " ").trim();
     return sql.length > 56 ? `${sql.slice(0, 56)}…` : sql;
   }
-  if (step.toolName === "manage_datasource" || step.toolName === "manage_service") {
+  if (step.toolName === "manage_datasource" || step.toolName === "manage_service" || step.toolName === "manage_mcp") {
     // 无 action 上下文时(历史持久化缺 action)退回 target
     return [step.input?.target].filter(Boolean).join(" ") || "";
   }

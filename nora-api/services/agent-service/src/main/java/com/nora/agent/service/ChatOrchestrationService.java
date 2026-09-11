@@ -474,16 +474,18 @@ public class ChatOrchestrationService {
         String title = parsed.description() != null && !parsed.description().isBlank()
                 ? parsed.description() : defaultTitle(name);
         long toolStart = System.currentTimeMillis();
-        log.info("tool call: {} (round={}, args={})", name, roundIndex, abbreviate(args == null ? "{}" : args, 200));
+        log.info("tool call: {} (round={}, args={})", name, roundIndex,
+                abbreviate(scrubArgsForLog(args), 200));
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
 
         // loop breaker: same (tool, normalized args) repeated too often.
         // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
-        // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill
-        // 同理(主体在 content/path/instructions 字段,typed input 抽不到)。
+        // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill/
+        // manage_mcp 同理(主体在 content/path/instructions/url 字段,typed input 抽不到)。
         boolean rawFingerprint = name.startsWith("mcp__")
-                || "manage_workspace".equals(name) || "manage_skill".equals(name);
+                || "manage_workspace".equals(name) || "manage_skill".equals(name)
+                || "manage_mcp".equals(name);
         String fingerprint = name + "|"
                 + (rawFingerprint ? (args == null ? "" : args) : normalizeArgs(name, input));
         int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
@@ -642,8 +644,8 @@ public class ChatOrchestrationService {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, p1),
                             description, null, action);
                 }
-                case "manage_skill" -> {
-                    // read/update/remove 用 target(名称或 id);create 用 name
+                case "manage_skill", "manage_mcp" -> {
+                    // read/update/remove 用 target(名称或 id);create/register 用 name
                     String target = node.path("target").asText(null);
                     if (target == null) {
                         target = node.path("name").asText(null);
@@ -682,6 +684,7 @@ public class ChatOrchestrationService {
             case "read_file" -> "读取文件";
             case "manage_workspace" -> "工作区文件";
             case "manage_skill" -> "技能管理";
+            case "manage_mcp" -> "MCP 服务器管理";
             default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
         };
     }
@@ -700,7 +703,7 @@ public class ChatOrchestrationService {
         if ("read_file".equals(name)) {
             return input.target() == null ? "?" : input.target();
         }
-        if ("manage_workspace".equals(name) || "manage_skill".equals(name)) {
+        if ("manage_workspace".equals(name) || "manage_skill".equals(name) || "manage_mcp".equals(name)) {
             return (input.target() == null ? "?" : input.target().toLowerCase())
                     + "#" + (input.limit() == null ? "" : input.limit());
         }
@@ -771,6 +774,33 @@ public class ChatOrchestrationService {
                     risk = "删除后该源不再被监控与采集日志";
                 } else {
                     risk = "对纳管源执行 " + action + " 操作";
+                }
+            }
+            case "manage_mcp" -> {
+                actionType = "mcp_manage";
+                // 与分类器/执行层同一归一化:别名 create/delete 等按 register/remove 展示明细
+                String action = RiskClassifier.normalizeMcpAction(parsed.datasourceAction());
+                JsonNode a = parseArgsSafe(rawArgs);
+                if ("register".equals(action)) {
+                    target = a.path("name").asText("新 MCP 服务器");
+                    JsonNode headers = a.path("headers");
+                    StringBuilder headerKeys = new StringBuilder();
+                    if (headers.isObject()) {
+                        headers.fieldNames().forEachRemaining(k ->
+                                headerKeys.append(headerKeys.length() > 0 ? ", " : "").append(k));
+                    }
+                    detail = "名称: " + target
+                            + "\n地址: " + a.path("url").asText("?")
+                            + "\n传输: " + a.path("transport").asText("STREAMABLE")
+                            + (headerKeys.length() > 0 ? "\n鉴权头: " + headerKeys + "(值已隐藏)" : "");
+                    risk = "将注册外部 MCP 服务器:其工具会挂载给 Agent 调用(外部能力,执行范围未知)";
+                } else if ("remove".equals(action)) {
+                    target = parsed.input().target() == null ? "?" : parsed.input().target();
+                    detail = "MCP 服务器: " + target + "\n后果: 注册记录与连接一并删除";
+                    risk = "删除后其工具立即不可用,需重新注册才能恢复";
+                } else {
+                    target = parsed.input().target() == null ? "?" : parsed.input().target();
+                    risk = "对 MCP 服务器执行 " + action + " 操作";
                 }
             }
             case "manage_workspace" -> {
@@ -1266,6 +1296,119 @@ public class ChatOrchestrationService {
                 return new ToolOutcome("ERROR: 技能操作失败: " + abbreviate(e.getMessage(), 200), null, null, false);
             }
         }
+        if ("manage_mcp".equals(name)) {
+            if (mcpServerService == null) {
+                return new ToolOutcome("ERROR: MCP 管理能力未启用(服务未配置)", null, null, false);
+            }
+            // 与分类器共用归一化:create/delete 等别名 → register/remove(两处必须一致)
+            String action = RiskClassifier.normalizeMcpAction(parsed.datasourceAction());
+            String guard = RiskClassifier.validateMcpAction(action);
+            if (guard != null) {
+                return new ToolOutcome("ERROR: " + guard, null, null, false);
+            }
+            try {
+                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+                if ("list".equals(action)) {
+                    List<McpServerService.ServerView> all = mcpServerService.list();
+                    if (all.isEmpty()) {
+                        return new ToolOutcome("(暂无 MCP 服务器)。可用 action=register 注册:"
+                                + "{\"action\": \"register\", \"name\": \"名称\", \"url\": \"https://...\"}",
+                                null, null, false);
+                    }
+                    StringBuilder sb = new StringBuilder("已注册 MCP 服务器:\n");
+                    for (McpServerService.ServerView s : all) {
+                        sb.append("id=").append(s.id())
+                                .append(s.enabled() ? "" : " [已停用]")
+                                .append(" ").append(s.name())
+                                .append(" · ").append(s.transport())
+                                .append(" · ").append(s.status())
+                                .append(s.statusDetail() != null ? "(" + abbreviate(s.statusDetail(), 80) + ")" : "")
+                                .append(" · 工具数 ").append(s.toolCount())
+                                .append('\n');
+                    }
+                    return new ToolOutcome(sb.toString(), null, null, false);
+                }
+                if ("register".equals(action)) {
+                    String rName = a.path("name").asText(null);
+                    String rUrl = a.path("url").asText(null);
+                    String rTransport = a.path("transport").asText(null);
+                    String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport);
+                    if (registerGuard != null) {
+                        return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
+                    }
+                    if (mcpServerService.findByName(rName) != null) {
+                        return new ToolOutcome("ERROR: 服务器名「" + rName.trim() + "」已存在。如需改用 remove 后重新注册,"
+                                + "或用 refresh 重新拉取工具", null, null, false);
+                    }
+                    // headers 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
+                    Map<String, String> headers = new java.util.LinkedHashMap<>();
+                    JsonNode h = a.path("headers");
+                    if (h.isObject()) {
+                        h.fields().forEachRemaining(e -> headers.put(e.getKey(), e.getValue().asText("")));
+                    }
+                    McpServerService.ServerView created = mcpServerService.create(rName, rUrl, rTransport,
+                            headers.isEmpty() ? null : headers);
+                    // 注册后自动测试连接(refresh):对齐 manage_datasource create 后自动 test 的语义;
+                    // 连接失败不回滚注册(注册本身成功,失败原因如实报告,用户可稍后重试 refresh)
+                    String testResult;
+                    try {
+                        List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(created.id());
+                        StringBuilder names = new StringBuilder();
+                        for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
+                            names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
+                        }
+                        testResult = "连接成功,发现 " + toolEntries.size() + " 个工具"
+                                + (toolEntries.isEmpty() ? "" : ": " + names
+                                + (toolEntries.size() > 10 ? " 等" : ""))
+                                + "。工具已挂载(mcp__" + created.name() + "__*),下轮对话可直接调用";
+                    } catch (Exception e) {
+                        testResult = "连接测试失败: " + abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200)
+                                + "(注册已保留;可检查地址/鉴权后用 refresh 重试)";
+                    }
+                    return new ToolOutcome("已注册 MCP 服务器(id=" + created.id() + "): " + created.name()
+                            + " · " + created.transport() + "\n" + testResult, null, null, false);
+                }
+                // refresh / enable / disable / remove:目标 = 名称或数字 id
+                String target = firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                if (target == null || target.isBlank()) {
+                    return new ToolOutcome("ERROR: 缺少目标服务器(target = 名称或 id)。可先用 action=list 查看",
+                            null, null, false);
+                }
+                McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
+                if (server == null) {
+                    return new ToolOutcome("ERROR: 找不到 MCP 服务器「" + target + "」。可先用 action=list 查看现有服务器"
+                            + "(服务器名不能猜测)", null, null, false);
+                }
+                String content = switch (action) {
+                    case "refresh" -> {
+                        List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
+                        StringBuilder names = new StringBuilder();
+                        for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
+                            names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
+                        }
+                        yield "已连接「" + server.name() + "」,发现 " + toolEntries.size() + " 个工具"
+                                + (toolEntries.isEmpty() ? "" : ": " + names + (toolEntries.size() > 10 ? " 等" : ""));
+                    }
+                    case "enable" -> mcpServerService.setEnabled(server.id(), true)
+                            ? "已启用「" + server.name() + "」。工具将在下轮对话挂载(缓存过工具清单则立即可用)"
+                            : "ERROR: 启用失败,服务器可能已被删除";
+                    case "disable" -> mcpServerService.setEnabled(server.id(), false)
+                            ? "已停用「" + server.name() + "」。其工具不再挂载"
+                            : "ERROR: 停用失败,服务器可能已被删除";
+                    default -> mcpServerService.delete(server.id())
+                            ? "已删除 MCP 服务器「" + server.name() + "」及其连接"
+                            : "ERROR: 删除失败,服务器可能已被删除";
+                };
+                boolean failure = content.startsWith("ERROR:");
+                return new ToolOutcome(content, failure ? null : content, null, false);
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                // create/refresh 的参数与连接错误:直接作为可自纠错误回给模型
+                return new ToolOutcome("ERROR: " + abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 300),
+                        null, null, false);
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: MCP 操作失败: " + abbreviate(e.getMessage(), 200), null, null, false);
+            }
+        }
         // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
         // 输出同样走 bounded 截断与脱敏
         if (mcpServerService != null && name.startsWith("mcp__")) {
@@ -1284,7 +1427,8 @@ public class ChatOrchestrationService {
                 + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）、"
                 + "read_file（工作台文件 list/read,只读）、"
                 + "manage_workspace（工作区文件 list/read/write/append/delete）、"
-                + "manage_skill（技能 list/read/create/update/remove）"
+                + "manage_skill（技能 list/read/create/update/remove）、"
+                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,register/remove 需批准）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
     }
 
@@ -2261,6 +2405,51 @@ public class ChatOrchestrationService {
         tools.add(skillTool);
         }
 
+        // MCP 服务器管理:agent 可自管远程工具服务器(注册/启停/刷新/删除),
+        // 与设置页 /api/mcp/servers 共用服务层。register/remove 属 CRITICAL
+        // (引入外部能力/不可逆),任何档位都需用户批准;headers 值不落对话记录。
+        if (mcpServerService != null) {
+        ObjectNode mcpTool = objectMapper.createObjectNode();
+        mcpTool.put("type", "function");
+        ObjectNode mcpFn = mcpTool.putObject("function");
+        mcpFn.put("name", "manage_mcp");
+        mcpFn.put("description", "管理 MCP(Model Context Protocol)远程工具服务器:"
+                + "list=列出已注册服务器(名称/状态/工具数);"
+                + "refresh=测试连接并拉取工具清单(拉取成功后其工具挂载为 mcp__<服务器名>__<工具名>,你即可调用);"
+                + "enable/disable=启用或停用;register=注册新服务器(需 name/url,可选 transport/headers);"
+                + "remove=删除注册。register 和 remove 执行前用户会收到审批请求。"
+                + "用户说「把 XX MCP 服务器接上/注册一下」时使用。示例:{\"action\": \"register\", "
+                + "\"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
+        ObjectNode mcpParams = mcpFn.putObject("parameters");
+        mcpParams.put("type", "object");
+        mcpParams.put("additionalProperties", false);
+        ObjectNode mcpProps = mcpParams.putObject("properties");
+        ObjectNode mcpActionProp = mcpProps.putObject("action");
+        mcpActionProp.put("type", "string");
+        mcpActionProp.put("description", "list / refresh / enable / disable / register / remove");
+        ObjectNode mcpNameProp = mcpProps.putObject("name");
+        mcpNameProp.put("type", "string");
+        mcpNameProp.put("description", "register 时:服务器名(只含字母/数字/下划线/连字符,不能含连续下划线;会成为挂载工具名前缀)");
+        ObjectNode mcpUrlProp = mcpProps.putObject("url");
+        mcpUrlProp.put("type", "string");
+        mcpUrlProp.put("description", "register 时:MCP 服务器地址(http(s):// 开头)");
+        ObjectNode mcpTransportProp = mcpProps.putObject("transport");
+        mcpTransportProp.put("type", "string");
+        mcpTransportProp.put("description", "register 时:STREAMABLE(默认)或 SSE");
+        ObjectNode mcpHeadersProp = mcpProps.putObject("headers");
+        mcpHeadersProp.put("type", "object");
+        mcpHeadersProp.put("description", "register 时:鉴权头(如 {\"Authorization\": \"Bearer xxx\"}),可省略;值不会出现在对话记录中");
+        ObjectNode mcpTargetProp = mcpProps.putObject("target");
+        mcpTargetProp.put("type", "string");
+        mcpTargetProp.put("description", "refresh/enable/disable/remove 时:目标服务器的名称或 id(以 list 结果为准,不要猜测)");
+        ObjectNode mcpDescProp = mcpProps.putObject("description");
+        mcpDescProp.put("type", "string");
+        mcpDescProp.put("description", "一句话描述这次操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)");
+        ArrayNode mcpRequired = mcpParams.putArray("required");
+        mcpRequired.add("action");
+        tools.add(mcpTool);
+        }
+
         // MCP 挂载工具:已启用且完成过 refresh(有 tools_cache)的远程服务器的
         // 工具,命名 mcp__<server>__<tool>;schema/描述来自远端 snapshot。
         // mcpServerService 为 null = 测试便捷构造器,跳过挂载
@@ -2577,6 +2766,36 @@ public class ChatOrchestrationService {
 
     private static String firstNonNull(String a, String b) {
         return a != null ? a : b;
+    }
+
+    /**
+     * 工具调用日志的 args 脱敏:凭据类字段(headers 的值、password、token 等)
+     * 替换为 ***。值只传给服务层,任何日志/步骤/审批明细都不得出现明文。
+     */
+    private String scrubArgsForLog(String args) {
+        if (args == null || args.isBlank()) {
+            return "{}";
+        }
+        try {
+            JsonNode node = objectMapper.readTree(args);
+            if (!(node instanceof ObjectNode obj)) {
+                return args;
+            }
+            JsonNode headers = obj.get("headers");
+            if (headers != null && headers.isObject()) {
+                ObjectNode masked = objectMapper.createObjectNode();
+                headers.fieldNames().forEachRemaining(k -> masked.put(k, "***"));
+                obj.set("headers", masked);
+            }
+            for (String key : new String[]{"password", "token", "apiKey", "api_key", "secret"}) {
+                if (obj.hasNonNull(key)) {
+                    obj.put(key, "***");
+                }
+            }
+            return obj.toString();
+        } catch (Exception e) {
+            return args; // 非法 JSON:原样保留(上游模型参数问题,不含结构化凭据)
+        }
     }
 
     private static String abbreviate(String text, int max) {        if (text == null) {
