@@ -139,6 +139,21 @@ public class McpServerService {
         return jdbcTemplate.update("DELETE FROM mcp_server WHERE id = ?", id) > 0;
     }
 
+    /**
+     * Updates an existing remote server's url/headers in place (OAuth token
+     * refresh path): the pooled client is evicted so the next connect uses
+     * the new credentials. Returns the refreshed view, or null when unknown.
+     */
+    public ServerView updateRemoteCredentials(long id, String url, Map<String, String> headers) {
+        evictClient(id);
+        int updated = jdbcTemplate.update(
+                "UPDATE mcp_server SET url = COALESCE(?, url), headers = ?, status='untested', status_detail=NULL, tools_cache=NULL WHERE id = ? AND transport <> 'STDIO'",
+                url == null || url.isBlank() ? null : url.trim(),
+                headers == null || headers.isEmpty() ? null : writeJson(headers),
+                id);
+        return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ?", id) : null;
+    }
+
     /** Enables/disables a server; disabling also drops the pooled client. */
     public boolean setEnabled(long id, boolean enabled) {
         if (!enabled) {

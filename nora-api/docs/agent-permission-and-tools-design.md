@@ -99,3 +99,13 @@ needApproval = mode == ASK
 - **无人值守通道**只拒 CRITICAL：automation 场景下 manage_mcp register（HIGH）会被放行——这意味着自动化任务可以注册 MCP 服务器。如需禁止，把 register 单独提回 CRITICAL 即可（同时影响 FULL 档）
 - **系统目录硬拒**不走审批流：这是 `AgentWorkspaceService` 的防呆（Windows/Program Files/盘根），任何档位、任何审批结果都不能写删
 - **循环熔断**（同参 3 次阻断）先于审批门判定：即使有权限，重复调用也会被拦
+
+## 7. GitHub OAuth 一键登录（2026-09-11）
+
+**流程**：MCP 页「GitHub 登录」→ 设备码流程（与 gh CLI 同款）→ 自动创建/更新名为 `github` 的服务器为官方远程端点 `https://api.githubcopilot.com/mcp/`（44 工具含 `get_me`）。
+
+- **设备码而非浏览器回调**：无需公网回调地址/本地监听端口，内网部署可用；代价是用户多输一次验证码
+- **GitHub 不支持动态客户端注册（DCR）**：client_id 需一次性配置——建 OAuth App（勾 **Enable Device Flow**，回调地址随意）→ `PUT /api/mcp/oauth/github/client-id` 存入 `app_setting`（非机密，可 `DELETE` 清除/更换）；静态兜底 `nora.github.oauth.client-id`
+- **token 边界**：只在服务端内存与 `mcp_server.headers`（连接必需，API 回读走 `maskValues` 脱敏）中出现；日志不打印；OAuth 端点的 HTTP 走出站代理（`ProxySettingsHolder`，与 LLM 调用同一套）
+- **登录完成语义**：创建或**更新已有 github 服务器**（evict 连接池 → 更新 url/headers → 启用 → refresh）；连接测试失败不丢凭据（warning 提示，可稍后测试连接重试）
+- **npm 包已弃用**：`@modelcontextprotocol/server-github` 官方标记 deprecated——GitHub MCP 统一用远程端点；本地 stdio 版仅遗留场景保留
