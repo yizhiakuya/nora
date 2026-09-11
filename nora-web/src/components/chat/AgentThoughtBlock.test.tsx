@@ -140,6 +140,23 @@ describe("AgentThoughtBlock ToolRow", () => {
     expect(screen.getByText("run_command")).toBeTruthy();
     expect(screen.getByText("npm test")).toBeTruthy();
   });
+
+  it("run_command 执行中显示实时输出", () => {
+    const running: ChatStep = {
+      id: "s-tool-live",
+      type: "tool",
+      title: "构建项目",
+      status: "running",
+      toolName: "run_command",
+      input: { target: "npm run build" },
+      detail: "vite v5.4.0 building for production…\n✓ 42 modules transformed",
+    };
+    render(<AgentThoughtBlock steps={[running]} />);
+    // 命令在折叠预览与详情各出现一次(都是预期展示位);实时输出在详情里
+    expect(screen.getAllByText("npm run build").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/42 modules transformed/)).toBeTruthy();
+    expect(screen.getByText(/实时输出/)).toBeTruthy();
+  });
 });
 
 describe("AgentThoughtBlock ReasoningRow", () => {

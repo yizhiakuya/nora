@@ -547,7 +547,12 @@ public class ChatOrchestrationService {
             }
         }
 
-        ToolOutcome outcome = executeTool(name, args, parsed);
+        ToolOutcome outcome = executeTool(name, args, parsed, liveOutput -> {
+            // 实时输出流(run_command):同 id step 原地替换,前端自然刷新
+            // (与 reasoning_delta 同款机制);detail 放预览、status 保持 running
+            eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+                    liveOutput, null, "running", name, input, null, roundIndex));
+        });
         boolean failure = outcome.content().startsWith("ERROR:");
         String status = failure ? "failed" : "completed";
         ChatStepDto.StepResult result = new ChatStepDto.StepResult(
@@ -1025,7 +1030,8 @@ public class ChatOrchestrationService {
      * (what was refused + which rule + a correct example) so the model can
      * self-correct on the next round.
      */
-    private ToolOutcome executeTool(String name, String args, ParsedArgs parsed) {
+    private ToolOutcome executeTool(String name, String args, ParsedArgs parsed,
+                                    java.util.function.Consumer<String> liveOutput) {
         if ("execute_sql".equals(name)) {
             String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
             String guard = guardSql(sql);
@@ -1484,7 +1490,7 @@ public class ChatOrchestrationService {
                 return new ToolOutcome("ERROR: MCP 操作失败: " + abbreviate(e.getMessage(), 200), null, null, false);
             }
         }
-        // 本机终端:非交互命令;输出走 bounded 截断与脱敏
+        // 本机终端:非交互命令;实时输出经 liveOutput 流式刷新,最终结果走 bounded
         if ("run_command".equals(name)) {
             if (terminalService == null) {
                 return new ToolOutcome("ERROR: 终端能力未启用(服务未配置)", null, null, false);
@@ -1495,8 +1501,13 @@ public class ChatOrchestrationService {
                 String cwdArg = a.path("cwd").asText(null);
                 Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
                 String shell = a.path("shell").asText(null);
-                TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell);
-                return bounded(r.render(), summarizeCommand(r));
+                TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell, liveOutput);
+                // 非零退出码按失败处理(红色步骤 + ERROR 前缀回填模型):
+                // 与 Claude Code 同语义——"命令跑了但失败了"不是成功结果;
+                // 仍走 bounded():失败预算 10K、成功 30K,且做脱敏
+                boolean failure = r.exitCode() != 0 || r.timedOut() || r.cancelled();
+                String rendered = r.render();
+                return bounded(failure ? "ERROR: " + rendered : rendered, summarizeCommand(r));
             } catch (IllegalArgumentException e) {
                 // 参数/启动错误:可自纠错误回给模型
                 return new ToolOutcome("ERROR: " + abbreviate(e.getMessage(), 300), null, null, false);

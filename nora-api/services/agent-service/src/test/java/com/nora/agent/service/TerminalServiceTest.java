@@ -173,4 +173,44 @@ class TerminalServiceTest {
         // 无 CLIXML 时原样返回(零开销路径)
         assertEquals("plain output", TerminalService.stripClixml("plain output"));
     }
+
+    @Test
+    void stripAnsiRemovesColorCodes() {
+        // ESC[32m 绿色 + ESC[0m 重置(npm/git 常见)
+        String colored = "\u001b[32mPASS\u001b[0m src/app.test.ts";
+        assertEquals("PASS src/app.test.ts", TerminalService.stripAnsi(colored));
+        // 光标控制序列(progress bar)
+        assertEquals("done", TerminalService.stripAnsi("\u001b[2K\u001b[1Gdone"));
+        // 无 ANSI 时原样返回
+        assertEquals("plain", TerminalService.stripAnsi("plain"));
+    }
+
+    @Test
+    void progressCallbackReceivesStreamingOutput() throws Exception {
+        Path ws = Files.createTempDirectory("nora-term-progress");
+        TerminalService svc = buildWith(ws);
+        java.util.List<String> snapshots = new java.util.concurrent.CopyOnWriteArrayList<>();
+        // 命令先输出一段、睡 2 秒(超过节流窗口 1.2s)、再输出——期间应收到快照
+        String cmd = isWindows()
+                ? "Write-Output 'phase-1'; Start-Sleep -Seconds 2; Write-Output 'phase-2'"
+                : "echo phase-1; sleep 2; echo phase-2";
+        TerminalService.RunResult r = svc.run(cmd, null, 15, null, snapshots::add);
+        assertEquals(0, r.exitCode());
+        assertFalse(snapshots.isEmpty(), "执行期间收到实时快照");
+        assertTrue(snapshots.get(0).contains("phase-1"), "快照含早期输出: " + snapshots.get(0));
+        assertTrue(r.output().contains("phase-2"), "最终输出完整");
+    }
+
+    @Test
+    void stdinIsClosedSoReadCommandsDoNotHang() throws Exception {
+        Path ws = Files.createTempDirectory("nora-term-stdin");
+        TerminalService svc = buildWith(ws);
+        // cat 无参读 stdin:stdin 已关 → 立即 EOF 退出,而不是挂起到超时
+        String cmd = isWindows() ? "$input | Out-String" : "cat";
+        long start = System.currentTimeMillis();
+        TerminalService.RunResult r = svc.run(cmd, null, 8, null);
+        long elapsed = System.currentTimeMillis() - start;
+        assertFalse(r.timedOut(), "读 stdin 的命令立即结束(未超时)");
+        assertTrue(elapsed < 6000, "快速返回(实际 " + elapsed + "ms)");
+    }
 }

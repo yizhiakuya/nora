@@ -1,5 +1,5 @@
 import { AlertTriangle, Brain, Check, ChevronDown, FileText, Loader2, Wrench, Ban } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ContextFile } from "@/lib/api/chatApi";
 
 /**
@@ -154,8 +154,38 @@ function ToolRow({ step }: { step: ChatStep }) {
 }
 
 function ToolDetail({ step }: { step: ChatStep }) {
-  const inputJson = step.input ? JSON.stringify(step.input, null, 2) : null;
   const result = step.result;
+  const isCommand = step.toolName === "run_command";
+
+  // run_command:命令以纯文本展示(不套 JSON);执行中显示实时输出流
+  if (isCommand) {
+    const cmd = step.input?.target ?? "";
+    return (
+      <div className="ml-6 my-1 space-y-1.5 max-w-2xl">
+        <Section title="命令" content={cmd} />
+        {step.status === "running" && (
+          step.detail ? (
+            <LiveOutput content={step.detail} />
+          ) : (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" /> 等待输出…
+            </div>
+          )
+        )}
+        {result?.error ? (
+          <Section title="执行结果" content={result.content ?? result.error} tone="error" />
+        ) : result?.content != null ? (
+          <Section
+            title="执行结果"
+            content={result.content}
+            meta={result.truncated && <span className="text-amber-600 dark:text-amber-400">· 已截断</span>}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  const inputJson = step.input ? JSON.stringify(step.input, null, 2) : null;
 
   if (!inputJson && !result) {
     if (!step.detail) return <span className="text-muted-foreground">无附加信息</span>;
@@ -185,6 +215,28 @@ function ToolDetail({ step }: { step: ChatStep }) {
           }
         />
       ) : null}
+    </div>
+  );
+}
+
+/** 实时输出(命令执行期间):终端习惯——等宽、深色、自动滚到底部。 */
+function LiveOutput({ content }: { content: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [content]);
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide mb-0.5 flex items-center gap-1 text-muted-foreground">
+        <Loader2 className="w-3 h-3 animate-spin" /> 实时输出
+      </div>
+      <pre
+        ref={ref}
+        className="whitespace-pre-wrap break-words rounded-md px-2 py-1.5 text-[11px] font-mono max-h-48 overflow-auto bg-[#1e1e1e] text-gray-300 custom-scroll"
+      >
+        {content}
+      </pre>
     </div>
   );
 }

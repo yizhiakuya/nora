@@ -279,9 +279,10 @@ class ChatOrchestrationServiceTest {
         parse.setAccessible(true);
         Object parsed = parse.invoke(svc, tool, args);
         var exec = ChatOrchestrationService.class.getDeclaredMethod("executeTool",
-                String.class, String.class, parsed.getClass());
+                String.class, String.class, parsed.getClass(), java.util.function.Consumer.class);
         exec.setAccessible(true);
-        return (ChatOrchestrationService.ToolOutcome) exec.invoke(svc, tool, args, parsed);
+        return (ChatOrchestrationService.ToolOutcome) exec.invoke(svc, tool, args, parsed,
+                (java.util.function.Consumer<String>) s -> { });
     }
 
     @Test

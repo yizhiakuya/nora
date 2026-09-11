@@ -131,3 +131,10 @@ needApproval = mode == ASK
 - 输出有界：原始 200K 字节截断，展示层 `bounded()` 再截到 30K/10K；exit code 如实报告（`render()` 附脚注）
 - **无 TTY**：交互式程序（vim/需要输入）会挂起到超时——工具描述已明确警告模型
 - 默认 cwd = 工作区（与 `manage_workspace` 同语义）；绝对 cwd 不硬拦（命令本身就能 cd，拦 cwd 是假安全）
+
+**打磨轮（2026-09-11 晚）**：
+- **实时输出流**：执行期间每 ≤1.2s 发同 id step 快照（尾部 4k、已清 ANSI/CLIXML），前端原地替换 + 自动滚底（与 reasoning_delta 同款机制）——构建/安装不再黑盒
+- **stdin 立即关闭**：无 TTY 语义——读 stdin 的命令（cat/read/确认类）得到 EOF 立刻返回而非挂起到超时
+- **ANSI 清理**：CSI/OSC 转义序列（颜色/progress bar）过滤，防污染上下文与前端
+- **非零退出码 = failed**：红色步骤 + `ERROR:` 前缀回填模型（与 Claude Code 同语义："命令跑了但失败了"不是成功结果）；仍走 `bounded()`（10K/30K 预算 + 脱敏）
+- 前端：命令纯文本展示（不套 JSON）+ 执行中「实时输出」深色终端块

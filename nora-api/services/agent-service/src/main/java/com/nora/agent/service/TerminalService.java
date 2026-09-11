@@ -47,6 +47,12 @@ public class TerminalService {
     static final int MAX_COMMAND_CHARS = 8_000;
     /** 支持的 shell 白名单。 */
     static final List<String> SHELLS = List.of("powershell", "bash");
+    /** 实时输出回调的节流间隔(ms):执行期间最多每 1.2s 回调一次快照。 */
+    static final long PROGRESS_MIN_INTERVAL_MS = 1_200;
+    /** 实时输出的缓冲轮询间隔(ms)。 */
+    private static final long PROGRESS_POLL_MS = 300;
+    /** 实时快照保留的尾部字符数(终端习惯看最新输出)。 */
+    static final int PROGRESS_PREVIEW_CHARS = 4_000;
 
     private final Path workspaceRoot;
 
@@ -85,6 +91,18 @@ public class TerminalService {
      * @param shell      powershell / bash;null=平台默认(Windows→powershell,其他→bash)
      */
     public RunResult run(String command, String cwdArg, Integer timeoutSec, String shell) {
+        return run(command, cwdArg, timeoutSec, shell, null);
+    }
+
+    /**
+     * 运行一条命令(带实时输出回调)。
+     *
+     * @param progress 执行期间的输出快照回调(节流 ≤1.2s 一次,尾部 4k 字符,已清
+     *                 ANSI/CLIXML);在调用线程上回调——编排层可安全地据此发 SSE
+     *                 step 更新(同 id 原地替换)。null=不要实时回调
+     */
+    public RunResult run(String command, String cwdArg, Integer timeoutSec, String shell,
+                         java.util.function.Consumer<String> progress) {
         if (command == null || command.isBlank()) {
             throw new IllegalArgumentException("拒绝执行：缺少 command 参数(要运行的命令)");
         }
@@ -111,6 +129,13 @@ public class TerminalService {
             throw new IllegalArgumentException("命令启动失败(" + shellName + "): " + e.getMessage()
                     + "——请确认命令存在;" + (isWindows() ? "PowerShell 默认可用,bash 需安装 git bash" : "bash 默认可用"));
         }
+        // stdin 立即关闭:无 TTY 语义——读 stdin 的命令(cat/read/需要确认的交互)
+        // 得到 EOF 立刻返回,而不是挂起到超时(实测坑:不关 stdin 会阻塞整条命令)
+        try {
+            process.getOutputStream().close();
+        } catch (Exception ignored) {
+            // 关不掉不影响主流程
+        }
 
         // 输出读取:独立线程边读边收集(有上限),避免管道写满阻塞子进程
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
@@ -119,9 +144,11 @@ public class TerminalService {
                 byte[] chunk = new byte[8192];
                 int n;
                 while ((n = in.read(chunk)) != -1) {
-                    int room = MAX_RAW_OUTPUT_BYTES - buffer.size();
-                    if (room > 0) {
-                        buffer.write(chunk, 0, Math.min(n, room));
+                    synchronized (buffer) {
+                        int room = MAX_RAW_OUTPUT_BYTES - buffer.size();
+                        if (room > 0) {
+                            buffer.write(chunk, 0, Math.min(n, room));
+                        }
                     }
                     // 超出上限后继续排空但丢弃,防止子进程因管道满而卡死
                 }
@@ -133,11 +160,30 @@ public class TerminalService {
         boolean timedOut = false;
         boolean cancelled = false;
         int exit;
+        long deadline = start + timeout * 1000L;
+        long lastProgressAt = 0;
+        int lastReportedSize = 0;
         try {
-            boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
-            if (!finished) {
-                timedOut = true;
-                killProcessTree(process);
+            // 轮询等待(而非一次 waitFor(timeout)):期间按节流回调实时输出;
+            // 回调在调用线程执行,编排层可安全发 SSE(无跨线程竞争)
+            while (true) {
+                if (process.waitFor(PROGRESS_POLL_MS, TimeUnit.MILLISECONDS)) {
+                    break;
+                }
+                long now = System.currentTimeMillis();
+                if (now >= deadline) {
+                    timedOut = true;
+                    killProcessTree(process);
+                    break;
+                }
+                if (progress != null && now - lastProgressAt >= PROGRESS_MIN_INTERVAL_MS) {
+                    int size = bufferSize(buffer);
+                    if (size > lastReportedSize) {
+                        lastProgressAt = now;
+                        lastReportedSize = size;
+                        progress.accept(snapshot(buffer));
+                    }
+                }
             }
         } catch (InterruptedException e) {
             // 用户「停止生成」:编排线程被中断——终止命令,恢复中断标志让上层短路
@@ -152,10 +198,48 @@ public class TerminalService {
         }
         exit = process.isAlive() ? -1 : process.exitValue();
         long durationMs = System.currentTimeMillis() - start;
-        String output = stripClixml(buffer.toString(StandardCharsets.UTF_8).stripTrailing());
+        String output = stripAnsi(stripClixml(buffer.toString(StandardCharsets.UTF_8).stripTrailing()));
         log.info("terminal: shell={} cwd={} exit={} timedOut={} cancelled={} chars={} durationMs={}",
                 shellName, cwd, exit, timedOut, cancelled, output.length(), durationMs);
         return new RunResult(output, exit, timedOut, cancelled, durationMs, cwd.toString(), timeout);
+    }
+
+    // ---------- 实时快照 ----------
+
+    private static int bufferSize(ByteArrayOutputStream buffer) {
+        synchronized (buffer) {
+            return buffer.size();
+        }
+    }
+
+    /** 实时预览:全量解码 → 清 ANSI/CLIXML → 取尾部 4k(终端习惯看最新输出)。 */
+    private static String snapshot(ByteArrayOutputStream buffer) {
+        String full;
+        synchronized (buffer) {
+            full = buffer.toString(StandardCharsets.UTF_8);
+        }
+        return tail(stripAnsi(stripClixml(full)), PROGRESS_PREVIEW_CHARS);
+    }
+
+    private static String tail(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        return text.length() <= max ? text : "…" + text.substring(text.length() - max);
+    }
+
+    /**
+     * 清理 ANSI 转义序列(颜色/光标控制):npm/git 等在管道模式下多数自禁色,
+     * 但部分工具(如 FORCE_COLOR、progress bar)仍会输出,污染模型上下文与前端展示。
+     * 覆盖 CSI(颜色/光标)与 OSC(标题/超链接)两类。
+     */
+    static String stripAnsi(String text) {
+        if (text == null || text.indexOf('\u001b') < 0) {
+            return text;
+        }
+        // CSI: ESC [ 参数 终止符;OSC: ESC ] ... (BEL 或 ESC 反斜杠)
+        return text.replaceAll("\u001b\\[[0-9;?]*[ -/]*[@-~]", "")
+                .replaceAll("\u001b\\][^\u0007\u001b]*(?:\u0007|\u001b\\\\)", "");
     }
 
     /**
