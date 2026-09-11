@@ -1,5 +1,6 @@
 package com.nora.agent.service;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -262,8 +263,11 @@ final class RiskClassifier {
         };
     }
 
-    /** manage_mcp register 参数校验:名称规则与设置页注册一致(挂载名约束)。 */
-    static String validateMcpRegister(String name, String url, String transport) {
+    /**
+     * manage_mcp register 参数校验:名称规则与设置页注册一致(挂载名约束);
+     * transport=STDIO 时需 command(本地进程),否则需 url(远程端点)。
+     */
+    static String validateMcpRegister(String name, String url, String transport, String command, List<String> args) {
         if (name == null || name.isBlank()) {
             return "拒绝执行：缺少 name 参数(MCP 服务器名称)";
         }
@@ -271,14 +275,34 @@ final class RiskClassifier {
             return "拒绝执行：服务器名只能包含字母、数字、下划线、连字符,且不能含连续下划线"
                     + "(挂载工具名 mcp__<server>__<tool> 的约束)";
         }
+        String t = transport == null || transport.isBlank() ? "STREAMABLE" : transport.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("STREAMABLE", "SSE", "STDIO").contains(t)) {
+            return "拒绝执行：transport 只支持 STREAMABLE / SSE / STDIO(当前:" + transport + ")";
+        }
+        if ("STDIO".equals(t)) {
+            // 本地进程:command 必填;args 里不得混入 shell 元字符拼接(整条命令交给
+            // ProcessBuilder 数组执行,不经过 shell,元字符只是普通字符——但拒绝空项)
+            if (command == null || command.isBlank()) {
+                return "拒绝执行：STDIO 必须提供 command(可执行命令,如 npx / node / docker)";
+            }
+            if (args != null) {
+                for (String arg : args) {
+                    if (arg == null || arg.isBlank()) {
+                        return "拒绝执行：args 含空项,请给出每个参数的完整值";
+                    }
+                }
+            }
+            return null;
+        }
         if (url == null || !url.trim().startsWith("http")) {
             return "拒绝执行：缺少合法 url(http(s):// 地址)";
         }
-        String t = transport == null || transport.isBlank() ? "STREAMABLE" : transport.trim().toUpperCase(Locale.ROOT);
-        if (!Set.of("STREAMABLE", "SSE").contains(t)) {
-            return "拒绝执行：transport 只支持 STREAMABLE / SSE(当前:" + transport + ")";
-        }
         return null;
+    }
+
+    /** Back-compat overload (remote transports only). */
+    static String validateMcpRegister(String name, String url, String transport) {
+        return validateMcpRegister(name, url, transport, null, null);
     }
 
     /** 数据源 create 参数校验:engine 只支持白名单(JdbcConnections 同款)。 */

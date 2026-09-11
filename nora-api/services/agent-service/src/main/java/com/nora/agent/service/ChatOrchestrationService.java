@@ -782,6 +782,14 @@ public class ChatOrchestrationService {
                 String action = RiskClassifier.normalizeMcpAction(parsed.datasourceAction());
                 JsonNode a = parseArgsSafe(rawArgs);
                 if ("register".equals(action)) {
+                    // 与执行层同一推断:有 command 无 url → STDIO(模型常省略 transport)
+                    String transport = a.path("transport").asText("");
+                    if (transport.isBlank() && !a.path("command").asText("").isBlank()
+                            && a.path("url").asText("").isBlank()) {
+                        transport = "STDIO";
+                    } else if (transport.isBlank()) {
+                        transport = "STREAMABLE";
+                    }
                     target = a.path("name").asText("新 MCP 服务器");
                     JsonNode headers = a.path("headers");
                     StringBuilder headerKeys = new StringBuilder();
@@ -789,11 +797,30 @@ public class ChatOrchestrationService {
                         headers.fieldNames().forEachRemaining(k ->
                                 headerKeys.append(headerKeys.length() > 0 ? ", " : "").append(k));
                     }
-                    detail = "名称: " + target
-                            + "\n地址: " + a.path("url").asText("?")
-                            + "\n传输: " + a.path("transport").asText("STREAMABLE")
-                            + (headerKeys.length() > 0 ? "\n鉴权头: " + headerKeys + "(值已隐藏)" : "");
-                    risk = "将注册外部 MCP 服务器:其工具会挂载给 Agent 调用(外部能力,执行范围未知)";
+                    JsonNode env = a.path("env");
+                    StringBuilder envKeys = new StringBuilder();
+                    if (env.isObject()) {
+                        env.fieldNames().forEachRemaining(k ->
+                                envKeys.append(envKeys.length() > 0 ? ", " : "").append(k));
+                    }
+                    if ("STDIO".equalsIgnoreCase(transport)) {
+                        // 本地进程:完整命令行给用户审(装的是什么包一眼可见)
+                        StringBuilder cmdline = new StringBuilder(a.path("command").asText("?"));
+                        if (a.path("args").isArray()) {
+                            for (JsonNode n : a.path("args")) {
+                                cmdline.append(' ').append(n.asText(""));
+                            }
+                        }
+                        detail = "本地命令: " + cmdline
+                                + (envKeys.length() > 0 ? "\n环境变量: " + envKeys + "(值已隐藏)" : "");
+                        risk = "将在本机启动本地进程作为 MCP 服务器(进程有本机权限,其工具会挂载给 Agent 调用)";
+                    } else {
+                        detail = "名称: " + target
+                                + "\n地址: " + a.path("url").asText("?")
+                                + "\n传输: " + transport
+                                + (headerKeys.length() > 0 ? "\n鉴权头: " + headerKeys + "(值已隐藏)" : "");
+                        risk = "将注册外部 MCP 服务器:其工具会挂载给 Agent 调用(外部能力,执行范围未知)";
+                    }
                 } else if ("remove".equals(action)) {
                     target = parsed.input().target() == null ? "?" : parsed.input().target();
                     detail = "MCP 服务器: " + target + "\n后果: 注册记录与连接一并删除";
@@ -1332,7 +1359,21 @@ public class ChatOrchestrationService {
                     String rName = a.path("name").asText(null);
                     String rUrl = a.path("url").asText(null);
                     String rTransport = a.path("transport").asText(null);
-                    String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport);
+                    // STDIO(本地进程)注册:command + args + env
+                    String rCommand = a.path("command").asText(null);
+                    // 推断:给了 command 没给 url/transport → 本地进程形态(模型常省略 transport)
+                    if ((rTransport == null || rTransport.isBlank())
+                            && rCommand != null && !rCommand.isBlank()
+                            && (rUrl == null || rUrl.isBlank())) {
+                        rTransport = "STDIO";
+                    }
+                    List<String> rArgs = new java.util.ArrayList<>();
+                    if (a.path("args").isArray()) {
+                        for (JsonNode n : a.path("args")) {
+                            rArgs.add(n.asText(""));
+                        }
+                    }
+                    String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport, rCommand, rArgs);
                     if (registerGuard != null) {
                         return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
                     }
@@ -1340,14 +1381,20 @@ public class ChatOrchestrationService {
                         return new ToolOutcome("ERROR: 服务器名「" + rName.trim() + "」已存在。如需改用 remove 后重新注册,"
                                 + "或用 refresh 重新拉取工具", null, null, false);
                     }
-                    // headers 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
+                    // headers/env 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
                     Map<String, String> headers = new java.util.LinkedHashMap<>();
                     JsonNode h = a.path("headers");
                     if (h.isObject()) {
                         h.fields().forEachRemaining(e -> headers.put(e.getKey(), e.getValue().asText("")));
                     }
+                    Map<String, String> env = new java.util.LinkedHashMap<>();
+                    JsonNode envNode = a.path("env");
+                    if (envNode.isObject()) {
+                        envNode.fields().forEachRemaining(e -> env.put(e.getKey(), e.getValue().asText("")));
+                    }
                     McpServerService.ServerView created = mcpServerService.create(rName, rUrl, rTransport,
-                            headers.isEmpty() ? null : headers);
+                            headers.isEmpty() ? null : headers,
+                            rCommand, rArgs.isEmpty() ? null : rArgs, env.isEmpty() ? null : env);
                     // 注册后自动测试连接(refresh):对齐 manage_datasource create 后自动 test 的语义;
                     // 连接失败不回滚注册(注册本身成功,失败原因如实报告,用户可稍后重试 refresh)
                     String testResult;
@@ -2413,11 +2460,14 @@ public class ChatOrchestrationService {
         mcpTool.put("type", "function");
         ObjectNode mcpFn = mcpTool.putObject("function");
         mcpFn.put("name", "manage_mcp");
-        mcpFn.put("description", "管理 MCP(Model Context Protocol)远程工具服务器:"
+        mcpFn.put("description", "管理 MCP(Model Context Protocol)工具服务器(远程或本地进程):"
                 + "list=列出已注册服务器(名称/状态/工具数);"
                 + "refresh=测试连接并拉取工具清单(拉取成功后其工具挂载为 mcp__<服务器名>__<工具名>,你即可调用);"
-                + "enable/disable=启用或停用;register=注册新服务器(需 name/url,可选 transport/headers);"
-                + "remove=删除注册。register 和 remove 执行前用户会收到审批请求。"
+                + "enable/disable=启用或停用;register=注册新服务器;remove=删除注册。"
+                + "register 两种形态:①远程——提供 url(可选 transport=STREAMABLE/SSE);"
+                + "②本地进程(STDIO)——提供 command 与 args,如 command=npx, args=[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"D:/docs\"],"
+                + "或 Docker 方式 command=docker, args=[\"run\",\"-i\",\"--rm\",\"镜像名\"];本地方式需本机已装对应运行时。"
+                + "register 和 remove 执行前用户会收到审批请求。"
                 + "用户说「把 XX MCP 服务器接上/注册一下」时使用。示例:{\"action\": \"register\", "
                 + "\"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
         ObjectNode mcpParams = mcpFn.putObject("parameters");
@@ -2432,13 +2482,23 @@ public class ChatOrchestrationService {
         mcpNameProp.put("description", "register 时:服务器名(只含字母/数字/下划线/连字符,不能含连续下划线;会成为挂载工具名前缀)");
         ObjectNode mcpUrlProp = mcpProps.putObject("url");
         mcpUrlProp.put("type", "string");
-        mcpUrlProp.put("description", "register 时:MCP 服务器地址(http(s):// 开头)");
+        mcpUrlProp.put("description", "register 远程服务器时:MCP 服务器地址(http(s):// 开头);本地 STDIO 时省略");
         ObjectNode mcpTransportProp = mcpProps.putObject("transport");
         mcpTransportProp.put("type", "string");
-        mcpTransportProp.put("description", "register 时:STREAMABLE(默认)或 SSE");
+        mcpTransportProp.put("description", "register 时:STREAMABLE(远程默认)/ SSE(远程)/ STDIO(本地进程)");
+        ObjectNode mcpCommandProp = mcpProps.putObject("command");
+        mcpCommandProp.put("type", "string");
+        mcpCommandProp.put("description", "register STDIO 时:可执行命令(npx / node / docker / uvx ...;需本机已安装)");
+        ObjectNode mcpArgsProp = mcpProps.putObject("args");
+        mcpArgsProp.put("type", "array");
+        mcpArgsProp.putObject("items").put("type", "string");
+        mcpArgsProp.put("description", "register STDIO 时:命令参数数组,如 [\"-y\", \"@scope/server\"]");
         ObjectNode mcpHeadersProp = mcpProps.putObject("headers");
         mcpHeadersProp.put("type", "object");
         mcpHeadersProp.put("description", "register 时:鉴权头(如 {\"Authorization\": \"Bearer xxx\"}),可省略;值不会出现在对话记录中");
+        ObjectNode mcpEnvProp = mcpProps.putObject("env");
+        mcpEnvProp.put("type", "object");
+        mcpEnvProp.put("description", "register STDIO 时:追加环境变量(如 {\"API_KEY\": \"xxx\"}),可省略;值不会出现在对话记录中");
         ObjectNode mcpTargetProp = mcpProps.putObject("target");
         mcpTargetProp.put("type", "string");
         mcpTargetProp.put("description", "refresh/enable/disable/remove 时:目标服务器的名称或 id(以 list 结果为准,不要猜测)");
@@ -2786,6 +2846,12 @@ public class ChatOrchestrationService {
                 ObjectNode masked = objectMapper.createObjectNode();
                 headers.fieldNames().forEachRemaining(k -> masked.put(k, "***"));
                 obj.set("headers", masked);
+            }
+            JsonNode env = obj.get("env");
+            if (env != null && env.isObject()) {
+                ObjectNode masked = objectMapper.createObjectNode();
+                env.fieldNames().forEachRemaining(k -> masked.put(k, "***"));
+                obj.set("env", masked);
             }
             for (String key : new String[]{"password", "token", "apiKey", "api_key", "secret"}) {
                 if (obj.hasNonNull(key)) {

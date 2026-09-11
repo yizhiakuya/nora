@@ -1,12 +1,18 @@
 import { requestJson, USE_BACKEND } from "./client";
 
-/** MCP 服务器视图(后端 ServerView;headers 已脱敏) */
+/** MCP 服务器视图(后端 ServerView;secrets 已脱敏) */
 export interface McpServer {
   id: number;
   name: string;
-  url: string;
-  transport: "STREAMABLE" | "SSE";
+  url: string | null;
+  transport: "STREAMABLE" | "SSE" | "STDIO";
+  /** STDIO 时:可执行命令(npx / node / docker ...) */
+  command: string | null;
+  /** STDIO 时:argv JSON 数组字符串 */
+  args: string | null;
   maskedHeaders: string | null;
+  /** STDIO 时:环境变量(值已脱敏) */
+  maskedEnv: string | null;
   enabled: boolean;
   status: "connected" | "error" | "untested";
   statusDetail: string | null;
@@ -31,9 +37,15 @@ export async function fetchMcpServers(): Promise<McpServer[]> {
 
 export async function createMcpServer(input: {
   name: string;
-  url: string;
-  transport: "STREAMABLE" | "SSE";
+  url?: string;
+  transport: "STREAMABLE" | "SSE" | "STDIO";
   headers?: Record<string, string>;
+  /** STDIO:可执行命令 */
+  command?: string;
+  /** STDIO:命令参数 */
+  args?: string[];
+  /** STDIO:环境变量 */
+  env?: Record<string, string>;
 }): Promise<McpServer> {
   return requestJson("/mcp/servers", {
     method: "POST",

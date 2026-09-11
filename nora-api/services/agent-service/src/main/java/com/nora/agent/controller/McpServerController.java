@@ -43,11 +43,22 @@ public class McpServerController {
         if (request.name() == null || request.name().isBlank()) {
             throw new BusinessException(400, "name is required");
         }
-        if (request.url() == null || request.url().isBlank()) {
+        boolean stdio = request.transport() != null && "STDIO".equalsIgnoreCase(request.transport().trim());
+        if (stdio) {
+            if (request.command() == null || request.command().isBlank()) {
+                throw new BusinessException(400, "command is required for STDIO transport");
+            }
+        } else if (request.url() == null || request.url().isBlank()) {
             throw new BusinessException(400, "url is required");
         }
-        return ApiResponse.ok(mcpServerService.create(
-                request.name(), request.url(), request.transport(), request.headers()));
+        try {
+            return ApiResponse.ok(mcpServerService.create(
+                    request.name(), request.url(), request.transport(), request.headers(),
+                    request.command(), request.args(), request.env()));
+        } catch (IllegalArgumentException e) {
+            // 命令预检失败等:400 带可操作文案(缺 Node.js 时前端直接展示)
+            throw new BusinessException(400, e.getMessage());
+        }
     }
 
     /** Deletes a server (its pooled MCP client is closed). */
@@ -87,7 +98,8 @@ public class McpServerController {
         }
     }
 
-    public record CreateRequest(String name, String url, String transport, Map<String, String> headers) {
+    public record CreateRequest(String name, String url, String transport, Map<String, String> headers,
+                                String command, List<String> args, Map<String, String> env) {
     }
 
     public record EnabledRequest(Boolean enabled) {

@@ -121,6 +121,12 @@ class ChatOrchestrationServiceTest {
         assertTrue(RiskClassifier.validateMcpRegister("ok", "https://x", "HTTP") != null);
         assertEquals(null, RiskClassifier.validateMcpRegister("weather", "https://x", "sse"));
         assertEquals(null, RiskClassifier.validateMcpRegister("weather", "http://192.168.0.9:8080/mcp", null));
+        // STDIO:command 必填;args 不得含空项;远程传输时 url 必填
+        assertEquals(null, RiskClassifier.validateMcpRegister("local-fs", null, "STDIO",
+                "npx", java.util.List.of("-y", "@modelcontextprotocol/server-filesystem", "D:/docs")));
+        assertTrue(RiskClassifier.validateMcpRegister("local-fs", null, "STDIO", null, null) != null);
+        assertTrue(RiskClassifier.validateMcpRegister("local-fs", null, "STDIO", "npx", java.util.List.of("ok", "")) != null);
+        assertTrue(RiskClassifier.validateMcpRegister("no-url", null, null, null, null) != null);
     }
 
     @Test
@@ -145,7 +151,7 @@ class ChatOrchestrationServiceTest {
     void mcpToolListRendersServersAndGuardsUnknownAction() throws Exception {
         McpServerService mcp = mock(McpServerService.class);
         when(mcp.list()).thenReturn(List.of(new McpServerService.ServerView(
-                1L, "megumin", "http://192.168.0.9:8080/mcp", "STREAMABLE", null,
+                1L, "megumin", "http://192.168.0.9:8080/mcp", "STREAMABLE", null, null, null, null,
                 true, "connected", null, 3)));
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
@@ -164,9 +170,9 @@ class ChatOrchestrationServiceTest {
     @Test
     void mcpRegisterTestsConnectionAndKeepsRegistrationOnFailure() throws Exception {
         McpServerService mcp = mock(McpServerService.class);
-        when(mcp.create("weather", "https://mcp.example.com/mcp", null, null)).thenReturn(
+        when(mcp.create("weather", "https://mcp.example.com/mcp", null, null, null, null, null)).thenReturn(
                 new McpServerService.ServerView(7L, "weather", "https://mcp.example.com/mcp",
-                        "STREAMABLE", null, true, "untested", null, 0));
+                        "STREAMABLE", null, null, null, null, true, "untested", null, 0));
         when(mcp.refresh(7L)).thenThrow(new IllegalStateException("connect timeout"));
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
@@ -182,16 +188,69 @@ class ChatOrchestrationServiceTest {
     void mcpRegisterAliasCreateExecutesRegisterPath() throws Exception {
         // 模型写 action=create(别名)时,执行层按 register 真执行——与分类器同一归一化
         McpServerService mcp = mock(McpServerService.class);
-        when(mcp.create("alias-mcp", "https://x/mcp", null, null)).thenReturn(
+        when(mcp.create("alias-mcp", "https://x/mcp", null, null, null, null, null)).thenReturn(
                 new McpServerService.ServerView(9L, "alias-mcp", "https://x/mcp",
-                        "STREAMABLE", null, true, "untested", null, 0));
+                        "STREAMABLE", null, null, null, null, true, "untested", null, 0));
         when(mcp.refresh(9L)).thenReturn(List.of());
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
         ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
                 "{\"action\": \"create\", \"name\": \"alias-mcp\", \"url\": \"https://x/mcp\"}");
         assertTrue(out.content().contains("已注册 MCP 服务器"), "create 别名走 register 路径");
-        org.mockito.Mockito.verify(mcp).create("alias-mcp", "https://x/mcp", null, null);
+        org.mockito.Mockito.verify(mcp).create("alias-mcp", "https://x/mcp", null, null, null, null, null);
+    }
+
+    @Test
+    void mcpRegisterInfersStdioFromCommandWithoutTransport() throws Exception {
+        // 模型常省略 transport 只给 command:必须推断为 STDIO 走本地路径
+        // (E2E 实测 deepseek 只发 command+args,不推断会走远程校验报"地址: ?")
+        McpServerService mcp = mock(McpServerService.class);
+        when(mcp.create("inferred", null, "STDIO", null,
+                "npx", java.util.List.of("-y", "pkg"), null)).thenReturn(
+                new McpServerService.ServerView(12L, "inferred", null, "STDIO",
+                        "npx", "[\"-y\",\"pkg\"]", null, null, true, "untested", null, 0));
+        when(mcp.refresh(12L)).thenReturn(List.of());
+        ChatOrchestrationService svc = buildWithMcp(mcp);
+
+        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+                "{\"action\": \"register\", \"name\": \"inferred\", \"command\": \"npx\", \"args\": [\"-y\", \"pkg\"]}");
+        assertTrue(out.content().contains("已注册 MCP 服务器"), "无 transport 但有 command → 推断 STDIO");
+        org.mockito.Mockito.verify(mcp).create("inferred", null, "STDIO", null,
+                "npx", java.util.List.of("-y", "pkg"), null);
+    }
+
+    @Test
+    void mcpRegisterStdioPassesCommandArgsEnv() throws Exception {
+        // STDIO 注册:command/args/env 原样传给服务层;headers 不传(那是远程形态的)
+        McpServerService mcp = mock(McpServerService.class);
+        when(mcp.create("local-fs", null, "STDIO", null,
+                "npx", java.util.List.of("-y", "@modelcontextprotocol/server-filesystem", "D:/docs"),
+                java.util.Map.of("API_KEY", "k1"))).thenReturn(
+                new McpServerService.ServerView(11L, "local-fs", null, "STDIO",
+                        "npx", "[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"D:/docs\"]",
+                        null, null, true, "untested", null, 0));
+        when(mcp.refresh(11L)).thenReturn(List.of());
+        ChatOrchestrationService svc = buildWithMcp(mcp);
+
+        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+                "{\"action\": \"register\", \"name\": \"local-fs\", \"transport\": \"STDIO\","
+                        + " \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"D:/docs\"],"
+                        + " \"env\": {\"API_KEY\": \"k1\"}}");
+        assertTrue(out.content().contains("已注册 MCP 服务器"), "STDIO 注册成功");
+        org.mockito.Mockito.verify(mcp).create("local-fs", null, "STDIO", null,
+                "npx", java.util.List.of("-y", "@modelcontextprotocol/server-filesystem", "D:/docs"),
+                java.util.Map.of("API_KEY", "k1"));
+    }
+
+    @Test
+    void mcpRegisterStdioRejectsMissingCommand() throws Exception {
+        // STDIO 无 command:校验器拒绝,可自纠(错误里给出正确形态)
+        McpServerService mcp = mock(McpServerService.class);
+        ChatOrchestrationService svc = buildWithMcp(mcp);
+        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+                "{\"action\": \"register\", \"name\": \"local-fs\", \"transport\": \"STDIO\"}");
+        assertTrue(out.content().startsWith("ERROR:"), "缺 command 拒绝");
+        assertTrue(out.content().contains("command"), "错误指向缺失字段");
     }
 
     /** Builds a service with only the MCP registry wired (17-arg constructor). */
