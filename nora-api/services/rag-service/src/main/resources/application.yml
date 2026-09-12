@@ -23,6 +23,15 @@ spring:
 
 nora:
   timezone: Asia/Shanghai
+  # Redis(平台组件):嵌入结果内容寻址缓存,重复文本不再重复调 provider。
+  # 禁用或不可达时直连 provider,不影响功能。
+  redis:
+    enabled: ${NORA_REDIS_ENABLED:true}
+    host: ${NORA_REDIS_HOST:localhost}
+    port: ${NORA_REDIS_PORT:6379}
+    password: ${NORA_REDIS_PASSWORD:}
+    database: ${NORA_REDIS_DATABASE:0}
+    timeout-ms: ${NORA_REDIS_TIMEOUT_MS:2000}
   embedding:
     api-key: ${NORA_EMBEDDING_API_KEY:}
     base-url: https://api.jina.ai/v1
@@ -50,4 +59,3 @@ management:
     web:
       exposure:
         include: health
-

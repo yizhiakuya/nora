@@ -75,6 +75,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Redis(Lettuce):嵌入结果内容寻址缓存(nora.redis.enabled=true 启用;
+             未启用/不可达时直连 provider,不影响功能) -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

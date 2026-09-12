@@ -14,7 +14,7 @@ Nora 个人工作台 Java 后端。设计文档见 [docs/](docs/)：
 - 微服务架构：7 个服务（gateway / file / rag / **agent** / datasource / env / automation）
 - Spring Boot 3.3 · Java 21 · Spring Cloud Alibaba（Nacos + Dubbo + Sentinel）
 - **LangChain4j**（Agent 循环 / AiServices / Tools / RAG / ChatMemory）
-- PostgreSQL 16 + pgvector · Redis · RocketMQ（设计中）
+- PostgreSQL 16 + pgvector · Redis（平台组件：嵌入缓存 / 审批票据）· RocketMQ（设计中）
 - Maven 多模块（16 个）+ Docker Compose
 
 ## 当前状态（2026-09-06）

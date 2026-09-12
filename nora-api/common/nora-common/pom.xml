@@ -40,5 +40,14 @@
             <groupId>net.logstash.logback</groupId>
             <artifactId>logstash-logback-encoder</artifactId>
         </dependency>
+
+        <!-- Redis 客户端(Lettuce):共享 NoraRedis 门面编译用;
+             运行时由真正启用 Redis 的服务自带(provided 不传递),未引入的服务
+             自动装配条件不满足、NoraRedis 不会被加载 -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

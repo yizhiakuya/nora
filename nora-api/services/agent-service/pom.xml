@@ -45,6 +45,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Redis(Lettuce):审批票据跨实例/重启可见(nora.redis.enabled=true 启用;
+             未启用时 ApprovalService 自动降级为纯内存) -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
         <!-- Persistence -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

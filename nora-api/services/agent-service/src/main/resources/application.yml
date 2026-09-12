@@ -24,6 +24,15 @@ spring:
 nora:
   # 全局统一时区(nora-common TimeZoneConfig 消费;JVM 默认时区)
   timezone: Asia/Shanghai
+  # Redis(平台组件):审批票据跨实例/重启可见 + 跨实例 resolve 广播。
+  # 禁用或不可达时服务自动降级为纯内存行为,不影响启动与请求。
+  redis:
+    enabled: ${NORA_REDIS_ENABLED:true}
+    host: ${NORA_REDIS_HOST:localhost}
+    port: ${NORA_REDIS_PORT:6379}
+    password: ${NORA_REDIS_PASSWORD:}
+    database: ${NORA_REDIS_DATABASE:0}
+    timeout-ms: ${NORA_REDIS_TIMEOUT_MS:2000}
   agent:
     # ReAct depth guard: max tool rounds per chat turn (harness convention 10-25)
     max-tool-rounds: 10

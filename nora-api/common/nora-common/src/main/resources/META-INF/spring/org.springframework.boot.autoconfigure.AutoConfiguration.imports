@@ -1,1 +1,2 @@
 com.nora.common.logging.LoggingAutoConfiguration
+com.nora.common.redis.RedisAutoConfiguration
