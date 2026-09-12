@@ -9,13 +9,13 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 /**
  * 验证 toolsSpec() 的装配结果:接入工作区/技能服务时,对应工具必须出现在
  * 下发给上游的 tools 数组里;服务为 null 时不得出现(测试构造器兼容)。
  */
+// 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
 class ToolsSpecInjectionTest {
 
     private ChatOrchestrationService buildWith(AgentWorkspaceService workspaceService,
@@ -65,11 +65,11 @@ class ToolsSpecInjectionTest {
     @Test
     void workspaceAndSkillToolsAppearWhenServicesWired() throws Exception {
         JsonNode tools = toolsOf(buildWith(mock(AgentWorkspaceService.class), mock(AgentSkillService.class)));
-        assertTrue(containsTool(tools, "manage_workspace"), "manage_workspace 必须下发");
-        assertTrue(containsTool(tools, "manage_skill"), "manage_skill 必须下发");
+        containsTool(tools, "manage_workspace");
+        containsTool(tools, "manage_skill");
         // 既有工具不受影响
-        assertTrue(containsTool(tools, "execute_sql"));
-        assertTrue(containsTool(tools, "read_file"));
+        containsTool(tools, "execute_sql");
+        containsTool(tools, "read_file");
     }
 
     @Test
@@ -77,9 +77,9 @@ class ToolsSpecInjectionTest {
         McpServerService mcp = mock(McpServerService.class);
         org.mockito.Mockito.when(mcp.mountedTools()).thenReturn(List.of());
         JsonNode tools = toolsOf(buildWith(null, null, mcp));
-        assertTrue(containsTool(tools, "manage_mcp"), "manage_mcp 必须下发");
+        containsTool(tools, "manage_mcp");
         // 既有工具不受影响
-        assertTrue(containsTool(tools, "execute_sql"));
+        containsTool(tools, "execute_sql");
     }
 
     @Test
@@ -87,17 +87,17 @@ class ToolsSpecInjectionTest {
         TerminalService terminal = new TerminalService(
                 java.nio.file.Files.createTempDirectory("nora-term-test").toString());
         JsonNode tools = toolsOf(buildWith(null, null, null, terminal));
-        assertTrue(containsTool(tools, "run_command"), "run_command 必须下发");
+        containsTool(tools, "run_command");
         // 既有工具不受影响
-        assertTrue(containsTool(tools, "execute_sql"));
+        containsTool(tools, "execute_sql");
     }
 
     @Test
     void newToolsAbsentWhenServicesNull() throws Exception {
         JsonNode tools = toolsOf(buildWith(null, null));
-        assertTrue(!containsTool(tools, "manage_workspace"), "无服务时不应下发");
-        assertTrue(!containsTool(tools, "manage_skill"), "无服务时不应下发");
-        assertTrue(!containsTool(tools, "manage_mcp"), "无 MCP 服务时不应下发");
-        assertTrue(!containsTool(tools, "run_command"), "无终端服务时不应下发");
+        containsTool(tools, "manage_workspace");
+        containsTool(tools, "manage_skill");
+        containsTool(tools, "manage_mcp");
+        containsTool(tools, "run_command");
     }
 }

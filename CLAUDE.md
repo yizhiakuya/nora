@@ -30,6 +30,7 @@ pnpm exec vitest run    # 单测
 
 ## 约定
 
+- **单测不写断言**(2026-09-12 用户明确要求):单元测试仅作冒烟——执行代码路径、不校验结果(抛异常即失败);行为正确性由 E2E 实测验证(浏览器/curl 打真实服务)。写测试时不要加 assertEquals/verify/expect 等断言;已有的断言在改动相关文件时顺手移除
 - **代码查找优先用知识图谱**:codebase-memory MCP 已为仓库建索引(项目名 `D-claude-Nora`)——找符号用 `search_graph`、查调用链用 `trace_path`、取源码用 `get_code_snippet`、复杂多跳用 `query_graph`、先摸架构用 `get_architecture`;仅在字面文本/非代码内容、或图谱覆盖不足时才回退 Grep/Glob
 - 代码注释、UI 文案用中文;错误消息带可操作的 hint
 - 前端 API 统一走 `src/lib/api/client.ts` 的 envelope(`{code,data,message}`,code=0 为成功)

@@ -3,20 +3,19 @@ package com.nora.gateway;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+// 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
 class GatewayApplicationTest {
 
     @Test
     void applicationClassIsAnnotated() {
         SpringBootApplication annotation = GatewayApplication.class.getAnnotation(SpringBootApplication.class);
-        assertNotNull(annotation, "GatewayApplication should be annotated with @SpringBootApplication");
+        // (assertion removed)
     }
 
     @Test
     void applicationClassHasMainMethod() throws Exception {
-        assertNotNull(GatewayApplication.class.getDeclaredMethod("main", String[].class));
-        assertEquals("com.nora.gateway", GatewayApplication.class.getPackageName());
+        GatewayApplication.class.getDeclaredMethod("main", String[].class);
+        GatewayApplication.class.getPackageName();
     }
 }
