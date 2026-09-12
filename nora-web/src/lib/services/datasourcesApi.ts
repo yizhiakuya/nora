@@ -14,12 +14,28 @@ export interface BackendConnection {
   status: string;
 }
 
+/** 后端表字段(含 JDBC 元数据:注释/可空/主键/默认值) */
+export interface BackendColumn {
+  name: string;
+  type: string;
+  /** 列注释(数据库无注释时为空串) */
+  comment: string;
+  /** 是否可空 */
+  nullable: boolean;
+  /** 是否主键 */
+  primaryKey: boolean;
+  /** 默认值表达式;无默认值为 null */
+  defaultValue: string | null;
+}
+
 /** 后端表结构 */
 export interface BackendTable {
   /** 所属 schema/catalog(如 pg 的 public);无 schema 的引擎为 null */
   schema?: string | null;
   name: string;
-  columns: { name: string; type: string }[];
+  /** 表注释(数据库无注释时为空串) */
+  comment: string;
+  columns: BackendColumn[];
 }
 
 /** 后端查询结果 */

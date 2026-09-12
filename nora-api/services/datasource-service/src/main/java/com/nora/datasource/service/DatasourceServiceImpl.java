@@ -122,13 +122,29 @@ public class DatasourceServiceImpl {
                 while (rs.next()) {
                     String tableSchema = rs.getString("TABLE_SCHEM");
                     String table = rs.getString("TABLE_NAME");
+                    String tableComment = rs.getString("REMARKS");
+                    // 主键列集合:DatabaseMetaData.getColumns 不返回 PK 标记,需单独取
+                    java.util.Set<String> pkColumns = new java.util.HashSet<>();
+                    try (ResultSet pk = meta.getPrimaryKeys(null, tableSchema, table)) {
+                        while (pk.next()) {
+                            pkColumns.add(pk.getString("COLUMN_NAME"));
+                        }
+                    }
                     List<Column> columns = new ArrayList<>();
                     try (ResultSet cols = meta.getColumns(null, tableSchema, table, "%")) {
                         while (cols.next()) {
-                            columns.add(new Column(cols.getString("COLUMN_NAME"), cols.getString("TYPE_NAME")));
+                            String colName = cols.getString("COLUMN_NAME");
+                            String remarks = cols.getString("REMARKS");
+                            columns.add(new Column(
+                                    colName,
+                                    cols.getString("TYPE_NAME"),
+                                    remarks == null ? "" : remarks,
+                                    cols.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls,
+                                    pkColumns.contains(colName),
+                                    cols.getString("COLUMN_DEF")));
                         }
                     }
-                    tables.add(new DbTable(tableSchema, table, columns));
+                    tables.add(new DbTable(tableSchema, table, tableComment == null ? "" : tableComment, columns));
                 }
             }
             jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);

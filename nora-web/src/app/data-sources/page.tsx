@@ -1,12 +1,11 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
-import { Database, Plus, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Database, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectionList } from "@/components/data-sources/ConnectionList";
+import { ConnectionActions } from "@/components/data-sources/ConnectionActions";
 import { SchemaBrowser } from "@/components/data-sources/SchemaBrowser";
 import { QueryConsole } from "@/components/data-sources/QueryConsole";
 import { NewConnectionModal } from "@/components/data-sources/NewConnectionModal";
@@ -16,7 +15,6 @@ import { useNotifications } from "@/hooks/useNotifications";
 const VIEW_TABS = ["Schema 浏览", "查询控制台"] as const;
 
 export default function DataSourcesPage() {
-  const navigate = useNavigate();
   // 连接列表可能为空(后端不可达/首次使用):延迟取首项,避免 undefined.id 崩页
   const [selectedId, setSelectedId] = useState<number | null>(() => useConnections.getState().connections[0]?.id ?? null);
   const [activeView, setActiveView] = useState<(typeof VIEW_TABS)[number]>("Schema 浏览");
@@ -36,12 +34,6 @@ export default function DataSourcesPage() {
   const handleQueryTable = (tableName: string) => {
     setTargetSql(`SELECT * FROM ${tableName} LIMIT 20;`);
     setActiveView("查询控制台");
-  };
-
-  /** 让 AI 在对话页基于该连接生成 SQL(真实 agent,不是本地假生成) */
-  const handleAskAi = () => {
-    if (!selected) return;
-    navigate(`/chat?prompt=${encodeURIComponent(`请基于数据源「${selected.name}」(${selected.database}) 帮我写一条查询:`)}`);
   };
 
   const handleCreated = (id: number) => {
@@ -96,15 +88,13 @@ export default function DataSourcesPage() {
             </p>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-5 items-start animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* 连接选择条:横向 chip 行,选中即切换当前连接 */}
             <ConnectionList selectedId={selectedId ?? selected.id} onSelect={setSelectedId} />
 
-            <div className="flex-1 min-w-0 w-full space-y-4">
-              {/* 连接操作条:状态 + 真实操作(测试连接/删除) */}
-              <ConnectionActionBar connectionId={selected.id} name={selected.name} />
-
-              {/* View tabs */}
-              <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 w-full space-y-4">
+              {/* 工具行:视图切换 + 当前连接操作(测试/删除/AI 写 SQL) */}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit" role="tablist" aria-label="数据源视图">
                   {VIEW_TABS.map((tab) => (
                     <button
@@ -119,13 +109,7 @@ export default function DataSourcesPage() {
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={handleAskAi}
-                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer shrink-0"
-                >
-                  ✨ 让 AI 帮我写 SQL
-                </button>
+                <ConnectionActions connectionId={selected.id} name={selected.name} database={selected.database} />
               </div>
 
               {activeView === "Schema 浏览" && (
@@ -141,54 +125,5 @@ export default function DataSourcesPage() {
 
       <NewConnectionModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={handleCreated} />
     </>
-  );
-}
-
-/** 连接操作条:显示真实状态,提供测试连接/删除(后端模式可用)。 */
-function ConnectionActionBar({ connectionId, name }: { connectionId: number; name: string }) {
-  const markStatus = useConnections((s) => s.markStatus);
-  const removeConnection = useConnections((s) => s.removeConnection);
-  const connections = useConnections((s) => s.connections);
-  const conn = connections.find((c) => c.id === connectionId);
-  const [testing, setTesting] = useState(false);
-
-  const handleTest = async () => {
-    setTesting(true);
-    try {
-      const { datasourcesApi } = await import("@/lib/services/datasourcesApi");
-      const r = await datasourcesApi.testConnection(connectionId);
-      markStatus(connectionId, r.ok ? "connected" : "error");
-      toast(r.ok ? `连接正常${r.latencyMs != null ? ` · ${r.latencyMs}ms` : ""}` : `连接失败：${r.message}`);
-    } catch (e) {
-      markStatus(connectionId, "error");
-      toast.error(`测试失败：${(e as Error).message}`);
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleDelete = () => {
-    if (!window.confirm(`确定删除连接「${name}」?该操作不可恢复。`)) return;
-    removeConnection(connectionId);
-    toast.success(`已删除「${name}」`);
-  };
-
-  return (
-    <div className="bg-card border border-border rounded-xl px-3 py-2 flex items-center justify-end gap-2">
-      <Button variant="outline" size="sm" className="h-7 text-[11px] px-2.5" onClick={handleTest} disabled={testing}>
-        {testing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
-        测试连接
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="w-7 h-7 text-muted-foreground hover:text-destructive"
-        title="删除连接"
-        onClick={handleDelete}
-        disabled={!conn}
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </Button>
-    </div>
   );
 }

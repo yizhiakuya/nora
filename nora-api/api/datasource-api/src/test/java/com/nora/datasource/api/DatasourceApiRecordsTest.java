@@ -21,13 +21,13 @@ class DatasourceApiRecordsTest {
     @Test
     void schemaSnapshotRoundTripKeepsNestedTablesAndColumns() {
         SchemaSnapshot snapshot = new SchemaSnapshot(List.of(
-                new DbTable("public", "db_connection", List.of(
-                        new Column("id", "int8"),
-                        new Column("name", "varchar"),
-                        new Column("url", "varchar"))),
-                new DbTable("public", "outbox", List.of(
-                        new Column("id", "bigserial"),
-                        new Column("topic", "varchar")))));
+                new DbTable("public", "db_connection", "数据源连接", List.of(
+                        new Column("id", "int8", "主键", false, true, "nextval('db_connection_id_seq')"),
+                        new Column("name", "varchar", "连接名", false, false, null),
+                        new Column("url", "varchar", "", true, false, null))),
+                new DbTable("public", "outbox", "", List.of(
+                        new Column("id", "bigserial", "", false, true, null),
+                        new Column("topic", "varchar", "事件主题", false, false, null)))));
 
         snapshot.tables();
         snapshot.tables();
@@ -58,9 +58,9 @@ class DatasourceApiRecordsTest {
 
     @Test
     void equalRecordsAreEqualAndDifferentRecordsAreNot() {
-        Column first = new Column("id", "int8");
-        Column same = new Column("id", "int8");
-        Column other = new Column("name", "varchar");
+        Column first = new Column("id", "int8", "主键", false, true, null);
+        Column same = new Column("id", "int8", "主键", false, true, null);
+        Column other = new Column("name", "varchar", "", true, false, null);
 
         // (assertion removed)
         first.hashCode();

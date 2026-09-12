@@ -187,12 +187,25 @@ public class DataSourceManageClient {
             for (JsonNode t : tables) {
                 String schema = t.path("schema").asText("");
                 String name = (schema.isBlank() ? "" : schema + ".") + t.path("name").asText("?");
+                String tableComment = t.path("comment").asText("");
                 StringBuilder cols = new StringBuilder();
                 for (JsonNode c : t.path("columns")) {
                     if (cols.length() > 0) cols.append(", ");
                     cols.append(c.path("name").asText("?")).append(' ').append(c.path("type").asText(""));
+                    // 注释/主键标记:帮助模型理解字段语义(PK 影响 JOIN 与 WHERE 计划)
+                    if (c.path("primaryKey").asBoolean(false)) {
+                        cols.append(" PK");
+                    }
+                    String colComment = c.path("comment").asText("");
+                    if (!colComment.isBlank()) {
+                        cols.append(" -- ").append(colComment);
+                    }
                 }
-                sb.append(name).append('(').append(cols).append(")\n");
+                sb.append(name);
+                if (!tableComment.isBlank()) {
+                    sb.append(" -- ").append(tableComment);
+                }
+                sb.append('(').append(cols).append(")\n");
                 tableCount++;
                 if (sb.length() > 20_000) {
                     sb.append("…[schema 过大已截断,已列 ").append(tableCount).append(" 张表,请用 SQL 查询剩余结构]\n");

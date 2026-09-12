@@ -13,11 +13,11 @@ const ENGINE_META: Record<DbConnection["engine"], { icon: React.ElementType; col
 
 function StatusDot({ status }: { status: DbConnection["status"] }) {
   const map = {
-    connected: "bg-green-500 animate-pulse",
+    connected: "bg-green-500",
     connecting: "bg-yellow-500 animate-pulse",
     error: "bg-red-500",
   };
-  return <span className={`w-2 h-2 rounded-full shrink-0 ${map[status]}`} />;
+  return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${map[status]}`} />;
 }
 
 interface ConnectionListProps {
@@ -25,10 +25,14 @@ interface ConnectionListProps {
   onSelect: (id: number) => void;
 }
 
+/**
+ * 连接选择器:横向紧凑 chip 行。
+ * 替代原左侧竖列——单个连接时不再占半屏宽度/留大片空白;多连接自动换行。
+ */
 export function ConnectionList({ selectedId, onSelect }: ConnectionListProps) {
   const connections = useConnections((s) => s.connections);
   return (
-    <div className="w-full md:w-56 shrink-0 space-y-1.5">
+    <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="数据源连接">
       {connections.map((conn) => {
         const meta = ENGINE_META[conn.engine];
         const Icon = meta.icon;
@@ -37,18 +41,19 @@ export function ConnectionList({ selectedId, onSelect }: ConnectionListProps) {
           <button
             key={conn.id}
             type="button"
+            role="tab"
+            aria-selected={active}
             onClick={() => onSelect(conn.id)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors cursor-pointer ${active ? "bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800" : "bg-card border border-border hover:bg-muted"}`}
+            title={`${conn.name} · ${conn.host !== "—" ? `${conn.host}:${conn.port}` : conn.database}`}
+            className={`flex items-center gap-2 pl-2.5 pr-3 h-8 rounded-lg border text-left transition-colors cursor-pointer max-w-[260px] ${active ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800" : "bg-card border-border hover:bg-muted"}`}
           >
-            <Icon className={`w-4 h-4 shrink-0 ${meta.color}`} />
-            <div className="min-w-0 flex-1">
-              <div className={`text-xs font-medium truncate ${active ? "text-blue-700 dark:text-blue-300" : "text-foreground"}`}>
-                {conn.name}
-              </div>
-              <div className="text-[10px] text-muted-foreground font-mono truncate">
-                {conn.host !== "—" ? `${conn.host}:${conn.port}` : conn.database}
-              </div>
-            </div>
+            <Icon className={`w-3.5 h-3.5 shrink-0 ${meta.color}`} />
+            <span className={`text-xs font-medium truncate ${active ? "text-blue-700 dark:text-blue-300" : "text-foreground"}`}>
+              {conn.name}
+            </span>
+            <span className="hidden sm:inline text-[10px] text-muted-foreground font-mono truncate">
+              {conn.host !== "—" ? `${conn.host}:${conn.port}` : conn.database}
+            </span>
             <StatusDot status={conn.status} />
           </button>
         );
