@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ChevronRight, Table2, RefreshCw, Loader2, Database, Play } from "lucide-react";
+import { ChevronRight, Table2, RefreshCw, Loader2, Database, Play, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 import { datasourcesApi, type BackendTable } from "@/lib/services/datasourcesApi";
 import { USE_BACKEND } from "@/lib/api/client";
@@ -24,6 +25,7 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
   const [serverTables, setServerTables] = useState<BackendTable[] | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   const sync = useCallback(async () => {
     if (!backendMode || connectionId === undefined) return;
@@ -49,21 +51,43 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
   }, [backendMode, connectionId]);
 
   const tables: { schema?: string | null; name: string; columns: { name: string; type: string }[] }[] =
-    (serverTables ?? []).map((t) => ({ schema: t.schema, name: t.name, columns: t.columns }));
+    useMemo(
+      () => (serverTables ?? []).map((t) => ({ schema: t.schema, name: t.name, columns: t.columns })),
+      [serverTables]
+    );
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return tables;
+    return tables.filter((t) => t.name.toLowerCase().includes(q));
+  }, [tables, filter]);
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
       <div className="p-3 border-b border-border bg-gray-50/50 dark:bg-gray-950/50">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-foreground">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-bold text-foreground shrink-0">
             {database} · {tables.length} 张表
           </span>
-          {backendMode ? (
-            <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={sync} disabled={syncing}>
-              {syncing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
-              同步 Schema
-            </Button>
-          ) : null}
+          <div className="flex items-center gap-2 min-w-0">
+            {tables.length > 0 && (
+              <div className="relative hidden sm:block">
+                <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="过滤表名…"
+                  className="h-6 w-40 text-[11px] pl-6 pr-2 bg-card"
+                />
+              </div>
+            )}
+            {backendMode ? (
+              <Button variant="outline" size="sm" className="h-6 text-[10px] px-2 shrink-0" onClick={sync} disabled={syncing}>
+                {syncing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
+                同步 Schema
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
       {tables.length === 0 ? (
@@ -73,9 +97,14 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
             {syncing ? "正在拉取表结构…" : "尚未同步表结构，点击右上「同步 Schema」拉取"}
           </span>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="py-12 flex flex-col items-center text-muted-foreground gap-1.5">
+          <Search className="w-6 h-6 opacity-20" />
+          <span className="text-xs">没有匹配「{filter}」的表</span>
+        </div>
       ) : (
       <div className="divide-y divide-gray-100 dark:divide-gray-800">
-        {tables.map((table) => {
+        {filtered.map((table) => {
           const isOpen = expanded === table.name;
           return (
             <div key={`${table.schema}.${table.name}`}>

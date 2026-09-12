@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from "react";
-import { Play, History, Loader2, Download, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Play, History, Loader2, Download, Zap, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { useAutomations } from "@/hooks/useAutomations";
@@ -42,6 +43,7 @@ interface QueryConsoleProps {
  * 非 SELECT/SHOW/EXPLAIN 会被后端 SqlGuard 拒绝),历史来自服务端;Mock 模式沿用模拟行为。
  */
 export function QueryConsole({ database, connectionId, initialSql }: QueryConsoleProps) {
+  const navigate = useNavigate();
   const backendMode = USE_BACKEND && connectionId !== undefined;
   const [sql, setSql] = useState(initialSql ?? "");
   const [isRunning, setIsRunning] = useState(false);
@@ -50,7 +52,6 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
   const [runError, setRunError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistory[]>([]);
   const addRule = useAutomations((s) => s.addRule);
-  const [aiGenerating, setAiGenerating] = useState(false);
   const { schedule, cancelAll } = useTimedSequence();
 
   useEffect(() => {
@@ -122,22 +123,9 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
     toast.success("已保存为自动任务（每日 09:00 执行），到「自动任务」页查看");
   };
 
-  /** AI 生成 SQL：模拟分析表结构 → 逐段输出 */
-  const generateWithAI = () => {
-    if (aiGenerating) return;
-    setAiGenerating(true);
-    setSql("");
-    const text = AI_SUGGEST;
-    let i = 0;
-    const timer = setInterval(() => {
-      i += 8;
-      setSql(text.slice(0, i));
-      if (i >= text.length) {
-        clearInterval(timer);
-        setAiGenerating(false);
-        toast.success("SQL 已生成，可编辑后运行");
-      }
-    }, 40);
+  /** 让 AI 生成 SQL:跳到对话页预填(真实 agent 可读 schema 后写 SQL,不再本地假生成) */
+  const askAi = () => {
+    navigate(`/chat?prompt=${encodeURIComponent(`请基于数据源「${database}」的表结构帮我写一条 SQL：`)}`);
   };
 
   const displayColumns = backendMode ? result?.columns ?? [] : RESULT_COLUMNS;
@@ -172,11 +160,10 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
         <div className="px-4 py-2 border-t border-border flex items-center gap-2">
           <button
             type="button"
-            onClick={generateWithAI}
-            disabled={aiGenerating}
-            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-60"
+            onClick={askAi}
+            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
           >
-            {aiGenerating ? "✨ AI 正在分析表结构并生成…" : "✨ AI 生成：按状态统计订单数"}
+            <Sparkles className="w-2.5 h-2.5" /> 让 AI 写 SQL（跳转对话，可读表结构）
           </button>
           <span className="text-[10px] text-muted-foreground ml-auto">⌘+Enter 运行</span>
         </div>
@@ -223,10 +210,10 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
           </div>
           <div className="max-h-80 overflow-y-auto custom-scroll">
             <table className="w-full text-xs">
-              <thead>
+              <thead className="sticky top-0 z-10">
                 <tr className="bg-muted border-b border-border text-muted-foreground">
                   {displayColumns.map((c) => (
-                    <th key={c} className="p-2.5 text-left font-medium">{c}</th>
+                    <th key={c} className="p-2.5 text-left font-medium bg-muted">{c}</th>
                   ))}
                 </tr>
               </thead>
@@ -254,24 +241,31 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
           <span className="text-[10px] text-muted-foreground ml-auto">{history.length} 条</span>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-48 overflow-y-auto custom-scroll">
-          {history.map((q) => (
-            <button
-              key={q.id}
-              type="button"
-              onClick={() => setSql(q.sql)}
-              className="w-full px-4 py-2 text-left hover:bg-muted/50 transition-colors cursor-pointer group"
-            >
-              <div className="flex items-center justify-between mb-0.5">
-                <span className={`text-[10px] font-medium ${q.status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                  {q.status === "success" ? `✓ ${q.rowsAffected} rows · ${q.duration}` : "✗ ERROR"}
-                </span>
-                <span className="text-[10px] text-muted-foreground">{q.time}</span>
-              </div>
-              <code className="text-[11px] font-mono text-muted-foreground truncate block group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                {q.sql}
-              </code>
-            </button>
-          ))}
+          {history.length === 0 ? (
+            <div className="py-8 flex flex-col items-center text-muted-foreground gap-1.5">
+              <History className="w-5 h-5 opacity-20" />
+              <span className="text-xs">暂无查询历史</span>
+            </div>
+          ) : (
+            history.map((q) => (
+              <button
+                key={q.id}
+                type="button"
+                onClick={() => setSql(q.sql)}
+                className="w-full px-4 py-2 text-left hover:bg-muted/50 transition-colors cursor-pointer group"
+              >
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className={`text-[10px] font-medium ${q.status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                    {q.status === "success" ? `✓ ${q.rowsAffected} rows · ${q.duration}` : "✗ ERROR"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">{q.time}</span>
+                </div>
+                <code className="text-[11px] font-mono text-muted-foreground truncate block group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                  {q.sql}
+                </code>
+              </button>
+            ))
+          )}
         </div>
       </div>
     </div>

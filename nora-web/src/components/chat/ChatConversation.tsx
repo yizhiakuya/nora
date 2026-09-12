@@ -12,6 +12,8 @@ import { ChatMessage, PermissionMode } from "@/lib/api/chatApi";
 interface ChatConversationProps {
   sessionId: string;
   initialMessages: ChatMessage[];
+  /** 初始输入框内容(如从数据源页跳转预填);仅挂载时生效 */
+  initialInput?: string;
 }
 
 /**
@@ -75,9 +77,10 @@ function shouldShowTimeDivider(prev: ChatMessage | undefined, cur: ChatMessage):
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  * 智能滚动:用户上翻阅读历史时不强制拉底,显示「回到底部」按钮。
  */
-export function ChatConversation({ sessionId, initialMessages }: ChatConversationProps) {
+export function ChatConversation({ sessionId, initialMessages, initialInput }: ChatConversationProps) {
   const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend } = useChat({
     initialMessages,
+    initialInput,
     sessionId,
   });
   // 跟随消息内容与流式状态变化;切会话时组件重挂载自动贴底

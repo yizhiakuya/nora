@@ -52,6 +52,8 @@ export const useAgentSettings = create<AgentSettingsState>()(
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
+  /** 初始输入框内容(如从数据源页「让 AI 帮我写 SQL」跳转预填);仅挂载时生效 */
+  initialInput?: string;
 /** 响应器：决定谁来回应用户消息（主对话 / 调试预览等场景） */
   responder?: ChatResponder;
   /** 传入时消息自动持久化到会话 store */
@@ -61,9 +63,9 @@ interface UseChatOptions {
 const formatTime = () =>
   new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
+export function useChat({ initialMessages = [], initialInput = "", responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput);
   const [isSending, setIsSending] = useState(false);
   const model = useModelProviders((s) => s.defaultModel);
   /** 对话框思考等级:全局覆写(持久);undefined = 跟随设置页该模型默认 */

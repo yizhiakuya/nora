@@ -21,6 +21,8 @@ export default function ChatPage() {
   const defaultModel = useModelProviders((s) => s.defaultModel);
   const syncProviders = useModelProviders((s) => s.syncFromBackend);
   const [copied, setCopied] = useState(false);
+  // 跨页跳转预填(如数据源页「让 AI 帮我写 SQL」带 ?prompt=...):只读一次,避免后续重挂载重复填入
+  const [prefillPrompt] = useState(() => new URLSearchParams(window.location.search).get("prompt") ?? "");
 
   useEffect(() => {
     void syncProviders().catch(() => undefined);
@@ -112,7 +114,7 @@ export default function ChatPage() {
       <div className="flex-1 flex overflow-hidden">
         {active ? (
           <div key={active.id} className="flex-1 relative flex flex-col min-w-0">
-            <ChatConversation sessionId={active.id} initialMessages={active.messages} />
+            <ChatConversation sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} />
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
