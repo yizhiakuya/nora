@@ -83,7 +83,7 @@ export default function DataSourcesPage() {
             <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
               <Database className="w-5 h-5 text-purple-600 dark:text-purple-400" /> 数据源
             </h1>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-[13px] text-muted-foreground mt-1.5">
               连接开发/测试数据库，浏览 Schema，执行查询——AI 可读取表结构辅助生成 SQL。
             </p>
           </div>
@@ -103,7 +103,7 @@ export default function DataSourcesPage() {
                       role="tab"
                       aria-selected={activeView === tab}
                       onClick={() => setActiveView(tab)}
-                      className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${activeView === tab ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                      className={`px-4 py-2 text-[13px] font-medium rounded-md cursor-pointer transition-all ${activeView === tab ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                     >
                       {tab}
                     </button>

@@ -136,21 +136,21 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
       {/* SQL Editor */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50">
-          <span className="text-xs font-bold text-foreground font-mono">{database} › SQL</span>
+          <span className="text-sm font-bold text-foreground font-mono">{database} › SQL</span>
           <Button
             size="sm"
-            className="h-7 text-xs bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600"
+            className="h-8 text-[13px] bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600"
             onClick={handleRun}
             disabled={isRunning || !sql.trim()}
           >
-            {isRunning ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
+            {isRunning ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1" />}
             运行
           </Button>
         </div>
         <div className="relative">
           <textarea
             rows={4}
-            className="w-full bg-[#1e1e1e] text-gray-300 font-mono text-xs leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
+            className="w-full bg-[#1e1e1e] text-gray-300 font-mono text-[13px] leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
             placeholder="-- 只读查询（SELECT / SHOW / EXPLAIN），或点击下方 AI 生成"
             value={sql}
             onChange={(e) => setSql(e.target.value)}
@@ -161,11 +161,11 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
           <button
             type="button"
             onClick={askAi}
-            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
+            className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
           >
             <Sparkles className="w-2.5 h-2.5" /> 让 AI 写 SQL（跳转对话，可读表结构）
           </button>
-          <span className="text-[10px] text-muted-foreground ml-auto">⌘+Enter 运行</span>
+          <span className="text-[11px] text-muted-foreground ml-auto">⌘+Enter 运行</span>
         </div>
       </div>
 
@@ -187,33 +187,33 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
       {!isRunning && hasRun && !runError && result && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center justify-between">
-            <span className="text-xs font-bold text-foreground">结果</span>
+            <span className="text-[13px] font-bold text-foreground">结果</span>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-green-600 dark:text-green-400">
+              <span className="text-[11px] text-green-600 dark:text-green-400">
                 ✓ {result.rowCount} rows · {result.durationMs}ms
               </span>
               <button
                 type="button"
                 onClick={() => downloadCsv(displayColumns, displayRows)}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
               >
                 <Download className="w-2.5 h-2.5" /> 导出 CSV
               </button>
               <button
                 type="button"
                 onClick={saveAsAutomation}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
               >
                 <Zap className="w-2.5 h-2.5" /> 保存为自动任务
               </button>
             </div>
           </div>
           <div className="max-h-80 overflow-y-auto custom-scroll">
-            <table className="w-full text-xs">
+            <table className="w-full text-[13px]">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-muted border-b border-border text-muted-foreground">
                   {displayColumns.map((c) => (
-                    <th key={c} className="p-2.5 text-left font-medium bg-muted">{c}</th>
+                    <th key={c} className="p-3 text-left font-medium bg-muted">{c}</th>
                   ))}
                 </tr>
               </thead>
@@ -221,7 +221,7 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
                 {displayRows.map((row, i) => (
                   <tr key={i} className="border-b border-border last:border-0 text-foreground">
                     {row.map((cell, j) => (
-                      <td key={j} className="p-2.5 font-mono">
+                      <td key={j} className="p-3 font-mono">
                         {cell ?? <span className="text-muted-foreground italic">NULL</span>}
                       </td>
                     ))}
@@ -236,15 +236,15 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
       {/* History */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
-          <History className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-bold text-foreground">查询历史</span>
-          <span className="text-[10px] text-muted-foreground ml-auto">{history.length} 条</span>
+          <History className="w-4 h-4 text-muted-foreground" />
+          <span className="text-[13px] font-bold text-foreground">查询历史</span>
+          <span className="text-[11px] text-muted-foreground ml-auto">{history.length} 条</span>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-48 overflow-y-auto custom-scroll">
           {history.length === 0 ? (
             <div className="py-8 flex flex-col items-center text-muted-foreground gap-1.5">
-              <History className="w-5 h-5 opacity-20" />
-              <span className="text-xs">暂无查询历史</span>
+              <History className="w-6 h-6 opacity-20" />
+              <span className="text-[13px]">暂无查询历史</span>
             </div>
           ) : (
             history.map((q) => (
@@ -252,15 +252,15 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
                 key={q.id}
                 type="button"
                 onClick={() => setSql(q.sql)}
-                className="w-full px-4 py-2 text-left hover:bg-muted/50 transition-colors cursor-pointer group"
+                className="w-full px-4 py-2.5 text-left hover:bg-muted/50 transition-colors cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-0.5">
-                  <span className={`text-[10px] font-medium ${q.status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                  <span className={`text-[11px] font-medium ${q.status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                     {q.status === "success" ? `✓ ${q.rowsAffected} rows · ${q.duration}` : "✗ ERROR"}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">{q.time}</span>
+                  <span className="text-[11px] text-muted-foreground">{q.time}</span>
                 </div>
-                <code className="text-[11px] font-mono text-muted-foreground truncate block group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                <code className="text-xs font-mono text-muted-foreground truncate block group-hover:text-blue-600 dark:group-hover:text-blue-400">
                   {q.sql}
                 </code>
               </button>

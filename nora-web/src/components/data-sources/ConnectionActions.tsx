@@ -54,22 +54,22 @@ export function ConnectionActions({ connectionId, name, database }: ConnectionAc
       <button
         type="button"
         onClick={handleAskAi}
-        className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
+        className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
       >
         ✨ 让 AI 帮我写 SQL
       </button>
-      <Button variant="outline" size="sm" className="h-7 text-[11px] px-2.5" onClick={handleTest} disabled={testing}>
-        {testing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+      <Button variant="outline" size="sm" className="h-8 text-xs px-3" onClick={handleTest} disabled={testing}>
+        {testing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
         测试连接
       </Button>
       <Button
         variant="ghost"
         size="icon"
-        className="w-7 h-7 text-muted-foreground hover:text-destructive"
+        className="w-8 h-8 text-muted-foreground hover:text-destructive"
         title="删除连接"
         onClick={handleDelete}
       >
-        <Trash2 className="w-3.5 h-3.5" />
+        <Trash2 className="w-4 h-4" />
       </Button>
     </div>
   );

@@ -45,13 +45,13 @@ export function ConnectionList({ selectedId, onSelect }: ConnectionListProps) {
             aria-selected={active}
             onClick={() => onSelect(conn.id)}
             title={`${conn.name} · ${conn.host !== "—" ? `${conn.host}:${conn.port}` : conn.database}`}
-            className={`flex items-center gap-2 pl-2.5 pr-3 h-8 rounded-lg border text-left transition-colors cursor-pointer max-w-[260px] ${active ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800" : "bg-card border-border hover:bg-muted"}`}
+            className={`flex items-center gap-2 pl-3 pr-3.5 h-9 rounded-lg border text-left transition-colors cursor-pointer max-w-[280px] ${active ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800" : "bg-card border-border hover:bg-muted"}`}
           >
-            <Icon className={`w-3.5 h-3.5 shrink-0 ${meta.color}`} />
-            <span className={`text-xs font-medium truncate ${active ? "text-blue-700 dark:text-blue-300" : "text-foreground"}`}>
+            <Icon className={`w-4 h-4 shrink-0 ${meta.color}`} />
+            <span className={`text-[13px] font-medium truncate ${active ? "text-blue-700 dark:text-blue-300" : "text-foreground"}`}>
               {conn.name}
             </span>
-            <span className="hidden sm:inline text-[10px] text-muted-foreground font-mono truncate">
+            <span className="hidden sm:inline text-[11px] text-muted-foreground font-mono truncate">
               {conn.host !== "—" ? `${conn.host}:${conn.port}` : conn.database}
             </span>
             <StatusDot status={conn.status} />
