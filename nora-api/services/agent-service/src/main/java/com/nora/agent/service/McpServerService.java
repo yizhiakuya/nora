@@ -253,15 +253,24 @@ public class McpServerService {
      * @return LLM-friendly rendering of the tool result content
      */
     public String callTool(long serverId, String toolName, String argsJson) {
+        return callToolRich(serverId, toolName, argsJson).text();
+    }
+
+    /**
+     * Rich variant of {@link #callTool}: keeps image content blocks intact so the
+     * orchestrator can feed them to vision-capable models as multimodal parts.
+     * Text rendering stays the same as before (images leave a size placeholder).
+     */
+    public McpToolResult callToolRich(long serverId, String toolName, String argsJson) {
         RawServer server = rawById(serverId);
         if (server == null) {
-            return "ERROR: mcp server " + serverId + " 不存在";
+            return McpToolResult.error("ERROR: mcp server " + serverId + " 不存在");
         }
         // 动态挂载的关键:远端服务器可能在中途挂掉/恢复,缓存的死连接必须能自愈——
         // 失败时把客户端踢出池(关闭)并重连重试一次;再失败才返回错误
         try {
             McpSyncClient client = clientFor(server);
-            return renderResult(client.callTool(new McpSchema.CallToolRequest(toolName,
+            return renderResultRich(client.callTool(new McpSchema.CallToolRequest(toolName,
                     argsJson == null || argsJson.isBlank()
                             ? Map.of()
                             : objectMapper.readValue(argsJson, Map.class))));
@@ -271,15 +280,34 @@ public class McpServerService {
             evictClient(serverId);
             try {
                 McpSyncClient fresh = clientFor(server);
-                return renderResult(fresh.callTool(new McpSchema.CallToolRequest(toolName,
+                return renderResultRich(fresh.callTool(new McpSchema.CallToolRequest(toolName,
                         argsJson == null || argsJson.isBlank()
                                 ? Map.of()
                                 : objectMapper.readValue(argsJson, Map.class))));
             } catch (Exception e) {
                 String msg = e.getMessage() == null ? e.toString() : e.getMessage();
                 log.warn("mcp callTool failed after reconnect: server={} tool={}: {}", server.name(), toolName, shorten(msg));
-                return "ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg);
+                return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
             }
+        }
+    }
+
+    /**
+     * MCP 工具调用结果:文本渲染 + 保真的图片块。
+     * images 为空 = 纯文本结果(与旧行为一致)。
+     */
+    public record McpToolResult(String text, boolean isError, List<ImageBlock> images) {
+
+        public McpToolResult {
+            if (images == null) images = List.of();
+        }
+
+        static McpToolResult error(String text) {
+            return new McpToolResult(text, true, List.of());
+        }
+
+        /** 一个图片内容块(base64 原样,不做解码)。 */
+        public record ImageBlock(String mimeType, String base64Data) {
         }
     }
 
@@ -618,21 +646,44 @@ public class McpServerService {
 
     /** Renders CallToolResult content blocks into a single text payload. */
     private String renderResult(McpSchema.CallToolResult result) {
+        return renderResultRich(result).text();
+    }
+
+    /**
+     * Renders content blocks into text **and** preserves image blocks.
+     *
+     * <p>Text blocks pass through as-is. Image blocks are appended as a short
+     * placeholder line (so a text-only model still knows something visual came
+     * back) while the raw base64 is carried alongside for vision-capable models.
+     * Unknown block types degrade to the previous "(非文本内容块: x)" line.
+     */
+    private McpToolResult renderResultRich(McpSchema.CallToolResult result) {
         StringBuilder sb = new StringBuilder();
+        List<McpToolResult.ImageBlock> images = new ArrayList<>();
         if (result.content() != null) {
             for (McpSchema.Content content : result.content()) {
                 if (content instanceof McpSchema.TextContent text) {
                     sb.append(text.text()).append('\n');
+                } else if (content instanceof McpSchema.ImageContent image) {
+                    // 图片块:文本侧留占位(避免整块 base64 进上下文),原图另存给视觉模型
+                    int kb = image.data() == null ? 0 : image.data().length() * 3 / 4 / 1024;
+                    sb.append("(图片内容块: ").append(image.mimeType() == null ? "image" : image.mimeType())
+                            .append(", ").append(kb).append("KB)\n");
+                    if (image.data() != null && !image.data().isBlank()) {
+                        images.add(new McpToolResult.ImageBlock(
+                                image.mimeType() == null ? "image/png" : image.mimeType(), image.data()));
+                    }
                 } else {
                     sb.append("(非文本内容块: ").append(content.type()).append(")\n");
                 }
             }
         }
+        boolean isError = result.isError() != null && result.isError();
         if (result.isError() != null && result.isError()) {
-            return "ERROR: " + sb.toString().strip();
+            return new McpToolResult("ERROR: " + sb.toString().strip(), true, images);
         }
         String out = sb.toString().stripTrailing();
-        return out.isEmpty() ? "(工具无返回内容)" : out;
+        return new McpToolResult(out.isEmpty() ? "(工具无返回内容)" : out, isError, images);
     }
 
     private String writeJson(Map<String, String> map) {

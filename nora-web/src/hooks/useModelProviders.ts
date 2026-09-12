@@ -16,7 +16,7 @@ export const PROTOCOL_META: Record<ProviderProtocol, { label: string; desc: stri
   ollama:    { label: "Ollama",          desc: "本地 Ollama 原生协议（/api/chat）" },
 };
 
-/** 单个模型的请求参数配置:上下文窗口 + 思考等级白名单 + 默认等级 + 协议覆盖 */
+/** 单个模型的请求参数配置:上下文窗口 + 思考等级白名单 + 默认等级 + 协议覆盖 + 识图 */
 export interface PerModelSettings {
   contextWindow?: number | null;
   /** 该模型可选的思考等级;空 = 全部可用等级 */
@@ -25,6 +25,11 @@ export interface PerModelSettings {
   defaultReasoningLevel?: string | null;
   /** 该模型的协议覆盖;null = 继承服务商协议 */
   protocol?: ProviderProtocol | null;
+  /**
+   * 识图能力：true/false = 显式开关；null/未设置 = 自适应
+   * （默认尝试附图，上游拒绝时自动跳过图片）
+   */
+  vision?: boolean | null;
 }
 
 /** 按模型 id 索引的设置表(后端 model_provider.model_settings JSONB) */

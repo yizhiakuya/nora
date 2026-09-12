@@ -69,9 +69,12 @@ public class ModelProviderService {
                         ? node.get("contextWindow").asLong() : null;
                 String protocol = node.has("protocol") && node.get("protocol").isTextual()
                         ? node.get("protocol").asText() : null;
+                // vision: 显式 true/false 覆盖;缺失 = 按模型名自动判断(见 ChatOrchestrationService)
+                Boolean vision = node.has("vision") && node.get("vision").isBoolean()
+                        ? node.get("vision").asBoolean() : null;
                 out.put(model, new PerModelSettings(contextWindow, levels,
                         node.has("defaultReasoningLevel") ? node.get("defaultReasoningLevel").asText(null) : null,
-                        protocol));
+                        protocol, vision));
             }
             return new ModelSettings(out);
         } catch (Exception e) {
@@ -94,6 +97,8 @@ public class ModelProviderService {
                 if (value.defaultReasoningLevel() != null) node.put("defaultReasoningLevel", value.defaultReasoningLevel());
                 // 每模型协议覆盖(openai/responses/...);null = 继承服务商协议
                 if (value.protocol() != null && !value.protocol().isBlank()) node.put("protocol", value.protocol());
+                // 识图能力开关:null = 按模型名自动判断,不落库(保持列干净)
+                if (value.vision() != null) node.put("vision", value.vision());
             }
             return objectMapper.writeValueAsString(root);
         } catch (Exception e) {
@@ -285,20 +290,28 @@ public class ModelProviderService {
     /**
      * One model's settings. {@code reasoningLevels} empty = no restriction;
      * {@code defaultReasoningLevel} null/"auto" = family default applies;
-     * {@code protocol} null = inherit the provider-level protocol.
+     * {@code protocol} null = inherit the provider-level protocol;
+     * {@code vision} null = auto-detect from the model name, TRUE/FALSE = forced.
      */
     public record PerModelSettings(Long contextWindow, List<String> reasoningLevels,
-                                   String defaultReasoningLevel, String protocol) {
+                                   String defaultReasoningLevel, String protocol,
+                                   Boolean vision) {
 
         public PerModelSettings {
             // Jackson 对缺失字段给 null;规范化为空列表,避免调用方 NPE
             if (reasoningLevels == null) reasoningLevels = List.of();
         }
 
-        /** Jackson-compatible constructor: protocol is optional in payloads. */
+        /** Jackson-compatible constructor: protocol/vision are optional in payloads. */
         public PerModelSettings(Long contextWindow, List<String> reasoningLevels,
                                 String defaultReasoningLevel) {
-            this(contextWindow, reasoningLevels, defaultReasoningLevel, null);
+            this(contextWindow, reasoningLevels, defaultReasoningLevel, null, null);
+        }
+
+        /** Jackson-compatible constructor: vision is optional in payloads. */
+        public PerModelSettings(Long contextWindow, List<String> reasoningLevels,
+                                String defaultReasoningLevel, String protocol) {
+            this(contextWindow, reasoningLevels, defaultReasoningLevel, protocol, null);
         }
     }
 

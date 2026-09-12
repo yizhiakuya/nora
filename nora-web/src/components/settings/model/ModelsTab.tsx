@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
 import { useModelProviders, type PerModelSettings } from "@/hooks/useModelProviders";
 import { ReasoningLevelPicker } from "@/components/settings/model/ReasoningLevelConfig";
+import { Switch } from "@/components/ui/switch";
 
 /**
  * 模型列表 tab:按服务商分组的表格(实际请求模型 / 上下文窗口 / 思考等级)。
@@ -55,9 +56,10 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
             <span className="text-[10px] text-muted-foreground ml-2">{p.models.length} 个模型</span>
           </div>
           {/* 表头 */}
-          <div className="grid grid-cols-[1fr_120px_230px] gap-3 px-4 py-2 border-b border-border/40 text-[10px] text-muted-foreground">
+          <div className="grid grid-cols-[1fr_110px_90px_220px] gap-3 px-4 py-2 border-b border-border/40 text-[10px] text-muted-foreground">
             <span>实际请求模型</span>
             <span>上下文窗口</span>
+            <span title="开启后工具返回的图片会作为图像附件发给模型；自适应 = 先尝试，不支持时自动跳过">识图</span>
             <span>思考等级</span>
           </div>
           <div className="divide-y divide-border/40">
@@ -67,7 +69,7 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
               const defaultLevel = settings.defaultReasoningLevel ?? null;
               const setPatch = (patch: Partial<PerModelSettings>) => updateModelSettings(p.id, m, patch);
               return (
-                <div key={m} className="grid grid-cols-[1fr_120px_230px] gap-3 px-4 py-2 items-center hover:bg-muted/20 transition-colors">
+                <div key={m} className="grid grid-cols-[1fr_110px_90px_220px] gap-3 px-4 py-2 items-center hover:bg-muted/20 transition-colors">
                   <div className="min-w-0">
                     <span className="text-xs font-mono font-medium text-foreground truncate block" title={m}>{m}</span>
                     {m === defaultModel && <span className="text-[10px] text-primary">默认</span>}
@@ -82,6 +84,15 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
                     }}
                     className="h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500 transition-colors"
                   />
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={settings.vision === true}
+                      onCheckedChange={(checked) => setPatch({ vision: checked })}
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      {settings.vision === true ? "开" : settings.vision === false ? "关" : "自适应"}
+                    </span>
+                  </div>
                   <ReasoningLevelPicker
                     levels={levels}
                     defaultLevel={defaultLevel}

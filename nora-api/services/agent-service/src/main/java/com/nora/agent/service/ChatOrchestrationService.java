@@ -67,6 +67,10 @@ public class ChatOrchestrationService {
                跑命令、管数据源/技能/MCP)。用户问「你能做什么」或需要了解工作台功能时,
                先读技能「工作台使用手册」(manage_skill action=read)获取权威说明,不要凭记忆
                编造功能;不确定工作台某能力是否存在时,用工具查证而不是猜测。
+            7. 工具可能返回图片附件(如相册图片)。当图片以图像附件形式提供时,
+               直接基于你看到的内容回答;若当前模型不支持图像输入(图片会被跳过并附说明),
+               如实告知“当前模型看不到图片”并建议切换到支持识图的模型,
+               绝不要凭文件名或描述猜测图片内容。
             """;
 
     /** Default max tool rounds per chat turn (ReAct depth guard). */
@@ -335,7 +339,27 @@ public class ChatOrchestrationService {
                         return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
                     }
                     StreamTurnResult retry = null;
-                    if (isContextOverflow(result.errorMessage)) {
+                    boolean explicitVisionReject = isVisionUnsupported(result.errorMessage);
+                    boolean maybeVisionReject = !explicitVisionReject
+                            && hasImagesInMessages(messages) && isGenericUpstream400(result.errorMessage);
+                    if (explicitVisionReject || maybeVisionReject) {
+                        // 模型不支持识图(上游拒绝图片):剥离图片后重试。
+                        // 中转流式下的 400 只有模糊文案(maybeVisionReject),因此以“剥图后重试是否成功”
+                        // 作为最终判据:成功才记住结论,后续轮次直接不再附图(“不支持就不去看”)。
+                        int stripped = stripImagesFromMessages(messages);
+                        log.info("vision retry for {} ({}): stripped {} image(s), explicit={}",
+                                resolved.model(), resolved.baseUrl(), stripped, explicitVisionReject);
+                        StreamTurnResult visionRetry = streamTurn(messages, requestedModel, reasoningLevel,
+                                round + 1, eventConsumer, ttftMs, turnStartMs);
+                        if (!visionRetry.failed) {
+                            // 确认:这个模型确实看不了图(下一次直接不发图片)
+                            visionRejectedModels.add(visionKey(resolved));
+                            eventConsumer.step(new ChatStepDto("s-vision-" + round, "think", "模型不支持识图",
+                                    "已自动跳过图片内容继续回答（可在设置中切换支持识图的模型）",
+                                    0L, "completed", null, null, null, round + 1));
+                        }
+                        retry = visionRetry;
+                    } else if (isContextOverflow(result.errorMessage)) {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
                         compactForRound(messages, budget, true, PER_REQUEST_OVERHEAD_TOKENS);
                         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
@@ -377,7 +401,7 @@ public class ChatOrchestrationService {
                     String args = call.path("function").path("arguments").asText("{}");
                     String toolStepId = "s-call-" + callFingerprints.size() + "-" + callId;
                     emitToolStep(toolStepId, name, args, callFingerprints, messages, callId,
-                            round + 1, permissionMode, sessionId, eventConsumer);
+                            round + 1, permissionMode, sessionId, resolved, eventConsumer);
                     String lastResult = lastToolResult(messages);
                     if (lastResult != null) {
                         toolOutcome = lastResult;
@@ -476,6 +500,19 @@ public class ChatOrchestrationService {
                               PermissionMode permissionMode,
                               String sessionId,
                               ChatEventConsumer eventConsumer) {
+        emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
+                permissionMode, sessionId, null, eventConsumer);
+    }
+
+    /** Overload carrying the resolved LLM so image attachments can honour its vision capability. */
+    private void emitToolStep(String toolStepId, String name, String args,
+                              Map<String, Integer> fingerprints,
+                              List<WireMessage> messages, String callId,
+                              int roundIndex,
+                              PermissionMode permissionMode,
+                              String sessionId,
+                              ResolvedLlm llm,
+                              ChatEventConsumer eventConsumer) {
         ParsedArgs parsed = parseArgs(name, args);
         // 跨轮历史重建(对齐 Claude Code/Codex「工具链即历史」):step 持久化脱敏后的
         // 原始参数,下一轮把它重放为 wire 层 assistant(tool_calls)+tool(result) 对——
@@ -573,7 +610,7 @@ public class ChatOrchestrationService {
                 outcome.truncated(),
                 failure ? outcome.content() : null);
         finishToolStep(toolStepId, name, title, input, toolStart, result, status, roundIndex, eventConsumer);
-        backfillToolMessage(messages, callId, outcome.content());
+        backfillToolMessage(messages, callId, outcome.content(), outcome.images(), llm);
     }
 
     private void finishToolStep(String toolStepId, String name, String title, ChatStepDto.StepInput input,
@@ -588,18 +625,167 @@ public class ChatOrchestrationService {
 
     /** Appends the tool result message fed back to the model (RespondToModel style: errors are content, not exceptions). */
     private void backfillToolMessage(List<WireMessage> messages, String callId, String content) {
+        backfillToolMessage(messages, callId, content, java.util.List.of(), null);
+    }
+
+    /**
+     * Tool-result backfill with optional image attachments.
+     *
+     * <p>When {@code images} is non-empty and the active model can see images, the
+     * tool message carries a multimodal content array (text + image_url parts) —
+     * verified end-to-end against the relay for both chat/completions and
+     * responses protocols. Otherwise the images are dropped with an explicit note
+     * so a text-only model never silently pretends to have seen them.
+     *
+     * @param visionOverride TRUE/FALSE = forced by settings; null = runtime adaptive
+     */
+    private void backfillToolMessage(List<WireMessage> messages, String callId, String content,
+                                     java.util.List<McpServerService.McpToolResult.ImageBlock> images,
+                                     ResolvedLlm llm) {
         ObjectNode toolMsg = objectMapper.createObjectNode();
         toolMsg.put("role", "tool");
         toolMsg.put("tool_call_id", callId);
-        toolMsg.put("content", content);
+        boolean wantImages = images != null && !images.isEmpty();
+        boolean canSee = wantImages && visionAllowed(llm, images.size());
+        if (!wantImages) {
+            toolMsg.put("content", content);
+        } else if (canSee) {
+            ArrayNode parts = toolMsg.putArray("content");
+            ObjectNode textPart = parts.addObject();
+            textPart.put("type", "text");
+            textPart.put("text", content);
+            for (McpServerService.McpToolResult.ImageBlock img : images) {
+                ObjectNode imgPart = parts.addObject();
+                imgPart.put("type", "image_url");
+                imgPart.putObject("image_url")
+                        .put("url", "data:" + img.mimeType() + ";base64," + img.base64Data());
+            }
+        } else {
+            // 模型不支持识图(或探测判定不可用):图片不参与上下文,明确告知而非静默丢弃
+            toolMsg.put("content", content + "\n(注:本次工具返回了 " + images.size()
+                    + " 张图片,但当前模型不支持图像输入,图片内容未提供;如需看图请在设置中改用支持识图的模型)");
+        }
         messages.add(new WireMessage(toolMsg));
+    }
+
+    /**
+     * 记忆“上游拒绝图片”的模型:首次遇到拒绝后,后续轮次直接不再附加图片,
+     * 避免每次都要“失败→重试”白费一轮。进程内记忆(重启后重新探测)。
+     */
+    private final java.util.Set<String> visionRejectedModels = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 是否允许把图片附到该模型的请求里。
+     * 优先级:设置页显式开关 > 运行时探测记忆 > 默认尝试(上游拒绝则自动剥离)。
+     */
+    private boolean visionAllowed(ResolvedLlm llm, int imageCount) {
+        if (llm == null || imageCount <= 0) return false;
+        if (Boolean.FALSE.equals(llm.vision())) return false;
+        if (Boolean.TRUE.equals(llm.vision())) return true;
+        return !visionRejectedModels.contains(visionKey(llm));
+    }
+
+    /** 探测记忆的键:同一上游端点上的同名模型共享结论。 */
+    private static String visionKey(ResolvedLlm llm) {
+        return (llm.baseUrl() == null ? "" : llm.baseUrl()) + "|" + (llm.model() == null ? "" : llm.model());
+    }
+
+    /**
+     * 上游错误是否为“不支持图像输入”。
+     * 实测拒绝文案示例:
+     * "Model X does not support image input. Remove the image content or use a vision-capable model."
+     */
+    private static boolean isVisionUnsupported(String errorMessage) {
+        if (errorMessage == null) return false;
+        String e = errorMessage.toLowerCase();
+        return e.contains("does not support image") || e.contains("not support image")
+                || e.contains("vision-capable") || e.contains("image input")
+                || e.contains("invalid image") || e.contains("unsupported image");
+    }
+
+    /**
+     * 请求里是否携带图片附件(多模态 tool 消息)。
+     */
+    private static boolean hasImagesInMessages(List<WireMessage> messages) {
+        for (WireMessage m : messages) {
+            JsonNode content = m.node().path("content");
+            if (!content.isArray()) continue;
+            for (JsonNode part : content) {
+                if ("image_url".equals(part.path("type").asText())) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 中转以流式返回时会把上游 400 粒度化为 "Upstream error: 400"——
+     * 看不到“不支持图像输入”原文。因此当请求里带图且收到 400 时,
+     * 按“可能是识图不支持”处理(剥图重试一次,成功则记住结论)。
+     */
+    private static boolean isGenericUpstream400(String errorMessage) {
+        if (errorMessage == null) return false;
+        String e = errorMessage.toLowerCase();
+        boolean has400 = e.contains("400");
+        boolean vague = e.contains("upstream error") || e.contains("上游");
+        return has400 && vague;
+    }
+
+    /** 从 messages 里剥离所有图片附件,返回被剥离的张数。 */
+    private int stripImagesFromMessages(List<WireMessage> messages) {
+        int stripped = 0;
+        for (WireMessage m : messages) {
+            ObjectNode n = m.node();
+            if (!"tool".equals(n.path("role").asText())) continue;
+            JsonNode content = n.path("content");
+            if (!content.isArray()) continue;
+            StringBuilder text = new StringBuilder();
+            int imgs = 0;
+            for (JsonNode part : content) {
+                if ("text".equals(part.path("type").asText())) {
+                    text.append(part.path("text").asText("")).append("\n");
+                } else if ("image_url".equals(part.path("type").asText())) {
+                    imgs++;
+                }
+            }
+            if (imgs == 0) continue;
+            String body = text.toString().stripTrailing();
+            n.put("content", body + "\n(注:本次工具返回了 " + imgs
+                    + " 张图片,但当前模型不支持图像输入,图片内容未提供)");
+            stripped += imgs;
+        }
+        return stripped;
+    }
+
+    /**
+     * Extracts plain text from a tool message content node: either a plain string
+     * (legacy) or a multimodal array (text + image_url parts, new). Images are
+     * represented by a short marker so callers that only need text stay correct.
+     */
+    private static String textOfContent(JsonNode content) {
+        if (content == null || content.isMissingNode() || content.isNull()) return null;
+        if (content.isTextual()) return content.asText();
+        if (content.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode part : content) {
+                String type = part.path("type").asText("");
+                if ("text".equals(type)) {
+                    if (sb.length() > 0) sb.append('\n');
+                    sb.append(part.path("text").asText(""));
+                } else if ("image_url".equals(type)) {
+                    if (sb.length() > 0) sb.append('\n');
+                    sb.append("(\u56fe\u7247\u9644\u4ef6)");
+                }
+            }
+            return sb.toString();
+        }
+        return content.asText(null);
     }
 
     private String lastToolResult(List<WireMessage> messages) {
         for (int i = messages.size() - 1; i >= 0; i--) {
             WireMessage m = messages.get(i);
             if ("tool".equals(m.node().path("role").asText())) {
-                return m.node().path("content").asText(null);
+                return textOfContent(m.node().path("content"));
             }
             if ("assistant".equals(m.node().path("role").asText())) {
                 break;
@@ -944,7 +1130,7 @@ public class ChatOrchestrationService {
         }
         if (llmProperties.configured()) {
             return new ResolvedLlm(llmProperties.baseUrl(), llmProperties.apiKey(), llmProperties.model(), "openai",
-                    null, null);
+                    null, null, null);
         }
         return null;
     }
@@ -968,7 +1154,7 @@ public class ChatOrchestrationService {
         String protocol = perModel.protocol() != null && !perModel.protocol().isBlank()
                 ? perModel.protocol() : provider.protocol();
         return new ResolvedLlm(provider.endpoint(), provider.apiKey(), model, protocol, effectiveLevel,
-                perModel.contextWindow());
+                perModel.contextWindow(), perModel.vision());
     }
 
     /** Merges the per-request level with the per-model default from settings. */
@@ -998,7 +1184,18 @@ public class ChatOrchestrationService {
     }
 
     /** One executed tool call: bounded content plus UI-facing metadata. */
-    record ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated) {
+    record ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
+                        /** 图片附件(MCP 工具返回的 image 块);空 = 纯文本 */
+                        java.util.List<McpServerService.McpToolResult.ImageBlock> images) {
+
+        /** 纯文本结果(旧行为,保持不变) */
+        ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated) {
+            this(content, summary, rowCount, truncated, java.util.List.of());
+        }
+
+        boolean hasImages() {
+            return images != null && !images.isEmpty();
+        }
     }
 
     /**
@@ -1533,8 +1730,14 @@ public class ChatOrchestrationService {
                 return new ToolOutcome("ERROR: 找不到该工具对应的 MCP 服务器(可能已被禁用或删除): " + name,
                         null, null, false);
             }
-            return bounded(mcpServerService.callTool(server.id(), McpServerService.rawToolName(name), args),
-                    "MCP " + server.name() + " 执行完成");
+            McpServerService.McpToolResult mcpResult =
+                    mcpServerService.callToolRich(server.id(), McpServerService.rawToolName(name), args);
+            ToolOutcome mcpOutcome = bounded(mcpResult.text(), "MCP " + server.name() + " 执行完成");
+            // 保留 image 块:图片本体不参与文本截断(避免把 base64 当文本切)，
+            // 由回填层按模型识图能力决定是否附上
+            return mcpResult.images().isEmpty() ? mcpOutcome
+                    : new ToolOutcome(mcpOutcome.content(), mcpOutcome.summary(), mcpOutcome.rowCount(),
+                            mcpOutcome.truncated(), mcpResult.images());
         }
         return new ToolOutcome("ERROR: unknown tool " + name
                 + ". 可用工具：execute_sql（只读 SQL,可选 datasource 参数）、execute_write_sql（写 SQL,需批准）、"
@@ -1835,7 +2038,15 @@ public class ChatOrchestrationService {
             assistant.put("content", content.toString());
             if (!orderedCalls.isEmpty()) {
                 ArrayNode arr = assistant.putArray("tool_calls");
-                orderedCalls.forEach(arr::add);
+                for (JsonNode call : orderedCalls) {
+                    // 部分上游(实测 DeepSeek-V4-Flash)严格要求每个 tool_call 带
+                    // "type":"function",缺失即 400(报错被中转粒化为 "Upstream error: 400",
+                    // 极难定位)。这里统一补齐,对宽松上游无副作用。
+                    if (call.isObject() && !call.has("type")) {
+                        ((ObjectNode) call).put("type", "function");
+                    }
+                    arr.add(call);
+                }
             }
             sseLog.info("upstream round done: contentChars={} reasoningChars={} toolCalls={} usage={}",
                     content.length(), reasoning.length(), orderedCalls.size(),
@@ -1919,7 +2130,23 @@ public class ChatOrchestrationService {
                     ObjectNode item = input.addObject();
                     item.put("type", "function_call_output");
                     item.put("call_id", m.path("tool_call_id").asText(""));
-                    item.put("output", m.path("content").asText(""));
+                    JsonNode toolContent = m.path("content");
+                    if (toolContent.isArray()) {
+                        // 多模态工具结果:转为 output 数组(input_text + input_image)。
+                        // 实测验证:responses 协议的 function_call_output.output 支持该形式。
+                        ArrayNode outParts = item.putArray("output");
+                        for (JsonNode part : toolContent) {
+                            String pType = part.path("type").asText("");
+                            if ("text".equals(pType)) {
+                                outParts.addObject().put("type", "input_text").put("text", part.path("text").asText(""));
+                            } else if ("image_url".equals(pType)) {
+                                outParts.addObject().put("type", "input_image")
+                                        .put("image_url", part.path("image_url").path("url").asText(""));
+                            }
+                        }
+                    } else {
+                        item.put("output", toolContent.asText(""));
+                    }
                     continue;
                 }
                 if ("system".equals(role)) {
@@ -2044,7 +2271,13 @@ public class ChatOrchestrationService {
             }
             if (!orderedCalls.isEmpty()) {
                 ArrayNode arr = assistant.putArray("tool_calls");
-                orderedCalls.forEach(arr::add);
+                for (JsonNode call : orderedCalls) {
+                    // 同 openai 路径:补齐 "type":"function"(部分上游严格校验)
+                    if (call.isObject() && !call.has("type")) {
+                        ((ObjectNode) call).put("type", "function");
+                    }
+                    arr.add(call);
+                }
             }
             sseLog.info("upstream round done (responses): contentChars={} toolCalls={} usage={}",
                     content.length(), orderedCalls.size(),
@@ -2203,7 +2436,8 @@ public class ChatOrchestrationService {
     /** Returns a copy of the resolved endpoint carrying the given reasoning level. */
     private static ResolvedLlm withLevel(ResolvedLlm llm, String reasoningLevel) {
         if (llm == null) return null;
-        return new ResolvedLlm(llm.baseUrl(), llm.apiKey(), llm.model(), llm.protocol(), reasoningLevel, llm.contextWindow());
+        return new ResolvedLlm(llm.baseUrl(), llm.apiKey(), llm.model(), llm.protocol(), reasoningLevel,
+                llm.contextWindow(), llm.vision());
     }
 
     /** Returns a copy of the resolved endpoint carrying the given reasoning level. */
@@ -2213,7 +2447,12 @@ public class ChatOrchestrationService {
                        /** 生效思考等级(已合并请求级与设置页默认);null = auto */
                        String effectiveReasoningLevel,
                        /** 模型上下文窗口(tokens);null = 未配置 */
-                       Long contextWindow) {}
+                       Long contextWindow,
+                       /**
+                        * 识图能力(设置页每模型开关):TRUE/FALSE = 强制;null = 运行时自适应
+                        * (默认尝试附加图片,上游以“不支持图片”拒绝时自动剥离并记忆)。
+                        */
+                       Boolean vision) {}
 
     private ArrayNode messagesArray(List<WireMessage> messages) {
         ArrayNode array = objectMapper.createArrayNode();
@@ -2850,7 +3089,22 @@ public class ChatOrchestrationService {
         for (int i = 1; i < lastCompactable && total > limit; i++) { // i=0 system 不动
             WireMessage m = messages.get(i);
             if (!"tool".equals(m.node().path("role").asText())) continue;
-            String content = m.node().path("content").asText("");
+            JsonNode contentNode = m.node().path("content");
+            if (contentNode.isArray()) {
+                // 多模态工具结果(带图):仅压缩其中的文本部分,图片保留
+                for (JsonNode part : contentNode) {
+                    if (!"text".equals(part.path("type").asText())) continue;
+                    String t = part.path("text").asText("");
+                    String compacted = compactToolContent(t);
+                    if (compacted.equals(t)) continue;
+                    freed += ContextBudget.estimateTokens(t) - ContextBudget.estimateTokens(compacted);
+                    total -= ContextBudget.estimateTokens(t) - ContextBudget.estimateTokens(compacted);
+                    compactedCount++;
+                    ((ObjectNode) part).put("text", compacted);
+                }
+                continue;
+            }
+            String content = contentNode.asText("");
             String compacted = compactToolContent(content);
             if (compacted.equals(content)) continue; // 太短不值得
             freed += ContextBudget.estimateTokens(content) - ContextBudget.estimateTokens(compacted);
@@ -2882,7 +3136,18 @@ public class ChatOrchestrationService {
     /** 一条 wire 消息的 token 估算(content + tool_calls 参数 + 封装)。 */
     private static int messageTokens(WireMessage m) {
         ObjectNode n = m.node();
-        int tokens = ContextBudget.estimateTokens(n.path("content").asText("")) + 8;
+        JsonNode contentNode = n.path("content");
+        int tokens = ContextBudget.estimateTokens(textOfContent(contentNode) == null ? "" : textOfContent(contentNode))
+                + 8;
+        if (contentNode.isArray()) {
+            // 图片部分不计入 token 预算(base64 长度与 token 无直接关系,
+            // 上游按图像块计费);这里只给一个固定估算避免预算误判
+            for (JsonNode part : contentNode) {
+                if ("image_url".equals(part.path("type").asText())) {
+                    tokens += IMAGE_TOKEN_ESTIMATE;
+                }
+            }
+        }
         JsonNode calls = n.path("tool_calls");
         if (calls.isArray()) {
             for (JsonNode c : calls) {
@@ -3089,6 +3354,9 @@ public class ChatOrchestrationService {
      */
     /** 单条工具参数重放上限:超过则不附 rawArgs(该步退化为文本历史,防病态超长参数)。 */
     private static final int MAX_REPLAY_ARGS_CHARS = 20_000;
+
+    /** 单张图片在上下文预算里的固定估算(上游按图像块计费,与 base64 长度无关) */
+    private static final int IMAGE_TOKEN_ESTIMATE = 1_200;
 
     /** 把脱敏后的原始参数附到 typed input 上(跨轮历史重建用;null/空/非法 = 不附)。 */
     private ChatStepDto.StepInput withRawArgs(ChatStepDto.StepInput input, String args) {
