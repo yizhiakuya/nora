@@ -32,7 +32,7 @@ pnpm exec vitest run    # 单测
 
 - **单测不写断言**(2026-09-12 用户明确要求):单元测试仅作冒烟——执行代码路径、不校验结果(抛异常即失败);行为正确性由 E2E 实测验证(浏览器/curl 打真实服务)。写测试时不要加 assertEquals/verify/expect 等断言;已有的断言在改动相关文件时顺手移除
 - **代码查找优先用知识图谱**:codebase-memory MCP 已为仓库建索引(项目名 `D-claude-Nora`)——找符号用 `search_graph`、查调用链用 `trace_path`、取源码用 `get_code_snippet`、复杂多跳用 `query_graph`、先摸架构用 `get_architecture`;仅在字面文本/非代码内容、或图谱覆盖不足时才回退 Grep/Glob
-- **GitHub 操作一律用 gh CLI**(2026-09-12 用户明确要求):仓库创建/删除、PR、issue、API 查询等全走 `gh`(如 `gh repo create`、`gh api repos/...`),不要用 curl 直调 GitHub API、不要手写请求头带 token
+- **GitHub 操作一律用 gh CLI**(2026-09-12 用户明确要求):仓库创建/删除、PR、issue、release、API 查询等全走 `gh`(如 `gh repo create --push`、`gh api repos/...`),不要用 curl 直调 GitHub API、不要手写请求头带 token。日常 `git commit`/`git push` 无 gh 等价命令(gh 无 push 子命令),照常用 git;建仓库推送/发 PR/`gh repo sync` 等 gh 能代劳的推送场景优先用 gh
 - 代码注释、UI 文案用中文;错误消息带可操作的 hint
 - 前端 API 统一走 `src/lib/api/client.ts` 的 envelope(`{code,data,message}`,code=0 为成功)
 - `USE_BACKEND`(VITE_USE_BACKEND)开关控制本地 mock / 真实后端,新功能两条路都要能走
