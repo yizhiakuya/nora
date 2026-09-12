@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, PermissionMode } from "./chatApi";
-import { API_BASE, defaultTimeoutSignal } from "./client";
+import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
 
@@ -70,7 +70,15 @@ interface DonePayload {
   promptTokens?: number | null;
   ttftMs?: number | null;
 }
-interface ErrorPayload { message?: string }
+interface ErrorPayload {
+  message?: string;
+  /** 异常处理系统:分类/错误码/提示/可重试/链路 ID(旧后端只给 message 时全部 undefined) */
+  category?: string;
+  errorCode?: string;
+  hint?: string;
+  retryable?: boolean;
+  traceId?: string;
+}
 
 export function normalizeStep(step: StepPayload, index: number): ChatStep {
   const title = step.title === "调用工具 execute_sql" ? "查询数据库" : step.title === "调用工具 read_service_logs" ? "读取服务日志" : step.title;
@@ -293,7 +301,17 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         const payload = parseData<ErrorPayload>(data);
         flushPendingSteps();
         onUpdate({ error: payload?.message || "Agent 执行失败", isTyping: false, approval: undefined });
-        throw new Error(payload?.message || "Agent 执行失败");
+        // 异常处理系统:结构化错误(带分类)原样抛出——humanizeError 按 category
+        // 直接映射文案,不再字符串猜测;traceId 供报障定位
+        throw new ApiError({
+          message: payload?.message || "Agent 执行失败",
+          code: 0,
+          category: payload?.category,
+          errorCode: payload?.errorCode,
+          hint: payload?.hint,
+          retryable: payload?.retryable,
+          traceId: payload?.traceId,
+        });
       }
     }, signal);
 

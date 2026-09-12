@@ -457,7 +457,7 @@ public class AgentController {
                             } catch (Exception reflectionError) {
                                 log.warn("failed to persist agent reflection for {}: {}", sessionId, reflectionError.getMessage());
                             }
-                            String errorJson = toJson(new ErrorPayload(error.getMessage()));
+                            String errorJson = toJson(ErrorPayload.from(error));
                             turnStreams.publish(liveTurn, "error", errorJson);
                             try {
                                 emitter.send(SseEmitter.event()
@@ -513,8 +513,9 @@ public class AgentController {
                     });
         } catch (Exception e) {
             log.error("chat turn failed for session {}: {}", sessionId, e.getMessage(), e);
-            turnStreams.publish(liveTurn, "error", toJson(new ErrorPayload(e.getMessage())));
-            send(emitter, "error", new ErrorPayload(e.getMessage()));
+            ErrorPayload payload = ErrorPayload.from(e);
+            turnStreams.publish(liveTurn, "error", toJson(payload));
+            send(emitter, "error", payload);
             emitter.complete();
         } finally {
             turnStreams.finish(sessionId, liveTurn);
@@ -608,7 +609,32 @@ public class AgentController {
         }
     }
 
-    /** SSE error payload. */
-    public record ErrorPayload(String message) {
+    /**
+     * SSE error payload(异常处理系统 2026-09-12):除 message 外携带分类/错误码/
+     * 提示/可重试/traceId,前端 humanizeError 直接按结构映射文案与「重试」按钮,
+     * 不再字符串匹配。旧字段 message 保留(旧前端零改动)。
+     */
+    public record ErrorPayload(String message, String category, String errorCode,
+                               String hint, Boolean retryable, String traceId) {
+
+        /** 兼容构造器:仅 message(内部旧调用点)。 */
+        public ErrorPayload(String message) {
+            this(message, null, null, null, null, null);
+        }
+
+        /** 从任意异常构造:BusinessException 提取结构化字段,其余归 INTERNAL/UNAVAILABLE。 */
+        public static ErrorPayload from(Throwable error) {
+            String traceId = com.nora.common.logging.TraceContext.traceId();
+            String message = error == null || error.getMessage() == null ? "unknown error" : error.getMessage();
+            if (error instanceof com.nora.common.exception.BusinessException be) {
+                return new ErrorPayload(message, be.getCategory().name(), be.getErrorCode(),
+                        be.getHint(), be.isRetryable(), traceId);
+            }
+            if (error instanceof IllegalArgumentException) {
+                return new ErrorPayload(message, "VALIDATION", null, null, false, traceId);
+            }
+            return new ErrorPayload(message, "INTERNAL", null,
+                    "请把 traceId 提供给管理员排障", false, traceId);
+        }
     }
 }

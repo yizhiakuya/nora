@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -48,7 +49,8 @@ public class ServiceController {
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
         factory.setReadTimeout(180_000); // agent 分析覆盖 RAG + 工具循环
-        this.agentClient = RestClient.builder().baseUrl(agentBaseUrl).requestFactory(factory).build();
+        this.agentClient = RestClient.builder().baseUrl(agentBaseUrl).requestFactory(factory)
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create()).build();
     }
 
     @GetMapping("/health")

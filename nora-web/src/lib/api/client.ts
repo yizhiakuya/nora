@@ -28,6 +28,48 @@ interface ApiEnvelope<T> {
   code: number;
   data: T;
   message?: string;
+  /** 错误分类(异常处理系统):VALIDATION/DEPENDENCY/TIMEOUT/... */
+  category?: string;
+  /** 稳定错误码(前端精确分支用) */
+  errorCode?: string;
+  /** 可操作建议(直接展示) */
+  hint?: string;
+  /** 是否值得重试(决定「重试」按钮) */
+  retryable?: boolean;
+  /** 链路 ID(报障定位) */
+  traceId?: string;
+}
+
+/**
+ * 结构化 API 错误(异常处理系统 2026-09-12):优先携带分类/提示/重试语义,
+ * 前端据 category 选文案与操作;raw 保留原始串供排障折叠展示。
+ */
+export class ApiError extends Error {
+  readonly code: number;
+  readonly category?: string;
+  readonly errorCode?: string;
+  readonly hint?: string;
+  readonly retryable?: boolean;
+  readonly traceId?: string;
+
+  constructor(init: {
+    message: string;
+    code: number;
+    category?: string;
+    errorCode?: string;
+    hint?: string;
+    retryable?: boolean;
+    traceId?: string;
+  }) {
+    super(init.message);
+    this.name = "ApiError";
+    this.code = init.code;
+    this.category = init.category;
+    this.errorCode = init.errorCode;
+    this.hint = init.hint;
+    this.retryable = init.retryable;
+    this.traceId = init.traceId;
+  }
 }
 
 function isEnvelope<T>(payload: ApiEnvelope<T> | T): payload is ApiEnvelope<T> {
@@ -55,7 +97,15 @@ async function parseBody<T>(response: Response): Promise<T> {
 
   if (isEnvelope<T>(payload)) {
     if (payload.code !== 0) {
-      throw new Error(payload.message || `API error ${payload.code}`);
+      throw new ApiError({
+        message: payload.message || `API error ${payload.code}`,
+        code: payload.code,
+        category: payload.category,
+        errorCode: payload.errorCode,
+        hint: payload.hint,
+        retryable: payload.retryable,
+        traceId: payload.traceId,
+      });
     }
     return payload.data;
   }
@@ -76,9 +126,29 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
+    // 异常处理系统:错误响应也是信封——解析出分类/hint/retryable/traceId;
+    // 解析失败(网关 HTML 错误页等)退回原始文本
+    let payload: ApiEnvelope<T> | null = null;
+    try {
+      const parsed = JSON.parse(text) as ApiEnvelope<T>;
+      if (isEnvelope<T>(parsed)) payload = parsed;
+    } catch {
+      // not JSON: keep raw text
+    }
+    const serverTrace = response.headers.get("X-Nora-Trace-Id");
+    if (payload) {
+      throw new ApiError({
+        message: payload.message || `HTTP ${response.status}`,
+        code: payload.code ?? response.status,
+        category: payload.category,
+        errorCode: payload.errorCode,
+        hint: payload.hint,
+        retryable: payload.retryable,
+        traceId: payload.traceId ?? (response.status >= 500 ? serverTrace ?? undefined : undefined),
+      });
+    }
     // 500 类错误:响应头里有服务端 traceId,拼进错误消息——用户复制会话 ID
     // 报障时,后端日志能按这个 ID 直接定位到当次请求
-    const serverTrace = response.headers.get("X-Nora-Trace-Id");
     const traceSuffix = response.status >= 500 && serverTrace ? ` [trace=${serverTrace}]` : "";
     throw new Error((text || `HTTP ${response.status}`) + traceSuffix);
   }

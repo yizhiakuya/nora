@@ -4,6 +4,7 @@ import com.nora.common.http.ProxyProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -30,6 +31,7 @@ public class AgentConfig {
     public RestClient ragServiceRestClient(RagServiceProperties ragServiceProperties) {
         return RestClient.builder()
                 .baseUrl(ragServiceProperties.baseUrl())
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())
                 .build();
     }
 
@@ -43,6 +45,7 @@ public class AgentConfig {
     public RestClient datasourceServiceRestClient(DatasourceServiceProperties properties) {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())
                 .build();
     }
 
@@ -56,6 +59,7 @@ public class AgentConfig {
     public RestClient envServiceRestClient(EnvServiceProperties properties) {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())
                 .build();
     }
 
@@ -69,6 +73,7 @@ public class AgentConfig {
     public RestClient fileServiceRestClient(FileServiceProperties properties) {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())
                 .build();
     }
 }

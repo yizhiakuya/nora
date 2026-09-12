@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 
 import com.nora.automation.service.AutomationService;
@@ -25,7 +26,8 @@ public class AutomationConfig {
     @Bean
     public RestClient datasourceServiceRestClient(
             @Value("${nora.datasource.base-url:http://localhost:8084}") String baseUrl) {
-        return RestClient.builder().baseUrl(baseUrl).build();
+        return RestClient.builder().baseUrl(baseUrl)
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create()).build();
     }
 
     /**
@@ -42,7 +44,8 @@ public class AutomationConfig {
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
         factory.setReadTimeout(180_000); // agent run covers RAG + tool loop
-        return RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create()).build();
     }
 
     /** Fires due rules every minute. */

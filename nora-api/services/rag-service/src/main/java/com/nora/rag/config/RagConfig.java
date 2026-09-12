@@ -4,6 +4,7 @@ import com.nora.common.http.ProxyProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -24,6 +25,7 @@ public class RagConfig {
     public RestClient fileServiceRestClient(FileServiceProperties fileServiceProperties) {
         return RestClient.builder()
                 .baseUrl(fileServiceProperties.baseUrl())
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())
                 .build();
     }
 }

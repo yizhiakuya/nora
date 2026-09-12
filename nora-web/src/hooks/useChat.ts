@@ -294,9 +294,8 @@ export function useChat({ initialMessages = [], responder = AgentAPI.sendMessage
           updateMessage(assistantMsgId, { isTyping: false, stopped: true });
           return;
         }
-        // 错误人性化:原始串进 details 折叠,人话文案 + hint 外显
-        const raw = (error as Error)?.message || "发送失败";
-        const friendly = humanizeError(raw);
+        // 错误人性化:结构化错误(ApiError)按分类映射,原始串进 details 折叠
+        const friendly = humanizeError(error);
         updateMessage(assistantMsgId, {
           error: friendly.message,
           errorHint: friendly.hint,
