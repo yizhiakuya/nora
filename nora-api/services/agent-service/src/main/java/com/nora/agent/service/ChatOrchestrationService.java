@@ -2233,7 +2233,9 @@ public class ChatOrchestrationService {
         sqlFn.put("name", "execute_sql");
         sqlFn.put("description", "在已连接的数据库上执行只读 SQL 查询并返回真实结果。需要数据库统计、表数据时必须使用此工具。"
                 + "限制：仅允许单条 SELECT/SHOW/EXPLAIN 语句；一次调用一条语句；不允许 INSERT/UPDATE/DELETE/DDL；"
-                + "结果最多返回 50 行,超长会被截断——请先加 LIMIT 探查再逐步细化。示例:{\"sql\": \"SELECT status, COUNT(*) FROM orders GROUP BY status\"}");
+                + "结果最多返回 50 行,超长会被截断——请先加 LIMIT 探查再逐步细化。"
+                + "Redis 连接(engine=redis)时此处填只读 Redis 命令(如 GET k / HGETALL k / KEYS pattern / SCAN 0 MATCH p / TYPE k / TTL k),写命令会被拒绝。"
+                + "示例:{\"sql\": \"SELECT status, COUNT(*) FROM orders GROUP BY status\"}");
         ObjectNode sqlParams = sqlFn.putObject("parameters");
         sqlParams.put("type", "object");
         sqlParams.put("additionalProperties", false);
@@ -2357,7 +2359,7 @@ public class ChatOrchestrationService {
         dsTargetProp.put("description", "test/schema/remove 时:目标数据源的名称或 id");
         ObjectNode dsEngineProp = dsProps.putObject("engine");
         dsEngineProp.put("type", "string");
-        dsEngineProp.put("description", "create 时:postgresql 或 mysql");
+        dsEngineProp.put("description", "create 时:postgresql / mysql / redis(redis 的 database 填逻辑库编号 0-15)");
         ObjectNode dsHostProp = dsProps.putObject("host");
         dsHostProp.put("type", "string");
         dsHostProp.put("description", "create 时:数据库主机名或 IP");

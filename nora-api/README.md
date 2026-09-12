@@ -37,7 +37,7 @@ Nora 个人工作台 Java 后端。设计文档见 [docs/](docs/)：
 | file-service | 8081 | `POST /files/upload`、`GET /files`、`DELETE /files`、`GET /files/{id}/preview`、`POST /files/{id}/index`、`POST /files/{id}/indexed` |
 | rag-service | 8082 | `POST /rag/index`、`POST /rag/index/text`、`GET /rag/docs`、`GET /rag/docs/{id}`(详情含 chunks)、`PATCH /rag/docs/{id}`(重命名)、`DELETE /rag/docs/{id}`、`POST /rag/docs/delete`(批量)、`POST /rag/docs/{id}/reindex`(重建向量)、`GET /rag/index/stats`、`POST /rag/search`、`POST /rag/citations` |
 | agent-service | — | `POST /chat`（SSE）、`POST /chat/approvals/{token}`、`GET /chat/sessions`、`GET /chat/sessions/{id}/messages`、`GET /chat/sessions/{id}/approvals`、`DELETE /chat/sessions/{id}`、`/models` CRUD + `/{id}/test` |
-| datasource-service | — | 连接 CRUD、`POST /{id}/test`、`GET /{id}/schema`、`POST /{id}/query`、`POST /{id}/execute`、`GET /{id}/history` |
+| datasource-service | — | 连接 CRUD、`POST /{id}/test`、`GET /{id}/schema`、`POST /{id}/query`、`POST /{id}/execute`、`GET /{id}/history`；引擎 postgresql / mysql / **redis**（键空间浏览 + 只读命令白名单） |
 | env-service | — | `GET /services`、start / stop / restart、`GET /logs` |
 | automation-service | — | 规则 CRUD、`POST /{id}/toggle`、`POST /{id}/run`、`GET /executions` |
 

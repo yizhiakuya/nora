@@ -308,8 +308,8 @@ final class RiskClassifier {
 
     /** 数据源 create 参数校验:engine 只支持白名单(JdbcConnections 同款)。 */
     static String validateDatasourceCreate(String engine, String host, Integer port, String database) {
-        if (engine == null || !Set.of("postgresql", "mysql").contains(engine.trim().toLowerCase(Locale.ROOT))) {
-            return "拒绝执行：engine 只支持 postgresql / mysql(当前:" + engine + ")";
+        if (engine == null || !Set.of("postgresql", "mysql", "redis").contains(engine.trim().toLowerCase(Locale.ROOT))) {
+            return "拒绝执行：engine 只支持 postgresql / mysql / redis(当前:" + engine + ")";
         }
         if (host == null || host.isBlank()) {
             return "拒绝执行：缺少 host 参数,无法构造 JDBC 连接";

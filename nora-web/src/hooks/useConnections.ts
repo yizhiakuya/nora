@@ -33,7 +33,8 @@ export const useConnections = create<ConnectionsState>()(
         }
       },
       addConnection: (partial) => {
-        if (USE_BACKEND && partial.username && partial.password !== undefined) {
+        // 后端模式:用户名可空(Redis 无认证/仅密码场景),以 password 是否传入作分流
+        if (USE_BACKEND && partial.password !== undefined) {
           const { username, password, ...rest } = partial;
           // 后端模式:先建记录,再立即测连通
           const optimistic: DbConnection = {
@@ -47,7 +48,8 @@ export const useConnections = create<ConnectionsState>()(
           return datasourcesApi
             .createConnection({
               name: partial.name,
-              engine: partial.engine === "mysql" ? "mysql" : "postgresql",
+              engine: partial.engine === "mysql" ? "mysql"
+                : partial.engine === "redis" ? "redis" : "postgresql",
               host: partial.host,
               port: partial.port,
               database: partial.database,

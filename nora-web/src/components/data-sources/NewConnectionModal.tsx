@@ -13,8 +13,8 @@ import { USE_BACKEND } from "@/lib/api/client";
 const ENGINES: { value: DbConnection["engine"]; label: string; defaultPort: number }[] = [
   { value: "postgresql", label: "PostgreSQL", defaultPort: 5432 },
   { value: "mysql", label: "MySQL", defaultPort: 3306 },
+  { value: "redis", label: "Redis（键值,只读浏览）", defaultPort: 6379 },
   { value: "sqlite", label: "SQLite（本地文件）", defaultPort: 0 },
-  { value: "redis", label: "Redis", defaultPort: 6379 },
 ];
 
 interface NewConnectionModalProps {
@@ -35,9 +35,9 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 后端模式仅支持 postgresql/mysql
+  // 后端模式支持 postgresql/mysql/redis(sqlite 仅本地 mock)
   const engineOptions = USE_BACKEND
-    ? ENGINES.filter((e) => e.value === "postgresql" || e.value === "mysql")
+    ? ENGINES.filter((e) => e.value === "postgresql" || e.value === "mysql" || e.value === "redis")
     : ENGINES;
 
   useEffect(() => {
@@ -57,8 +57,13 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
     setEngine(v);
     const found = ENGINES.find((e) => e.value === v);
     if (found) setPort(String(found.defaultPort));
-    if (v === "sqlite") setHost("—");
-    else if (host === "—") setHost("localhost");
+    if (v === "sqlite") {
+      setHost("—");
+    } else {
+      if (host === "—") setHost("localhost");
+      // Redis 的"数据库"是逻辑库编号(0-15),给个默认值
+      if (v === "redis" && !database.trim()) setDatabase("0");
+    }
   };
 
   const handleSubmit = async () => {
@@ -71,10 +76,12 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
       return;
     }
     if (!database.trim()) {
-      setError(engine === "sqlite" ? "数据库文件路径不能为空" : "数据库名不能为空");
+      setError(engine === "sqlite" ? "数据库文件路径不能为空"
+        : engine === "redis" ? "逻辑库编号不能为空（默认 0）" : "数据库名不能为空");
       return;
     }
-    if (USE_BACKEND && !username.trim()) {
+    // Redis 允许无认证(开发环境常见),用户名密码可留空
+    if (USE_BACKEND && engine !== "redis" && !username.trim()) {
       setError("用户名不能为空");
       return;
     }
@@ -144,10 +151,10 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
 
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-foreground">
-            {engine === "sqlite" ? "数据库文件路径" : "数据库名"}
+            {engine === "sqlite" ? "数据库文件路径" : engine === "redis" ? "逻辑库编号（0-15）" : "数据库名"}
           </label>
           <Input
-            placeholder={engine === "sqlite" ? "./data/app.db" : "myapp_dev"}
+            placeholder={engine === "sqlite" ? "./data/app.db" : engine === "redis" ? "0" : "myapp_dev"}
             className="h-9 text-sm font-mono"
             value={database}
             onChange={(e) => { setDatabase(e.target.value); setError(null); }}
@@ -157,16 +164,20 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
         {USE_BACKEND && (
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-foreground">用户名</label>
+              <label className="text-xs font-bold text-foreground">
+                用户名{engine === "redis" && <span className="font-normal text-muted-foreground">（可选,ACL）</span>}
+              </label>
               <Input
-                placeholder="postgres"
+                placeholder={engine === "redis" ? "留空 = 仅密码/无认证" : "postgres"}
                 className="h-9 text-sm font-mono"
                 value={username}
                 onChange={(e) => { setUsername(e.target.value); setError(null); }}
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-foreground">密码</label>
+              <label className="text-xs font-bold text-foreground">
+                密码{engine === "redis" && <span className="font-normal text-muted-foreground">（可选）</span>}
+              </label>
               <Input
                 type="password"
                 placeholder="••••••••"

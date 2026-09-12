@@ -53,7 +53,7 @@
 | 文件 | `filesApi.ts` | `/api/files/**` | ✅ 已接入（上传/列表/删除/预览/索引） |
 | 知识库 RAG | `ragService.ts` | `/api/rag/**` | ✅ 已接入（文档/检索/统计/引用/详情/重命名/删除/批量删除/重建索引） |
 | 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval） |
-| 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询） |
+| 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询；引擎 pg/mysql/redis，Redis 键空间浏览 + 只读命令控制台） |
 | 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE） |
 | 自动任务 | `automationsApi.ts` | `/api/automations/**` | ✅ 已接入（规则 CRUD/执行） |
 | 模型 Provider | `modelsApi.ts` | `/api/models/**` | ✅ 已接入（CRUD/连通测试） |

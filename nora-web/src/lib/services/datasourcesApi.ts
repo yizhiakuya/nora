@@ -89,7 +89,7 @@ export const datasourcesApi = {
 
   async createConnection(input: {
     name: string;
-    engine: "postgresql" | "mysql";
+    engine: "postgresql" | "mysql" | "redis";
     host: string;
     port: number;
     database: string;

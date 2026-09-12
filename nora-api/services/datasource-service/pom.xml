@@ -69,6 +69,12 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Redis key-value engine (Lettuce; version managed by spring-boot-dependencies) -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

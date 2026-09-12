@@ -31,8 +31,11 @@ export default function DataSourcesPage() {
 
   const selected = connections.find((c) => c.id === selectedId) ?? connections[0];
 
-  const handleQueryTable = (tableName: string) => {
-    setTargetSql(`SELECT * FROM ${tableName} LIMIT 20;`);
+  /** 表→控制台:JDBC 传表名(包 SELECT);Redis 传完整命令(后端已生成) */
+  const handleQueryTable = (tableNameOrCommand: string) => {
+    setTargetSql(selected?.engine === "redis"
+      ? tableNameOrCommand
+      : `SELECT * FROM ${tableNameOrCommand} LIMIT 20;`);
     setActiveView("查询控制台");
   };
 
@@ -113,10 +116,10 @@ export default function DataSourcesPage() {
               </div>
 
               {activeView === "Schema 浏览" && (
-                <SchemaBrowser database={selected.database} connectionId={selected.id} onQueryTable={handleQueryTable} />
+                <SchemaBrowser database={selected.database} connectionId={selected.id} engine={selected.engine} onQueryTable={handleQueryTable} />
               )}
               {activeView === "查询控制台" && (
-                <QueryConsole database={selected.database} connectionId={selected.id} initialSql={targetSql} />
+                <QueryConsole database={selected.database} connectionId={selected.id} engine={selected.engine} initialSql={targetSql} />
               )}
             </div>
           </div>

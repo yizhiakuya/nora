@@ -59,8 +59,8 @@ public class DatasourceServiceImpl {
         if (name == null || name.isBlank()) {
             throw new BusinessException(400, "name is required");
         }
-        if (engine == null || !List.of("postgresql", "mysql").contains(engine)) {
-            throw new BusinessException(400, "engine must be postgresql or mysql");
+        if (engine == null || !List.of("postgresql", "mysql", "redis").contains(engine)) {
+            throw new BusinessException(400, "engine must be postgresql, mysql or redis");
         }
         Long id = jdbcTemplate.queryForObject(
                 "INSERT INTO db_connection (name, engine, host, port, database, username, password, status) "
@@ -98,6 +98,9 @@ public class DatasourceServiceImpl {
 
     /** Tests connectivity: opens a real JDBC connection, measures latency. */
     public ConnectionStatus test(long id) {
+        if (isRedis(id)) {
+            return testRedis(id);
+        }
         JdbcConnections.Params params = params(id);
         long start = System.currentTimeMillis();
         try (Connection ignored = JdbcConnections.open(params)) {
@@ -110,8 +113,25 @@ public class DatasourceServiceImpl {
         }
     }
 
+    /** Tests a Redis connection: PING round-trip, measures latency. */
+    private ConnectionStatus testRedis(long id) {
+        long start = System.currentTimeMillis();
+        try (RedisConnections.Open open = RedisConnections.open(redisParams(id))) {
+            String pong = open.connection().sync().ping();
+            long latency = System.currentTimeMillis() - start;
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
+            return new ConnectionStatus(true, "连接成功 (" + pong + ")", latency);
+        } catch (Exception e) {
+            jdbcTemplate.update("UPDATE db_connection SET status = 'error' WHERE id = ? AND deleted_at IS NULL", id);
+            return new ConnectionStatus(false, shorten(e.getMessage()), null);
+        }
+    }
+
     /** Introspects the schema of the connected database. */
     public SchemaSnapshot schema(long id) {
+        if (isRedis(id)) {
+            return schemaRedis(id);
+        }
         JdbcConnections.Params params = params(id);
         try (Connection conn = JdbcConnections.open(params)) {
             DatabaseMetaData meta = conn.getMetaData();
@@ -155,11 +175,26 @@ public class DatasourceServiceImpl {
         }
     }
 
+    /** Renders the Redis key space into the generic schema shape. */
+    private SchemaSnapshot schemaRedis(long id) {
+        try (RedisConnections.Open open = RedisConnections.open(redisParams(id))) {
+            SchemaSnapshot snapshot = RedisSchema.snapshot(open.connection().sync(), redisParams(id).db());
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
+            return snapshot;
+        } catch (Exception e) {
+            jdbcTemplate.update("UPDATE db_connection SET status = 'error' WHERE id = ? AND deleted_at IS NULL", id);
+            throw new BusinessException(502, "Redis key space scan failed: " + shorten(e.getMessage()));
+        }
+    }
+
     /**
      * Executes a guarded read-only statement: at most {@value #MAX_ROWS} rows,
      * cell values rendered as strings, execution persisted to query_history.
      */
     public QueryResult executeReadOnly(long id, String sql) {
+        if (isRedis(id)) {
+            return executeRedis(id, sql);
+        }
         SqlGuard.requireReadOnly(sql);
         JdbcConnections.Params params = params(id);
         long start = System.currentTimeMillis();
@@ -212,6 +247,66 @@ public class DatasourceServiceImpl {
                         rs.getString("status"),
                         rs.getTimestamp("executed_at")),
                 id, limit);
+    }
+
+    /** Executes a guarded read-only Redis command (console path). */
+    private QueryResult executeRedis(long id, String command) {
+        List<String> argv = RedisGuard.requireReadOnly(command);
+        long start = System.currentTimeMillis();
+        try (RedisConnections.Open open = RedisConnections.open(redisParams(id))) {
+            QueryResult result = RedisExecutor.execute(open.connection().sync(), argv);
+            long duration = System.currentTimeMillis() - start;
+            saveHistory(id, command, duration, result.rowCount(), "success");
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
+            // 统一补耗时(执行器内部不知道连接耗时)
+            return new QueryResult(result.columns(), result.rows(), result.rowCount(), duration, result.truncated());
+        } catch (BusinessException e) {
+            saveHistory(id, command, System.currentTimeMillis() - start, 0, "error");
+            throw e;
+        } catch (Exception e) {
+            saveHistory(id, command, System.currentTimeMillis() - start, 0, "error");
+            throw new BusinessException(502, "Redis 命令执行失败: " + shorten(e.getMessage()));
+        }
+    }
+
+    /** True when the connection's engine is redis. */
+    private boolean isRedis(long id) {
+        String engine = jdbcTemplate.query(
+                "SELECT engine FROM db_connection WHERE id = ? AND deleted_at IS NULL",
+                (rs, rowNum) -> rs.getString("engine"), id).stream().findFirst().orElse(null);
+        if (engine == null) {
+            throw new BusinessException(404, "connection not found: " + id);
+        }
+        return "redis".equals(engine);
+    }
+
+    /** Redis connection parameters (database column holds the logical db index). */
+    private RedisConnections.Params redisParams(long id) {
+        List<RedisConnections.Params> rows = jdbcTemplate.query(
+                "SELECT host, port, username, password, database FROM db_connection WHERE id = ? AND deleted_at IS NULL",
+                (rs, rowNum) -> new RedisConnections.Params(
+                        rs.getString("host"),
+                        rs.getObject("port") == null ? null : rs.getInt("port"),
+                        rs.getString("username"),
+                        rs.getString("password"),
+                        parseDbIndex(rs.getString("database"))),
+                id);
+        if (rows.isEmpty()) {
+            throw new BusinessException(404, "connection not found: " + id);
+        }
+        return rows.get(0);
+    }
+
+    /** Redis logical db index from the database column (defaults to 0). */
+    private static Integer parseDbIndex(String database) {
+        if (database == null || database.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(database.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /**

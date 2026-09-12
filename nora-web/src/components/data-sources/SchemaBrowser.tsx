@@ -13,6 +13,8 @@ interface SchemaBrowserProps {
   database: string;
   /** 服务端连接 id(后端模式必传) */
   connectionId?: number;
+  /** 引擎类型:redis 时表=key,查询命令按 key 类型生成 */
+  engine?: string;
   onQueryTable?: (tableName: string) => void;
 }
 
@@ -21,7 +23,7 @@ interface SchemaBrowserProps {
  * 布局:左侧表列表(可过滤) + 右侧选中表的字段详情,卡片限高内部滚动,
  * 表多/字段多时不再把整页撑成长滚动。
  */
-export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBrowserProps) {
+export function SchemaBrowser({ database, connectionId, engine, onQueryTable }: SchemaBrowserProps) {
   // 未选连接时显示空态(不提供假 schema 数据)
   const backendMode = USE_BACKEND && connectionId !== undefined;
   const [serverTables, setServerTables] = useState<BackendTable[] | null>(null);
@@ -47,13 +49,21 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
     }
   }, [backendMode, connectionId]);
 
-  // 后端模式:首次进入自动拉取(静默,不弹 toast;手动点「同步 Schema」才提示)
+  // 连接切换:清空上一连接的 schema,避免显示旧数据(Redis 与 PG 表结构完全不同)
+  useEffect(() => {
+    setServerTables(null);
+    setSelectedKey(null);
+    setFilter("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendMode, connectionId]);
+
+  // 后端模式:首次进入/切换连接后自动拉取(静默,不弹 toast;手动点「同步 Schema」才提示)
   useEffect(() => {
     if (backendMode && serverTables === null && !syncing) {
       void sync({ silent: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backendMode, connectionId]);
+  }, [backendMode, connectionId, serverTables]);
 
   const tables: { schema?: string | null; name: string; comment: string; columns: BackendColumn[] }[] =
     useMemo(
@@ -87,6 +97,26 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
   /** 生成可执行的表引用:非默认 schema 需要 schema 前缀,否则查询不到 */
   const qualifiedName = (t: { schema?: string | null; name: string }) =>
     t.schema && t.schema !== "public" ? `${t.schema}.${t.name}` : t.name;
+
+  /**
+   * 查询命令:JDBC 走 SELECT;Redis 的"表"是 key,按 key 类型生成对应只读命令
+   * (类型信息编码在 comment 里,由后端 RedisSchema 生成,如 "类型 hash · TTL -1s · 3 项")。
+   */
+  const queryCommandFor = (t: { schema?: string | null; name: string; comment: string }) => {
+    if (engine !== "redis") {
+      return `SELECT * FROM ${qualifiedName(t)} LIMIT 20;`;
+    }
+    const type = /类型\s+(\w+)/.exec(t.comment)?.[1] ?? "string";
+    const key = t.name;
+    switch (type) {
+      case "hash": return `HGETALL ${key}`;
+      case "list": return `LRANGE ${key} 0 -1`;
+      case "set": return `SMEMBERS ${key}`;
+      case "zset": return `ZRANGE ${key} 0 -1`;
+      case "stream": return `XRANGE ${key} - +`;
+      default: return `GET ${key}`;
+    }
+  };
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col max-h-[calc(100vh-300px)] min-h-[380px]">
@@ -196,9 +226,9 @@ export function SchemaBrowser({ database, connectionId, onQueryTable }: SchemaBr
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs px-3 shrink-0 bg-card hover:bg-muted text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-900"
-                onClick={() => onQueryTable(qualifiedName(selectedTable!))}
+                onClick={() => onQueryTable(queryCommandFor(selectedTable!))}
               >
-                <Play className="w-3 h-3 mr-1" /> 在控制台查询此表
+                <Play className="w-3 h-3 mr-1" /> {engine === "redis" ? "在控制台查看此键" : "在控制台查询此表"}
               </Button>
             )}
           </div>

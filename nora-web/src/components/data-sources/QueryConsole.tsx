@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Play, History, Loader2, Download, Zap, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,8 @@ interface QueryConsoleProps {
   database: string;
   /** 服务端连接 id(后端模式必传) */
   connectionId?: number;
+  /** 引擎类型:redis 时执行只读 Redis 命令而非 SQL */
+  engine?: string;
   initialSql?: string;
 }
 
@@ -42,9 +44,10 @@ interface QueryConsoleProps {
  * 查询控制台:USE_BACKEND 时走 datasource-service 只读执行(限 200 行,
  * 非 SELECT/SHOW/EXPLAIN 会被后端 SqlGuard 拒绝),历史来自服务端;Mock 模式沿用模拟行为。
  */
-export function QueryConsole({ database, connectionId, initialSql }: QueryConsoleProps) {
+export function QueryConsole({ database, connectionId, engine, initialSql }: QueryConsoleProps) {
   const navigate = useNavigate();
   const backendMode = USE_BACKEND && connectionId !== undefined;
+  const isRedis = engine === "redis";
   const [sql, setSql] = useState(initialSql ?? "");
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
@@ -59,6 +62,20 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
       setSql(initialSql);
     }
   }, [initialSql]);
+
+  // 连接切换(仅切换时,挂载不清):清空上一次结果/错误,避免残留另一数据源的查询输出
+  const prevConnectionRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevConnectionRef.current;
+    prevConnectionRef.current = connectionId;
+    if (prev === undefined || prev === connectionId) return;
+    setSql("");
+    setResult(null);
+    setRunError(null);
+    setHasRun(false);
+    setHistory([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionId]);
 
   // 后端模式:拉取服务端查询历史
   const loadHistory = useCallback(async () => {
@@ -116,7 +133,7 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
 
   const saveAsAutomation = () => {
     addRule(
-      "定时执行查询：订单状态分布",
+      isRedis ? "定时执行 Redis 命令" : "定时执行查询：订单状态分布",
       "每日 09:00",
       sql.trim() || AI_SUGGEST,
     );
@@ -125,7 +142,9 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
 
   /** 让 AI 生成 SQL:跳到对话页预填(真实 agent 可读 schema 后写 SQL,不再本地假生成) */
   const askAi = () => {
-    navigate(`/chat?prompt=${encodeURIComponent(`请基于数据源「${database}」的表结构帮我写一条 SQL：`)}`);
+    navigate(`/chat?prompt=${encodeURIComponent(isRedis
+      ? `请基于 Redis 数据源「${database}」帮我写一条只读命令：`
+      : `请基于数据源「${database}」的表结构帮我写一条 SQL：`)}`);
   };
 
   const displayColumns = backendMode ? result?.columns ?? [] : RESULT_COLUMNS;
@@ -136,7 +155,7 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
       {/* SQL Editor */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50">
-          <span className="text-sm font-bold text-foreground font-mono">{database} › SQL</span>
+          <span className="text-sm font-bold text-foreground font-mono">{database} › {isRedis ? "Redis 命令" : "SQL"}</span>
           <Button
             size="sm"
             className="h-8 text-[13px] bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600"
@@ -151,7 +170,9 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
           <textarea
             rows={4}
             className="w-full bg-[#1e1e1e] text-gray-300 font-mono text-[13px] leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
-            placeholder="-- 只读查询（SELECT / SHOW / EXPLAIN），或点击下方 AI 生成"
+            placeholder={isRedis
+              ? "只读命令（GET / HGETALL / KEYS / SCAN / TYPE / TTL / LRANGE / SMEMBERS / ZRANGE / INFO …）"
+              : "-- 只读查询（SELECT / SHOW / EXPLAIN），或点击下方 AI 生成"}
             value={sql}
             onChange={(e) => setSql(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleRun(); }}
@@ -163,7 +184,7 @@ export function QueryConsole({ database, connectionId, initialSql }: QueryConsol
             onClick={askAi}
             className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
           >
-            <Sparkles className="w-2.5 h-2.5" /> 让 AI 写 SQL（跳转对话，可读表结构）
+            <Sparkles className="w-2.5 h-2.5" /> {isRedis ? "让 AI 写命令（跳转对话）" : "让 AI 写 SQL（跳转对话，可读表结构）"}
           </button>
           <span className="text-[11px] text-muted-foreground ml-auto">⌘+Enter 运行</span>
         </div>
