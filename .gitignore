@@ -29,3 +29,6 @@ logs/
 
 # agent workspace (private memory: user prefs / agent notes — back up separately)
 agent-workspace/
+
+# bundled pwsh runtime (extracted cache; the archive itself is tracked via git-lfs)
+tools/pwsh/pwsh-*/

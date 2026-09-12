@@ -2595,7 +2595,7 @@ public class ChatOrchestrationService {
         cmdFn.put("name", "run_command");
         cmdFn.put("description", "在本机终端运行一条非交互命令(构建/测试/git/npm/pip/查进程等)。"
                 + "工作目录默认是你的工作区;相对 cwd 相对工作区解析,绝对 cwd 可指向整机任意目录。"
-                + "Windows 默认 PowerShell,也可显式 shell=bash(git bash)。"
+                + "Windows 默认 PowerShell 7(Nora 内置,版本确定),也可显式 shell=bash(git bash)。"
                 + "注意:命令无 TTY——不要运行交互式程序(vim/需要输入确认的),会挂起到超时;"
                 + "长时间命令(构建/下载)显式传更大的 timeout(秒,上限 300);"
                 + "运行前用户会按权限档位收到审批请求。示例:{\"command\": \"npm test\", \"cwd\": \"D:/projects/app\"}");
@@ -2614,7 +2614,7 @@ public class ChatOrchestrationService {
         cmdTimeoutProp.put("description", "超时秒数(可选,默认 60,上限 300);构建/安装类给 120-300");
         ObjectNode cmdShellProp = cmdProps.putObject("shell");
         cmdShellProp.put("type", "string");
-        cmdShellProp.put("description", "powershell(默认)或 bash(需要 git bash);省略=平台默认");
+        cmdShellProp.put("description", "powershell(默认,Nora 内置 pwsh 7)或 bash(需要 git bash);省略=平台默认");
         ObjectNode cmdDescProp = cmdProps.putObject("description");
         cmdDescProp.put("type", "string");
         cmdDescProp.put("description", "一句话描述这次命令要做什么,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"

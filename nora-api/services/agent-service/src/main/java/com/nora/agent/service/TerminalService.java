@@ -2,19 +2,24 @@ package com.nora.agent.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * 本机终端执行(agent 的 run_command 工具):非交互式命令,进程树超时清理。
@@ -54,10 +59,31 @@ public class TerminalService {
     /** 实时快照保留的尾部字符数(终端习惯看最新输出)。 */
     static final int PROGRESS_PREVIEW_CHARS = 4_000;
 
-    private final Path workspaceRoot;
+    /** 内置 PowerShell 版本(随仓库 tools/pwsh 经 git-lfs 分发,首次使用解压到缓存目录)。 */
+    static final String BUNDLED_PWSH_VERSION = "7.6.6";
+    /** 内置 PowerShell 归档的默认路径(仓库根 tools/pwsh;可配 nora.agent.pwsh-bundle)。 */
+    static final String DEFAULT_PWSH_BUNDLE =
+            "D:/claude/Nora/tools/pwsh/PowerShell-" + BUNDLED_PWSH_VERSION + "-win-x64.zip";
 
-    public TerminalService(@Value("${nora.agent.workspace:" + AgentWorkspaceService.DEFAULT_ROOT + "}") String workspacePath) {
+    private final Path workspaceRoot;
+    /** 显式指定的 pwsh 可执行文件(可配 nora.agent.powershell);空=自动(内置→PATH)。 */
+    private final String pwshOverride;
+    /** 内置 pwsh 归档路径(可配 nora.agent.pwsh-bundle);null/空=禁用内置。 */
+    private final Path pwshBundle;
+
+    @Autowired
+    public TerminalService(
+            @Value("${nora.agent.workspace:" + AgentWorkspaceService.DEFAULT_ROOT + "}") String workspacePath,
+            @Value("${nora.agent.powershell:}") String pwshOverride,
+            @Value("${nora.agent.pwsh-bundle:" + DEFAULT_PWSH_BUNDLE + "}") String pwshBundle) {
         this.workspaceRoot = Path.of(workspacePath).toAbsolutePath().normalize();
+        this.pwshOverride = pwshOverride;
+        this.pwshBundle = (pwshBundle == null || pwshBundle.isBlank()) ? null : Path.of(pwshBundle).toAbsolutePath().normalize();
+    }
+
+    /** 便捷构造器(测试用):工作区 + 默认内置 pwsh,无显式覆盖。 */
+    public TerminalService(String workspacePath) {
+        this(workspacePath, "", DEFAULT_PWSH_BUNDLE);
     }
 
     /** 一次命令执行的结果。 */
@@ -303,7 +329,8 @@ public class TerminalService {
 
     /**
      * 组装 argv:
-     * - powershell:-EncodedCommand 传 Base64(UTF-16LE)脚本——命令里的引号/换行/美元符
+     * - powershell:内置 pwsh 7(优先)→ 显式覆盖 → PATH 上的 pwsh;
+     *   -EncodedCommand 传 Base64(UTF-16LE)脚本——命令里的引号/换行/美元符
      *   全部免转义;脚本前置 UTF-8 输出编码 + ProgressPreference=SilentlyContinue
      *   (中文 Windows 默认 GBK 乱码;进度流被重定向时会序列化成 CLIXML 噪音)
      * - bash:-lc 单参数直接传(调用方已把整条命令作为一个 argv)
@@ -318,8 +345,140 @@ public class TerminalService {
                 + "$ErrorActionPreference='Continue'; "
                 + command;
         String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_16LE));
-        return List.of("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        return List.of(powershellExecutable(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                 "-EncodedCommand", encoded);
+    }
+
+    /**
+     * 解析 PowerShell 可执行文件(优先内置,保证版本确定、不依赖宿主机):
+     * <ol>
+     *   <li>显式配置 {@code nora.agent.powershell}(绝对路径或命令名)</li>
+     *   <li>内置 pwsh 7:归档解压到缓存目录(首次使用一次性解压,之后命中)</li>
+     *   <li>PATH 上的 {@code pwsh}(用户已装 PowerShell 7+)</li>
+     *   <li>兜底 {@code powershell.exe}(系统自带 5.1)</li>
+     * </ol>
+     */
+    private String powershellExecutable() {
+        if (pwshOverride != null && !pwshOverride.isBlank()) {
+            return pwshOverride.trim();
+        }
+        Path bundled = bundledPwsh();
+        if (bundled != null) {
+            return bundled.toString();
+        }
+        if (pwshOnPath()) {
+            return "pwsh";
+        }
+        return "powershell.exe";
+    }
+
+    /** 内置 pwsh 可执行文件路径;未配置/归档缺失/解压失败→null(回退 PATH)。 */
+    private Path bundledPwsh() {
+        if (pwshBundle == null || !Files.isRegularFile(pwshBundle)) {
+            return null;
+        }
+        Path target = pwshBundle.getParent().resolve("pwsh-" + BUNDLED_PWSH_VERSION);
+        Path exe = target.resolve("pwsh.exe");
+        if (Files.isRegularFile(exe)) {
+            return exe;
+        }
+        // 并发首次解压会撞同一临时目录(名含 PID 不含线程):串行化,双检避免重复解压
+        synchronized (EXTRACT_LOCK) {
+            if (Files.isRegularFile(exe)) {
+                return exe;
+            }
+            return extractPwsh(pwshBundle, target, exe);
+        }
+    }
+
+    /** 解压串行化锁(同 JVM 内多会话并发首次调用命令时避免写坏同一临时目录)。 */
+    private static final Object EXTRACT_LOCK = new Object();
+
+    /**
+     * 解压内置 pwsh 归档到 {@code target}(原子化:先解到临时目录再改名,
+     * 避免并发/中断留下半成品)。成功返回 pwsh.exe 路径,失败返回 null(回退 PATH)。
+     */
+    private Path extractPwsh(Path zip, Path target, Path exe) {
+        Path tmp = target.resolveSibling(target.getFileName() + ".tmp-" + ProcessHandle.current().pid());
+        try {
+            Files.createDirectories(tmp);
+            try (ZipInputStream zin = new ZipInputStream(Files.newInputStream(zip))) {
+                ZipEntry e;
+                while ((e = zin.getNextEntry()) != null) {
+                    Path out = tmp.resolve(e.getName()).normalize();
+                    if (!out.startsWith(tmp)) {
+                        continue; // 防 zip-slip(归档路径逃逸)
+                    }
+                    if (e.isDirectory()) {
+                        Files.createDirectories(out);
+                    } else {
+                        Files.createDirectories(out.getParent());
+                        Files.copy(zin, out, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    zin.closeEntry();
+                }
+            }
+            try {
+                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException atomicFailed) {
+                // 目标可能已被并发线程建好:能读到 exe 即视为成功,否则清理重试一次
+                if (!Files.isRegularFile(exe)) {
+                    Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+                } else {
+                    deleteRecursively(tmp);
+                }
+            }
+            if (Files.isRegularFile(exe)) {
+                log.info("terminal: 内置 pwsh {} 已解压到 {}", BUNDLED_PWSH_VERSION, target);
+                return exe;
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("terminal: 内置 pwsh 解压失败({}),回退 PATH: {}", zip, e.getMessage());
+            deleteRecursively(tmp);
+            return null;
+        }
+    }
+
+    private static void deleteRecursively(Path dir) {
+        if (dir == null || !Files.exists(dir)) {
+            return;
+        }
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // 尽力清理
+                }
+            });
+        } catch (IOException ignored) {
+            // 尽力清理
+        }
+    }
+
+    /** PATH 上是否有 PowerShell 7(pwsh);启动探测一次并缓存。 */
+    private static volatile Boolean pwshOnPath;
+
+    private static boolean pwshOnPath() {
+        Boolean cached = pwshOnPath;
+        if (cached != null) {
+            return cached;
+        }
+        boolean found;
+        try {
+            Process p = new ProcessBuilder("pwsh", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major")
+                    .redirectErrorStream(true).start();
+            p.getOutputStream().close();
+            found = p.waitFor(10, TimeUnit.SECONDS) && p.exitValue() == 0;
+            if (p.isAlive()) {
+                p.destroyForcibly();
+            }
+        } catch (Exception e) {
+            found = false;
+        }
+        pwshOnPath = found;
+        return found;
     }
 
     private static String bashExecutable() {

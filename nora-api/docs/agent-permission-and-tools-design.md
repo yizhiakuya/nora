@@ -124,7 +124,8 @@ needApproval = mode == ASK
 - 无人值守通道（automation）：HIGH 按设计放行——定时任务可跑命令（需要禁止时改 `RiskClassifier` 一行）
 
 **实现要点**（`TerminalService`）：
-- Windows 默认 PowerShell，命令经 **`-EncodedCommand`（Base64 UTF-16LE）** 传入——引号/换行/美元符全部免转义
+- **PowerShell 用 Nora 内置 pwsh 7.6.6**（`tools/pwsh/PowerShell-7.6.6-win-x64.zip` 经 **git-lfs** 分发；首次使用解压到同目录 `pwsh-7.6.6/` 缓存，之后命中）——版本确定、不依赖宿主机装没装/装的对不对。解析优先级：配置 `nora.agent.powershell` → 内置 → PATH 上的 `pwsh` → 系统 `powershell.exe`(5.1) 兜底；归档缺失/解压失败自动回退（不阻断）。解压原子化（临时目录→改名，防 zip-slip），`tools/pwsh/pwsh-*/` 已 gitignore
+- 命令经 **`-EncodedCommand`（Base64 UTF-16LE）** 传入——引号/换行/美元符全部免转义
 - **编码**：强制 `[Console]::OutputEncoding=UTF8`（中文 Windows 默认 GBK 乱码）；**`$ProgressPreference='SilentlyContinue'` + `stripClixml` 按行过滤**——实测 npm 首次运行进度会被 PowerShell 序列化成 CLIXML 噪音污染模型上下文
 - bash 优先 git bash 固定路径（`C:/Program Files/Git/bin/bash.exe`）——Windows 裸 `bash` 会解析到 WSL 转发器（无发行版时报 `execvpe(/bin/bash) failed`）
 - **超时/取消杀进程树**：taskkill /T + 后代句柄快照兜底（与 MCP STDIO 同一套机制）；「停止生成」中断编排线程 → 命令被终止（`cancelled` 标记）

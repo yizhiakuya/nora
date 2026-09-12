@@ -27,6 +27,13 @@ nora:
   agent:
     # ReAct depth guard: max tool rounds per chat turn (harness convention 10-25)
     max-tool-rounds: 10
+    # 本机终端(run_command)的 PowerShell:
+    #   默认优先用随仓库分发的内置 pwsh 7(tools/pwsh,首次使用解压到同目录 pwsh-<ver>),
+    #   保证版本确定、不依赖宿主机;解压失败/归档缺失时回退 PATH 上的 pwsh,再兜底系统 powershell.exe(5.1)。
+    # powershell: 显式指定 pwsh 可执行文件(绝对路径或命令名);空=自动(内置→PATH)
+    powershell: ${NORA_POWERSHELL:}
+    # pwsh-bundle: 内置 pwsh 归档(zip)路径;空=禁用内置(直接用 PATH)
+    pwsh-bundle: ${NORA_PWSH_BUNDLE:D:/claude/Nora/tools/pwsh/PowerShell-7.6.6-win-x64.zip}
   proxy:
     # 出站代理:外网目标(LLM 上游/Jina embedding)经此转发,内网服务互调始终直连。
     # 环境变量覆盖:NORA_PROXY_ENABLED / NORA_PROXY_HOST / NORA_PROXY_PORT
