@@ -25,10 +25,10 @@ public class ModelProviderService {
         this.objectMapper = objectMapper;
     }
 
-    /** Lists providers with masked keys (frontend ModelProvider[]). */
+    /** Lists providers with masked keys (frontend ModelProvider[]; soft-deleted excluded). */
     public List<ProviderView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider ORDER BY id",
+                "SELECT id, name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider WHERE deleted_at IS NULL ORDER BY id",
                 (rs, rowNum) -> new ProviderView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -118,7 +118,7 @@ public class ModelProviderService {
     public ProviderView update(long id, String name, String protocol, String endpoint, String apiKey,
                                Boolean enabled, List<String> models, ModelSettings modelSettings) {
         List<StoredProvider> existing = jdbcTemplate.query(
-                "SELECT name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider WHERE id = ?",
+                "SELECT name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new StoredProvider(
                         rs.getString("name"), rs.getString("protocol"), rs.getString("endpoint"),
                         rs.getString("api_key"), rs.getBoolean("enabled"),
@@ -143,40 +143,41 @@ public class ModelProviderService {
                 modelSettings != null ? modelSettings : current.modelSettings());
     }
 
-    /** Deletes by id. */
+    /** Soft-deletes by id (row kept; queries filter it out). */
     public boolean delete(long id) {
-        return jdbcTemplate.update("DELETE FROM model_provider WHERE id = ?", id) > 0;
+        return jdbcTemplate.update(
+                "UPDATE model_provider SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
-    /** Marks the connectivity status of a provider. */
+    /** Marks the connectivity status of a provider (live rows only). */
     public void markStatus(long id, String status) {
-        jdbcTemplate.update("UPDATE model_provider SET status = ? WHERE id = ?", status, id);
+        jdbcTemplate.update("UPDATE model_provider SET status = ? WHERE id = ? AND deleted_at IS NULL", status, id);
     }
 
-    /** Replaces the model list of a provider (auto-discovered from upstream). */
+    /** Replaces the model list of a provider (auto-discovered from upstream; live rows only). */
     public void updateModels(long id, List<String> models) {
-        jdbcTemplate.update("UPDATE model_provider SET models = ? WHERE id = ?",
+        jdbcTemplate.update("UPDATE model_provider SET models = ? WHERE id = ? AND deleted_at IS NULL",
                 models.toArray(new String[0]), id);
     }
 
-    /** Loads the raw endpoint+key pair for a provider (connectivity test / chat use). */
+    /** Loads the raw endpoint+key pair for a provider (connectivity test / chat use; live rows only). */
     public StoredCredentials credentials(long id) {
         List<StoredCredentials> rows = jdbcTemplate.query(
-                "SELECT endpoint, api_key FROM model_provider WHERE id = ?",
+                "SELECT endpoint, api_key FROM model_provider WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new StoredCredentials(rs.getString("endpoint"), rs.getString("api_key")),
                 id);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Returns the first enabled provider with a usable key for chat execution. */
+    /** Returns the first enabled live provider with a usable key for chat execution. */
     public ActiveProvider activeProvider() {
         List<ActiveProvider> rows = jdbcTemplate.query(
-                "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider WHERE enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' ORDER BY id",
+                "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider WHERE enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' AND deleted_at IS NULL ORDER BY id",
                 SETTINGS_ROW_MAPPER);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Returns the first enabled provider that actually serves the requested model. */
+    /** Returns the first enabled live provider that actually serves the requested model. */
     public ActiveProvider activeProvider(String requestedModel) {
         if (requestedModel == null || requestedModel.isBlank()) {
             return activeProvider();
@@ -184,7 +185,7 @@ public class ModelProviderService {
         List<ActiveProvider> rows = jdbcTemplate.query(
                 "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider "
                         + "WHERE enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' "
-                        + "AND ?::text = ANY(models) ORDER BY id",
+                        + "AND ?::text = ANY(models) AND deleted_at IS NULL ORDER BY id",
                 SETTINGS_ROW_MAPPER,
                 requestedModel);
         return rows.isEmpty() ? null : rows.get(0);

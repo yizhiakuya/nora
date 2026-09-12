@@ -116,27 +116,34 @@ class KnowledgeDocServiceTest {
 
     @Test
     void deleteDocReportsWhetherRowWasRemoved() {
-        when(jdbcTemplate.update(anyString(), eq(7L))).thenReturn(1, 0);
+        // 软删:doc 的 UPDATE 返回 1 才继续软删 chunks;第二次调用(已删)返回 0 → false
+        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(7L))).thenReturn(1, 0);
 
         assertTrue(service.deleteDoc(7L));
         assertFalse(service.deleteDoc(7L), "不存在的 id 应返回 false");
+        // chunks 只在 doc 软删成功后才标记
+        verify(jdbcTemplate).update(contains("knowledge_chunk SET deleted_at = now()"), eq(7L));
     }
 
     @Test
     void deleteDocsCountsActualDeletionsInOneStatement() {
-        // 单条 IN 删除,返回值即真实删除行数
-        when(jdbcTemplate.update(anyString(), eq(List.of(1L, 2L, 3L)))).thenReturn(2);
+        // 单条 IN 软删,返回值即真实标记行数;成功后联动软删 chunks
+        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(List.of(1L, 2L, 3L)))).thenReturn(2);
 
         assertEquals(2, service.deleteDocs(List.of(1L, 2L, 3L)));
+        verify(jdbcTemplate).update(contains("knowledge_chunk SET deleted_at = now()"), eq(List.of(1L, 2L, 3L)));
     }
 
     @Test
     void deleteDocsDedupesAndDropsNullIds() {
-        when(jdbcTemplate.update(anyString(), eq(List.of(1L, 3L)))).thenReturn(2);
+        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(List.of(1L, 3L)))).thenReturn(2);
 
         assertEquals(2, service.deleteDocs(java.util.Arrays.asList(1L, null, 3L, 1L)));
-        // 去重后的列表才应到达 SQL(重复 id 不该发两次)
-        verify(jdbcTemplate).update(contains("IN (?)"), eq(List.of(1L, 3L)));
+        // 去重后的列表才应到达 SQL(重复 id 不该发两次;doc/chunk 各一条)
+        verify(jdbcTemplate).update(
+                contains("knowledge_doc SET deleted_at = now() WHERE id IN (?)"), eq(List.of(1L, 3L)));
+        verify(jdbcTemplate).update(
+                contains("knowledge_chunk SET deleted_at = now() WHERE doc_id IN (?)"), eq(List.of(1L, 3L)));
     }
 
     @Test

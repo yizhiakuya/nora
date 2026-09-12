@@ -74,7 +74,9 @@ class IndexingServiceTest {
 
         assertEquals(9L, docId);
         var inOrder = inOrder(jdbcTemplate);
-        inOrder.verify(jdbcTemplate).update(contains("DELETE"), eq("file"), eq(42L));
+        // 软删旧文档(含 chunks):先标记 chunk 再标记 doc(子查询需 doc 存活)
+        inOrder.verify(jdbcTemplate).update(contains("SET deleted_at = now() WHERE doc_id IN"), eq("file"), eq(42L));
+        inOrder.verify(jdbcTemplate).update(contains("knowledge_doc SET deleted_at = now()"), eq("file"), eq(42L));
         inOrder.verify(jdbcTemplate).update(contains("INSERT INTO schema_rag.knowledge_chunk"),
                 eq(9L), eq(0), eq("chunk one"), eq("[0.1]"), anyInt());
         inOrder.verify(jdbcTemplate).update(contains("INSERT INTO schema_rag.knowledge_chunk"),
@@ -92,9 +94,12 @@ class IndexingServiceTest {
 
         service.indexDocument("dup.txt", "file", 7L, "1 KB", "text b");
 
-        // dedup DELETE is scoped to (source, source_id), never by display name
-        verify(jdbcTemplate).update(contains("source = ? AND source_id = ?"), eq("file"), eq(7L));
-        verify(jdbcTemplate, never()).update(contains("WHERE name"), any(), anyString());
+        // dedup 软删 scope 在 (source, source_id),绝不按 display name 误伤
+        verify(jdbcTemplate).update(
+                contains("knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id = ?"), eq("file"), eq(7L));
+        verify(jdbcTemplate).update(
+                contains("knowledge_chunk SET deleted_at = now() WHERE doc_id IN"), eq("file"), eq(7L));
+        verify(jdbcTemplate, never()).update(contains("source_id IS NULL AND name = ?"), any(), anyString());
     }
 
     @Test
@@ -106,8 +111,12 @@ class IndexingServiceTest {
 
         service.indexDocument("note.md", "chat", null, "1 KB", "text");
 
-        // 同名覆盖:按 (source, name) 清理,且不越界删其它 source 的同名行
-        verify(jdbcTemplate).update(contains("source_id IS NULL AND name = ?"), eq("chat"), eq("note.md"));
+        // 同名覆盖:按 (source, name) 软删清理,且不越界删其它 source 的同名行
+        verify(jdbcTemplate).update(
+                contains("knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ?"),
+                eq("chat"), eq("note.md"));
+        verify(jdbcTemplate).update(
+                contains("knowledge_chunk SET deleted_at = now() WHERE doc_id IN"), eq("chat"), eq("note.md"));
         verify(jdbcTemplate).update(contains("chunks = 0"), eq(5L));
     }
 
@@ -120,8 +129,8 @@ class IndexingServiceTest {
 
         service.indexDocument("dup.txt", "text", null, "1 KB", "x");
 
-        // 只删 (source,name) 命中的行;按 source_id 的清理路径必须不触发
-        verify(jdbcTemplate, never()).update(contains("source = ? AND source_id = ?"), any(), any());
+        // 只软删 (source,name) 命中的行;按 source_id 的清理路径必须不触发
+        verify(jdbcTemplate, never()).update(contains("source = ? AND source_id = ? AND deleted_at IS NULL"), any(), any());
     }
 
     @Test
@@ -196,8 +205,8 @@ class IndexingServiceTest {
 
         assertEquals(2, rebuilt);
         var inOrder = inOrder(jdbcTemplate);
-        // 先清旧 chunk,再按原 chunk_index 重新写入,doc id 不变
-        inOrder.verify(jdbcTemplate).update(contains("DELETE FROM schema_rag.knowledge_chunk"), eq(9L));
+        // 先软删旧 chunk,再按原 chunk_index 重新写入,doc id 不变
+        inOrder.verify(jdbcTemplate).update(contains("UPDATE schema_rag.knowledge_chunk SET deleted_at = now()"), eq(9L));
         inOrder.verify(jdbcTemplate).update(contains("status = 'processing'"), eq(9L));
         inOrder.verify(jdbcTemplate).update(contains("INSERT INTO schema_rag.knowledge_chunk"),
                 eq(9L), eq(0), eq("第一段"), eq("[0.1]"), anyInt());

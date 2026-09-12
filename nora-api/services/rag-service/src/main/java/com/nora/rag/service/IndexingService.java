@@ -70,13 +70,24 @@ public class IndexingService {
      */
     @Transactional
     public long indexDocument(String name, String source, Long sourceId, String size, String text) {
+        // 软删旧文档(含其 chunks):partial unique index 释放 (source, source_id) /
+        // (source, name) 去重键,新行才能插入;旧数据保留可审计
         if (sourceId != null) {
-            jdbcTemplate.update("DELETE FROM schema_rag.knowledge_doc WHERE source = ? AND source_id = ?",
+            jdbcTemplate.update(
+                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
+                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id = ? AND deleted_at IS NULL)",
+                    source, sourceId);
+            jdbcTemplate.update(
+                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id = ? AND deleted_at IS NULL",
                     source, sourceId);
         } else {
             // 同名覆盖:name-keyed 源(如对话保存)重复入库会堆行,按 (source,name) 先清旧
             jdbcTemplate.update(
-                    "DELETE FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ?",
+                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
+                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL)",
+                    source, name);
+            jdbcTemplate.update(
+                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL",
                     source, name);
         }
 
@@ -90,7 +101,7 @@ public class IndexingService {
         List<String> chunks = chunkingService.chunk(text);
         if (chunks.isEmpty()) {
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET chunks = 0, status = 'indexed', updated_at = now() WHERE id = ?",
+                    "UPDATE schema_rag.knowledge_doc SET chunks = 0, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                     docId);
             return docId;
         }
@@ -107,7 +118,7 @@ public class IndexingService {
                 );
             }
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', updated_at = now() WHERE id = ?",
+                    "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                     chunks.size(), docId);
             log.info("Indexed doc '{}' with {} chunks ({}d, model {})",
                     name, chunks.size(), embeddingProperties.dimensions(), embeddingProperties.model());
@@ -147,7 +158,7 @@ public class IndexingService {
     public int reindexChunks(long docId, List<String> texts) {
         if (texts == null || texts.isEmpty()) {
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET chunks = 0, status = 'indexed', updated_at = now() WHERE id = ?",
+                    "UPDATE schema_rag.knowledge_doc SET chunks = 0, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                     docId);
             return 0;
         }
@@ -164,9 +175,10 @@ public class IndexingService {
         }
         try {
             txTemplate.executeWithoutResult(tx -> {
-                jdbcTemplate.update("DELETE FROM schema_rag.knowledge_chunk WHERE doc_id = ?", docId);
                 jdbcTemplate.update(
-                        "UPDATE schema_rag.knowledge_doc SET status = 'processing', updated_at = now() WHERE id = ?",
+                        "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id = ? AND deleted_at IS NULL", docId);
+                jdbcTemplate.update(
+                        "UPDATE schema_rag.knowledge_doc SET status = 'processing', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                         docId);
                 for (int i = 0; i < texts.size(); i++) {
                     String content = texts.get(i);
@@ -178,7 +190,7 @@ public class IndexingService {
                     );
                 }
                 jdbcTemplate.update(
-                        "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', updated_at = now() WHERE id = ?",
+                        "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                         texts.size(), docId);
             });
             log.info("Re-indexed doc {} with {} chunks", docId, texts.size());
@@ -198,7 +210,7 @@ public class IndexingService {
         try {
             txTemplate.executeWithoutResult(tx ->
                     jdbcTemplate.update(
-                            "UPDATE schema_rag.knowledge_doc SET status = 'failed', updated_at = now() WHERE id = ?",
+                            "UPDATE schema_rag.knowledge_doc SET status = 'failed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                             docId));
         } catch (RuntimeException markerError) {
             log.warn("failed to mark doc {} as failed: {}", docId, markerError.getMessage());

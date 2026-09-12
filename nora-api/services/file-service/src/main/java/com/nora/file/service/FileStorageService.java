@@ -116,49 +116,38 @@ public class FileStorageService {
      */
     public List<FileItem> list(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
-            return jdbcTemplate.query("SELECT * FROM file_item ORDER BY id", this::mapRow);
+            return jdbcTemplate.query("SELECT * FROM file_item WHERE deleted_at IS NULL ORDER BY id", this::mapRow);
         }
         String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
         return jdbcTemplate.query(
-                "SELECT * FROM file_item WHERE id IN (" + placeholders + ") ORDER BY id",
+                "SELECT * FROM file_item WHERE id IN (" + placeholders + ") AND deleted_at IS NULL ORDER BY id",
                 this::mapRow,
                 ids.toArray());
     }
 
     /**
-     * Deletes file items by ids and removes the backing files from disk.
+     * Soft-deletes file items by ids; the backing files stay on disk
+     * (data is never physically destroyed; queries filter deleted rows out).
      * Unknown ids are skipped silently.
      *
      * @param ids ids to delete; must not be empty
-     * @return number of deleted rows
+     * @return number of soft-deleted rows
      */
     public int delete(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new BusinessException(400, "ids parameter is required");
         }
-        List<FileItem> items = list(ids);
-        if (items.isEmpty()) {
-            return 0;
-        }
-        for (FileItem item : items) {
-            String filePath = filePathOf(item.id());
-            if (filePath != null && !filePath.isBlank()) {
-                try {
-                    Files.deleteIfExists(Path.of(filePath));
-                } catch (IOException ex) {
-                    log.warn("Could not delete file on disk '{}': {}", filePath, ex.getMessage());
-                }
-            }
-        }
         String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
-        return jdbcTemplate.update("DELETE FROM file_item WHERE id IN (" + placeholders + ")", ids.toArray());
+        return jdbcTemplate.update(
+                "UPDATE file_item SET deleted_at = now() WHERE id IN (" + placeholders + ") AND deleted_at IS NULL",
+                ids.toArray());
     }
 
     /** Reads only the {@code file_path} column for the given id. */
     private String filePathOf(Long id) {
         List<String> paths = new ArrayList<>();
         jdbcTemplate.query(
-                "SELECT file_path FROM file_item WHERE id = ?",
+                "SELECT file_path FROM file_item WHERE id = ? AND deleted_at IS NULL",
                 (org.springframework.jdbc.core.RowCallbackHandler) rs -> paths.add(rs.getString("file_path")),
                 id);
         return paths.isEmpty() ? null : paths.get(0);
@@ -173,7 +162,7 @@ public class FileStorageService {
      */
     public FileItem getById(Long id) {
         List<FileItem> items = jdbcTemplate.query(
-                "SELECT * FROM file_item WHERE id = ?", this::mapRow, id);
+                "SELECT * FROM file_item WHERE id = ? AND deleted_at IS NULL", this::mapRow, id);
         if (items.isEmpty()) {
             throw new BusinessException(FILE_NOT_FOUND_CODE, "File not found: " + id);
         }
@@ -224,7 +213,7 @@ public class FileStorageService {
      */
     public FileItem markIndexed(Long id) {
         getById(id);
-        jdbcTemplate.update("UPDATE file_item SET indexed = true WHERE id = ?", id);
+        jdbcTemplate.update("UPDATE file_item SET indexed = true WHERE id = ? AND deleted_at IS NULL", id);
         return getById(id);
     }
 

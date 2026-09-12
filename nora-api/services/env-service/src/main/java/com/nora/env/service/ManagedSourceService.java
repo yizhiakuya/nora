@@ -50,7 +50,7 @@ public class ManagedSourceService {
     public List<SourceView> list() {
         return jdbcTemplate.query(
                 "SELECT id, kind, name, file_log_path, container_name, command, work_dir, enabled " +
-                        "FROM managed_source ORDER BY id",
+                        "FROM managed_source WHERE deleted_at IS NULL ORDER BY id",
                 (rs, i) -> new SourceView(
                         rs.getLong("id"),
                         rs.getString("kind"),
@@ -96,20 +96,21 @@ public class ManagedSourceService {
         return getByName(name.trim());
     }
 
-    /** 删除一条纳管源(只删清单,不动容器/文件本身)。 */
+    /** 软删除一条纳管源(只标记清单,不动容器/文件本身;名字随之释放,可重建同名)。 */
     public boolean delete(long id) {
-        return jdbcTemplate.update("DELETE FROM managed_source WHERE id = ?", id) > 0;
+        return jdbcTemplate.update(
+                "UPDATE managed_source SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     /** 暂停/恢复纳管(暂停后 /services 不再返回该项)。 */
     public boolean setEnabled(long id, boolean enabled) {
-        return jdbcTemplate.update("UPDATE managed_source SET enabled = ? WHERE id = ?", enabled, id) > 0;
+        return jdbcTemplate.update("UPDATE managed_source SET enabled = ? WHERE id = ? AND deleted_at IS NULL", enabled, id) > 0;
     }
 
     private SourceView getByName(String name) {
         List<SourceView> rows = jdbcTemplate.query(
                 "SELECT id, kind, name, file_log_path, container_name, command, work_dir, enabled " +
-                        "FROM managed_source WHERE name = ?",
+                        "FROM managed_source WHERE name = ? AND deleted_at IS NULL",
                 (rs, i) -> new SourceView(
                         rs.getLong("id"),
                         rs.getString("kind"),

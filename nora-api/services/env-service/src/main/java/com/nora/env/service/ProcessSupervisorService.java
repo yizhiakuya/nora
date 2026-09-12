@@ -148,7 +148,7 @@ public class ProcessSupervisorService {
     private ProcRow loadProc(long id) {
         List<ProcRow> rows = jdbcTemplate.query(
                 "SELECT id, name, command, work_dir, pid, desired_state, last_exit_code, started_at " +
-                        "FROM managed_source WHERE id = ? AND kind = 'PROC'",
+                        "FROM managed_source WHERE id = ? AND kind = 'PROC' AND deleted_at IS NULL",
                 (rs, i) -> new ProcRow(rs.getLong("id"), rs.getString("name"), rs.getString("command"),
                         rs.getString("work_dir"),
                         rs.getObject("pid") == null ? null : rs.getLong("pid"),
@@ -246,7 +246,7 @@ public class ProcessSupervisorService {
     public void supervise() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT id, name, pid, desired_state, last_exit_code " +
-                        "FROM managed_source WHERE kind = 'PROC' AND enabled = TRUE");
+                        "FROM managed_source WHERE kind = 'PROC' AND enabled = TRUE AND deleted_at IS NULL");
         for (Map<String, Object> row : rows) {
             long id = ((Number) row.get("id")).longValue();
             String desired = String.valueOf(row.get("desired_state"));

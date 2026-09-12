@@ -47,10 +47,10 @@ public class ChatStoreService {
                 toJson(steps), toJson(sources));
     }
 
-    /** Loads all messages of a session in chronological order. */
+    /** Loads all messages of a session in chronological order (soft-deleted rows excluded). */
     public List<StoredMessage> loadMessages(String sessionId) {
         List<StoredMessage> loaded = jdbcTemplate.query(
-                "SELECT role, content, steps, sources, created_at FROM chat_message WHERE session_id = ? ORDER BY created_at, id",
+                "SELECT role, content, steps, sources, created_at FROM chat_message WHERE session_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
                 (rs, rowNum) -> new StoredMessage(
                         rs.getString("role"),
                         rs.getString("content"),
@@ -84,14 +84,15 @@ public class ChatStoreService {
                 .toList();
     }
 
-    /** Lists sessions with message counts, most recently active first. */
+    /** Lists live sessions with message counts, most recently active first (soft-deleted excluded). */
     public List<SessionSummary> listSessions() {
         return jdbcTemplate.query(
                 """
                 SELECT s.id, s.title, s.created_at, count(m.id) AS message_count,
                        max(m.created_at) AS last_activity
                 FROM chat_session s
-                LEFT JOIN chat_message m ON m.session_id = s.id
+                LEFT JOIN chat_message m ON m.session_id = s.id AND m.deleted_at IS NULL
+                WHERE s.deleted_at IS NULL
                 GROUP BY s.id, s.title, s.created_at
                 ORDER BY max(m.created_at) DESC NULLS LAST, s.created_at DESC
                 """,
@@ -103,17 +104,30 @@ public class ChatStoreService {
                         rs.getTimestamp("last_activity")));
     }
 
-    /** Deletes a session and its messages (cascade). Returns false when unknown. */
+    /**
+     * Soft-deletes a session and its messages (cascade, same transaction
+     * semantics as the old physical delete). Returns false when unknown or
+     * already deleted.
+     */
+    @org.springframework.transaction.annotation.Transactional
     public boolean deleteSession(String sessionId) {
-        return jdbcTemplate.update("DELETE FROM chat_session WHERE id = ?", sessionId) > 0;
+        int updated = jdbcTemplate.update(
+                "UPDATE chat_session SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", sessionId);
+        if (updated == 0) {
+            return false;
+        }
+        jdbcTemplate.update(
+                "UPDATE chat_message SET deleted_at = now() WHERE session_id = ? AND deleted_at IS NULL", sessionId);
+        return true;
     }
 
     /**
      * Truncates the session history from the message at {@code index}
      * (0-based, chronological) inclusive — used by the frontend
      * "edit & resend" flow so the LLM context stays consistent with the UI.
+     * Soft-delete (rows kept for audit; queries filter them out).
      *
-     * @return number of messages deleted; -1 when the index is out of range
+     * @return number of messages soft-deleted; -1 when the index is out of range
      */
     public int truncateFrom(String sessionId, int index) {
         List<StoredMessage> all = loadMessages(sessionId);
@@ -122,7 +136,7 @@ public class ChatStoreService {
         }
         java.time.LocalDateTime cutoff = all.get(index).createdAt();
         return jdbcTemplate.update(
-                "DELETE FROM chat_message WHERE session_id = ? AND created_at >= ?",
+                "UPDATE chat_message SET deleted_at = now() WHERE session_id = ? AND created_at >= ? AND deleted_at IS NULL",
                 sessionId, cutoff);
     }
 

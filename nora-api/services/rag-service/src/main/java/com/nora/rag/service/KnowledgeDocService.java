@@ -29,7 +29,7 @@ public class KnowledgeDocService {
     /** All knowledge docs, newest first, shaped for the KnowledgeDoc frontend type. */
     public List<KnowledgeDocView> listDocs() {
         return jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at FROM schema_rag.knowledge_doc ORDER BY updated_at DESC, id DESC",
+                "SELECT id, name, source, chunks, status, size, quality, updated_at FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
                 (rs, rowNum) -> new KnowledgeDocView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -46,7 +46,7 @@ public class KnowledgeDocService {
     /** Single doc by id (used by the index endpoint response). */
     public KnowledgeDocView getDoc(long id) {
         List<KnowledgeDocView> docs = jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at FROM schema_rag.knowledge_doc WHERE id = ?",
+                "SELECT id, name, source, chunks, status, size, quality, updated_at FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new KnowledgeDocView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -63,21 +63,30 @@ public class KnowledgeDocService {
     }
 
     /**
-     * Deletes a doc and its chunks (FK {@code ON DELETE CASCADE}).
+     * Soft-deletes a doc and its chunks (rows kept; queries filter them out).
      *
      * @param id doc id
-     * @return false when the id does not exist
+     * @return false when the id does not exist (or is already deleted)
      */
+    @org.springframework.transaction.annotation.Transactional
     public boolean deleteDoc(long id) {
-        return jdbcTemplate.update("DELETE FROM schema_rag.knowledge_doc WHERE id = ?", id) > 0;
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id);
+        if (updated == 0) {
+            return false;
+        }
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id = ? AND deleted_at IS NULL", id);
+        return true;
     }
 
     /**
-     * Deletes many docs in one statement.
+     * Soft-deletes many docs (and their chunks) in one statement.
      *
      * @param ids doc ids; null/empty is a no-op
-     * @return number of deleted rows
+     * @return number of soft-deleted rows
      */
+    @org.springframework.transaction.annotation.Transactional
     public int deleteDocs(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return 0;
@@ -86,9 +95,15 @@ public class KnowledgeDocService {
         if (distinct.isEmpty()) {
             return 0;
         }
-        return jdbcTemplate.update(
-                "DELETE FROM schema_rag.knowledge_doc WHERE id IN (?)",
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE id IN (?) AND deleted_at IS NULL",
                 distinct);
+        if (updated > 0) {
+            jdbcTemplate.update(
+                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN (?) AND deleted_at IS NULL",
+                    distinct);
+        }
+        return updated;
     }
 
     /**
@@ -110,14 +125,14 @@ public class KnowledgeDocService {
         String trimmed = name.trim();
         Integer clash = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM schema_rag.knowledge_doc "
-                        + "WHERE id <> ? AND source = (SELECT source FROM schema_rag.knowledge_doc WHERE id = ?) "
-                        + "AND source_id IS NULL AND name = ?",
+                        + "WHERE id <> ? AND source = (SELECT source FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL) "
+                        + "AND source_id IS NULL AND name = ? AND deleted_at IS NULL",
                 Integer.class, id, id, trimmed);
         if (clash != null && clash > 0) {
             throw new BusinessException(409, "同名文档已存在: " + trimmed);
         }
         return jdbcTemplate.update(
-                "UPDATE schema_rag.knowledge_doc SET name = ?, updated_at = now() WHERE id = ?",
+                "UPDATE schema_rag.knowledge_doc SET name = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                 trimmed, id) > 0;
     }
 
@@ -125,7 +140,7 @@ public class KnowledgeDocService {
     public List<ChunkView> listChunks(long id) {
         return jdbcTemplate.query(
                 "SELECT chunk_index, content, token_count FROM schema_rag.knowledge_chunk "
-                        + "WHERE doc_id = ? ORDER BY chunk_index",
+                        + "WHERE doc_id = ? AND deleted_at IS NULL ORDER BY chunk_index",
                 (rs, rowNum) -> {
                     String content = rs.getString("content");
                     return new ChunkView(
@@ -147,7 +162,7 @@ public class KnowledgeDocService {
      */
     public List<String> chunkTexts(long id) {
         List<String> texts = jdbcTemplate.query(
-                "SELECT content FROM schema_rag.knowledge_chunk WHERE doc_id = ? ORDER BY chunk_index",
+                "SELECT content FROM schema_rag.knowledge_chunk WHERE doc_id = ? AND deleted_at IS NULL ORDER BY chunk_index",
                 (rs, rowNum) -> rs.getString("content"),
                 id);
         return texts == null ? List.of() : texts;
@@ -164,13 +179,13 @@ public class KnowledgeDocService {
 
     public IndexStatsView getIndexStats() {
         Long totalDocs = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM schema_rag.knowledge_doc", Long.class);
+                "SELECT count(*) FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL", Long.class);
         Long totalChunks = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM schema_rag.knowledge_chunk", Long.class);
+                "SELECT count(*) FROM schema_rag.knowledge_chunk WHERE deleted_at IS NULL", Long.class);
         Long pendingDocs = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM schema_rag.knowledge_doc WHERE status = 'processing'", Long.class);
+                "SELECT count(*) FROM schema_rag.knowledge_doc WHERE status = 'processing' AND deleted_at IS NULL", Long.class);
         Timestamp lastUpdate = jdbcTemplate.query(
-                "SELECT max(updated_at) FROM schema_rag.knowledge_doc",
+                "SELECT max(updated_at) FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL",
                 (rs, rowNum) -> (Timestamp) rs.getObject(1)).stream()
                 .filter(ts -> ts != null)
                 .max(Timestamp::compareTo)

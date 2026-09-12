@@ -76,10 +76,10 @@ public class McpServerService {
 
     // ---------- registry CRUD ----------
 
-    /** Lists servers (secrets masked, no tools cache payload). */
+    /** Lists servers (secrets masked, no tools cache payload; soft-deleted excluded). */
     public List<ServerView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache FROM mcp_server ORDER BY id",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache FROM mcp_server WHERE deleted_at IS NULL ORDER BY id",
                 (rs, i) -> viewOf(rs));
     }
 
@@ -133,10 +133,11 @@ public class McpServerService {
         return getByName(name.trim());
     }
 
-    /** Deletes a server and closes its pooled client (stdio: kills the process tree). */
+    /** Soft-deletes a server (name freed) and closes its pooled client (stdio: kills the process tree). */
     public boolean delete(long id) {
         evictClient(id);
-        return jdbcTemplate.update("DELETE FROM mcp_server WHERE id = ?", id) > 0;
+        return jdbcTemplate.update(
+                "UPDATE mcp_server SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     /**
@@ -147,11 +148,11 @@ public class McpServerService {
     public ServerView updateRemoteCredentials(long id, String url, Map<String, String> headers) {
         evictClient(id);
         int updated = jdbcTemplate.update(
-                "UPDATE mcp_server SET url = COALESCE(?, url), headers = ?, status='untested', status_detail=NULL, tools_cache=NULL WHERE id = ? AND transport <> 'STDIO'",
+                "UPDATE mcp_server SET url = COALESCE(?, url), headers = ?, status='untested', status_detail=NULL, tools_cache=NULL WHERE id = ? AND transport <> 'STDIO' AND deleted_at IS NULL",
                 url == null || url.isBlank() ? null : url.trim(),
                 headers == null || headers.isEmpty() ? null : writeJson(headers),
                 id);
-        return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ?", id) : null;
+        return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ? AND deleted_at IS NULL", id) : null;
     }
 
     /** Enables/disables a server; disabling also drops the pooled client. */
@@ -159,9 +160,9 @@ public class McpServerService {
         if (!enabled) {
             evictClient(id);
         }
-        return jdbcTemplate.update("UPDATE mcp_server SET status='untested', status_detail=NULL WHERE id = ?",
+        return jdbcTemplate.update("UPDATE mcp_server SET status='untested', status_detail=NULL WHERE id = ? AND deleted_at IS NULL",
                 id) >= 0
-                && jdbcTemplate.update("UPDATE mcp_server SET enabled = ? WHERE id = ?", enabled, id) > 0;
+                && jdbcTemplate.update("UPDATE mcp_server SET enabled = ? WHERE id = ? AND deleted_at IS NULL", enabled, id) > 0;
     }
 
     /**
@@ -175,7 +176,7 @@ public class McpServerService {
         }
         String t = target.trim();
         if (t.matches("\\d+")) {
-            ServerView byId = queryOne(VIEW_SELECT + " WHERE id = ?", Long.parseLong(t));
+            ServerView byId = queryOne(VIEW_SELECT + " WHERE id = ? AND deleted_at IS NULL", Long.parseLong(t));
             if (byId != null) {
                 return byId;
             }
@@ -183,19 +184,19 @@ public class McpServerService {
         return getByName(t);
     }
 
-    /** Fetches one raw row (secrets raw — internal use only). */
+    /** Fetches one raw row (secrets raw — internal use only; soft-deleted excluded). */
     public RawServer rawById(long id) {
         List<RawServer> rows = jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE id = ?",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
                 (rs, i) -> rawOf(rs),
                 id);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Lists enabled servers' raw rows (internal: connection setup). */
+    /** Lists enabled servers' raw rows (internal: connection setup; soft-deleted excluded). */
     public List<RawServer> rawEnabled() {
         return jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE enabled = TRUE ORDER BY id",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY id",
                 (rs, i) -> rawOf(rs));
     }
 
@@ -363,7 +364,7 @@ public class McpServerService {
         List<MountedTool> out = new ArrayList<>();
         for (RawServer server : rawEnabled()) {
             String cache = jdbcTemplate.queryForObject(
-                    "SELECT COALESCE(tools_cache, '') FROM mcp_server WHERE id = ?", String.class, server.id());
+                    "SELECT COALESCE(tools_cache, '') FROM mcp_server WHERE id = ? AND deleted_at IS NULL", String.class, server.id());
             if (cache == null || cache.isBlank()) {
                 continue;
             }
@@ -399,7 +400,7 @@ public class McpServerService {
             return null;
         }
         List<RawServer> rows = jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE name = ? AND enabled = TRUE",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE name = ? AND enabled = TRUE AND deleted_at IS NULL",
                 (rs, i) -> rawOf(rs),
                 serverName);
         return rows.isEmpty() ? null : rows.get(0);
@@ -687,7 +688,7 @@ public class McpServerService {
             "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache FROM mcp_server";
 
     private ServerView getByName(String name) {
-        return queryOne(VIEW_SELECT + " WHERE name = ?", name);
+        return queryOne(VIEW_SELECT + " WHERE name = ? AND deleted_at IS NULL", name);
     }
 
     /** Exact-name lookup (public: register duplicate check in the agent tool). */

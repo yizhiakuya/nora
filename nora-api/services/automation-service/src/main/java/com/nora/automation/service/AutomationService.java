@@ -32,7 +32,7 @@ public class AutomationService {
     /** Lists rules, newest first (frontend AutomationRule[]). */
     public List<RuleView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule ORDER BY id DESC",
+                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule WHERE deleted_at IS NULL ORDER BY id DESC",
                 (rs, rowNum) -> new RuleView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -72,7 +72,7 @@ public class AutomationService {
                 "INSERT INTO automation_rule (name, trigger_type, trigger_expr, action, enabled, status) VALUES (?, ?, ?, ?::jsonb, true, 'active')",
                 name.trim(), type, label, actionJson);
         Long id = jdbcTemplate.queryForObject(
-                "SELECT id FROM automation_rule WHERE name = ? ORDER BY id DESC LIMIT 1", Long.class, name.trim());
+                "SELECT id FROM automation_rule WHERE name = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1", Long.class, name.trim());
         return get(id);
     }
 
@@ -81,14 +81,15 @@ public class AutomationService {
         RuleView current = get(id);
         boolean next = !current.enabled();
         jdbcTemplate.update(
-                "UPDATE automation_rule SET enabled = ?, status = ? WHERE id = ?",
+                "UPDATE automation_rule SET enabled = ?, status = ? WHERE id = ? AND deleted_at IS NULL",
                 next, next ? "active" : "paused", id);
         return get(id);
     }
 
-    /** Deletes a rule (executions cascade). */
+    /** Soft-deletes a rule (row kept; execution history stays in the table). */
     public boolean delete(long id) {
-        return jdbcTemplate.update("DELETE FROM automation_rule WHERE id = ?", id) > 0;
+        return jdbcTemplate.update(
+                "UPDATE automation_rule SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     /**
@@ -118,7 +119,7 @@ public class AutomationService {
                     "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, ?, ?, ?)",
                     rule.id(), duration, ok ? "success" : "failed", detail);
             jdbcTemplate.update(
-                    "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ?",
+                    "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ? AND deleted_at IS NULL",
                     ok ? "active" : "error", rule.id());
             return latestExecution(rule.id());
         } finally {
@@ -173,7 +174,7 @@ public class AutomationService {
 
     private RuleView get(long id) {
         List<RuleView> rows = jdbcTemplate.query(
-                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule WHERE id = ?",
+                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new RuleView(
                         rs.getLong("id"),
                         rs.getString("name"),

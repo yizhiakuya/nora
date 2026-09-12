@@ -52,6 +52,8 @@ public class RetrievalService {
             FROM schema_rag.knowledge_chunk c
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
             WHERE c.embedding IS NOT NULL
+              AND c.deleted_at IS NULL
+              AND d.deleted_at IS NULL
             ORDER BY c.embedding <=> ?::vector
             LIMIT ?
             """;
@@ -73,6 +75,8 @@ public class RetrievalService {
             FROM schema_rag.knowledge_chunk c
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
             WHERE c.content IS NOT NULL
+              AND c.deleted_at IS NULL
+              AND d.deleted_at IS NULL
               AND ? <<% c.content
             ORDER BY strict_word_similarity(?, c.content) DESC
             LIMIT ?

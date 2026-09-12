@@ -43,20 +43,20 @@ public class AgentSkillService {
 
     public List<SkillView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill ORDER BY updated_at DESC, id DESC",
+                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
                 (rs, i) -> map(rs));
     }
 
     public SkillView get(long id) {
         return jdbcTemplate.query(
-                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE id = ?",
+                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE id = ? AND deleted_at IS NULL",
                 rs -> rs.next() ? map(rs) : null,
                 id);
     }
 
     public SkillView getByName(String name) {
         return jdbcTemplate.query(
-                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE lower(name) = lower(?)",
+                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE lower(name) = lower(?) AND deleted_at IS NULL",
                 rs -> rs.next() ? map(rs) : null,
                 name);
     }
@@ -90,8 +90,10 @@ public class AgentSkillService {
         return get(id);
     }
 
+    /** Soft-delete: 标记 deleted_at,名字随之释放(partial unique index 只约束存活行)。 */
     public boolean delete(long id) {
-        return jdbcTemplate.update("DELETE FROM agent_skill WHERE id = ?", id) > 0;
+        return jdbcTemplate.update(
+                "UPDATE agent_skill SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     /**
@@ -138,7 +140,7 @@ public class AgentSkillService {
 
     private List<SkillView> enabledSkills() {
         return jdbcTemplate.query(
-                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE enabled = TRUE ORDER BY updated_at DESC, id DESC",
+                "SELECT id, name, description, instructions, category, enabled, created_at, updated_at FROM agent_skill WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
                 (rs, i) -> map(rs));
     }
 

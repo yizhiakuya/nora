@@ -40,7 +40,7 @@ public class DatasourceServiceImpl {
     /** Lists connections (passwords never returned; a masked hint is). */
     public List<ConnectionView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, engine, host, port, database, username, password, status FROM db_connection ORDER BY id",
+                "SELECT id, name, engine, host, port, database, username, password, status FROM db_connection WHERE deleted_at IS NULL ORDER BY id",
                 (rs, rowNum) -> new ConnectionView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -69,15 +69,16 @@ public class DatasourceServiceImpl {
         return get(id);
     }
 
-    /** Deletes a connection (history cascades). */
+    /** Soft-deletes a connection (row kept; history stays but becomes unreachable via filtered reads). */
     public boolean delete(long id) {
-        return jdbcTemplate.update("DELETE FROM db_connection WHERE id = ?", id) > 0;
+        return jdbcTemplate.update(
+                "UPDATE db_connection SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     /** Loads one connection (masked). */
     public ConnectionView get(long id) {
         List<ConnectionView> rows = jdbcTemplate.query(
-                "SELECT id, name, engine, host, port, database, username, password, status FROM db_connection WHERE id = ?",
+                "SELECT id, name, engine, host, port, database, username, password, status FROM db_connection WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new ConnectionView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -101,10 +102,10 @@ public class DatasourceServiceImpl {
         long start = System.currentTimeMillis();
         try (Connection ignored = JdbcConnections.open(params)) {
             long latency = System.currentTimeMillis() - start;
-            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
             return new ConnectionStatus(true, "连接成功", latency);
         } catch (Exception e) {
-            jdbcTemplate.update("UPDATE db_connection SET status = 'error' WHERE id = ?", id);
+            jdbcTemplate.update("UPDATE db_connection SET status = 'error' WHERE id = ? AND deleted_at IS NULL", id);
             return new ConnectionStatus(false, shorten(e.getMessage()), null);
         }
     }
@@ -130,10 +131,10 @@ public class DatasourceServiceImpl {
                     tables.add(new DbTable(tableSchema, table, columns));
                 }
             }
-            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
             return new SchemaSnapshot(tables);
         } catch (Exception e) {
-            jdbcTemplate.update("UPDATE db_connection SET status = 'error' WHERE id = ?", id);
+            jdbcTemplate.update("UPDATE db_connection SET status = 'error' WHERE id = ? AND deleted_at IS NULL", id);
             throw new BusinessException(502, "schema introspection failed: " + shorten(e.getMessage()));
         }
     }
@@ -167,7 +168,7 @@ public class DatasourceServiceImpl {
                 }
                 long duration = System.currentTimeMillis() - start;
                 saveHistory(id, sql, duration, rows.size(), "success");
-                jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);
+                jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
                 // 截断判定:maxRows 顶满即视为可能被截断(setMaxRows 让驱动在 200 行后停止拉取,
                 // 无法区分"恰好 200 行"与"更多行被砍掉",保守标记,由展示层注明)
                 boolean truncated = rows.size() >= MAX_ROWS;
@@ -213,7 +214,7 @@ public class DatasourceServiceImpl {
             int affected = stmt.executeUpdate(sql);
             long duration = System.currentTimeMillis() - start;
             saveHistory(id, sql, duration, affected, "success");
-            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ?", id);
+            jdbcTemplate.update("UPDATE db_connection SET status = 'connected' WHERE id = ? AND deleted_at IS NULL", id);
             return new QueryResult(
                     List.of("rows_affected"),
                     List.of(List.of(String.valueOf(affected))),
@@ -239,7 +240,7 @@ public class DatasourceServiceImpl {
 
     private JdbcConnections.Params params(long id) {
         List<JdbcConnections.Params> rows = jdbcTemplate.query(
-                "SELECT engine, host, port, database, username, password FROM db_connection WHERE id = ?",
+                "SELECT engine, host, port, database, username, password FROM db_connection WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new JdbcConnections.Params(
                         rs.getString("engine"),
                         rs.getString("host"),
