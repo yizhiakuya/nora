@@ -21,6 +21,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 
 ## 已知坑
 
+- **错误结构化优先(异常处理系统 2026-09-12)**:`client.ts` 的 `requestJson` 非 2xx 时解析后端信封为 `ApiError`(带 category/errorCode/hint/retryable/traceId);`humanizeError` 优先按 `category` 映射文案(ApiError 入参),字符串启发式仅作兜底(网络异常/网关 HTML/旧接口)。新增错误 UI 时先传 Error 对象、不要先 `.message` 提取字符串
 - HMR 对重命名导出不可靠,报 "does not provide an export" 先整页 reload 再判断
 - Zustand persist 的 store 改字段结构时注意兼容旧 localStorage 数据
 - 链路追踪:`client.ts` 每页面会话生成 browserTraceId,随全部请求走 `X-Nora-Trace-Id`;全局错误经 `lib/errorReporter.ts` 上报 `POST /api/log/frontend`(10s 去重);500 错误消息带服务端 `[trace=…]`,可与后端日志交叉检索

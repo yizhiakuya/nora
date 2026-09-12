@@ -32,6 +32,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 
 ## 已知坑
 
+- **异常处理系统(2026-09-12)**:错误按 `ErrorCategory`(10 类:VALIDATION/UNAUTHORIZED/FORBIDDEN/NOT_FOUND/CONFLICT/RATE_LIMITED/DEPENDENCY/UNAVAILABLE/TIMEOUT/INTERNAL)分类——新代码抛语义化 `BusinessException.dependency("DS_CONNECT_FAILED","消息","hint")` 等工厂;旧 `BusinessException(400,...)` 自动映射分类(零改动但不是新写法)。错误信封带 `category/errorCode/hint/retryable/traceId`(成功响应保持三段形状,data 为 null 也不省略——前端 isEnvelope 依赖 data 键)。**服务间 RestClient 必须配 `defaultStatusHandler(HttpStatusCode::isError, EnvelopeErrorHandler.create())`**(双参重载!单参是 legacy 接口)——非 2xx 时信封 message 提取为干净异常,否则 catch 块回填的是 Spring 异常串噪音。LLM 上游等外部客户端不配(非 Nora 信封,错误格式各异)
 - **时区全局约定**:`nora.timezone`(默认 Asia/Shanghai)统一三处——JVM 默认时区(nora-common `TimeZoneConfig` 静态块生效)、Jackson 序列化、DB 会话(`ALTER DATABASE nora SET timezone`,已固定)。DB 时间列一律 `timestamp without time zone` 存本地挂钟时间,Java 读取必须用 `LocalDateTime`(用 `OffsetDateTime` 读会被 JDBC 贴错 UTC 标签,前端 +8h);前端解析 `created_at` 走 `toHm()`(agentApi)手动拆解,不用 `new Date()`
 - **SSE 上游用 JDK HttpClient 流式读取**,不要用 RestClient `.body(byte[].class)`(伪流式),其字符串转换器还会把 text/event-stream 按 ISO-8859-1 弄乱中文
 - 测试 mock:`ModelProviderServiceTest` 用 Strict stubs,参数不匹配直接报 PotentialStubbingProblem
