@@ -8,4 +8,3 @@
 - **不主动用子代理**：不要自行派发 subagent/后台代理来分担任务（现在子代理不好用），自己顺序执行；仅当用户明确要求时才用
 - **单测不写断言**：单元测试仅作冒烟——执行代码路径、不校验结果（抛异常即失败）；行为正确性由 E2E 实测验证（浏览器/curl 打真实服务）。写测试时不要加 assertEquals/verify/expect 等断言；改动相关文件时顺手移除已有断言
 - **代码查找优先用知识图谱**：codebase-memory MCP 已建索引（项目名 `D-claude-Nora`）——找符号用 `search_graph`、查调用链用 `trace_path`、取源码用 `get_code_snippet`、复杂多跳用 `query_graph`；仅字面文本/非代码内容才回退 Grep/Glob
-- **GitHub 操作一律用 gh CLI**（2026-09-12 用户明确要求）：仓库创建/删除、PR、issue、release、API 查询等全走 `gh`（如 `gh repo create --push`、`gh api repos/...`），不要用 curl 直调 GitHub API、不要手写请求头带 token。日常 `git commit`/`git push` 无 gh 等价命令（gh 无 push 子命令），照常用 git；但建仓库推送（`gh repo create --push`）、发 PR（`gh pr create` 自动推分支）、`gh repo sync` 等 gh 能代劳的推送场景优先用 gh
