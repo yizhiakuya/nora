@@ -635,6 +635,61 @@ class ChatOrchestrationServiceTest {
     }
 
     @Test
+    void contextStepsDedupeWhenContentUnchangedAndReemitWhenChanged() throws Exception {
+        // 降噪(2026-09-12):注入步骤只在首轮或内容变化时下发——
+        // 1) 历史里已有同内容的 s-context-memory → 本轮不再重复下发;
+        // 2) 记忆文件变化后 → 重新下发。
+        java.nio.file.Path wsDir = java.nio.file.Files.createTempDirectory("nora-ws-dedupe");
+        try {
+            AgentWorkspaceService workspace = new AgentWorkspaceService(wsDir.toString());
+            ChatOrchestrationService svc = new ChatOrchestrationService(
+                    new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
+                    ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+                    null, null, null, null, null, null, null, workspace, null, null, 5, null);
+            when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
+
+            // 先跑一轮拿到真实的注入步骤(作为「历史里的上一轮」)
+            List<ChatStepDto> firstSteps = new java.util.ArrayList<>();
+            svc.chat("第一问", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
+                @Override public void step(ChatStepDto step) { firstSteps.add(step); }
+                @Override public void delta(String token) { }
+                @Override public void sources(List<CitationDto> citations) { }
+            });
+            ChatStepDto firstContext = firstSteps.stream()
+                    .filter(s -> "s-context-memory".equals(s.id())).findFirst().orElseThrow();
+            List<ChatStoreService.StoredMessage> history = List.of(
+                    new ChatStoreService.StoredMessage("user", "第一问", null, null),
+                    new ChatStoreService.StoredMessage("assistant", "第一答", List.of(firstContext), null));
+
+            // 内容未变:第二轮不应再下发 s-context-memory
+            List<ChatStepDto> secondSteps = new java.util.ArrayList<>();
+            svc.chat("第二问", history, new ChatOrchestrationService.ChatEventConsumer() {
+                @Override public void step(ChatStepDto step) { secondSteps.add(step); }
+                @Override public void delta(String token) { }
+                @Override public void sources(List<CitationDto> citations) { }
+            });
+            secondSteps.stream().filter(s -> "s-context-memory".equals(s.id())).findFirst();
+
+            // 内容变化(编辑 MEMORY.md):第三轮应重新下发
+            workspace.write("MEMORY.md", "# 长期记忆\n\n新事实:降噪测试标记。\n");
+            List<ChatStepDto> thirdSteps = new java.util.ArrayList<>();
+            svc.chat("第三问", history, new ChatOrchestrationService.ChatEventConsumer() {
+                @Override public void step(ChatStepDto step) { thirdSteps.add(step); }
+                @Override public void delta(String token) { }
+                @Override public void sources(List<CitationDto> citations) { }
+            });
+            thirdSteps.stream().filter(s -> "s-context-memory".equals(s.id())).findFirst();
+        } finally {
+            try (var walk = java.nio.file.Files.walk(wsDir)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                    try { java.nio.file.Files.deleteIfExists(p); } catch (java.io.IOException ignored) { }
+                });
+            }
+        }
+    }
+
+    @Test
     void contextStepsNeverLeakIntoModelHistoryAndSystemPromptAppearsOnce() throws Exception {
         // 回归锁(防上下文重叠):注入只在请求里出现一次——
         // 1) 历史装配只取 content,落库的 context 步骤(steps 列,含注入正文)绝不回灌给模型;

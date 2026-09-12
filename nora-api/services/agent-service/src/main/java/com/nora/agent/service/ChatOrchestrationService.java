@@ -286,8 +286,10 @@ public class ChatOrchestrationService {
         SystemPromptResult[] promptOut = new SystemPromptResult[1];
         List<WireMessage> messages = buildMessages(userMessage, history, citations, reflections, budget, promptOut);
         // 注入可见性(dsh 模式):把本轮注入的记忆/技能清单作为步骤下发,
-        // 前端时间线可展开查看真实注入内容;无注入时静默跳过
-        emitContextSteps(promptOut[0], eventConsumer);
+        // 前端时间线可展开查看真实注入内容;无注入时静默跳过。
+        // 注入本身每轮都发生(系统提示必须随每次请求携带),但步骤仅在首轮或
+        // 内容较上次下发有变化时下发——不变的轮次不再重复展示(降噪,2026-09-12)
+        emitContextSteps(promptOut[0], history, eventConsumer);
         final String reasoningLevel = resolved.effectiveReasoningLevel();
         String toolOutcome = null;
         final int[] roundsUsed = {0};
@@ -2965,33 +2967,69 @@ public class ChatOrchestrationService {
     /**
      * 下发「注入上下文」步骤(dsh 模式:注入内容对用户可见,自描述 form 声明信息形态)。
      * 工作区引导 → form=instructions;技能目录 → form=catalog。无注入时静默跳过。
+     *
+     * <p>降噪(2026-09-12):注入本身每轮都发生(系统提示必须随每次请求携带),
+     * 但步骤只在<b>首轮或内容较上次下发有变化</b>时下发——与历史里最近一次同名步骤
+     * 逐字段对比,一致则跳过(不变的重复展示只是噪音)。内容变化(如 agent 自演化
+     * 编辑了记忆文件)仍会重新下发,保证「模型这轮读到的记忆变过」对用户可见。
      */
-    private void emitContextSteps(SystemPromptResult prompt, ChatEventConsumer eventConsumer) {
+    private void emitContextSteps(SystemPromptResult prompt, List<ChatStoreService.StoredMessage> history,
+                                  ChatEventConsumer eventConsumer) {
+        ChatStepDto.ContextInfo prevMemory = lastEmittedContext(history, "s-context-memory");
+        ChatStepDto.ContextInfo prevSkills = lastEmittedContext(history, "s-context-skills");
         if (prompt.workspace() != null && !prompt.workspace().files().isEmpty()) {
             List<ChatStepDto.ContextFile> files = prompt.workspace().files().stream()
                     .map(f -> new ChatStepDto.ContextFile(f.path(), f.bytes(), f.truncated(), f.missing(), f.content()))
                     .toList();
-            int injected = prompt.workspace().files().stream()
-                    .filter(f -> !f.missing() && !f.truncated())
-                    .toList().size();
-            String detail = "注入 " + injected + " 个文件"
-                    + (prompt.workspace().dailyNotes().isEmpty()
-                            ? ""
-                            : " + " + prompt.workspace().dailyNotes().size() + " 篇日记清单");
-            eventConsumer.step(new ChatStepDto("s-context-memory", "context", "加载长期记忆", detail,
-                    0L, "completed", null, null, null, 0,
-                    new ChatStepDto.ContextInfo("instructions", "workspace-bootstrap",
-                            files, null, prompt.workspace().dailyNotes())));
+            boolean unchanged = prevMemory != null
+                    && java.util.Objects.equals(files, prevMemory.files())
+                    && java.util.Objects.equals(prompt.workspace().dailyNotes(), prevMemory.dailyNotes());
+            if (!unchanged) {
+                int injected = prompt.workspace().files().stream()
+                        .filter(f -> !f.missing() && !f.truncated())
+                        .toList().size();
+                String detail = "注入 " + injected + " 个文件"
+                        + (prompt.workspace().dailyNotes().isEmpty()
+                                ? ""
+                                : " + " + prompt.workspace().dailyNotes().size() + " 篇日记清单");
+                eventConsumer.step(new ChatStepDto("s-context-memory", "context", "加载长期记忆", detail,
+                        0L, "completed", null, null, null, 0,
+                        new ChatStepDto.ContextInfo("instructions", "workspace-bootstrap",
+                                files, null, prompt.workspace().dailyNotes())));
+            }
         }
         if (prompt.skills() != null && !prompt.skills().entries().isEmpty()) {
             List<ChatStepDto.ContextEntry> entries = prompt.skills().entries().stream()
                     .map(e -> new ChatStepDto.ContextEntry(e.name(), e.description(), e.category()))
                     .toList();
-            eventConsumer.step(new ChatStepDto("s-context-skills", "context", "加载技能目录",
-                    "启用 " + entries.size() + " 个技能（正文按需读取）",
-                    0L, "completed", null, null, null, 0,
-                    new ChatStepDto.ContextInfo("catalog", "skill-catalog", null, entries, null)));
+            boolean unchanged = prevSkills != null && java.util.Objects.equals(entries, prevSkills.entries());
+            if (!unchanged) {
+                eventConsumer.step(new ChatStepDto("s-context-skills", "context", "加载技能目录",
+                        "启用 " + entries.size() + " 个技能（正文按需读取）",
+                        0L, "completed", null, null, null, 0,
+                        new ChatStepDto.ContextInfo("catalog", "skill-catalog", null, entries, null)));
+            }
         }
+    }
+
+    /** 会话历史里最近一次已下发的注入步骤(倒序;用于「内容不变不重复展示」判定)。 */
+    private static ChatStepDto.ContextInfo lastEmittedContext(List<ChatStoreService.StoredMessage> history,
+                                                              String stepId) {
+        if (history == null) {
+            return null;
+        }
+        for (int i = history.size() - 1; i >= 0; i--) {
+            List<ChatStepDto> steps = history.get(i).steps();
+            if (steps == null) {
+                continue;
+            }
+            for (ChatStepDto s : steps) {
+                if (stepId.equals(s.id()) && s.context() != null) {
+                    return s.context();
+                }
+            }
+        }
+        return null;
     }
 
     private static String abbreviateForSse(String text, int max) {
