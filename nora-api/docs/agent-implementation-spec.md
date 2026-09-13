@@ -8,7 +8,7 @@
 
 ## 目标
 
-Agent 负责开放式对话与只读诊断；文件索引、自动任务调度等固定流程由服务代码编排。单轮请求使用单线程 ReAct，最多 5 个工具轮次（**现为 `nora.agent.max-tool-rounds` 可配，默认 10**）。
+Agent 负责开放式对话与只读诊断；文件索引、自动任务调度等固定流程由服务代码编排。单轮请求使用单线程 ReAct 工具循环：**跑到模型自己不再调工具为止**（对齐 Codex / Claude Code 语义），`nora.agent.max-tool-rounds`（默认 100）只作病态死循环保险丝，不是任务预算；上下文增长由轮内压缩与旧图回收控制（见 `context-management-design.md`）。
 
 ## 一轮执行协议
 

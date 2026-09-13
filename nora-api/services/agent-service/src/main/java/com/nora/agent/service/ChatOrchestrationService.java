@@ -26,11 +26,13 @@ import java.util.concurrent.CompletableFuture;
  * Chat orchestration with an OpenAI function-calling agent loop:
  * <ol>
  *   <li>RAG retrieval (unchanged) → system prompt citations</li>
- *   <li>Tool loop: non-streaming rounds where the model may call
- *       {@code execute_sql} / {@code read_service_logs}; each call emits a
+ *   <li>Tool loop: rounds where the model may call tools; each call emits a
  *       structured step (toolName + parsed input + typed result) and feeds
- *       the bounded output back to the model (configurable max rounds,
- *       default 10)</li>
+ *       the bounded output back to the model. The loop runs until the model
+ *       stops calling tools (Codex/Claude Code semantics) — the round count
+ *       is only a pathological-loop fuse (default 100), not a task budget;
+ *       context growth is handled by compaction, and the user can stop
+ *       at any time.</li>
  *   <li>Final answer streams token by token to the SSE consumer</li>
  * </ol>
  *
@@ -73,8 +75,17 @@ public class ChatOrchestrationService {
                绝不要凭文件名或描述猜测图片内容。
             """;
 
-    /** Default max tool rounds per chat turn (ReAct depth guard). */
-    private static final int DEFAULT_MAX_TOOL_ROUNDS = 10;
+    /**
+     * 工具轮数保险丝（不是任务预算）。
+     *
+     * <p>语义对齐 Codex / Claude Code：工具循环跑到**模型自己不再调工具**为止；
+     * 上下文增长由压缩（compactForRound）控制，用户随时可停。
+     * 轮数上限只用于兜住病态死循环（如模型在两个工具间反复横跳且指纹去重未拦住），
+     * 因此给一个远超正常任务需要的大值——实测"扫相册找猫"（50 张照片，
+     * 拼图两页 + 48 次逐张细看）自然跑了 17 轮才收尾，旧的 10 轮默认值
+     * 会把这类任务拦腰截断。
+     */
+    private static final int DEFAULT_MAX_TOOL_ROUNDS = 100;
 
     /**
      * Tool output budget per harness research: success keeps a large inline
@@ -132,7 +143,7 @@ public class ChatOrchestrationService {
                                     AgentWorkspaceService agentWorkspaceService,
                                     AgentSkillService agentSkillService,
                                     TerminalService terminalService,
-                                    @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:10}") int maxToolRounds,
+                                    @org.springframework.beans.factory.annotation.Value("${nora.agent.max-tool-rounds:100}") int maxToolRounds,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties) {
         this.llmProperties = llmProperties;
@@ -318,10 +329,15 @@ public class ChatOrchestrationService {
                 }
                 roundsUsed[0] = round + 1;
                 int compactedCount = compactForRound(messages, budget, false, PER_REQUEST_OVERHEAD_TOKENS);
-                if (compactedCount > 0) {
+                if (compactedCount > 0 || lastRecycledImages > 0) {
+                    StringBuilder what = new StringBuilder();
+                    if (compactedCount > 0) what.append("已压缩 ").append(compactedCount).append(" 条早期工具结果");
+                    if (lastRecycledImages > 0) {
+                        if (what.length() > 0) what.append("、");
+                        what.append("已回收 ").append(lastRecycledImages).append(" 条消息的早期图片附件");
+                    }
                     eventConsumer.step(new ChatStepDto("s-compact-" + round, "think",
-                            "整理上下文", "已压缩 " + compactedCount + " 条早期工具结果,释放约 "
-                                    + estimateTokensFreed + " tokens 预算",
+                            "整理上下文", what + (compactedCount > 0 ? ",释放约 " + estimateTokensFreed + " tokens 预算" : ""),
                             0L, "completed", null, null, null, round));
                 }
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
@@ -391,7 +407,8 @@ public class ChatOrchestrationService {
                 }
                 if (result.toolCalls.isEmpty()) {
                     // 回答(与推理)已随流逐 token 转发完毕
-                    logCalibration(lastPromptEstimate[0], totalUsage, budget);
+                    // 校准用**当轮** usage:传累计值会与单轮估算相除产生虚高比值
+                    logCalibration(lastPromptEstimate[0], result.usage(), budget);
                     return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
                 }
                 messages.add(new WireMessage(result.assistantMessage));
@@ -450,7 +467,7 @@ public class ChatOrchestrationService {
                 totalUsage = totalUsage == null ? finalResult.usage() : totalUsage.add(finalResult.usage());
             }
             if (!answerText.isBlank()) {
-                logCalibration(lastPromptEstimate[0], totalUsage, budget);
+                logCalibration(lastPromptEstimate[0], finalResult.usage(), budget);
                 return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
             }
         }
@@ -3277,6 +3294,18 @@ public class ChatOrchestrationService {
     private static final int COMPACTION_TAIL_KEEP = 6;
 
     /**
+     * 保留图片附件的最近工具批次数(含当前批次;更早批次的图片在下一轮请求前回收)。
+     *
+     * <p>为什么按"轮"而不是"条":实测(2026-09-13)按条保留 2 条时,模型在
+     * 第 3 轮请求 4 张图后,第 4 轮(最终回答)前这 4 张里较早的 2 张已被回收——
+     * 模型尚未把结论写进文本,只能如实报告"看不到画面"。按轮保留 2 个批次
+     * 覆盖"当前批次 + 上一批次",让模型有完整的窗口消化刚看过的图。
+     * 模型看过的更早的图通常已消化成结论;需要回看时可按编号清单里的 id
+     * 重新取图,比让每轮请求体无限膨胀(每张 data URL ~600KB)更划算。
+     */
+    private static final int COMPACTION_KEEP_RECENT_IMAGE_ROUNDS = 2;
+
+    /**
      * 每次请求的固定 overhead token 估算(tools spec JSON schema ~1.5k +
      * 协议封装/系统字段;实测校准 2026-09-08:消息体估算与上游真实
      * inputTokens 比值 6.7~10.4,overhead 主导,必须计入预算)。
@@ -3292,6 +3321,9 @@ public class ChatOrchestrationService {
      */
     private int compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force,
                                 long overheadTokens) {
+        // 旧图回收:与 token 预算无关的带宽护栏——每轮都执行(见 recycleOldImages)
+        int recycledImages = recycleOldImages(messages, force);
+        lastRecycledImages = recycledImages;
         long total = 0;
         for (WireMessage m : messages) {
             total += messageTokens(m);
@@ -3300,7 +3332,10 @@ public class ChatOrchestrationService {
         long limit = force
                 ? (long) (budget.window() * ContextBudget.RECOVERY_RATIO)
                 : budget.triggerTokens() - budget.outputReserve();
-        if (total <= limit) return 0;
+        if (total <= limit) {
+            estimateTokensFreed = 0;
+            return 0;
+        }
         int compactedCount = 0;
         long freed = 0;
         int lastCompactable = messages.size() - COMPACTION_TAIL_KEEP;
@@ -3309,7 +3344,7 @@ public class ChatOrchestrationService {
             if (!"tool".equals(m.node().path("role").asText())) continue;
             JsonNode contentNode = m.node().path("content");
             if (contentNode.isArray()) {
-                // 多模态工具结果(带图):仅压缩其中的文本部分,图片保留
+                // 多模态工具结果(带图):只压缩文本部分(图片回收在 recycleOldImages)
                 for (JsonNode part : contentNode) {
                     if (!"text".equals(part.path("type").asText())) continue;
                     String t = part.path("text").asText("");
@@ -3333,6 +3368,58 @@ public class ChatOrchestrationService {
         estimateTokensFreed = freed;
         return compactedCount;
     }
+
+    /**
+     * 旧图回收:只保留最近 {@link #COMPACTION_KEEP_RECENT_IMAGE_ROUNDS} 个
+     * 工具批次的图片附件,更早批次剥离(保留文本与编号清单);尾部
+     * {@link #COMPACTION_TAIL_KEEP} 条消息永不触碰。
+     *
+     * <p>动机:图片 token 计费极低(实测本环境中转几乎不计——每轮追加 4-5 张
+     * 全尺寸照片仅使上报输入 +~640 tokens),但每张 data URL 有 ~600KB——
+     * 48 张图的找猫任务若全部保留,单请求体将达 ~100MB,上传耗时主导每轮时长。
+     * 回收把在途图片稳定压在小窗口内,模型需要回看时可按编号清单重新取图。
+     *
+     * @return 被剥离图片附件的消息条数
+     */
+    private int recycleOldImages(List<WireMessage> messages, boolean force) {
+        int keepBatches = force ? 1 : COMPACTION_KEEP_RECENT_IMAGE_ROUNDS;
+        int lastCompactable = messages.size() - COMPACTION_TAIL_KEEP;
+        int batchIndex = 0; // 0 = 当前批次(倒序走到的第一个批次)
+        int stripped = 0;
+        for (int i = messages.size() - 1; i >= 1; i--) {
+            JsonNode node = messages.get(i).node();
+            JsonNode calls = node.path("tool_calls");
+            if ("assistant".equals(node.path("role").asText()) && calls.isArray() && !calls.isEmpty()) {
+                batchIndex++; // 越过该批次的 tool_calls 锚点,再往前即更早批次
+                continue;
+            }
+            JsonNode contentNode = node.path("content");
+            if (!contentNode.isArray()) continue;
+            boolean hasImg = false;
+            for (JsonNode part : contentNode) {
+                if ("image_url".equals(part.path("type").asText())) {
+                    hasImg = true;
+                    break;
+                }
+            }
+            if (!hasImg) continue;
+            if (batchIndex < keepBatches || i >= lastCompactable) continue;
+            ArrayNode kept = objectMapper.createArrayNode();
+            for (JsonNode part : contentNode) {
+                if ("image_url".equals(part.path("type").asText())) continue;
+                kept.add(part);
+            }
+            kept.add(objectMapper.createObjectNode()
+                    .put("type", "text")
+                    .put("text", "(早期图片已省略——如需回看,重新调用对应工具或按编号清单中的 id 单独取图)"));
+            ((ObjectNode) messages.get(i).node()).set("content", kept);
+            stripped++;
+        }
+        return stripped;
+    }
+
+    /** 最近一次 compactForRound 回收的旧图张数(可视化 step 用)。 */
+    private int lastRecycledImages;
 
     /** 最近一次 compactForRound 释放的 token 估算(可视化 step 用)。 */
     private long estimateTokensFreed;
@@ -3358,8 +3445,10 @@ public class ChatOrchestrationService {
         int tokens = ContextBudget.estimateTokens(textOfContent(contentNode) == null ? "" : textOfContent(contentNode))
                 + 8;
         if (contentNode.isArray()) {
-            // 图片部分不计入 token 预算(base64 长度与 token 无直接关系,
-            // 上游按图像块计费);这里只给一个固定估算避免预算误判
+            // 图片按单张固定成本估算(见 IMAGE_TOKEN_ESTIMATE):与 data URL 长度
+            // 无关——实测追加 ~14MB 图片仅使上游上报输入 +639 tokens;此前
+            // "按 ~16 字符/token"的推断来自把累计 usage 与单轮估算相比的
+            // 日志口径错误(见 logCalibration),并非真实计费方式。
             for (JsonNode part : contentNode) {
                 if ("image_url".equals(part.path("type").asText())) {
                     tokens += IMAGE_TOKEN_ESTIMATE;
@@ -3377,9 +3466,13 @@ public class ChatOrchestrationService {
     }
 
     /**
-     * 估算校准日志:每轮结束把服务端 prompt 估算与上游真实 inputTokens
+     * 估算校准日志:把**当前轮**的服务端 prompt 估算与该轮上游真实 inputTokens
      * 对齐输出(真实值含 tools spec/协议封装 overhead,估算只含消息体)。
-     * 比值持续偏离预期时调整 ContextBudget 估算系数——观测驱动的闭环。
+     * 比值持续偏离预期时调整估算系数——观测驱动的闭环。
+     *
+     * <p>必须传**当轮** usage:曾误传累计 usage 与单轮估算相除,产生
+     * ratio=10.73 的虚高告警,并误导出"图片按 data URL 长度计费"的错误结论
+     * (实测:追加 14MB 图片仅使上游上报输入 +639 tokens)。
      */
     private void logCalibration(int promptEstimate, TokenUsage usage, ContextBudget budget) {
         if (usage == null || usage.inputTokens() == null || promptEstimate <= 0) return;
@@ -3573,8 +3666,18 @@ public class ChatOrchestrationService {
     /** 单条工具参数重放上限:超过则不附 rawArgs(该步退化为文本历史,防病态超长参数)。 */
     private static final int MAX_REPLAY_ARGS_CHARS = 20_000;
 
-    /** 单张图片在上下文预算里的固定估算(上游按图像块计费,与 base64 长度无关) */
-    private static final int IMAGE_TOKEN_ESTIMATE = 1_200;
+    /**
+     * 单张图片的 token 估算(保守上限)。
+     *
+     * <p>实测(2026-09-13 找猫任务,上游上报 usage):每轮追加 4-5 张全尺寸照片
+     * (data URL 合计 8-20MB)仅使输入 token 增加 ~0.6-0.7K/轮,其中主要仍是
+     * 文本——单张图片的真实计费远低于此值。此处取 3K 作保守上限,让预算估算
+     * 偏安全(宁可早压缩);图片字节的膨胀由 recycleOldImages 单独兜底。
+     *
+     * <p>历史注:旧值 1_200 偏低;期间曾按 data URL 长度/16 估算,系对校准日志
+     * 口径错误的误读(logCalibration 当时传的是累计 usage,已一并修正)。
+     */
+    private static final int IMAGE_TOKEN_ESTIMATE = 3_000;
 
     /** 把脱敏后的原始参数附到 typed input 上(跨轮历史重建用;null/空/非法 = 不附)。 */
     private ChatStepDto.StepInput withRawArgs(ChatStepDto.StepInput input, String args) {

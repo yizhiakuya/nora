@@ -34,8 +34,10 @@ nora:
     database: ${NORA_REDIS_DATABASE:0}
     timeout-ms: ${NORA_REDIS_TIMEOUT_MS:2000}
   agent:
-    # ReAct depth guard: max tool rounds per chat turn (harness convention 10-25)
-    max-tool-rounds: 10
+    # 工具轮数保险丝(不是任务预算):循环跑到模型自己不再调工具为止(对齐 Codex/Claude Code),
+    # 上下文增长由轮内压缩 + 旧图回收控制、用户随时可停;此值只兜病态死循环,
+    # 故给远超正常任务需要的大值(实测"扫相册找猫"50 张照片自然跑 17 轮)。
+    max-tool-rounds: 100
     # 本机终端(run_command)的 PowerShell:
     #   默认优先用随仓库分发的内置 pwsh 7(tools/pwsh,首次使用解压到同目录 pwsh-<ver>),
     #   保证版本确定、不依赖宿主机;解压失败/归档缺失时回退 PATH 上的 pwsh,再兜底系统 powershell.exe(5.1)。
