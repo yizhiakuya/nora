@@ -634,24 +634,7 @@ public class ChatOrchestrationService {
             return "ERROR: url 必须是 http/https 地址,当前收到: " + abbreviate(url, 120);
         }
         try {
-            java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
-            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder.addressFor(url);
-            if (proxyAddr != null) {
-                cb.proxy(java.net.ProxySelector.of(proxyAddr));
-            }
-            java.net.http.HttpResponse<byte[]> resp = cb.build().send(
-                    java.net.http.HttpRequest.newBuilder()
-                            .uri(java.net.URI.create(url))
-                            .timeout(Duration.ofSeconds(60))
-                            .header("User-Agent", "Nora-Agent/1.0")
-                            .GET().build(),
-                    java.net.http.HttpResponse.BodyHandlers.ofByteArray());
-            if (resp.statusCode() >= 400) {
-                return "ERROR: 下载失败 HTTP " + resp.statusCode() + "(" + abbreviate(url, 100) + ")";
-            }
-            byte[] body = resp.body();
+            byte[] body = downloadBounded(url, AgentWorkspaceService.MAX_BINARY_BYTES);
             if (body == null || body.length == 0) {
                 return "ERROR: 下载到空内容";
             }
@@ -660,8 +643,58 @@ public class ChatOrchestrationService {
                 name = inferFilename(url);
             }
             return fileToolClient.upload(name, body);
+        } catch (IllegalArgumentException e) {
+            return "ERROR: " + e.getMessage();
         } catch (Exception e) {
             return "ERROR: 下载失败: " + abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200);
+        }
+    }
+
+    /**
+     * 带大小上限的流式下载:先看 Content-Length 快速拒绝,再边读边计数,
+     * 超限立即中断(不再全量进内存后才判断——大视频会把堆打爆)。
+     *
+     * @param url      下载地址
+     * @param maxBytes 允许的最大字节数
+     * @return 文件字节
+     * @throws IllegalArgumentException 超限或下载失败(消息面向用户可读)
+     */
+    private byte[] downloadBounded(String url, long maxBytes) throws Exception {
+        java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
+        java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder.addressFor(url);
+        if (proxyAddr != null) {
+            cb.proxy(java.net.ProxySelector.of(proxyAddr));
+        }
+        java.net.http.HttpResponse<java.io.InputStream> resp = cb.build().send(
+                java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(url))
+                        .timeout(Duration.ofSeconds(120))
+                        .header("User-Agent", "Nora-Agent/1.0")
+                        .GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+        if (resp.statusCode() >= 400) {
+            throw new IllegalArgumentException("下载失败 HTTP " + resp.statusCode() + "(" + abbreviate(url, 100) + ")");
+        }
+        long declared = resp.headers().firstValueAsLong("Content-Length").orElse(-1);
+        if (declared > maxBytes) {
+            throw new IllegalArgumentException("文件超过 " + (maxBytes / 1024 / 1024) + "MB 上限(源声明 "
+                    + (declared / 1024 / 1024) + "MB)");
+        }
+        try (java.io.InputStream in = resp.body();
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buf = new byte[64 * 1024];
+            long total = 0;
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                total += n;
+                if (total > maxBytes) {
+                    throw new IllegalArgumentException("文件超过 " + (maxBytes / 1024 / 1024) + "MB 上限,已中断下载");
+                }
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
         }
     }
 
@@ -696,27 +729,7 @@ public class ChatOrchestrationService {
             target = "imports/" + name;
         }
         try {
-            java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
-            java.net.InetSocketAddress proxyAddr =
-                    com.nora.common.http.ProxySettingsHolder.addressFor(url);
-            if (proxyAddr != null) {
-                cb.proxy(java.net.ProxySelector.of(proxyAddr));
-            }
-            java.net.http.HttpClient client = cb.build();
-            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(url))
-                    .timeout(Duration.ofSeconds(60))
-                    .header("User-Agent", "Nora-Agent/1.0")
-                    .GET()
-                    .build();
-            java.net.http.HttpResponse<byte[]> resp = client.send(req,
-                    java.net.http.HttpResponse.BodyHandlers.ofByteArray());
-            if (resp.statusCode() >= 400) {
-                return "ERROR: 下载失败 HTTP " + resp.statusCode() + "(" + abbreviate(url, 100) + ")";
-            }
-            byte[] body = resp.body();
+            byte[] body = downloadBounded(url, AgentWorkspaceService.MAX_BINARY_BYTES);
             if (body == null || body.length == 0) {
                 return "ERROR: 下载到空内容(" + abbreviate(url, 100) + ")";
             }
@@ -725,6 +738,8 @@ public class ChatOrchestrationService {
             return "已保存到 " + target + "(" + FileToolClient.formatSize(written)
                     + (existed ? ",已覆盖同名文件" : "")
                     + ", 来源: " + abbreviate(url, 90) + ")";
+        } catch (IllegalArgumentException e) {
+            return "ERROR: " + e.getMessage();
         } catch (Exception e) {
             return "ERROR: 下载失败: " + abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200);
         }
