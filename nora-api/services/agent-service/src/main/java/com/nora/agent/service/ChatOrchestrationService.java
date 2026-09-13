@@ -2888,10 +2888,13 @@ public class ChatOrchestrationService {
         wsFilenameProp.put("description", "import 时可选:保存的文件名(不给则从 URL 推断)");
         ObjectNode wsActionProp = wsProps.putObject("action");
         wsActionProp.put("type", "string");
-        wsActionProp.put("description", "list / read / write / append / delete");
+        wsActionProp.put("description", "list / read / write / append / delete / import(下载 URL 存成文件;"
+                + "存远程图片等二进制必须用 import,write 只写文本)");
         ObjectNode wsPathProp = wsProps.putObject("path");
         wsPathProp.put("type", "string");
-        wsPathProp.put("description", "read/write/append/delete 时:相对路径=工作区内(如 USER.md);绝对路径=整机(如 D:/projects/x/README.md;写/删前会被要求确认)");
+        wsPathProp.put("description", "read/write/append/delete/import 时:相对路径=工作区内(如 USER.md);"
+                + "绝对路径=整机(如 D:/projects/x/README.md;写/删前会被要求确认)。"
+                + "import 不给 path 时默认存到工作区 imports/ 目录");
         ObjectNode wsDirProp = wsProps.putObject("dir");
         wsDirProp.put("type", "string");
         wsDirProp.put("description", "list 时:目录(相对=工作区内;绝对=整机;省略=工作区根目录)");
