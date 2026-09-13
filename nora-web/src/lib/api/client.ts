@@ -1,3 +1,5 @@
+import { randomId } from "@/lib/utils";
+
 export const API_BASE = "/api";
 export const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === "true";
 
@@ -5,18 +7,20 @@ export const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === "true";
  * 浏览器侧链路 ID:每个页面会话一个(per-tab session),随全部 API 请求以
  * X-Nora-Trace-Id 传播;网关/后端透传或采纳,日志系统按它串联前后端事件。
  * 错误上报(errorReporter)也带同一 ID,与后端日志交叉检索。
+ *
+ * 生成走 randomId()(兼容局域网 HTTP 无 crypto.randomUUID 的环境)。
  */
 const BROWSER_TRACE_ID = (() => {
   try {
     const key = "nora-browser-trace-id";
     let id = sessionStorage.getItem(key);
     if (!id) {
-      id = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+      id = randomId().replace(/-/g, "").slice(0, 24);
       sessionStorage.setItem(key, id);
     }
     return id;
   } catch {
-    return crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+    return randomId().replace(/-/g, "").slice(0, 24);
   }
 })();
 

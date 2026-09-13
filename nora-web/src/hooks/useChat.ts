@@ -7,6 +7,7 @@ import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
 import { useModelProviders } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
+import { randomId } from "@/lib/utils";
 
 /**
  * Agent 全局设置(权限模式 / 默认模型 / 思考等级覆写):后端 app_setting
@@ -359,12 +360,12 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
 
     const content = input.trim();
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: randomId(),
       role: "user",
       content,
       timestamp: formatTime(),
     };
-    const assistantMsgId = crypto.randomUUID();
+    const assistantMsgId = randomId();
 
     setMessages((prev) => [
       ...prev,
@@ -395,7 +396,7 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
       if (userMsg?.role !== "user") return;
 
       const content = userMsg.content;
-      const assistantMsgId = crypto.randomUUID();
+      const assistantMsgId = randomId();
       // 失败轮就地替换为新助手消息(保留占位),原 user 消息不动
       setMessages((prev) =>
         prev.map((m) =>
@@ -457,10 +458,10 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
         }
       }
 
-      const assistantMsgId = crypto.randomUUID();
+      const assistantMsgId = randomId();
       setMessages([
         ...kept,
-        { id: crypto.randomUUID(), role: "user", content: edited.trim(), timestamp: formatTime() },
+        { id: randomId(), role: "user", content: edited.trim(), timestamp: formatTime() },
         { id: assistantMsgId, role: "assistant", content: "", timestamp: formatTime(), isTyping: true, startedAtMs: Date.now() },
       ]);
       await runTurn(edited.trim(), assistantMsgId);
