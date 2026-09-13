@@ -328,7 +328,8 @@ public class ChatOrchestrationService {
                     return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
                 }
                 roundsUsed[0] = round + 1;
-                int compactedCount = compactForRound(messages, budget, false, PER_REQUEST_OVERHEAD_TOKENS);
+                long overhead = requestOverheadTokens();
+                int compactedCount = compactForRound(messages, budget, false, overhead);
                 if (compactedCount > 0 || lastRecycledImages > 0) {
                     StringBuilder what = new StringBuilder();
                     if (compactedCount > 0) what.append("已压缩 ").append(compactedCount).append(" 条早期工具结果");
@@ -341,7 +342,7 @@ public class ChatOrchestrationService {
                             0L, "completed", null, null, null, round));
                 }
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
-                        + PER_REQUEST_OVERHEAD_TOKENS;
+                        + (int) overhead;
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
                         round + 1, eventConsumer, ttftMs, turnStartMs);
                 if (result.usage() != null) {
@@ -377,8 +378,9 @@ public class ChatOrchestrationService {
                         retry = visionRetry;
                     } else if (isContextOverflow(result.errorMessage)) {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
-                        compactForRound(messages, budget, true, PER_REQUEST_OVERHEAD_TOKENS);
-                        lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum();
+                        compactForRound(messages, budget, true, overhead);
+                        lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
+                                + (int) overhead;
                         retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
                         // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
@@ -446,17 +448,18 @@ public class ChatOrchestrationService {
         final String fallbackOutcome = toolOutcome;
 
         final int reasoningRound = roundsUsed[0] + 1;
+        long answerOverhead = requestOverheadTokens();
         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
-                + PER_REQUEST_OVERHEAD_TOKENS;
+                + (int) answerOverhead;
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                 reasoningRound, eventConsumer, ttftMs, turnStartMs);
         // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试。
         // 线程被中断(用户取消)绝不重试——那会让取消多烧一整轮上游 token
         if (finalResult.failed && finalResult.content().isBlank() && !Thread.currentThread().isInterrupted()) {
             if (isContextOverflow(finalResult.errorMessage)) {
-                compactForRound(messages, budget, true, PER_REQUEST_OVERHEAD_TOKENS);
+                compactForRound(messages, budget, true, answerOverhead);
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
-                        + PER_REQUEST_OVERHEAD_TOKENS;
+                        + (int) answerOverhead;
             }
             finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                     reasoningRound, eventConsumer, ttftMs, turnStartMs);
@@ -3160,7 +3163,7 @@ public class ChatOrchestrationService {
         int fixedCost = ContextBudget.estimateTokens(systemPrompt)
                 + (reflectionBlock == null ? 0 : ContextBudget.estimateTokens(reflectionBlock))
                 + ContextBudget.estimateTokens(userMessage)
-                + PER_REQUEST_OVERHEAD_TOKENS;
+                + (int) requestOverheadTokens();
         long historyBudget = budget.historyBudgetTokens(fixedCost);
         int used = 0;
         // controller 在调用前已把当前 user 消息落库(loadMessages 的末条就是它),
@@ -3306,11 +3309,54 @@ public class ChatOrchestrationService {
     private static final int COMPACTION_KEEP_RECENT_IMAGE_ROUNDS = 2;
 
     /**
-     * 每次请求的固定 overhead token 估算(tools spec JSON schema ~1.5k +
-     * 协议封装/系统字段;实测校准 2026-09-08:消息体估算与上游真实
-     * inputTokens 比值 6.7~10.4,overhead 主导,必须计入预算)。
+     * 每次请求的固定 overhead token 估算下限(tools spec + 协议封装/系统字段)。
+     *
+     * <p>实测(2026-09-13):启用 MCP 后 tools spec 已膨胀到 75 个工具/74KB
+     * (≈2 万 tokens)——固定 1800 严重低估,导致 promptEstimate 4051 vs
+     * 真实 11565(ratio 2.85),压缩触发偏晚。改为按 toolsSpec() 实际序列化
+     * 长度动态估算(见 {@link #toolsOverheadTokens()}),此常量降级为下限
+     * (无 tools 的路径/序列化失败时兜底)。
      */
     static final int PER_REQUEST_OVERHEAD_TOKENS = 1_800;
+
+    /** tools spec 序列化缓存的长度(每进程一次:工具集在运行期不变)。 */
+    private volatile int toolsSpecTokensCache = -1;
+
+    /**
+     * tools spec 的 token 估算(按实际序列化长度)。
+     *
+     * <p>口径与消息体不同:实测(2026-09-13,空会话单请求)body 77174 字符
+     * → 上游上报 in=11395;扣掉消息体估算(≈2.4K)后 tools 段 73792 字符
+     * ≈ 9K tokens,即 **≈7-8 字符/token**——JSON 键名/语法高度重复,
+     * tokenizer 打包效率远高于普通文本。若沿用消息体的 CJK 感知估算
+     * (≈20K)会过估 2 倍,导致压缩过早触发(实测 ratio 0.47)。
+     * 取 /7 略偏保守(宁可略早压缩)。工具集运行期不变,首次计算后缓存。
+     */
+    int toolsOverheadTokens() {
+        int cached = toolsSpecTokensCache;
+        if (cached >= 0) return cached;
+        int tokens;
+        try {
+            String json = objectMapper.writeValueAsString(toolsSpec());
+            tokens = Math.max(PER_REQUEST_OVERHEAD_TOKENS, json.length() / TOOLS_SPEC_CHARS_PER_TOKEN);
+        } catch (Exception e) {
+            log.warn("tools spec serialize failed, fallback to constant overhead: {}", e.toString());
+            tokens = PER_REQUEST_OVERHEAD_TOKENS;
+        }
+        toolsSpecTokensCache = tokens;
+        return tokens;
+    }
+
+    /** tools spec 的字符/token 经验值(实测 7-8;取 7 略保守)。 */
+    private static final int TOOLS_SPEC_CHARS_PER_TOKEN = 7;
+
+    /** 本轮请求的真实固定开销 = tools spec(动态) + 协议封装余量。 */
+    private long requestOverheadTokens() {
+        return Math.max(PER_REQUEST_OVERHEAD_TOKENS, (long) toolsOverheadTokens()) + PROTOCOL_OVERHEAD_TOKENS;
+    }
+
+    /** 协议封装/系统字段余量(在 tools spec 之外,固定)。 */
+    private static final int PROTOCOL_OVERHEAD_TOKENS = 1_800;
 
     /**
      * 轮内微压缩(microcompact,语义对齐 Claude Code):预估 prompt 超过
