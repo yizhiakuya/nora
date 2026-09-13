@@ -491,24 +491,20 @@ public class AgentController {
                         // done carries turn metrics (harness pattern: server stamps timing so
                         // the client never recomputes); usage is the provider's real token
                         // accounting summed across tool rounds (null when relay omits it);
-                        // contextWindow/promptTokens feed the frontend context meter
-                        if (!userCancelled) {
-                            String doneJson = toJson(new DonePayload(UUID.randomUUID().toString(),
-                                    durationMs,
-                                    usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
-                                    answerText.length(),
-                                    turn != null ? turn.contextWindow() : null,
-                                    turn != null ? turn.promptTokens() : null,
-                                    turn != null ? turn.ttftMs() : null));
-                            turnStreams.publish(liveTurn, "done", doneJson);
-                            send(emitter, "done", new DonePayload(UUID.randomUUID().toString(),
-                                    durationMs,
-                                    usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
-                                    answerText.length(),
-                                    turn != null ? turn.contextWindow() : null,
-                                    turn != null ? turn.promptTokens() : null,
-                                    turn != null ? turn.ttftMs() : null));
-                        }
+                        // contextWindow/promptTokens feed the frontend context meter.
+                        // 取消轮也发终态(stopped=true):接续流(切页返回/断线重连的
+                        // 客户端)必须收到终态才能收敛 UI——此前取消路径不发任何终态,
+                        // 接续方永远卡在「正在思考」(实测 bug:取消后 UI 无法复位)。
+                        DonePayload done = new DonePayload(UUID.randomUUID().toString(),
+                                durationMs,
+                                usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
+                                answerText.length(),
+                                turn != null ? turn.contextWindow() : null,
+                                turn != null ? turn.promptTokens() : null,
+                                turn != null ? turn.ttftMs() : null,
+                                userCancelled);
+                        turnStreams.publish(liveTurn, "done", toJson(done));
+                        send(emitter, "done", done);
                         emitter.complete();
                     });
         } catch (Exception e) {
@@ -602,7 +598,16 @@ public class AgentController {
      * local estimate while it is null.
      */
     public record DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
-                              Long contextWindow, Integer promptTokens, Long ttftMs) {
+                              Long contextWindow, Integer promptTokens, Long ttftMs,
+                              /** 用户主动停止的取消轮:true;正常完成 null(缺省不序列化时前端视为 false)。
+                                  接续流据此保留半截内容并标「已停止」,而非误当正常完成。 */
+                              Boolean stopped) {
+
+        /** 兼容构造器:正常完成轮(stopped 缺省)。 */
+        public DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
+                           Long contextWindow, Integer promptTokens, Long ttftMs) {
+            this(messageId, durationMs, usage, answerChars, contextWindow, promptTokens, ttftMs, null);
+        }
 
         /** Token accounting from the provider (harness: usage is a first-class done field). */
         public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {

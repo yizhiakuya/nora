@@ -82,6 +82,17 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
   const mountedRef = useRef(true);
   /** 进行中轮次的 AbortController;null = 空闲。「停止生成」按钮调用 abort() */
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * 接续流(切页返回恢复进行中轮次)的句柄。生命周期独立于恢复 effect 的重跑:
+   * 放 effect cleanup 里会被本 effect 自身的 setIsSending(true) 重跑连带拆掉
+   * ——接上即断,终态永远收不到,UI 卡死「正在思考」且「停止生成」失效。
+   * 只在卸载/切会话时统一断开(见下方独立 effect)。
+   */
+  const recoverRef = useRef<{ detach: () => void } | null>(null);
+  /** 接续流是否已接上(守卫重跑:接续中不重复探测、不重挂)。 */
+  const recoverActiveRef = useRef(false);
+  /** 用户点过「停止生成」:本挂载周期内不再自动接续(停止后又被接上=停不掉)。 */
+  const stopRequestedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -94,6 +105,15 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
       abortRef.current = null;
     };
   }, []);
+
+  // 卸载/切会话:断开接续流。服务端轮次不受影响(事件继续进缓冲),
+  // 回到本会话时由恢复逻辑重新探测接续。
+  useEffect(() => {
+    return () => {
+      recoverRef.current?.detach();
+      recoverRef.current = null;
+    };
+  }, [sessionId]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -154,8 +174,9 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
   useEffect(() => {
     if (!USE_BACKEND || !sessionId) return;
     if (isSending) return; // 本地正在流式:轮次是本组件自己发起的,无需恢复
+    if (recoverActiveRef.current) return; // 已接续中:接续流生命周期独立,不重复探测
+    if (stopRequestedRef.current) return; // 用户已停止:本挂载周期不再自动接续
     let cancelled = false;
-    let detach: (() => void) | null = null;
 
     (async () => {
       // 串行等 loadHistory 先落地(激活会话时异步拉取):恢复占位消息写进
@@ -176,6 +197,7 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
       if (cancelled || !info?.running) return;
       // 双保险:store 里这条会话若已有流式中的消息(理论不可能,挂载即无),跳过
       const recoverId = `live-${sessionId}`;
+      recoverActiveRef.current = true;
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== recoverId),
         {
@@ -189,7 +211,9 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
         },
       ]);
       setIsSending(true);
-      detach = attachLiveTurnStream(sessionId, {
+      // 接续流句柄存 ref(而非 effect 局部变量):本 effect 会因 isSending 变化
+      // 重跑,局部变量+cleanup detach 会让刚接上的流被自身重跑立刻拆掉。
+      recoverRef.current = { detach: attachLiveTurnStream(sessionId, {
         onStep: (s) => {
           const normalized = normalizeStep(s, 0);
           setMessages((prev) => prev.map((m) => {
@@ -232,17 +256,28 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
         onApproval: (approval) => {
           updateMessage(recoverId, { approval });
         },
-        onDone: () => {
+        onDone: (p?: unknown) => {
           // 轮次结束:去 typing 态;服务端已落库,主动拉历史收敛终态
           // (直接 loadHistory 会被本会话本地写版本闸门丢弃——恢复消息刚写回
           // store;这里先移除恢复占位再拉,写回的是删除后的数组,闸门不触发)
-          updateMessage(recoverId, { isTyping: false });
-          setMessages((prev) => prev.filter((m) => m.id !== recoverId));
-          lastSavedRef.current = null; // 允许下一次 store→本地 收编
+          recoverActiveRef.current = false;
+          recoverRef.current = null;
+          const stopped = !!(p as { stopped?: boolean } | undefined)?.stopped;
+          if (stopped) {
+            // 取消轮终态(done.stopped):保留已流出的半截内容并标记「已停止」,
+            // 不拉历史(服务端行无 stopped 语义,拉回来反而丢本地标记)
+            updateMessage(recoverId, { isTyping: false, stopped: true });
+          } else {
+            updateMessage(recoverId, { isTyping: false });
+            setMessages((prev) => prev.filter((m) => m.id !== recoverId));
+            lastSavedRef.current = null; // 允许下一次 store→本地 收编
+            void useChatSessions.getState().loadHistory(sessionId);
+          }
           setIsSending(false);
-          void useChatSessions.getState().loadHistory(sessionId);
         },
         onError: (msg) => {
+          recoverActiveRef.current = false;
+          recoverRef.current = null;
           const friendly = humanizeError(msg);
           updateMessage(recoverId, {
             error: friendly.message,
@@ -256,21 +291,27 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
         onIdle: () => {
           // 无进行中轮次(竞态:探测到 live 但连接时已结束):移除占位,
           // 由 loadHistory 拉到已落库的最终消息
+          recoverActiveRef.current = false;
+          recoverRef.current = null;
           setMessages((prev) => prev.filter((m) => m.id !== recoverId));
           setIsSending(false);
         },
-      });
+      }) };
     })();
 
     return () => {
+      // 只标记取消,不断开接续流:本 effect 会因 isSending 变化重跑,
+      // 若在此 detach,刚接上的流会被自身重跑立刻拆掉——终态永远收不到,
+      // UI 卡「正在思考」且「停止生成」失效(实测 bug)。接续流的断开由
+      // sessionId 切换/卸载的独立 effect 与终态回调负责。
       cancelled = true;
-      detach?.();
     };
   }, [sessionId, isSending, updateMessage]);
 
   /** 核心发送逻辑:复用于 sendMessage 与 regenerate */
   const runTurn = useCallback(
     async (content: string, assistantMsgId: string) => {
+      stopRequestedRef.current = false; // 新一轮:解除「停止后不接续」守卫
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -370,9 +411,27 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
 
   /** 停止生成:前端断流 + 通知后端取消轮次(上游 LLM 调用一并中止,不白烧 token) */
   const stopGenerating = useCallback(() => {
+    stopRequestedRef.current = true; // 本挂载周期不再自动接续(否则「停掉又被接上」)
     abortRef.current?.abort();
     if (USE_BACKEND && sessionId) {
       void cancelTurnOnBackend(sessionId);
+    }
+    // 接续流模式(切页返回恢复的轮次,无本地 abortRef):后端取消后
+    // done(stopped) 会经接续流到达并收敛 UI;若接续流已死(手机冻结等),
+    // 兜底就地收敛——否则「停止生成」点了没反应,UI 永久卡「正在思考」(实测 bug)。
+    if (!abortRef.current && sessionId) {
+      const recoverId = `live-${sessionId}`;
+      window.setTimeout(() => {
+        if (!mountedRef.current) return;
+        if (abortRef.current) return; // 3s 内已发起新轮次:兜底让位,不抢状态
+        recoverRef.current?.detach();
+        recoverRef.current = null;
+        recoverActiveRef.current = false;
+        setMessages((prev) => prev.map((m) =>
+          m.id === recoverId && m.isTyping ? { ...m, isTyping: false, stopped: true } : m
+        ));
+        setIsSending(false);
+      }, 3000);
     }
   }, [sessionId]);
 
