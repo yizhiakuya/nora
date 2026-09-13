@@ -1,6 +1,7 @@
 import { AlertTriangle, Brain, Check, ChevronDown, FileText, Loader2, Wrench, Ban } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ContextFile } from "@/lib/api/chatApi";
+import { GalleryBlock, parseGalleryFence } from "./GalleryBlock";
 
 /**
  * Agent 过程时间线（内联式，无外框）：
@@ -125,6 +126,9 @@ function ToolRow({ step }: { step: ChatStep }) {
   const resultImages = !running && step.toolName?.startsWith("mcp__")
     ? extractResultImages(step.result?.content)
     : [];
+  // photos_showcase 的画廊块：结构化展示（标题/说明由 agent 填写），
+  // 识别到围栏时不再渲染散图（避免同一批照片重复出现）
+  const gallery = !running ? parseGalleryFence(step.result?.content) : null;
 
   return (
     <div className="animate-in fade-in slide-in-from-top-1">
@@ -173,7 +177,12 @@ function ToolRow({ step }: { step: ChatStep }) {
         {step.duration && <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{step.duration}</span>}
         {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />}
       </button>
-      {resultImages.length > 0 && (
+      {gallery && (
+        <div className="ml-6 mt-1.5">
+          <GalleryBlock data={gallery} />
+        </div>
+      )}
+      {!gallery && resultImages.length > 0 && (
         <div className="ml-6 mt-1.5 flex flex-wrap gap-2 max-w-2xl">
           {resultImages.slice(0, 6).map((img, i) => (
             <a
