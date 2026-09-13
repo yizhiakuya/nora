@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"photos_review","arguments":{"limit":6,"cols":3,"offset":0}}}
