@@ -213,6 +213,16 @@
   font-size: 0.8125rem;
 }
 
+/* 回答里的图片（如相册工具附的 Markdown 链接）：限高限宽，防撑爆布局 */
+.chat-markdown img {
+  max-width: min(100%, 420px);
+  max-height: 420px;
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border));
+  margin: 0.4em 0;
+  object-fit: contain;
+}
+
 .chat-markdown code:not(pre code) {
   padding: 0.1em 0.3em;
   font-size: 0.85em;

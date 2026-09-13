@@ -34,6 +34,28 @@ function argsPreview(step: ChatStep): string {
   return json.length > 72 ? `${json.slice(0, 72)}…` : json;
 }
 
+/**
+ * 工具结果里的 Markdown 图片（如相册工具返回的 ![照片](url)）。
+ *
+ * 为什么需要：MCP 工具（相册等）会在结果文本里附 Markdown 图片链接，
+ * 让"模型看到了什么"对用户可见——模型看了猫的照片，用户也该看到。
+ * 只从 mcp__ 工具的结果里提取（普通工具结果里的 ![]() 可能是文件内容，不渲染）。
+ */
+function extractResultImages(content: string | null | undefined): { alt: string; url: string }[] {
+  if (!content) return [];
+  const out: { alt: string; url: string }[] = [];
+  const re = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const url = m[2];
+    // 只渲染 http(s) 图片地址（相对路径/数据串不进 <img>）
+    if (/^https?:\/\//i.test(url)) {
+      out.push({ alt: m[1] || "图片", url });
+    }
+  }
+  return out;
+}
+
 /** 推理步骤：默认折叠为一行摘要(流式中也是),点击展开回看。 */
 function ReasoningRow({ step }: { step: ChatStep }) {
   const running = step.status === "running";
@@ -98,6 +120,11 @@ function ToolRow({ step }: { step: ChatStep }) {
   const lines = outputLineCount(step);
   const preview = argsPreview(step);
   const running = step.status === "running";
+  // MCP 工具结果里的图片（相册照片/拼图等）：直接展示给用户，
+  // 不用展开详情——"模型看到了什么"用户同屏可见
+  const resultImages = !running && step.toolName?.startsWith("mcp__")
+    ? extractResultImages(step.result?.content)
+    : [];
 
   return (
     <div className="animate-in fade-in slide-in-from-top-1">
@@ -146,6 +173,30 @@ function ToolRow({ step }: { step: ChatStep }) {
         {step.duration && <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{step.duration}</span>}
         {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />}
       </button>
+      {resultImages.length > 0 && (
+        <div className="ml-6 mt-1.5 flex flex-wrap gap-2 max-w-2xl">
+          {resultImages.slice(0, 6).map((img, i) => (
+            <a
+              key={`${img.url}-${i}`}
+              href={img.url}
+              target="_blank"
+              rel="noreferrer"
+              title={`${img.alt}（点击查看原图）`}
+              className="group/img block rounded-lg border border-border overflow-hidden bg-muted/40"
+            >
+              <img
+                src={img.url}
+                alt={img.alt}
+                loading="lazy"
+                className="h-24 w-auto max-w-[240px] object-cover transition-opacity group-hover/img:opacity-90"
+              />
+            </a>
+          ))}
+          {resultImages.length > 6 && (
+            <span className="self-end text-[10px] text-muted-foreground">+{resultImages.length - 6} 张</span>
+          )}
+        </div>
+      )}
       {effectiveOpen && expandable && (
         <ToolDetail step={step} />
       )}
