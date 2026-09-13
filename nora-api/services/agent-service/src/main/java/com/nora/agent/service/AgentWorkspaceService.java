@@ -348,6 +348,51 @@ public class AgentWorkspaceService {
         return appendPath(resolveSafe(relative), content);
     }
 
+    /** 二进制文件的单文件大小上限(字节)。 */
+    public static final long MAX_BINARY_BYTES = 100L * 1024 * 1024;
+
+    /**
+     * 写入二进制内容(自动建父目录;限长)。
+     *
+     * <p>用于把远程资源(如 MCP 工具给出的图片 URL)落到工作区/整机文件系统,
+     * 供用户在工作台「文件」里查看、整理、归档。与文本写入共用同一套路径解析
+     * 与系统目录保护:相对路径=工作区内,绝对路径=整机(区外写由 HIGH 审批把门)。
+     *
+     * @param path    目标路径(相对=工作区内,绝对=整机)
+     * @param bytes   文件字节
+     * @return 实际写入的字节数
+     */
+    public long writeBinaryAny(String path, byte[] bytes) {
+        if (bytes == null) {
+            throw new IllegalArgumentException("内容为空");
+        }
+        if (bytes.length > MAX_BINARY_BYTES) {
+            throw new IllegalArgumentException("文件超过 " + (MAX_BINARY_BYTES / 1024 / 1024)
+                    + "MB 上限(当前 " + (bytes.length / 1024 / 1024) + "MB)");
+        }
+        Path file = resolveAny(path).path();
+        guardSystemPath(file, "写入");
+        if (Files.isDirectory(file)) {
+            throw new IllegalArgumentException("目标是目录,不能写入: " + file);
+        }
+        try {
+            Files.createDirectories(file.getParent());
+            Files.write(file, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            return bytes.length;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("写入失败: " + e.getMessage());
+        }
+    }
+
+    /** 目标文件是否已存在(避免覆盖用户文件前先确认)。 */
+    public boolean existsAny(String path) {
+        try {
+            return Files.exists(resolveAny(path).path());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** 追加任意文件(agent 工具用)。 */
     public int appendAny(String path, String content) {
         return appendPath(resolveAny(path).path(), content);

@@ -613,6 +613,139 @@ public class ChatOrchestrationService {
         backfillToolMessage(messages, callId, outcome.content(), outcome.images(), llm);
     }
 
+    /**
+     * 把远程 URL 下载并存成工作台「文件」(read_file action=import)。
+     *
+     * <p>与 manage_workspace 的 import 区别:这里存进用户可见的文件中心
+     * (可预览/删除/建索引),适合“把这张图存起来我稍后看”。
+     */
+    private String importToWorkbenchFile(String args) {
+        JsonNode a;
+        try {
+            a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+        } catch (Exception e) {
+            return "ERROR: 参数不是合法 JSON: " + e.getMessage();
+        }
+        String url = a.path("url").asText(null);
+        if (url == null || url.isBlank()) {
+            return "ERROR: 缺少 url 参数(要下载的地址)";
+        }
+        if (!url.matches("(?i)^https?://.*")) {
+            return "ERROR: url 必须是 http/https 地址,当前收到: " + abbreviate(url, 120);
+        }
+        try {
+            java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
+            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder.addressFor(url);
+            if (proxyAddr != null) {
+                cb.proxy(java.net.ProxySelector.of(proxyAddr));
+            }
+            java.net.http.HttpResponse<byte[]> resp = cb.build().send(
+                    java.net.http.HttpRequest.newBuilder()
+                            .uri(java.net.URI.create(url))
+                            .timeout(Duration.ofSeconds(60))
+                            .header("User-Agent", "Nora-Agent/1.0")
+                            .GET().build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() >= 400) {
+                return "ERROR: 下载失败 HTTP " + resp.statusCode() + "(" + abbreviate(url, 100) + ")";
+            }
+            byte[] body = resp.body();
+            if (body == null || body.length == 0) {
+                return "ERROR: 下载到空内容";
+            }
+            String name = a.path("filename").asText(null);
+            if (name == null || name.isBlank()) {
+                name = inferFilename(url);
+            }
+            return fileToolClient.upload(name, body);
+        } catch (Exception e) {
+            return "ERROR: 下载失败: " + abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200);
+        }
+    }
+
+    /**
+     * 从 URL 下载内容并写入文件系统(manage_workspace action=import)。
+     *
+     * <p>典型用法:把 MCP 工具(如手机相册)返回的图片链接存到工作区,
+     * 供用户在工作台「文件」里查看/整理/归档。下载走全局出站代理配置
+     * (外网目标经代理、内网/本机直连,见 ProxySupport)。
+     *
+     * @param a    工具参数(url / filename 可选)
+     * @param path 目标路径(缺省时用下载文件名放到工作区根)
+     */
+    private String importFromUrl(JsonNode a, String path) {
+        String url = a.path("url").asText(null);
+        if (url == null || url.isBlank()) {
+            return "ERROR: 缺少 url 参数(要下载的地址,如 MCP 工具返回的 contentUrl/thumbUrl)";
+        }
+        if (!url.matches("(?i)^https?://.*")) {
+            return "ERROR: url 必须是 http/https 地址,当前收到: " + abbreviate(url, 120);
+        }
+        if (agentWorkspaceService == null) {
+            return "ERROR: 工作区能力未启用(服务未配置)";
+        }
+        // 目标路径:显式给定优先;否则用 filename 或从 URL 推断,放到工作区根
+        String target = path;
+        if (target == null || target.isBlank()) {
+            String name = a.path("filename").asText(null);
+            if (name == null || name.isBlank()) {
+                name = inferFilename(url);
+            }
+            target = "imports/" + name;
+        }
+        try {
+            java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
+            java.net.InetSocketAddress proxyAddr =
+                    com.nora.common.http.ProxySettingsHolder.addressFor(url);
+            if (proxyAddr != null) {
+                cb.proxy(java.net.ProxySelector.of(proxyAddr));
+            }
+            java.net.http.HttpClient client = cb.build();
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(url))
+                    .timeout(Duration.ofSeconds(60))
+                    .header("User-Agent", "Nora-Agent/1.0")
+                    .GET()
+                    .build();
+            java.net.http.HttpResponse<byte[]> resp = client.send(req,
+                    java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() >= 400) {
+                return "ERROR: 下载失败 HTTP " + resp.statusCode() + "(" + abbreviate(url, 100) + ")";
+            }
+            byte[] body = resp.body();
+            if (body == null || body.length == 0) {
+                return "ERROR: 下载到空内容(" + abbreviate(url, 100) + ")";
+            }
+            boolean existed = agentWorkspaceService.existsAny(target);
+            long written = agentWorkspaceService.writeBinaryAny(target, body);
+            return "已保存到 " + target + "(" + FileToolClient.formatSize(written)
+                    + (existed ? ",已覆盖同名文件" : "")
+                    + ", 来源: " + abbreviate(url, 90) + ")";
+        } catch (Exception e) {
+            return "ERROR: 下载失败: " + abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200);
+        }
+    }
+
+    /** 从 URL 推断合适的文件名(取路径末段并去掉查询参数)。 */
+    private static String inferFilename(String url) {
+        try {
+            String p = java.net.URI.create(url).getPath();
+            if (p != null && p.contains("/")) {
+                String last = p.substring(p.lastIndexOf('/') + 1);
+                if (!last.isBlank() && last.contains(".")) {
+                    return last.replaceAll("[\\\\/:*?\"<>|]", "_");
+                }
+            }
+        } catch (Exception ignored) {
+            // 推断失败走默认名
+        }
+        return "import-" + System.currentTimeMillis() + ".bin";
+    }
+
     private void finishToolStep(String toolStepId, String name, String title, ChatStepDto.StepInput input,
                                 long toolStart, ChatStepDto.StepResult result, String status,
                                 int roundIndex,
@@ -1398,6 +1531,12 @@ public class ChatOrchestrationService {
         }
         if ("read_file".equals(name)) {
             String action = parsed.datasourceAction() == null ? "list" : parsed.datasourceAction().trim().toLowerCase();
+            // import: 把远程 URL 下载并存成工作台文件(用户可见可管理)
+            if ("import".equals(action)) {
+                String r = importToWorkbenchFile(args);
+                return r.startsWith("ERROR:") ? new ToolOutcome(r, null, null, false)
+                        : new ToolOutcome(r, r, null, false);
+            }
             if ("list".equals(action) || parsed.input().target() == null) {
                 // 无 id = 列出文件让模型挑;显式 action=list 同理
                 return bounded(fileToolClient.list(), null);
@@ -1414,8 +1553,8 @@ public class ChatOrchestrationService {
                 return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
             }
             String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-            if (!java.util.Set.of("list", "read", "write", "append", "delete").contains(action)) {
-                return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / write / append / delete",
+            if (!java.util.Set.of("list", "read", "write", "append", "delete", "import").contains(action)) {
+                return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / write / append / delete / import",
                         null, null, false);
             }
             try {
@@ -1469,6 +1608,7 @@ public class ChatOrchestrationService {
                         int written = agentWorkspaceService.appendAny(path, content);
                         yield "已追加 " + written + " 字符到 " + path;
                     }
+                    case "import" -> importFromUrl(a, path);
                     default -> {
                         if (path == null || path.isBlank()) {
                             yield "ERROR: 缺少 path 参数;删除不可恢复,请先向用户确认";
@@ -2672,17 +2812,27 @@ public class ChatOrchestrationService {
         fileTool.put("type", "function");
         ObjectNode fileFn = fileTool.putObject("function");
         fileFn.put("name", "read_file");
-        fileFn.put("description", "读取工作台已上传文件的内容(list 列出全部文件;带 id 读取某个文件的提取文本,"
-                + "支持文档/PDF/代码等)。用户问\"我的文件里/上传的文档里\"这类问题时使用——"
+        fileFn.put("description", "工作台文件管理。"
+                + "list 列出全部文件;带 id 读取某个文件的提取文本(支持文档/PDF/代码等);"
+                + "**import 把远程 URL 下载并存成工作台文件**"
+                + "(适合把 MCP 工具返回的图片链接存起来:用户可在「文件」页直接看到)。"
+                + "用户问\"我的文件里/上传的文档里\"这类问题时使用——"
                 + "注意 RAG 检索只能召回片段,通读全文用此工具。文件名不能猜,必须先 list 拿到 id。"
-                + "示例:{\"action\": \"list\"} 或 {\"id\": \"3\"}");
+                + "示例:{\"action\": \"list\"}、{\"id\": \"3\"}、"
+                + "{\"action\": \"import\", \"url\": \"https://.../photo/123/content?t=xxx\", \"filename\": \"photo-123.jpg\"}");
         ObjectNode fileParams = fileFn.putObject("parameters");
         fileParams.put("type", "object");
         fileParams.put("additionalProperties", false);
         ObjectNode fileProps = fileParams.putObject("properties");
+        ObjectNode fileUrlProp = fileProps.putObject("url");
+        fileUrlProp.put("type", "string");
+        fileUrlProp.put("description", "import 时:要下载并存成文件的 http/https 地址");
+        ObjectNode fileFilenameProp = fileProps.putObject("filename");
+        fileFilenameProp.put("type", "string");
+        fileFilenameProp.put("description", "import 时可选:保存的文件名(不给则从 URL 推断)");
         ObjectNode fileActionProp = fileProps.putObject("action");
         fileActionProp.put("type", "string");
-        fileActionProp.put("description", "list(列文件)或 read(读内容);省略时:有 id 即 read,无 id 即 list");
+        fileActionProp.put("description", "list(列文件)/ read(读内容)/ import(下载 URL 存成文件);省略时:有 id 即 read,无 id 即 list");
         ObjectNode fileIdProp = fileProps.putObject("id");
         fileIdProp.put("type", "string");
         fileIdProp.put("description", "read 时:文件 id(list 结果里的数字 id,非文件名)");
@@ -2701,7 +2851,10 @@ public class ChatOrchestrationService {
         ObjectNode wsFn = wsTool.putObject("function");
         wsFn.put("name", "manage_workspace");
         wsFn.put("description", "文件系统读写(工作区是你的家目录,也是你的长期记忆)。"
-                + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除。"
+                + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除;"
+                + "**import 把远程 URL 的内容下载并保存到文件系统**"
+                + "(如把 MCP 工具返回的图片链接存到工作区:"
+                + "{\"action\": \"import\", \"url\": \"https://.../photo/123/content?t=xxx\", \"path\": \"album/photo-123.jpg\"})。"
                 + "**相对路径=工作区内**(如 USER.md、memory/2026-09-10.md);"
                 + "**绝对路径=整机任意位置**(如 D:/projects/app/src/main.ts、C:/Users/xxx/notes.md),"
                 + "可帮用户查看/整理项目文件——写/删工作区外的文件前用户会被要求确认。"
@@ -2712,6 +2865,12 @@ public class ChatOrchestrationService {
         wsParams.put("type", "object");
         wsParams.put("additionalProperties", false);
         ObjectNode wsProps = wsParams.putObject("properties");
+        ObjectNode wsUrlProp = wsProps.putObject("url");
+        wsUrlProp.put("type", "string");
+        wsUrlProp.put("description", "import 时:要下载的 http/https 地址");
+        ObjectNode wsFilenameProp = wsProps.putObject("filename");
+        wsFilenameProp.put("type", "string");
+        wsFilenameProp.put("description", "import 时可选:保存的文件名(不给则从 URL 推断)");
         ObjectNode wsActionProp = wsProps.putObject("action");
         wsActionProp.put("type", "string");
         wsActionProp.put("description", "list / read / write / append / delete");

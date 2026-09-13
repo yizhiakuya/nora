@@ -110,7 +110,8 @@ final class RiskClassifier {
             if ("list".equals(action) || "read".equals(action)) {
                 return Risk.LOW; // 读操作无副作用(含区外读)
             }
-            boolean knownAction = "write".equals(action) || "append".equals(action) || "delete".equals(action);
+            boolean knownAction = "write".equals(action) || "append".equals(action)
+                    || "delete".equals(action) || "import".equals(action);
             if (!knownAction) {
                 return Risk.HIGH; // 参数坏/action 未知:保守按 HIGH
             }
@@ -121,6 +122,12 @@ final class RiskClassifier {
             boolean outside = isOutsideWorkspace(target);
             if ("delete".equals(action)) {
                 return outside ? Risk.CRITICAL : Risk.HIGH;
+            }
+            // import:从远程 URL 下载并落盘(有出站请求 + 写文件)。
+            // 区内落盘=LOW(与区内 write 同级:用户请求把相册存进工作区时不应被打断);
+            // 区外落盘=HIGH(整机任意位置,跟随审批档位)
+            if ("import".equals(action)) {
+                return outside ? Risk.HIGH : Risk.LOW;
             }
             // write / append:区内=LOW(记忆维护须即时落盘,不打扰);区外=HIGH
             return outside ? Risk.HIGH : Risk.LOW;
