@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import {describe, it, vi} from "vitest";
-import { AgentThoughtBlock } from "./AgentThoughtBlock";
+import { AgentProcessBlock, AgentThoughtBlock } from "./AgentThoughtBlock";
 import type { ChatStep } from "@/lib/api/chatApi";
 
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行渲染/交互路径,不校验结果。
@@ -205,5 +205,53 @@ describe("AgentThoughtBlock ReasoningRow", () => {
     // 默认仍折叠;点开后能看到累积的完整内容
     fireEvent.click(screen.getByRole("button", { name: /思考中/ }));
     // (assertion removed)
+  });
+});
+
+describe("AgentProcessBlock 过程折叠(对齐 Codex:执行中展示、完成后合并)", () => {
+  const toolStep: ChatStep = {
+    id: "s-tool-1",
+    type: "tool",
+    title: "检索照片",
+    status: "completed",
+    toolName: "mcp__phone__photos_review",
+    input: { target: "" },
+    result: { content: "照片拼图：9 格" },
+  };
+  const steps: ChatStep[] = [runningThink, toolStep];
+
+  it("执行中(isTyping)完整展示过程,无折叠行", () => {
+    render(<AgentProcessBlock steps={steps} isTyping durationMs={undefined} />);
+    // 过程步骤直接可见(不经过折叠按钮)
+    screen.getByText(/思考中|已深度思考/);
+    screen.getByText("mcp__phone__photos_review");
+  });
+
+  it("完成后折叠为一行,点击展开回看", () => {
+    render(<AgentProcessBlock steps={steps} isTyping={false} durationMs={3200} />);
+    const toggle = screen.getByRole("button", { name: /查看工作过程/ });
+    fireEvent.click(toggle); // 展开
+    fireEvent.click(screen.getByRole("button", { name: /工作过程/ })); // 收起
+  });
+
+  it("折叠态保留结果类内容(画廊卡片)", () => {
+    const gallery = {
+      version: 1,
+      title: "最近的猫照",
+      count: 1,
+      items: [{ id: 8367, url: "https://example.com/8367.jpg", caption: "躺在黑衣旁" }],
+    };
+    const showcaseStep: ChatStep = {
+      id: "s-tool-showcase",
+      type: "tool",
+      title: "整理画廊",
+      status: "completed",
+      toolName: "mcp__phone__photos_showcase",
+      result: { content: "画廊已生成。\n```nora-gallery\n" + JSON.stringify(gallery) + "\n```\n" },
+    };
+    render(<AgentProcessBlock steps={[showcaseStep]} isTyping={false} durationMs={800} />);
+    // 折叠态:画廊标题可见(结果必须可见),过程行在折叠按钮内
+    screen.getByText("最近的猫照");
+    screen.getByRole("button", { name: /查看工作过程/ });
   });
 });

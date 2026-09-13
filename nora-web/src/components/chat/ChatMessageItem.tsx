@@ -1,6 +1,6 @@
 import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X } from "lucide-react";
 import { useState } from "react";
-import { AgentThoughtBlock, TurnMeta } from "./AgentThoughtBlock";
+import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { Markdown } from "@/components/shared/Markdown";
@@ -238,7 +238,11 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
               
               <div className="relative pl-6 space-y-3 before:absolute before:inset-y-2 before:left-2.5 before:w-px before:bg-gray-200 dark:before:bg-gray-700">
                   {msg.steps && msg.steps.length > 0 && (
-                    <AgentThoughtBlock steps={msg.steps} />
+                    <AgentProcessBlock
+                      steps={msg.steps}
+                      isTyping={!!msg.isTyping}
+                      durationMs={msg.turnMetrics?.durationMs}
+                    />
                   )}
 
                   {msg.approval && (
@@ -326,6 +330,7 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
                               durationMs={msg.turnMetrics?.durationMs}
                               usage={msg.turnMetrics?.usage}
                               ttftMs={msg.turnMetrics?.ttftMs}
+                              hideToolAndDuration={!!msg.steps && msg.steps.length > 0}
                             />
                             {msg.stopped && (
                               <span className="text-[10px] text-amber-600 dark:text-amber-400">· 已停止</span>

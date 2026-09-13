@@ -1,7 +1,7 @@
-import { AlertTriangle, Brain, Check, ChevronDown, FileText, Loader2, Wrench, Ban } from "lucide-react";
+import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, FileText, Loader2, Wrench, Ban } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ContextFile } from "@/lib/api/chatApi";
-import { GalleryBlock, parseGalleryFence } from "./GalleryBlock";
+import { GalleryBlock, parseGalleryFence, type GalleryData } from "./GalleryBlock";
 
 /**
  * Agent 过程时间线（内联式，无外框）：
@@ -495,19 +495,88 @@ export function AgentThoughtBlock({ steps }: { steps: ChatStep[] }) {
 }
 
 /**
+ * 工作过程块（对齐 Codex/Claude Code 的折叠语义）：
+ * - 执行中（isTyping）：完整时间线实时展示——过程要看得见；
+ * - 完成后：自动折叠为一行「查看工作过程 · N 次工具调用 · 耗时」，
+ *   点击展开回看完整时间线；
+ * - 折叠态仍保留「结果类」内容（photos_showcase 的画廊卡片）——
+ *   过程可折叠，结果必须可见（散图/拼图属过程，随过程一起折叠）。
+ */
+export function AgentProcessBlock({
+  steps,
+  isTyping,
+  durationMs,
+}: {
+  steps: ChatStep[];
+  isTyping: boolean;
+  durationMs?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (steps.length === 0) return null;
+  if (isTyping) return <AgentThoughtBlock steps={steps} />;
+
+  const toolCount = steps.filter((s) => s.type === "tool").length;
+  const summary = toolCount > 0 ? `${toolCount} 次工具调用` : `${steps.length} 个步骤`;
+  // 结果类内容：photos_showcase 的画廊卡片（过程折叠后仍展示）
+  const galleries = steps
+    .map((s) => parseGalleryFence(s.result?.content))
+    .filter((g): g is GalleryData => g !== null);
+
+  return (
+    <div className="animate-in fade-in">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+        className="group flex items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors"
+      >
+        <ChevronRight
+          className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform ${expanded ? "rotate-90" : ""}`}
+        />
+        <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+          {expanded ? "工作过程" : "查看工作过程"}
+        </span>
+        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+          · {summary}
+          {durationMs != null && ` · ${(durationMs / 1000).toFixed(1)}s`}
+        </span>
+      </button>
+      {expanded ? (
+        <div className="mt-1">
+          <AgentThoughtBlock steps={steps} />
+        </div>
+      ) : (
+        galleries.length > 0 && (
+          <div className="mt-1.5 space-y-1.5">
+            {galleries.map((g, i) => (
+              <GalleryBlock key={i} data={g} />
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+/**
  * 回答下方的执行元信息行(灰色小字):N 次工具调用 · N tokens · Ns。
  * 仅在轮次结束后展示。
+ *
+ * hideToolAndDuration: 折叠后的「查看工作过程」行已带"N 次工具调用 · Xs",
+ * 此处不再重复,只补 tokens / 首字延迟。
  */
 export function TurnMeta({
   steps,
   durationMs,
   usage,
   ttftMs,
+  hideToolAndDuration = false,
 }: {
   steps?: ChatStep[];
   durationMs?: number;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
   ttftMs?: number | null;
+  hideToolAndDuration?: boolean;
 }) {
   const toolCount = steps?.filter((s) => s.type === "tool").length ?? 0;
   const tokens = usage?.totalTokens ?? usage?.outputTokens ?? null;
@@ -515,10 +584,11 @@ export function TurnMeta({
   if (toolCount === 0 && tokens == null && durationMs == null) return null;
 
   const parts: string[] = [];
-  if (toolCount > 0) parts.push(`${toolCount} 次工具调用`);
+  if (!hideToolAndDuration && toolCount > 0) parts.push(`${toolCount} 次工具调用`);
   if (tokens != null) parts.push(`${tokens} tokens`);
   if (ttftMs != null && ttftMs >= 0) parts.push(`首字 ${(ttftMs / 1000).toFixed(1)}s`);
-  if (durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
+  if (!hideToolAndDuration && durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
+  if (parts.length === 0) return null;
 
   return (
     <div className="text-[10px] text-muted-foreground/70 tabular-nums pt-0.5">{parts.join(" · ")}</div>
