@@ -414,6 +414,55 @@ public class AgentWorkspaceService {
         }
     }
 
+    /**
+     * 读取任意文件的原始字节(agent 识图通道用;区外读取=LOW,直接放行)。
+     *
+     * <p>图片经文本工具读取必然失败(二进制 UTF-8 解码报 "Input length = 1"),
+     * 因此识图必须走字节通道:读原始字节 → 作为图像附件喂给视觉模型。
+     *
+     * @param path 相对=工作区内,绝对=整机
+     * @return 文件字节
+     */
+    public byte[] readBytesAny(String path) {
+        Path file = resolveAny(path).path();
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("文件不存在: " + file);
+        }
+        try {
+            long size = Files.size(file);
+            if (size > MAX_BINARY_BYTES) {
+                throw new IllegalArgumentException("文件超过 " + (MAX_BINARY_BYTES / 1024 / 1024)
+                        + "MB,拒绝整体读取");
+            }
+            return Files.readAllBytes(file);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 从扩展名推断图片 MIME(png/jpg/jpeg/gif/webp/bmp);非图片返回 {@code null}。
+     * 供 agent 工具在文本读取前分流:图片走字节+图像附件,文本走 readAny。
+     */
+    public static String imageMime(String path) {
+        if (path == null) {
+            return null;
+        }
+        int dot = path.lastIndexOf('.');
+        if (dot < 0 || dot == path.length() - 1) {
+            return null;
+        }
+        String ext = path.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        return switch (ext) {
+            case "png" -> "image/png";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "gif" -> "image/gif";
+            case "webp" -> "image/webp";
+            case "bmp" -> "image/bmp";
+            default -> null;
+        };
+    }
+
     /** 追加任意文件(agent 工具用)。 */
     public int appendAny(String path, String content) {
         return appendPath(resolveAny(path).path(), content);

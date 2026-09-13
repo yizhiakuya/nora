@@ -1561,7 +1561,29 @@ public class ChatOrchestrationService {
                 return new ToolOutcome("ERROR: id 必须是数字(先用 action=list 查看可用文件)"
                         + ",不能按文件名猜测。当前收到: " + target, null, null, false);
             }
-            return bounded(fileToolClient.preview(Long.parseLong(target)), null);
+            long fileId = Long.parseLong(target);
+            FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
+            if (info.failed()) {
+                return bounded("ERROR: " + info.error(), null);
+            }
+            if (info.hasText()) {
+                return bounded(fileToolClient.renderPreview(info), null);
+            }
+            // 无文本=二进制/图片:图片走图像通道(视觉模型直接看图;
+            // 非视觉模型由 backfillToolMessage 明确告知看不到,不静默丢弃)
+            JsonNode meta = fileToolClient.meta(fileId);
+            String mime = meta == null ? null : meta.path("mimeType").asText(null);
+            if (mime != null && mime.startsWith("image/")) {
+                FileToolClient.RawFile raw = fileToolClient.raw(fileId);
+                if (raw != null && raw.bytes().length > 0) {
+                    String b64 = java.util.Base64.getEncoder().encodeToString(raw.bytes());
+                    String desc = "图片文件 " + info.name() + "(" + FileToolClient.formatSize(raw.bytes().length)
+                            + ", " + mime + "),原始字节已作为图像附件返回;直接描述你看到的内容";
+                    return new ToolOutcome(desc, "图片", null, false,
+                            List.of(new McpServerService.McpToolResult.ImageBlock(mime, b64)));
+                }
+            }
+            return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
         }
         if ("manage_workspace".equals(name)) {
             if (agentWorkspaceService == null) {
@@ -1575,6 +1597,25 @@ public class ChatOrchestrationService {
             try {
                 JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
                 String path = a.path("path").asText(null);
+                // read 图片:文本解码必然失败("Input length = 1"),改走图像通道——
+                // 原始字节作为图像附件喂给视觉模型;非视觉模型由 backfillToolMessage
+                // 明确告知「看不到」,不静默丢弃、不报解码错误。
+                if ("read".equals(action) && path != null && !path.isBlank()) {
+                    String imgMime = AgentWorkspaceService.imageMime(path);
+                    if (imgMime != null) {
+                        try {
+                            byte[] bytes = agentWorkspaceService.readBytesAny(path);
+                            String b64 = java.util.Base64.getEncoder().encodeToString(bytes);
+                            return new ToolOutcome(
+                                    "图片文件 " + path + "(" + FileToolClient.formatSize(bytes.length)
+                                            + ", " + imgMime + "),原始字节已作为图像附件返回;直接描述你看到的内容",
+                                    "图片", null, false,
+                                    List.of(new McpServerService.McpToolResult.ImageBlock(imgMime, b64)));
+                        } catch (IllegalArgumentException e) {
+                            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+                        }
+                    }
+                }
                 return new ToolOutcome(switch (action) {
                     case "list" -> {
                         // dir 优先,其次 path(agent 可能把路径塞进 path)
