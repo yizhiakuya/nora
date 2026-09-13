@@ -190,6 +190,29 @@ public class FileStorageService {
         return new FilePreview(id, "text", text, item.name(), humanReadableSize(item.sizeBytes()));
     }
 
+    /**
+     * 读取文件原始字节(图片/PDF 等二进制的直接预览用)。
+     *
+     * <p>预览端点走 Tika 只能给文本,图片拿不到内容;文件中心里点开图片
+     * 需要原始字节,这里按 id 定位磁盘文件读回。
+     *
+     * @param id file id
+     * @return 文件字节
+     * @throws BusinessException 404 when the id is unknown or the file is missing on disk
+     */
+    public byte[] raw(Long id) {
+        FileItem item = getById(id);
+        String filePath = filePathOf(id);
+        if (filePath == null || !Files.exists(Path.of(filePath))) {
+            throw new BusinessException(FILE_NOT_FOUND_CODE, "File content not found: " + item.name());
+        }
+        try {
+            return Files.readAllBytes(Path.of(filePath));
+        } catch (IOException ex) {
+            throw new BusinessException(500, "Could not read file '" + item.name() + "': " + ex.getMessage(), ex);
+        }
+    }
+
     private static String humanReadableSize(Long bytes) {
         if (bytes == null || bytes < 0) {
             return "—";

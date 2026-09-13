@@ -81,6 +81,26 @@ public class FileController {
     }
 
     /**
+     * 返回文件原始字节(图片/PDF 等二进制预览用;前端 &lt;img src&gt; 直接引用)。
+     * Content-Type 用文件真实 mime,浏览器按图片渲染。
+     *
+     * @param id file id
+     * @return raw bytes with the stored mime type
+     */
+    @GetMapping("/{id}/raw")
+    public org.springframework.http.ResponseEntity<byte[]> raw(@PathVariable Long id) {
+        com.nora.file.api.FileItem item = fileStorageService.getById(id);
+        byte[] body = fileStorageService.raw(id);
+        String mime = item.mimeType() == null || item.mimeType().isBlank()
+                ? org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE
+                : item.mimeType();
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Type", mime)
+                .header("Cache-Control", "private, max-age=300")
+                .body(body);
+    }
+
+    /**
      * Triggers rag-service indexing asynchronously (fire-and-forget) and
      * immediately returns the current file item (still {@code indexed=false}).
      *

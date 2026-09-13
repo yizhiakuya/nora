@@ -39,6 +39,10 @@ export const workspaceApi = {
     );
     return row.content;
   },
+  /** 图片等二进制文件的预览 URL(原始字节端点,浏览器直接渲染)。 */
+  rawUrl(path: string): string {
+    return `/api/workspace/file/raw?path=${encodeURIComponent(path)}`;
+  },
   async writeFile(path: string, content: string): Promise<void> {
     await requestJson<{ path: string; content: string }>("/workspace/file", {
       method: "PUT",

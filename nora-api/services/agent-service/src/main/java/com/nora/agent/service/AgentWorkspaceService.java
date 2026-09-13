@@ -393,6 +393,27 @@ public class AgentWorkspaceService {
         }
     }
 
+    /**
+     * 读取工作区文件的原始字节(图片等二进制预览用)。
+     *
+     * <p>文本读取(read)会拒绝二进制;图片导入工作区后,「文件」页里的
+     * 工作区浏览器需要原始字节才能渲染缩略图。
+     *
+     * @param relative 工作区内相对路径
+     * @return 文件字节
+     */
+    public byte[] readBytes(String relative) {
+        Path file = resolveSafe(relative);
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("文件不存在: " + file);
+        }
+        try {
+            return Files.readAllBytes(file);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取失败: " + e.getMessage());
+        }
+    }
+
     /** 追加任意文件(agent 工具用)。 */
     public int appendAny(String path, String content) {
         return appendPath(resolveAny(path).path(), content);

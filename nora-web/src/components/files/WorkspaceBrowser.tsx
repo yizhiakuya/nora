@@ -28,6 +28,8 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
   const [content, setContent] = useState("");
   const [original, setOriginal] = useState("");
   const [busy, setBusy] = useState(false);
+  /** 图片预览(二进制不进编辑器:文本读取会拒绝二进制)。 */
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const list = await workspaceApi.listFiles(dir).catch(() => []);
@@ -43,6 +45,11 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
   }, []);
 
   const openFile = async (path: string) => {
+    // 图片走原始字节预览(文本端点拒绝二进制)
+    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(path)) {
+      setViewingImage(path);
+      return;
+    }
     try {
       const text = await workspaceApi.readFile(path);
       setEditing(path);
@@ -161,6 +168,23 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
           {stats ? ` · 共 ${stats.files} 个文件 ${stats.bytes} B` : ""}
         </div>
       )}
+
+      <Modal
+        isOpen={viewingImage != null}
+        onClose={() => setViewingImage(null)}
+        title={viewingImage ?? ""}
+        width="w-[94%] sm:w-[720px]"
+      >
+        {viewingImage && (
+          <div className="flex items-center justify-center bg-muted/40 rounded-lg p-4 min-h-[300px]">
+            <img
+              src={workspaceApi.rawUrl(viewingImage)}
+              alt={viewingImage}
+              className="max-w-full max-h-[420px] rounded-lg shadow-md"
+            />
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={editing != null}

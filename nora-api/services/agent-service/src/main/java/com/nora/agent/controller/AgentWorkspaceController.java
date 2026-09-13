@@ -54,6 +54,36 @@ public class AgentWorkspaceController {
         }
     }
 
+    /**
+     * 读文件原始字节(图片等二进制预览用;前端 &lt;img src&gt; 直接引用)。
+     * 文本端点拒绝二进制,图片预览必须走这里。
+     */
+    @GetMapping("/file/raw")
+    public org.springframework.http.ResponseEntity<byte[]> raw(@RequestParam String path) {
+        try {
+            byte[] body = workspaceService.readBytes(path);
+            String mime = guessMime(path);
+            return org.springframework.http.ResponseEntity.ok()
+                    .header("Content-Type", mime)
+                    .header("Cache-Control", "private, max-age=300")
+                    .body(body);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(404, e.getMessage());
+        }
+    }
+
+    /** 按扩展名猜 mime(工作区文件没有元数据表,从路径推断)。 */
+    private static String guessMime(String path) {
+        String lower = path == null ? "" : path.toLowerCase();
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        return "application/octet-stream";
+    }
+
     /** 写文件(覆盖);前端编辑器保存用。 */
     @PutMapping("/file")
     public ApiResponse<FileContent> write(@RequestBody WriteRequest request) {

@@ -71,16 +71,17 @@ interface BackendFilePreview {
   size: string;
 }
 
-function toPreview(p: BackendFilePreview, name: string): FilePreview {
+function toPreview(p: BackendFilePreview, id: number, name: string): FilePreview {
   if (p.textContent) {
     return { kind: "text", text: p.textContent };
   }
   // 后端 Tika 提取不到文本(图片/空文件)时按扩展名给预览 kind
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  const kind: FilePreviewKind = ["png", "jpg", "jpeg", "gif", "webp"].includes(ext)
-    ? "image"
-    : "unknown";
-  return { kind };
+  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
+    // 图片:文本提取为空,给 raw 端点 URL 让 <img> 直接渲染原始字节
+    return { kind: "image", imageUrl: `/api/files/${id}/raw` };
+  }
+  return { kind: "unknown" as FilePreviewKind };
 }
 
 async function requestRaw<T>(path: string, init?: RequestInit): Promise<T> {
@@ -132,10 +133,9 @@ export const filesApi = {
 
   async fetchPreview(id: number, name: string): Promise<FilePreview> {
     const p = await requestJson<BackendFilePreview>(`/files/${id}/preview`);
-    return toPreview(p, name);
+    return toPreview(p, id, name);
   },
 };
 
 export { toFileItem, humanSize, mimeToType, getFileMeta };
 export type { BackendFileItem, BackendFilePreview };
-
