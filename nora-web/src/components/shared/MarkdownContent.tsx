@@ -1,6 +1,37 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useState } from "react";
 import { GalleryBlock, parseGalleryJson } from "@/components/chat/GalleryBlock";
+import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
+
+/**
+ * Markdown 正文里的图片：点击页内灯箱放大（不再跳外部标签页）。
+ * 单张图也给灯箱——行为一致（点击放大、Esc 关闭）。
+ */
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!src) return null;
+  const images: LightboxImage[] = [{ src, alt }];
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt ?? ""}
+        loading="lazy"
+        onClick={() => setOpen(true)}
+        className="max-w-full rounded-lg border border-border cursor-zoom-in my-1.5"
+      />
+      {open && (
+        <ImageLightbox
+          images={images}
+          index={0}
+          onClose={() => setOpen(false)}
+          onIndexChange={() => {}}
+        />
+      )}
+    </>
+  );
+}
 
 /**
  * 把文本按 ```nora-gallery 围栏切成片段：围栏内是 photos_showcase 的
@@ -35,7 +66,14 @@ export default function MarkdownContent({
   if (segments.length <= 1) {
     return (
       <div className={className}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
+          }}
+        >
+          {children}
+        </ReactMarkdown>
       </div>
     );
   }
@@ -54,7 +92,13 @@ export default function MarkdownContent({
           );
         }
         return seg.text.trim() ? (
-          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            key={i}
+            remarkPlugins={[remarkGfm]}
+            components={{
+              img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
+            }}
+          >
             {seg.text}
           </ReactMarkdown>
         ) : null;

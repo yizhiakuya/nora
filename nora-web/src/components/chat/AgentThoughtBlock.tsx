@@ -2,6 +2,7 @@ import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, FileText, Loade
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ContextFile } from "@/lib/api/chatApi";
 import { GalleryBlock, parseGalleryFence, type GalleryData } from "./GalleryBlock";
+import { ImageLightbox } from "@/components/shared/ImageLightbox";
 
 /**
  * Agent 过程时间线（内联式，无外框）：
@@ -55,6 +56,14 @@ function extractResultImages(content: string | null | undefined): { alt: string;
     }
   }
   return out;
+}
+
+/**
+ * 手机相册的 /content 原图有 /thumb 缩略图变体：网格用缩略图（快），
+ * 灯箱用原图（清晰）。非相册地址原样返回。
+ */
+function thumbVariant(url: string): string {
+  return url.replace(/\/content(\?|$)/, "/thumb$1");
 }
 
 /** 推理步骤：默认折叠为一行摘要(流式中也是),点击展开回看。 */
@@ -116,6 +125,8 @@ function ReasoningRow({ step }: { step: ChatStep }) {
 function ToolRow({ step }: { step: ChatStep }) {
   const [open, setOpen] = useState(step.status === "running");
   const [userTouched, setUserTouched] = useState(false);
+  // 结果散图点击 → 页内灯箱（不再跳外部标签页）
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const effectiveOpen = userTouched ? open : step.status === "running";
   const expandable = Boolean(step.input || step.result || step.detail);
   const lines = outputLineCount(step);
@@ -185,26 +196,37 @@ function ToolRow({ step }: { step: ChatStep }) {
       {!gallery && resultImages.length > 0 && (
         <div className="ml-6 mt-1.5 flex flex-wrap gap-2 max-w-2xl">
           {resultImages.slice(0, 6).map((img, i) => (
-            <a
+            <button
+              type="button"
               key={`${img.url}-${i}`}
-              href={img.url}
-              target="_blank"
-              rel="noreferrer"
-              title={`${img.alt}（点击查看原图）`}
-              className="group/img block rounded-lg border border-border overflow-hidden bg-muted/40"
+              title={`${img.alt}（点击放大查看）`}
+              onClick={() => setLightboxIndex(i)}
+              className="group/img block rounded-lg border border-border overflow-hidden bg-muted/40 cursor-zoom-in"
             >
               <img
-                src={img.url}
+                src={thumbVariant(img.url)}
                 alt={img.alt}
                 loading="lazy"
                 className="h-24 w-auto max-w-[240px] object-cover transition-opacity group-hover/img:opacity-90"
               />
-            </a>
+            </button>
           ))}
           {resultImages.length > 6 && (
             <span className="self-end text-[10px] text-muted-foreground">+{resultImages.length - 6} 张</span>
           )}
         </div>
+      )}
+      {lightboxIndex !== null && (
+        <ImageLightbox
+          images={resultImages.map((img) => ({
+            src: img.url,
+            thumb: thumbVariant(img.url),
+            alt: img.alt,
+          }))}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
       )}
       {effectiveOpen && expandable && (
         <ToolDetail step={step} />

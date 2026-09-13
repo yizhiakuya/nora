@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Images, Play } from "lucide-react";
+import { ImageLightbox } from "@/components/shared/ImageLightbox";
 
 /**
  * 画廊卡片：手机相册 MCP 的 photos_showcase 工具输出的结构化展示。
@@ -64,6 +66,16 @@ function formatTakenAt(takenAt?: string): string | null {
 
 export function GalleryBlock({ data }: { data: GalleryData }) {
   const count = data.count ?? data.items.length;
+  // 点击缩略图 → 页内灯箱放大（不再跳外部标签页）；
+  // lightboxIndex=null 表示关闭
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxImages = data.items.map((item) => ({
+    src: item.fullUrl ?? item.url,
+    thumb: item.url,
+    caption: item.caption,
+    alt: item.filename ?? `照片 ${item.id}`,
+  }));
+
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden max-w-2xl animate-in fade-in slide-in-from-bottom-1">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/70">
@@ -71,21 +83,20 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
         <span className="text-xs font-medium text-foreground truncate">{data.title}</span>
         <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{count} 张</span>
         <span className="ml-auto text-[10px] text-muted-foreground/60 shrink-0 hidden sm:inline">
-          点击查看原图
+          点击放大
         </span>
       </div>
       <div className="grid grid-cols-3 gap-1.5 p-2 max-h-96 overflow-auto custom-scroll">
-        {data.items.map((item) => {
+        {data.items.map((item, idx) => {
           const when = formatTakenAt(item.takenAt);
           const tip = [item.caption, when, item.filename].filter(Boolean).join(" · ");
           return (
-            <a
+            <button
+              type="button"
               key={item.id}
-              href={item.fullUrl ?? item.url}
-              target="_blank"
-              rel="noreferrer"
               title={tip || `照片 ${item.id}`}
-              className="group/img relative block rounded-md overflow-hidden border border-border/60 bg-muted/40"
+              onClick={() => setLightboxIndex(idx)}
+              className="group/img relative block w-full rounded-md overflow-hidden border border-border/60 bg-muted/40 cursor-zoom-in text-left"
             >
               <img
                 src={item.url}
@@ -103,7 +114,7 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
                   {item.caption ?? when}
                 </span>
               )}
-            </a>
+            </button>
           );
         })}
       </div>
@@ -111,6 +122,14 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
         <div className="px-3 py-2 border-t border-border/70 text-[11px] text-muted-foreground leading-relaxed">
           {data.note}
         </div>
+      )}
+      {lightboxIndex !== null && (
+        <ImageLightbox
+          images={lightboxImages}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
       )}
     </div>
   );
