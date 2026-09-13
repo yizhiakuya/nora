@@ -35,6 +35,31 @@ export function ImageLightbox({
   const current = images[index];
   const hasMultiple = images.length > 1;
 
+  /**
+   * 预加载相邻大图（左右各一张）：手机相册的原图要走中继隧道，
+   * 实测单张 ~0.7s——等按下方向键再开始下载，用户会盯着空白等。
+   * 提前把邻居塞进浏览器缓存，切换时几乎瞬时。
+   *
+   * 用 <link rel=preload> 而非 new Image()：前者不占额外解码内存，
+   * 加载完可由 <img> 直接命中缓存。
+   */
+  useEffect(() => {
+    if (!hasMultiple) return;
+    const links: HTMLLinkElement[] = [];
+    for (const delta of [1, -1]) {
+      const neighbor = images[(index + delta + images.length) % images.length];
+      const href = neighbor?.src;
+      if (!href || href === current?.src) continue;
+      const link = document.createElement("link");
+      link.rel = "preload";
+      link.as = "image";
+      link.href = href;
+      document.head.appendChild(link);
+      links.push(link);
+    }
+    return () => links.forEach((l) => l.remove());
+  }, [images, index, hasMultiple, current?.src]);
+
   const go = useCallback(
     (delta: number) => {
       if (!hasMultiple) return;
