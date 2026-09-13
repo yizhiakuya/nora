@@ -3352,11 +3352,14 @@ public class ChatOrchestrationService {
 
     /** 本轮请求的真实固定开销 = tools spec(动态) + 协议封装余量。 */
     private long requestOverheadTokens() {
-        return Math.max(PER_REQUEST_OVERHEAD_TOKENS, (long) toolsOverheadTokens()) + PROTOCOL_OVERHEAD_TOKENS;
+        return toolsOverheadTokens();
     }
 
-    /** 协议封装/系统字段余量(在 tools spec 之外,固定)。 */
-    private static final int PROTOCOL_OVERHEAD_TOKENS = 1_800;
+    /*
+     * 注:不再单列"协议封装"常量。实测(空会话单请求)76K body → in=11550,
+     * 其中消息体仅 ~2K 字符——即 74K 的 tools 段实际承担了 ~11K tokens,
+     * 已含协议封装/系统字段。再叠加一个固定常量会重复计算(实测 ratio 0.61)。
+     */
 
     /**
      * 轮内微压缩(microcompact,语义对齐 Claude Code):预估 prompt 超过
@@ -3713,17 +3716,18 @@ public class ChatOrchestrationService {
     private static final int MAX_REPLAY_ARGS_CHARS = 20_000;
 
     /**
-     * 单张图片的 token 估算(保守上限)。
+     * 单张图片的 token 估算。
      *
-     * <p>实测(2026-09-13 找猫任务,上游上报 usage):每轮追加 4-5 张全尺寸照片
-     * (data URL 合计 8-20MB)仅使输入 token 增加 ~0.6-0.7K/轮,其中主要仍是
-     * 文本——单张图片的真实计费远低于此值。此处取 3K 作保守上限,让预算估算
-     * 偏安全(宁可早压缩);图片字节的膨胀由 recycleOldImages 单独兜底。
+     * <p>实测(2026-09-13,同一会话逐轮对比):从 0 图到 1 图 in 增加 ~1.0K
+     * (其中含少量工具结果文本);1 图到 3 图再增加 ~2.3K,即单张 ≈1K。
+     * 与 data URL 长度无关(视觉分辨率口径)——74KB 的 tools 段计 ~11K tokens,
+     * 而单张 2-3MB 的图片只计 ~1K。取 1K 与实测对齐;图片字节的膨胀
+     * 由 recycleOldImages 单独兜底(那才是带宽问题,不是 token 问题)。
      *
-     * <p>历史注:旧值 1_200 偏低;期间曾按 data URL 长度/16 估算,系对校准日志
-     * 口径错误的误读(logCalibration 当时传的是累计 usage,已一并修正)。
+     * <p>历史注:旧值 1_200 → 一度按 data URL 长度/16 估算(误读校准日志口径,
+     * 见 logCalibration 注释)→ 3_000(过估,实测 ratio 0.61)。现取 1_000。
      */
-    private static final int IMAGE_TOKEN_ESTIMATE = 3_000;
+    private static final int IMAGE_TOKEN_ESTIMATE = 1_000;
 
     /** 把脱敏后的原始参数附到 typed input 上(跨轮历史重建用;null/空/非法 = 不附)。 */
     private ChatStepDto.StepInput withRawArgs(ChatStepDto.StepInput input, String args) {
