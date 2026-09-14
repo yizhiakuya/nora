@@ -137,12 +137,39 @@ const CACHE_TTL_MS: Record<string, number> = {
   "/skills": 60_000,
   "/datasources": 60_000,
   "/automations": 60_000,
+  // 文件列表（/files 精确路径）值得缓存：切页/重连会反复拉
   "/files": 30_000,
 };
 
-/** 该路径的缓存 TTL；0 = 不缓存（但仍参与并发去重）。 */
-function ttlFor(path: string): number {
+/**
+ * 不该进缓存的路径（按最长前缀排除，优先于 CACHE_TTL_MS）。
+ *
+ * 为什么要单独排除而不是整体不缓存 /files：
+ *   - /files            → 文件**列表**（读多写少，适合缓存）
+ *   - /files/{id}/preview → 文件**内容**（后端 Tika 提取的文本，可能很大）。
+ *     缓存它等于把文件正文留在内存里绕开 FileViewer 自己的加载语义；
+ *     这个接口的调用时机本就由打开预览决定，重复率低。所以排除其子路径。
+ */
+const CACHE_EXCLUDE: string[] = [
+  "/files/",   // 子路径（preview/index/raw/upload）不缓存；精确 "/files" 由 TTL 表放行
+  "/log/",     // 前端错误上报，只写不读
+];
+
+/**
+ * 该路径的缓存 TTL；0 = 不缓存。
+ *
+ * 导出供单测覆盖前缀/排除规则的边界（这类匹配最容易写错，且错了会静默
+ * 缓存不该缓存的东西）。
+ */
+export function ttlFor(path: string): number {
   const clean = path.split("?")[0];
+  // 排除规则优先：匹配到就完全不缓存（连并发去重也不做，语义更直白）
+  for (const ex of CACHE_EXCLUDE) {
+    // 直接 startsWith：排除项 "/files/" 只排除子路径，不排除 "/files" 本身
+    // （文件列表值得缓存、文件内容不值得）。曾把尾部斜杠去掉再比较，结果
+    // 连 "/files" 本身也被排除——静默丢掉收益，靠单测才发现。
+    if (clean.startsWith(ex)) return 0;
+  }
   // 最长前缀优先：/chat/sessions/{id}/messages 命中 /chat/sessions 而不是别的
   let bestLen = -1;
   let bestTtl = 0;
