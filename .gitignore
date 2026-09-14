@@ -38,3 +38,6 @@ agent-workspace/
 tools/pwsh/pwsh-*/
 # 临时提交消息文件（写多行中文提交信息用，不属于仓库内容）
 scripts/_cm.txt
+
+# 卸载/迁移的本地数据存档（含私有对话与工作区记忆，仅存本地，绝不上远程）
+archive/
