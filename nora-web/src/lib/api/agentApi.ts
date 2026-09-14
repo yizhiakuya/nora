@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, PermissionMode } from "./chatApi";
+import { emitSessionTitle } from "./sessionTitleEvents";
 import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
@@ -69,6 +70,12 @@ interface DonePayload {
   contextWindow?: number | null;
   promptTokens?: number | null;
   ttftMs?: number | null;
+}
+
+/** SSE `title` 事件载荷：AI 异步起好的会话标题（见后端 AgentController.TitlePayload）。 */
+interface TitlePayload {
+  sessionId?: string;
+  title?: string;
 }
 interface ErrorPayload {
   message?: string;
@@ -276,6 +283,12 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         const payload = parseData<Citation[]>(data);
         const sources = normalizeSources(payload);
         if (sources) onUpdate({ sources });
+      } else if (event === "title") {
+        // AI 异步起好的标题：广播给会话 store 刷新侧栏（不占用消息流）
+        const payload = parseData<TitlePayload>(data);
+        if (payload?.sessionId && payload.title) {
+          emitSessionTitle(payload.sessionId, payload.title);
+        }
       } else if (event === "done") {
         donePayload = parseData<DonePayload>(data);
         for (let i = 0; i < steps.length; i++) {
@@ -342,7 +355,7 @@ export async function cancelTurnOnBackend(sessionId: string): Promise<void> {
 
 /** GET /chat/sessions → 会话摘要列表(最近活跃在前) */
 export async function fetchSessions(): Promise<
-  { id: string; title: string; messageCount: number; createdAt: string; lastActivity?: string }[]
+  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string }[]
 > {
   const res = await fetch(`${API_BASE}/chat/sessions`, { signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
@@ -350,6 +363,8 @@ export async function fetchSessions(): Promise<
   const list = (body?.data ?? body) as Array<{
     id: string;
     title: string;
+    /** 标题是否已由 AI 生成；false/缺失 = 仍是首轮占位标题 */
+    titleGenerated?: boolean;
     messageCount: number;
     createdAt: string;
     lastActivity?: string;
@@ -487,6 +502,12 @@ export function attachLiveTurnStream(
   es.addEventListener("idle", () => {
     handlers.onIdle?.();
     es.close();
+  });
+  // 接续流(切页返回/断线重连)同样可能收到标题事件:AI 起标题是旁路任务,
+  // 可能在轮次 done 之后才回来——那时前端已切回,靠这条事件刷新侧栏
+  es.addEventListener("title", (e) => {
+    const p = safeParse<TitlePayload>((e as MessageEvent).data);
+    if (p?.sessionId && p.title) emitSessionTitle(p.sessionId, p.title);
   });
   return () => es.close();
 }

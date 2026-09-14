@@ -2,11 +2,18 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { AgentAPI, fetchSessions, fetchSessionMessages, deleteSessionOnBackend } from "@/lib/api/agentApi";
+import { subscribeSessionTitle } from "@/lib/api/sessionTitleEvents";
 import { USE_BACKEND } from "@/lib/api/client";
 
 export interface ChatSession {
   id: string;
   title: string;
+  /**
+   * 标题是否已由 AI 生成。
+   * false/未定义 = 仍是首轮占位标题（用户消息开头若干字），AI 标题还在路上。
+   * 前端据此决定轮次结束后要不要轮询兜底拉取（见 awaitGeneratedTitle）。
+   */
+  titleGenerated?: boolean;
   updatedAt: number;
   messageCount?: number;
   /** 本地缓存的消息(仅离线兜底/即时渲染用;真相在后端) */
@@ -29,9 +36,28 @@ interface ChatSessionsState {
   syncFromBackend: () => Promise<void>;
   /** 切换会话时从后端拉完整历史,替换本地缓存 */
   loadHistory: (id: string) => Promise<void>;
+  /** 应用 AI 生成的会话标题(SSE title 事件;覆盖占位标题) */
+  applyTitle: (id: string, title: string) => void;
+  /** 兜底拉取 AI 标题:SSE title 事件可能在轮次结束后才回来(见实现注释) */
+  awaitGeneratedTitle: (id: string) => Promise<void>;
 }
 
 const DEFAULT_TITLE = "新对话";
+
+/** 占位标题字数:与后端 ChatStoreService.placeholderTitle 保持一致,避免视觉跳变。 */
+const PLACEHOLDER_CHARS = 20;
+
+/**
+ * 首轮占位标题:用户消息开头若干字 + …
+ *
+ * 与后端 ChatStoreService.placeholderTitle 同规则(折叠空白、超长截断 + 省略号),
+ * 这样前端乐观显示的名字与后端落库的一致,AI 标题到达前不会出现两次跳变。
+ * 标题只用于侧栏辨识,长消息不该整条塞进去。
+ */
+function placeholderTitle(content: string): string {
+  const flat = (content ?? "").replace(/\s+/g, " ").trim();
+  return flat.length <= PLACEHOLDER_CHARS ? flat : `${flat.slice(0, PLACEHOLDER_CHARS)}…`;
+}
 
 /**
  * 每会话本地消息写入版本号:loadHistory 返回后比对,落后即丢弃快照。
@@ -58,7 +84,9 @@ export const useChatSessions = create<ChatSessionsState>()(
       syncing: false,
       createSession: () => {
         const id = `sess-${Date.now()}`;
-        const session: ChatSession = { id, title: DEFAULT_TITLE, updatedAt: Date.now(), messages: [] };
+        const session: ChatSession = {
+          id, title: DEFAULT_TITLE, titleGenerated: false, updatedAt: Date.now(), messages: [],
+        };
         set((state) => {
           const withoutSame = state.sessions.filter((s) => s.id !== id);
           return { sessions: [session, ...withoutSame], activeId: id };
@@ -107,12 +135,45 @@ export const useChatSessions = create<ChatSessionsState>()(
                   updatedAt: Date.now(),
                   title:
                     s.title === DEFAULT_TITLE && messages[0]?.role === "user"
-                      ? messages[0].content.slice(0, 24)
+                      ? placeholderTitle(messages[0].content)
                       : s.title,
                 }
               : s
           ),
         }));
+      },
+      applyTitle: (id, title) => {
+        if (!id || !title) return;
+        set((state) => ({
+          sessions: state.sessions.map((s) => (s.id === id ? { ...s, title, titleGenerated: true } : s)),
+        }));
+      },
+      /**
+       * SSE 的 title 事件可能赶不上：AI 起标题是旁路任务，短轮次常常在轮次
+       * done（emitter complete、live 缓冲随 turn 结束）之后才返回——事件无人接收。
+       * 因此轮次结束后轮询一次会话列表，把真标题捞回来。
+       *
+       * 轮询而非单次：标题通常 1-3s 内回来，给 3 次（约 1.5s/3s/4.5s）足够；
+       * 仍拿不到就放弃（下次进对话页 syncFromBackend 自然会拉到），不为它设长任务。
+       */
+      awaitGeneratedTitle: async (id) => {
+        if (!USE_BACKEND || !id) return;
+        const current = get().sessions.find((s) => s.id === id);
+        if (!current || current.titleGenerated) return; // 已经是 AI 标题，无需轮询
+        for (const delay of [1500, 1500, 1500]) {
+          await new Promise((r) => setTimeout(r, delay));
+          try {
+            const remote = await fetchSessions();
+            const found = remote.find((r) => r.id === id);
+            // 后端 titleGenerated=true = AI 标题已落库
+            if (found?.title && found.titleGenerated) {
+              get().applyTitle(id, found.title);
+              return;
+            }
+          } catch {
+            return; // 网络失败：放弃，不阻塞
+          }
+        }
       },
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
@@ -132,6 +193,7 @@ export const useChatSessions = create<ChatSessionsState>()(
             return {
               id: r.id,
               title: r.title || DEFAULT_TITLE,
+              titleGenerated: r.titleGenerated,
               messageCount: r.messageCount,
               updatedAt,
               // 保留本地消息缓存直到 loadHistory 拉到后端历史
@@ -181,6 +243,17 @@ export const useChatSessions = create<ChatSessionsState>()(
     }
   )
 );
+
+/**
+ * AI 标题事件接线:SSE 收到 title 事件(见 agentApi)→ 覆盖对应会话标题。
+ *
+ * 在模块加载时订阅一次(store 是单例,pages 共享同一实例),无需在组件里
+ * 反复订阅/退订。后端已落库,这里只是把已经过时的占位标题立刻换成真标题;
+ * 即使这条事件漏收(用户当时没在对话页),下次 syncFromBackend 也会拉到。
+ */
+subscribeSessionTitle((sessionId, title) => {
+  useChatSessions.getState().applyTitle(sessionId, title);
+});
 
 /** 兼容旧引用:发送完成后后端已落库,无需额外上报 */
 export const _sendMessage = AgentAPI.sendMessage;

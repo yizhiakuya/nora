@@ -61,6 +61,15 @@ public class AgentController {
     private final java.util.concurrent.ConcurrentMap<String, java.util.concurrent.Future<?>> activeTurns =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 会话标题生成专用线程池。
+     *
+     * <p>独立于 {@link #chatExecutor}：起标题是「锦上添花」的旁路任务，不能与
+     * 对话轮次争抢，也不能被「停止生成」（中断 chatExecutor 上的 Future）连带取消
+     * ——用户停掉回答后，标题仍应正常生成。
+     */
+    private final ExecutorService titleExecutor = Executors.newCachedThreadPool();
+
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
                            ObjectMapper objectMapper) {
@@ -376,8 +385,16 @@ public class AgentController {
         // 编排线程不受断开影响,收尾照常落库
         TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content);
         try {
-            chatStoreService.ensureSession(sessionId, content);
+            // 标题：先落「用户消息开头若干字 + …」当占位（立刻有名字可看），
+            // 再异步让 AI 生成短标题覆盖它。不再把整条原文塞进标题列——
+            // 列宽 VARCHAR(255)，超长消息会让会话创建直接失败（实测）。
+            boolean firstTurn = chatStoreService.ensureSession(
+                    sessionId, ChatStoreService.placeholderTitle(content));
             chatStoreService.saveMessage(sessionId, "user", content, null, null);
+            // 仅本会话首次命名：后续轮次改标题会覆盖上一轮已经起好的名字
+            if (firstTurn) {
+                scheduleTitleGeneration(sessionId, content, model, liveTurn, emitter);
+            }
 
             List<ChatStepDto> steps = new java.util.ArrayList<>();
             List<CitationDto> citations = new java.util.ArrayList<>();
@@ -518,10 +535,52 @@ public class AgentController {
         }
     }
 
+    /**
+     * 异步生成会话标题：先用占位标题顶上（已落库），这里在旁路线程池里让 AI
+     * 起一个短标题并覆盖，同时通过 SSE 把新标题推给前端即时刷新侧栏。
+     *
+     * <p>全程 best-effort：失败不影响对话，占位标题继续用。
+     */
+    private void scheduleTitleGeneration(String sessionId, String content, String model,
+                                         TurnStreamRegistry.LiveTurn liveTurn, SseEmitter emitter) {
+        titleExecutor.execute(TraceContext.wrap(() -> {
+            // 标题是旁路任务：MDC 里只带 sessionId 便于检索，不与对话轮次共用 turnId
+            TraceContext.setSessionId(sessionId);
+            try {
+                String title = orchestrationService.generateSessionTitle(content, model);
+                if (title == null || title.isBlank()) {
+                    return;
+                }
+                chatStoreService.updateTitle(sessionId, title);
+                log.info("session title generated: {} -> {}", sessionId, title);
+                TitlePayload payload = new TitlePayload(sessionId, title);
+                // 两条通道都要发，因为前端有两条消费路径：
+                //   1. 主发送链路直接读 POST 响应流（emitter）——正在等回答的这次请求
+                //   2. 接续流 /turn/stream 读 TurnStreamRegistry 缓冲——切页返回、断线重连
+                // 只发其中一条都会漏掉一类客户端。emitter 可能已 complete（标题回来得晚），
+                // send() 内部已捕获 IO/State 异常，这里无需额外判断。
+                turnStreams.publish(liveTurn, "title", toJson(payload));
+                send(emitter, "title", payload);
+            } catch (Exception e) {
+                log.warn("async session title failed for {}: {}", sessionId, e.getMessage());
+            } finally {
+                TraceContext.clear();
+            }
+        }));
+    }
+
+    /** SSE {@code title} 事件载荷：AI 起好的会话标题（前端据此即时刷新侧栏）。 */
+    public record TitlePayload(String sessionId, String title) {
+    }
+
     private void send(SseEmitter emitter, String event, Object payload) {
         try {
             String json = toJson(payload);
-            emitter.send(SseEmitter.event().name(event).data(json, MediaType.APPLICATION_JSON));
+            // SseEmitter.send 不是线程安全的:同一 emitter 被对话线程(delta/step)与
+            // 旁路线程(异步标题)同时写会交错、损坏事件流。所有写出统一串行化。
+            synchronized (emitter) {
+                emitter.send(SseEmitter.event().name(event).data(json, MediaType.APPLICATION_JSON));
+            }
             // SSE 事件时间线:done/error/step 全记,delta 采样记(事件流复盘时
             // 与前端 agentApi 解析出的序列逐条对齐,竞态问题按 traceId 拉时间线)
             switch (event) {

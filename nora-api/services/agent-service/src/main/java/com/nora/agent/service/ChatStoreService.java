@@ -23,6 +23,12 @@ public class ChatStoreService {
     private static final TypeReference<List<CitationDto>> SOURCE_LIST = new TypeReference<>() {
     };
 
+    /** 占位标题保留的用户消息字数（AI 标题就绪后会被覆盖）。 */
+    private static final int PLACEHOLDER_CHARS = 20;
+
+    /** 标题落库硬上限：列是 VARCHAR(255)，留出余量避免超长写入直接抛错。 */
+    private static final int MAX_TITLE_CHARS = 200;
+
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
@@ -31,11 +37,52 @@ public class ChatStoreService {
         this.objectMapper = objectMapper;
     }
 
-    /** Creates a session row; idempotent for an existing id. */
-    public void ensureSession(String sessionId, String title) {
-        jdbcTemplate.update(
+    /**
+     * Creates a session row; idempotent for an existing id.
+     *
+     * <p>{@code title} 只在该行首次创建时生效（{@code ON CONFLICT DO NOTHING}），
+     * 因此传入的是**占位标题**——由 {@link #placeholderTitle(String)} 取首条消息
+     * 开头若干字生成，随后由 AI 生成的短标题覆盖（见 {@link #updateTitle}）。
+     *
+     * @return true 当且仅当本次真的创建了新行（= 这是该会话的第一轮）。调用方
+     *         据此决定是否触发 AI 起标题，避免后续轮次覆盖已经起好的名字。
+     */
+    public boolean ensureSession(String sessionId, String title) {
+        int inserted = jdbcTemplate.update(
                 "INSERT INTO chat_session (id, title) VALUES (?, ?) ON CONFLICT (id) DO NOTHING",
-                sessionId, title);
+                sessionId, clampTitle(title));
+        return inserted > 0;
+    }
+
+    /**
+     * 首轮占位标题：用户消息开头若干字 + 省略号。
+     *
+     * <p>为什么不再直接存整条原文：标题只用于侧栏辨识，长消息既显示不下又会撑爆
+     * 列宽——历史实现把原始 {@code content} 直接当 title 写入，超过 255 字的消息
+     * 会让会话创建直接失败（实测 {@code value too long for type character varying(255)}）。
+     * 首轮先用短占位保证「立刻有名字可看」，AI 标题异步就绪后替换。
+     */
+    public static String placeholderTitle(String content) {
+        if (content == null) {
+            return "";
+        }
+        // 折叠所有空白（含换行）：标题必须是单行，否则侧栏条目会撑高
+        String flat = content.replaceAll("\\s+", " ").trim();
+        return flat.length() <= PLACEHOLDER_CHARS ? flat : flat.substring(0, PLACEHOLDER_CHARS) + "…";
+    }
+
+    /** Overwrites a session's title (AI 生成标题就绪时调用)。 */
+    public void updateTitle(String sessionId, String title) {
+        jdbcTemplate.update("UPDATE chat_session SET title = ?, title_generated = TRUE WHERE id = ?",
+                clampTitle(title), sessionId);
+    }
+
+    /** 标题列宽兜底：超长直接截断，绝不让写标题把会话创建/更新带崩。 */
+    private static String clampTitle(String title) {
+        if (title == null) {
+            return null;
+        }
+        return title.length() <= MAX_TITLE_CHARS ? title : title.substring(0, MAX_TITLE_CHARS) + "…";
     }
 
     /** Saves one message with its steps/sources snapshots. */
@@ -88,17 +135,18 @@ public class ChatStoreService {
     public List<SessionSummary> listSessions() {
         return jdbcTemplate.query(
                 """
-                SELECT s.id, s.title, s.created_at, count(m.id) AS message_count,
+                SELECT s.id, s.title, s.title_generated, s.created_at, count(m.id) AS message_count,
                        max(m.created_at) AS last_activity
                 FROM chat_session s
                 LEFT JOIN chat_message m ON m.session_id = s.id AND m.deleted_at IS NULL
                 WHERE s.deleted_at IS NULL
-                GROUP BY s.id, s.title, s.created_at
+                GROUP BY s.id, s.title, s.title_generated, s.created_at
                 ORDER BY max(m.created_at) DESC NULLS LAST, s.created_at DESC
                 """,
                 (rs, rowNum) -> new SessionSummary(
                         rs.getString("id"),
                         rs.getString("title"),
+                        rs.getBoolean("title_generated"),
                         rs.getInt("message_count"),
                         rs.getTimestamp("created_at"),
                         rs.getTimestamp("last_activity")));
@@ -165,6 +213,8 @@ public class ChatStoreService {
     public record SessionSummary(
             String id,
             String title,
+            /** 标题是否已由 AI 生成；false = 仍是首轮占位标题。 */
+            boolean titleGenerated,
             int messageCount,
             java.sql.Timestamp createdAt,
             java.sql.Timestamp lastActivity) {

@@ -1276,6 +1276,92 @@ public class ChatOrchestrationService {
         return configured(null);
     }
 
+    /**
+     * 会话标题生成用的系统提示。
+     *
+     * <p>要点：限制长度（侧栏一行放得下）、强制单行、禁止包装（模型爱回
+     * 「标题：xxx」或加引号）、禁止"关于…的讨论"这类无信息量的套话。
+     */
+    private static final String TITLE_SYSTEM_PROMPT = """
+            你为对话生成一个简短标题。规则：
+            1. 只输出标题本身，不要引号、不要「标题：」前缀、不要任何解释；
+            2. 长度不超过 12 个汉字（或 24 个英文字符），必须单行；
+            3. 用与用户消息相同的语言；
+            4. 直接概括用户在做什么/问什么，不要写「关于…的讨论」「用户询问」这类套话；
+            5. 不要以句号、问号等标点结尾。
+            """;
+
+    /** 送模型用于起标题的用户消息上限（字符）：标题只需开头意图，无需全文。 */
+    private static final int TITLE_EXCERPT_CHARS = 600;
+
+    /** 落库标题的最大长度：兜住模型不听话时的超长输出（DB 列宽 255）。 */
+    private static final int TITLE_MAX_CHARS = 40;
+
+    /**
+     * 用一次轻量 LLM 调用为会话生成短标题（同步阻塞；调用方放到线程池里跑）。
+     *
+     * <p>复用主链路的上游调用（{@link #streamUpstream}），因此协议分歧
+     * （openai / responses）、出站代理、供应商额外请求头都与对话完全一致——
+     * 不另起一套 HTTP 逻辑。
+     *
+     * @return 清理后的标题；未配置模型或上游失败返回 null（调用方保留占位标题）
+     */
+    public String generateSessionTitle(String userMessage, String requestedModel) {
+        if (userMessage == null || userMessage.isBlank()) {
+            return null;
+        }
+        // 标题是纯转写任务，不需要推理：显式压到最低档省钱省时
+        ResolvedLlm llm = withLevel(resolveLlm(requestedModel), "none");
+        if (llm == null) {
+            return null;
+        }
+        try {
+            ObjectNode body = baseBody(true, llm);
+            ArrayNode messages = body.putArray("messages");
+            messages.addObject().put("role", "system").put("content", TITLE_SYSTEM_PROMPT);
+            String excerpt = userMessage.length() <= TITLE_EXCERPT_CHARS
+                    ? userMessage
+                    : userMessage.substring(0, TITLE_EXCERPT_CHARS);
+            messages.addObject().put("role", "user").put("content", excerpt);
+            // 不带 tools：标题任务不允许调用工具
+            StreamTurnResult result = streamUpstream(llm, body, (content, reasoning) -> {
+            });
+            if (result.failed()) {
+                log.warn("session title generation failed: {}", result.errorMessage());
+                return null;
+            }
+            return cleanTitle(result.content());
+        } catch (Exception e) {
+            log.warn("session title generation error: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * 清理模型输出的标题：折叠空白、剥掉包裹符号与「标题：」前缀、限长。
+     *
+     * <p>实测模型不会严格遵守格式：会给引号、写「标题：xxx」、甚至在标题后
+     * 另起一行解释。这里统一清洗，避免脏标题直接进侧栏。
+     */
+    static String cleanTitle(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String t = raw.replaceAll("\\s+", " ").trim();
+        // 只取第一行（模型可能补一段说明）
+        if (t.isEmpty()) {
+            return null;
+        }
+        // 剥前缀：标题：/ 会话标题：/ title:
+        t = t.replaceAll("(?i)^(会话)?(标题|title)\\s*[:：]\\s*", "");
+        // 剥两端包裹：引号、书名号、方括号、星号（markdown 粗体）
+        t = t.replaceAll("^[\"'“”‘’《》\\[\\]【】*]+", "").replaceAll("[\"'“”‘’《》\\[\\]【】*]+$", "").trim();
+        if (t.isEmpty()) {
+            return null;
+        }
+        return t.length() <= TITLE_MAX_CHARS ? t : t.substring(0, TITLE_MAX_CHARS) + "…";
+    }
+
     public boolean configured(String requestedModel) {
         return resolveLlm(requestedModel) != null;
     }

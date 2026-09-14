@@ -350,6 +350,9 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
         if (mountedRef.current) setIsSending(false);
+        // 轮次结束后兜底拉 AI 标题：title 事件是旁路任务，短轮次常在 done 之后
+        // 才回来（emitter 已 complete），事件会丢。这里轮询补一次。
+        if (sessionId) void useChatSessions.getState().awaitGeneratedTitle(sessionId);
       }
     },
     [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage]
