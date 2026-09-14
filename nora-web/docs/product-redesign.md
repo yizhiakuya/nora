@@ -16,7 +16,7 @@
 /               概览（数据源/环境/知识库状态面板）
 /files          文件管理（AI 索引徽章）
 /chat           AI 对话
-/knowledge      知识库 RAG（5 Tab：文档库/检索测试/索引状态/数据图谱/清洗规则）
+/knowledge      知识库 RAG（4 Tab：文档库/检索测试/索引状态/清洗规则）
 /skills         AI 能力（原「技能中心」，定义 AI 能做什么）
 /data-sources   数据源（连接列表 + Schema 浏览 + 查询控制台）
 /environments   环境控制台（服务卡片 + 日志流 + AI 诊断）
@@ -49,11 +49,8 @@
 
 ## 4. 数据层
 
-| 文件 | 内容 |
-|------|------|
-| `mockData.ts` | 个人文件（含 indexed 标志）+ AI 能力 |
-| `devData.ts` | 数据库连接、表结构、查询历史、服务、日志、自动任务 |
-| `knowledgeData.ts` | RAG 文档、索引统计、清洗规则、检索结果、数据图谱 |
+| 数据层已收敛：全部 Mock 文件（`mockData.ts` / `devData.ts` / `knowledgeData.ts`）已于 2026-09-07 删除，
+后端成为唯一数据源（见 `nora-web/AGENTS.md` 的「后端接入现状」）。 |
 
 ## 5. 回滚
 

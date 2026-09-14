@@ -101,7 +101,6 @@ export function computeIndexStats(docs: KnowledgeDoc[]): IndexStats {
   const totalChunks = docs.reduce((sum, d) => sum + d.chunks, 0);
   const pendingDocs = docs.filter((d) => d.status === "processing").length;
   const indexedDocs = docs.filter((d) => d.status === "indexed").length;
-  const failedDocs = docs.filter((d) => d.status === "failed").length;
 
   // 找最近更新的文档时间作为 lastUpdate
   const sorted = [...docs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -115,7 +114,6 @@ export function computeIndexStats(docs: KnowledgeDoc[]): IndexStats {
     lastUpdate,
     pendingDocs,
     vectorReady: indexedDocs > 0,
-    graphReady: indexedDocs > 0 && failedDocs === 0,
   };
 }
 

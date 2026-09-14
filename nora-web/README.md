@@ -40,7 +40,7 @@ nora-web/
 │   │   ├── page.tsx        #   首页（概览面板）
 │   │   ├── files/          #   文件管理
 │   │   ├── chat/           #   AI 对话
-│   │   ├── knowledge/      #   知识库 RAG（5 Tab）
+│   │   ├── knowledge/      #   知识库 RAG（4 Tab）
 │   │   ├── skills/         #   AI 能力
 │   │   ├── data-sources/   #   数据源
 │   │   ├── environments/   #   环境控制台
@@ -54,12 +54,11 @@ nora-web/
 │   │   └── shared/         # Markdown 等跨域组件
 │   ├── hooks/              # 业务逻辑 Hooks（Zustand store + persist）
 │   ├── lib/
-│   │   ├── api/            # HTTP 客户端 / SSE / Mock API（client.ts、sse.ts、agentApi.ts、chatApi.ts）
+│   │   ├── api/            # HTTP 客户端 / SSE / 请求缓存（client.ts、sse.ts、agentApi.ts、chatApi.ts、requestCache.ts）
 │   │   ├── services/       # 后端 API 契约层（filesApi / ragService / datasourcesApi / environmentApi / automationsApi / modelsApi）
 │   │   ├── next-shims/     # Next.js → React Router 兼容层
-│   │   ├── mockData.ts     # 静态种子数据（文件/技能）
-│   │   ├── devData.ts      # 开发者场景数据（数据库/服务/日志/自动任务）
-│   │   └── knowledgeData.ts# 知识库 RAG 数据（文档/索引/图谱/清洗规则）
+│   │   ├── knowledgeSourceMeta.ts  # 文档来源的展示元数据
+│   │   └── utils.ts        # 通用工具
 │   └── types/              # 全局 TypeScript 接口
 ├── docs/                   # 设计文档与验证记录
 └── scripts/                # 工具脚本（apply-dark-variants.ps1）
@@ -93,7 +92,6 @@ nora-web/
 | 域 | 状态 |
 |----|------|
 | 文件 / 知识库 / 对话 / 数据源 / 环境 / 自动任务 / 模型管理 | ✅ 已接入后端 |
-| 知识图谱 | ⬜ 后端未提供，仍读 `MOCK_GRAPH` |
 | AI 能力 / 设置 / 环境变量 / 通知 | ⬜ 后端未提供，仍为本地 Zustand + localStorage |
 
 接入新域或改契约后，请同步更新 [AGENTS.md](AGENTS.md) 的「后端接入现状」表。
@@ -126,4 +124,3 @@ nora-web/
   或后端尚未提供的域，已接后端的域不得用 Mock 覆盖真实返回值
 - **dev 固定 3001**——HMR 即时生效，改代码不刷新页面
 - **路由集中**——`src/App.tsx` 统一注册，`/src/app` 下只放页面胶水组件
-

@@ -62,19 +62,6 @@ export function IndexStatus() {
           </span>
         </div>
 
-        <div className="flex items-center justify-between py-2 border-b border-border">
-          <div className="flex items-center gap-2.5">
-            {s.graphReady ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-red-500" />}
-            <div>
-              <div className="text-sm font-medium text-foreground">关系图谱</div>
-              <div className="text-xs text-muted-foreground">项目 → 文件 → 表 → 服务 关联链</div>
-            </div>
-          </div>
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.graphReady ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300"}`}>
-            {s.graphReady ? "正常" : "异常"}
-          </span>
-        </div>
-
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-2.5">
             {s.pendingDocs === 0 ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-yellow-500" />}
@@ -93,4 +80,3 @@ export function IndexStatus() {
     </div>
   );
 }
-

@@ -219,7 +219,7 @@ try { controller.search(new RagController.SearchBody("q", 8)); } catch (Exceptio
     @Test
     void indexStatsWrapsSnapshotInEnvelope() {
         KnowledgeDocService.IndexStatsView stats = new KnowledgeDocService.IndexStatsView(
-                1, 5, 1024, "jina-embeddings-v3", "2026-09-04 11:00", 0, true, false);
+                1, 5, 1024, "jina-embeddings-v3", "2026-09-04 11:00", 0, true);
         when(knowledgeDocService.getIndexStats()).thenReturn(stats);
 
         ApiResponse<KnowledgeDocService.IndexStatsView> response = controller.indexStats();

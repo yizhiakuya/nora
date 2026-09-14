@@ -82,7 +82,6 @@ export interface IndexStats {
   lastUpdate: string;
   pendingDocs: number;
   vectorReady: boolean;
-  graphReady: boolean;
 }
 
 /** 清洗规则 */
@@ -125,15 +124,6 @@ export interface KnowledgeChunk {
 export interface DocDetail {
   doc: KnowledgeDoc;
   chunks: KnowledgeChunk[];
-}
-
-/** 数据图谱节点关联 */
-export interface GraphProject {
-  id: number;
-  name: string;
-  files: string[];
-  tables: string[];
-  services: string[];
 }
 
 // ==========================================

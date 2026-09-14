@@ -198,8 +198,7 @@ public class KnowledgeDocService {
                 embeddingProperties.model(),
                 lastUpdate == null ? "—" : format(lastUpdate),
                 pendingDocs == null ? 0 : pendingDocs,
-                (totalChunks != null && totalChunks > 0),
-                false // graph index is not built in Phase 1
+                (totalChunks != null && totalChunks > 0)
         );
     }
 
@@ -228,8 +227,7 @@ public class KnowledgeDocService {
             String model,
             String lastUpdate,
             long pendingDocs,
-            boolean vectorReady,
-            boolean graphReady
+            boolean vectorReady
     ) {
     }
 }

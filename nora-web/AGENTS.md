@@ -57,7 +57,6 @@
 | 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE） |
 | 自动任务 | `automationsApi.ts` | `/api/automations/**` | ✅ 已接入（规则 CRUD/执行） |
 | 模型 Provider | `modelsApi.ts` | `/api/models/**` | ✅ 已接入（CRUD/连通测试） |
-| 知识图谱 | — | — | ⬜ 后端未提供，仍读 `MOCK_GRAPH` |
 | AI 能力 / 设置 / 环境变量 / 通知 | — | — | ⬜ 后端未提供，仍为本地 Zustand + localStorage |
 
 新增接入时遵循同一模式：在 `lib/services/` 建 `xxxApi.ts`，导出 async 函数并在内部 `requestJson`；

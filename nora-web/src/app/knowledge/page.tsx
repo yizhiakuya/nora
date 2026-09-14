@@ -13,7 +13,6 @@ import { KnowledgeTabs } from "@/components/knowledge/KnowledgeTabs";
 import { DocumentLibrary } from "@/components/knowledge/DocumentLibrary";
 import { RetrievalTest } from "@/components/knowledge/RetrievalTest";
 import { IndexStatus } from "@/components/knowledge/IndexStatus";
-import { DataGraphView } from "@/components/knowledge/DataGraphView";
 import { CleaningRules } from "@/components/knowledge/CleaningRules";
 import { USE_BACKEND } from "@/lib/api/client";
 import { FileItem } from "@/types";
@@ -82,7 +81,6 @@ export default function KnowledgePage() {
             {activeTab === "文档库" && <DocumentLibrary />}
             {activeTab === "检索测试" && <RetrievalTest />}
             {activeTab === "索引状态" && <IndexStatus />}
-            {activeTab === "数据图谱" && <DataGraphView />}
             {activeTab === "清洗规则" && <CleaningRules />}
           </div>
         </div>

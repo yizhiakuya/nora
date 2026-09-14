@@ -56,7 +56,6 @@ class KnowledgeDocServiceTest {
         stats.model();
         stats.lastUpdate();
         stats.vectorReady();
-        stats.graphReady();
     }
 
     @Test
@@ -73,7 +72,6 @@ class KnowledgeDocServiceTest {
         stats.pendingDocs();
         stats.lastUpdate();
         stats.vectorReady();
-        stats.graphReady();
     }
 
     @Test
