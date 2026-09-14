@@ -3,6 +3,7 @@ import { emitSessionTitle } from "./sessionTitleEvents";
 import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
+import { cached, invalidateForPath } from "./requestCache";
 
 /** 结构化工具结果(后端 ChatStepDto.StepResult) */
 interface StepResultPayload {
@@ -183,6 +184,10 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
       throw new Error(text || `Agent API HTTP ${response.status}`);
     }
 
+    // 写后失效：本轮会写入消息、可能改变会话标题与活跃时间，缓存必须清。
+    // 放在请求成功之后（失败/中止不该清缓存——那会让「停止生成」白丢历史缓存）。
+    invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+
     const steps: ChatStep[] = [];
     let content = "";
     let donePayload: DonePayload | undefined;
@@ -353,8 +358,21 @@ export async function cancelTurnOnBackend(sessionId: string): Promise<void> {
   }
 }
 
-/** GET /chat/sessions → 会话摘要列表(最近活跃在前) */
-export async function fetchSessions(): Promise<
+/**
+ * GET /chat/sessions → 会话摘要列表(最近活跃在前)
+ *
+ * 走统一缓存：实测这个端点被反复调用（切换会话、后端在线恢复时各 store
+ * 一起 re-sync），30s 内复用同一份结果。会话变更（发消息/改名/删除）会
+ * 通过写操作失效缓存，所以「写后立刻看得到」不受影响。
+ */
+export async function fetchSessions(force = false): Promise<
+  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string }[]
+> {
+  return cached("/chat/sessions", 30_000, force, fetchSessionsUncached);
+}
+
+/** 真实请求；缓存包装见 {@link fetchSessions}。 */
+async function fetchSessionsUncached(): Promise<
   { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string }[]
 > {
   const res = await fetch(`${API_BASE}/chat/sessions`, { signal: defaultTimeoutSignal() });
@@ -385,7 +403,22 @@ function toHm(raw?: string): string {
     : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-export async function fetchSessionMessages(sessionId: string): Promise<ChatMessage[]> {
+/**
+ * GET /chat/sessions/{id}/messages → 完整消息历史(steps 合并后)
+ *
+ * 走统一缓存：实测单次响应 123KB、被重复调用 27 次（切会话/重连各拉一遍），
+ * 是本地最大的重复负载来源。历史只在发消息/截断时变化，那些写操作会失效缓存。
+ */
+export async function fetchSessionMessages(sessionId: string, force = false): Promise<ChatMessage[]> {
+  return cached(
+    `/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
+    30_000,
+    force,
+    () => fetchSessionMessagesUncached(sessionId),
+  );
+}
+
+async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMessage[]> {
   const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessionMessages failed: ${res.status}`);
   const stored = (await res.json()) as Array<{
@@ -409,6 +442,8 @@ export async function fetchSessionMessages(sessionId: string): Promise<ChatMessa
 export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`deleteSession failed: ${res.status}`);
+  // 写后失效：会话列表与历史缓存都要清（删掉的会话不该继续出现在缓存里）
+  invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 /**
@@ -419,6 +454,8 @@ export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
 export async function truncateMessagesFrom(sessionId: string, index: number): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${index}`, { method: "DELETE", signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`truncateMessagesFrom failed: ${res.status}`);
+  // 写后失效：截断改变了历史，缓存必须清（否则「编辑重发」后仍看到旧分支）
+  invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 /** GET /chat/sessions/{id}/turn/live → 会话是否有进行中轮次及其已缓冲事件 */
@@ -546,4 +583,6 @@ export async function saveAgentSettings(patch: {
     signal: defaultTimeoutSignal(),
   });
   if (!res.ok) throw new Error(`saveAgentSettings failed: ${res.status}`);
+  // 写后失效：设置改了，缓存里的旧设置必须清（否则界面显示的还是改前的值）
+  invalidateForPath("/chat/settings");
 }

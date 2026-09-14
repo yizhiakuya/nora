@@ -1,4 +1,5 @@
 import { randomId } from "@/lib/utils";
+import { cached, invalidateForPath } from "./requestCache";
 
 export const API_BASE = "/api";
 export const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === "true";
@@ -117,7 +118,62 @@ async function parseBody<T>(response: Response): Promise<T> {
   return payload;
 }
 
+/**
+ * 各资源的缓存 TTL（毫秒）；未列出的默认不缓存。
+ *
+ * 取值依据（按「数据多久变一次」定，不按「希望多快」定）：
+ *   - 会话列表/历史：只有发消息才会变，写操作会失效缓存 → 给较长 TTL 无损
+ *   - 模型/技能/MCP/数据源配置：改一次用很久，改的时候会写 → 60s 足够安全
+ *   - 健康检查：实时性要紧，不缓存（它本身就是极轻的探活）
+ *
+ * 刻意不用一个全局 TTL：不同资源的「新鲜度要求」差一个数量级，
+ * 统一值只能取最保守的那个，等于白白放弃收益。
+ */
+const CACHE_TTL_MS: Record<string, number> = {
+  "/chat/sessions": 30_000,
+  "/chat/settings": 30_000,
+  "/models/providers": 60_000,
+  "/mcp/servers": 60_000,
+  "/skills": 60_000,
+  "/datasources": 60_000,
+  "/automations": 60_000,
+  "/files": 30_000,
+};
+
+/** 该路径的缓存 TTL；0 = 不缓存（但仍参与并发去重）。 */
+function ttlFor(path: string): number {
+  const clean = path.split("?")[0];
+  // 最长前缀优先：/chat/sessions/{id}/messages 命中 /chat/sessions 而不是别的
+  let bestLen = -1;
+  let bestTtl = 0;
+  for (const [prefix, ttl] of Object.entries(CACHE_TTL_MS)) {
+    const matches = clean === prefix || clean.startsWith(`${prefix}/`);
+    if (matches && prefix.length > bestLen) {
+      bestLen = prefix.length;
+      bestTtl = ttl;
+    }
+  }
+  return bestTtl;
+}
+
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+
+  // 只缓存 GET：非 GET 是写操作，必须落库后可见（并在成功后失效对应资源）
+  if (method === "GET") {
+    // 调用方显式传 signal（如「可取消」场景）时不走缓存：这类调用通常
+    // 需要真实的连接生命周期，复用共享 Promise 会让取消语义变模糊
+    if (init?.signal) return doRequestJson<T>(path, init);
+    return cached<T>(path, ttlFor(path), false, () => doRequestJson<T>(path, init));
+  }
+
+  const result = await doRequestJson<T>(path, init);
+  // 写成功后失效该资源（含子路径）的缓存：宁可多取一次，也不给用户看写前的旧值
+  invalidateForPath(path);
+  return result;
+}
+
+async function doRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {

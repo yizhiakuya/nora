@@ -36,3 +36,5 @@ agent-workspace/
 
 # bundled pwsh runtime (extracted cache; the archive itself is tracked via git-lfs)
 tools/pwsh/pwsh-*/
+# 临时提交消息文件（写多行中文提交信息用，不属于仓库内容）
+scripts/_cm.txt

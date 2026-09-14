@@ -163,7 +163,9 @@ export const useChatSessions = create<ChatSessionsState>()(
         for (const delay of [1500, 1500, 1500]) {
           await new Promise((r) => setTimeout(r, delay));
           try {
-            const remote = await fetchSessions();
+            // force=true：这里就要轮询到后端的新标题，必须绕过缓存，
+            // 否则 30s TTL 会让三次轮询都命中同一份旧结果，永远等不到 AI 标题
+            const remote = await fetchSessions(true);
             const found = remote.find((r) => r.id === id);
             // 后端 titleGenerated=true = AI 标题已落库
             if (found?.title && found.titleGenerated) {
