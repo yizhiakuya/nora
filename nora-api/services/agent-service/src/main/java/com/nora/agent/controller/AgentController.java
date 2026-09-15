@@ -399,6 +399,18 @@ public class AgentController {
             List<ChatStepDto> steps = new java.util.ArrayList<>();
             List<CitationDto> citations = new java.util.ArrayList<>();
             java.util.Map<Integer, StringBuilder> reasoningBuffers = new java.util.LinkedHashMap<>();
+            // 推理步骤的落位与计时:首次 reasoning_delta 就把步骤按真实时间顺序占位进
+            // steps(收尾原位补正文),而不是收尾统一 append——否则落库顺序变成
+            // 「工具全在前、推理全在后」,前端拉历史收敛终态后时间线错位(实测 2026-09-15:
+            // 5 个工具聚在上、4 条思考聚在下,而真实顺序是 思考→工具→思考→工具…)。
+            java.util.Map<Integer, Integer> reasoningStepAt = new java.util.LinkedHashMap<>();
+            java.util.Map<Integer, Long> reasoningStartMs = new java.util.LinkedHashMap<>();
+            java.util.Map<Integer, Long> reasoningEndMs = new java.util.LinkedHashMap<>();
+            // 上一事件时刻:推理起点取「距上一个事件的时间」而非首个推理 token——
+            // 上游把整段推理突发投递(几十 ms 内一次性到达)时,首末 token 间隔会
+            // 算成 8ms 这种假数字;从上一事件起算则两种投递形态都接近真实耗时
+            // (突发≈整轮思考时长,流式≈真实思考窗口)。
+            long[] lastEventMs = {System.currentTimeMillis()};
             StringBuilder answer = new StringBuilder();
             int[] stepIndex = {0};
             long turnStart = System.currentTimeMillis();
@@ -414,6 +426,7 @@ public class AgentController {
                     new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {
+                            lastEventMs[0] = System.currentTimeMillis();
                             steps.add(step);
                             try { chatStoreService.saveStep(sessionId, stepIndex[0]++, step); }
                             catch (Exception e) { log.warn("failed to persist agent step: {}", e.getMessage()); }
@@ -423,6 +436,7 @@ public class AgentController {
 
                         @Override
                         public void delta(String token) {
+                            lastEventMs[0] = System.currentTimeMillis();
                             answer.append(token);
                             send(emitter, "delta", new DeltaPayload(token));
                             turnStreams.publish(liveTurn, "delta", toJson(new DeltaPayload(token)));
@@ -433,6 +447,19 @@ public class AgentController {
                             if (token == null || token.isEmpty()) return;
                             int key = roundIndex == null ? Integer.MAX_VALUE : roundIndex;
                             reasoningBuffers.computeIfAbsent(key, k -> new StringBuilder()).append(token);
+                            long now = System.currentTimeMillis();
+                            reasoningStartMs.putIfAbsent(key, lastEventMs[0]);
+                            reasoningEndMs.put(key, now);
+                            lastEventMs[0] = now;
+                            // 首 token 即占位:保持「思考→工具→思考→工具…」的真实顺序;
+                            // 正文收尾时一次性补上(逐 token 重建大字符串是 O(n²) 白工)
+                            if (!reasoningStepAt.containsKey(key)) {
+                                reasoningStepAt.put(key, steps.size());
+                                steps.add(new ChatStepDto(
+                                        "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
+                                        "think", "推理过程", null, null, "running",
+                                        null, null, null, roundIndex));
+                            }
                             send(emitter, "reasoning_delta", new ReasoningDeltaPayload(roundIndex, token));
                             turnStreams.publish(liveTurn, "reasoning_delta",
                                     toJson(new ReasoningDeltaPayload(roundIndex, token)));
@@ -492,11 +519,21 @@ public class AgentController {
                             for (var entry : reasoningBuffers.entrySet()) {
                                 if (entry.getValue().isEmpty()) continue;
                                 Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
+                                long started = reasoningStartMs.getOrDefault(entry.getKey(), turnStart);
+                                long ended = reasoningEndMs.getOrDefault(entry.getKey(), System.currentTimeMillis());
                                 ChatStepDto reasoningStep = new ChatStepDto(
                                         "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
-                                        "think", "推理过程", entry.getValue().toString(), durationMs,
+                                        "think", "推理过程", entry.getValue().toString(),
+                                        Math.max(0, ended - started),
                                         "completed", null, null, null, roundIndex);
-                                steps.add(reasoningStep);
+                                // 原位补终态(占位已按真实顺序放进 steps);每轮时长是该轮
+                                // 推理流的首末 token 间隔,不再给每条都盖整轮耗时
+                                Integer at = reasoningStepAt.get(entry.getKey());
+                                if (at != null && at < steps.size()) {
+                                    steps.set(at, reasoningStep);
+                                } else {
+                                    steps.add(reasoningStep);
+                                }
                                 try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
                                 catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
                             }

@@ -126,9 +126,40 @@ public class ChatStoreService {
                 byId.put(step.id(), step);
             }
         }
-        return byId.values().stream()
+        return orderByRound(byId.values().stream()
                 .filter(s -> !"running".equals(s.status()) && !"pending".equals(s.status()))
-                .toList();
+                .toList());
+    }
+
+    /**
+     * 把步骤排回真实执行顺序：按轮次分组，同一轮里推理（think）排在该轮工具调用之前。
+     *
+     * <p>背景（2026-09-15 修复）：推理步骤此前只在整轮收尾时统一追加进落库列表，
+     * 而工具步骤是实时追加的——于是历史里出现「5 个工具全在前、4 条思考全在后」，
+     * 前端拉历史收敛终态后时间线错位（真实顺序是 思考→工具→思考→工具…，与用户在
+     * 界面上看到的过程一致）。写入侧已改为首个推理 token 即原位占位；这里对存量行
+     * 做等价重排：只把「落在同轮工具之后」的推理步骤挪到该轮首个工具之前，
+     * 其余步骤（含缺 roundIndex 的旧行、上下文注入、错误行）相对顺序一概不动。
+     */
+    private static List<ChatStepDto> orderByRound(List<ChatStepDto> steps) {
+        List<ChatStepDto> ordered = new java.util.ArrayList<>(steps);
+        for (ChatStepDto step : steps) {
+            if (!"think".equals(step.type()) || step.roundIndex() == null) continue;
+            int from = ordered.indexOf(step);
+            if (from < 0) continue;
+            int firstTool = -1;
+            for (int i = 0; i < ordered.size(); i++) {
+                ChatStepDto candidate = ordered.get(i);
+                if ("tool".equals(candidate.type()) && step.roundIndex().equals(candidate.roundIndex())) {
+                    firstTool = i;
+                    break;
+                }
+            }
+            if (firstTool < 0 || from < firstTool) continue; // 该轮没有工具，或推理已在工具之前
+            ordered.remove(from);
+            ordered.add(firstTool, step);
+        }
+        return ordered;
     }
 
     /** Lists live sessions with message counts, most recently active first (soft-deleted excluded). */

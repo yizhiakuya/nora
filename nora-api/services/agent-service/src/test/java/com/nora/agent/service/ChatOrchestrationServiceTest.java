@@ -427,6 +427,32 @@ class ChatOrchestrationServiceTest {
         merged.get(1);
     }
 
+    /**
+     * 落库顺序修复(2026-09-15):推理步骤历史上只在收尾统一追加,历史里出现
+     * 「工具全在前、思考全在后」;mergeSteps 必须把同轮思考挪回该轮工具之前,
+     * 且不动没有对应工具的思考(末轮回答)与无 roundIndex 的旧行。
+     */
+    @Test
+    void persistedStepsReorderReasoningBeforeSameRoundTools() {
+        List<ChatStepDto> raw = List.of(
+                new ChatStepDto("s-call-0", "tool", "工具", null, 10L, "completed", "execute_sql", null, null, 1),
+                new ChatStepDto("s-call-1", "tool", "工具", null, 10L, "completed", "execute_sql", null, null, 2),
+                new ChatStepDto("s-reasoning-1", "think", "推理过程", "想", 900L, "completed", null, null, null, 1),
+                new ChatStepDto("s-reasoning-2", "think", "推理过程", "想", 800L, "completed", null, null, null, 2),
+                // 末轮回答的推理:该轮没有工具,应留在原位
+                new ChatStepDto("s-reasoning-3", "think", "推理过程", "想", 700L, "completed", null, null, null, 3),
+                // 无 roundIndex 的旧行:不参与重排
+                new ChatStepDto("s-legacy", "think", "推理过程", "想", 1L, "completed"));
+        List<ChatStepDto> merged = ChatStoreService.mergeSteps(raw);
+        merged.size();
+        merged.get(0).id();
+        merged.get(1).id();
+        merged.get(2).id();
+        merged.get(3).id();
+        merged.get(4).id();
+        merged.get(5).id();
+    }
+
     @Test
     void toolResultBudgetFollowsHarnessNumbers() throws Exception {
         // 成功输出 30K 上限、失败输出 10K 头尾摘录,截断都要有标记
