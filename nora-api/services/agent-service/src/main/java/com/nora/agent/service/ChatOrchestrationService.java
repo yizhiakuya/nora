@@ -2636,8 +2636,11 @@ public class ChatOrchestrationService {
                     arr.add(call);
                 }
             }
-            sseLog.info("upstream round done (responses): contentChars={} toolCalls={} usage={}",
-                    content.length(), orderedCalls.size(),
+            // reasoningChars 必须记录:此前 responses 分支漏了这一项,排查
+            // 「思考等级失效」时只能靠直连上游重放才能判断上游到底有没有产推理,
+            // 日志里看不出(openai 分支一直是全的)。
+            sseLog.info("upstream round done (responses): contentChars={} reasoningChars={} toolCalls={} usage={}",
+                    content.length(), reasoning.length(), orderedCalls.size(),
                     usage == null ? "none" : "in=" + usage.inputTokens() + " out=" + usage.outputTokens());
             return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
                     assistant, orderedCalls, usage);
