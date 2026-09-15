@@ -426,6 +426,8 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     content: string;
     steps?: StepPayload[];
     sources?: Citation[];
+    /** 整轮耗时(ms):assistant 消息落库字段,折叠行「查看工作过程 · Ns」用 */
+    durationMs?: number | null;
     createdAt?: string;
   }>;
   return (stored ?? []).map((m, i) => ({
@@ -435,6 +437,18 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     timestamp: toHm(m.createdAt),
     steps: (m.steps ?? []).map((s, j) => normalizeStep(s, j)),
     sources: normalizeSources(m.sources),
+    // 整轮耗时来自落库字段(与 done 事件同源)。此前只在流式期间有,刷新/切会话
+    // 后从历史重建消息就丢了——「查看工作过程 · N 次工具调用 · Xs」的总计时消失。
+    // 旧数据无该字段(undefined/null)→ 保持 undefined,折叠行不显示秒数。
+    turnMetrics: m.durationMs != null
+      ? {
+          durationMs: m.durationMs,
+          usage: null,
+          contextWindow: null,
+          promptTokens: null,
+          ttftMs: null,
+        }
+      : undefined,
   }));
 }
 

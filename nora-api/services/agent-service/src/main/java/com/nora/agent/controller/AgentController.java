@@ -537,7 +537,11 @@ public class AgentController {
                                 try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
                                 catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
                             }
-                            chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations);
+                            // durationMs 一并落库:done 事件下发的整轮耗时若只活在事件里,
+                            // 刷新/切会话后前端从历史重建消息就丢了,「查看工作过程 · Ns」
+                            // 的总计时会消失(实测用户反馈)。与 done 同源,不另算。
+                            chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations,
+                                    durationMs);
                         } catch (Exception e) {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());

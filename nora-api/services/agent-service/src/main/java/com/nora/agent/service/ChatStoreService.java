@@ -88,21 +88,37 @@ public class ChatStoreService {
     /** Saves one message with its steps/sources snapshots. */
     public void saveMessage(String sessionId, String role, String content,
                             List<ChatStepDto> steps, List<CitationDto> sources) {
+        saveMessage(sessionId, role, content, steps, sources, null);
+    }
+
+    /**
+     * Saves one message with its steps/sources snapshots and the turn duration.
+     *
+     * <p>{@code durationMs} 与 SSE done 事件同源（整轮墙钟耗时）。必须落库：
+     * 它此前只随 done 事件下发，刷新/切会话后前端从历史重建消息就丢了，
+     * 「查看工作过程 · N 次工具调用 · Xs」的总计时会消失（实测用户反馈）。
+     * 非 assistant 消息传 null。
+     */
+    public void saveMessage(String sessionId, String role, String content,
+                            List<ChatStepDto> steps, List<CitationDto> sources, Long durationMs) {
         jdbcTemplate.update(
-                "INSERT INTO chat_message (id, session_id, role, content, steps, sources) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO chat_message (id, session_id, role, content, steps, sources, duration_ms) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 UUID.randomUUID().toString(), sessionId, role, content,
-                toJson(steps), toJson(sources));
+                toJson(steps), toJson(sources), durationMs);
     }
 
     /** Loads all messages of a session in chronological order (soft-deleted rows excluded). */
     public List<StoredMessage> loadMessages(String sessionId) {
         List<StoredMessage> loaded = jdbcTemplate.query(
-                "SELECT role, content, steps, sources, created_at FROM chat_message WHERE session_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
+                "SELECT role, content, steps, sources, duration_ms, created_at FROM chat_message "
+                        + "WHERE session_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
                 (rs, rowNum) -> new StoredMessage(
                         rs.getString("role"),
                         rs.getString("content"),
                         fromJson(rs.getString("steps"), STEP_LIST),
                         fromJson(rs.getString("sources"), SOURCE_LIST),
+                        rs.getObject("duration_ms", Long.class),
                         rs.getObject("created_at", java.time.LocalDateTime.class)),
                 sessionId);
         // steps 按 (id → 状态) 追加式存储(running 先行、终态覆盖),恢复时合并去重,
@@ -111,7 +127,8 @@ public class ChatStoreService {
             List<ChatStepDto> steps = loaded.get(i).steps();
             if (steps == null || steps.isEmpty()) continue;
             loaded.set(i, new StoredMessage(loaded.get(i).role(), loaded.get(i).content(),
-                    mergeSteps(steps), loaded.get(i).sources(), loaded.get(i).createdAt()));
+                    mergeSteps(steps), loaded.get(i).sources(),
+                    loaded.get(i).durationMs(), loaded.get(i).createdAt()));
         }
         return loaded;
     }
@@ -323,12 +340,14 @@ public class ChatStoreService {
             String content,
             List<ChatStepDto> steps,
             List<CitationDto> sources,
+            /** 整轮耗时(ms);assistant 消息才有,旧数据/用户消息为 null。 */
+            Long durationMs,
             java.time.LocalDateTime createdAt
     ) {
 
         /** Back-compat constructor for in-memory messages that have no DB timestamp. */
         public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources) {
-            this(role, content, steps, sources, null);
+            this(role, content, steps, sources, null, null);
         }
     }
 }
