@@ -126,9 +126,47 @@ public class ChatStoreService {
                 byId.put(step.id(), step);
             }
         }
-        return orderByRound(byId.values().stream()
+        return sanitizeReasoningDurations(orderByRound(byId.values().stream()
                 .filter(s -> !"running".equals(s.status()) && !"pending".equals(s.status()))
-                .toList());
+                .toList()));
+    }
+
+    /**
+     * 清掉旧数据里被整轮耗时污染的推理计时。
+     *
+     * <p>背景（2026-09-15，用户实报）：旧写入路径在整轮收尾时把「整轮耗时」盖给该轮
+     * 每条推理步骤，于是一个含 4 轮推理的轮次里 4 条「已深度思考」全都显示 17.61s。
+     * 写入侧已改为按轮计时（见 AgentController.reasoningDelta）；这里对存量行做等价
+     * 清理：同一消息内若 ≥2 条推理步骤携带完全相同的时长，判定为整轮戳记，置空
+     * （前端隐藏秒数——显示一个错数字比不显示更糟）。新数据各轮时长是各自的首末
+     * 事件间隔，几乎不可能完全相同，不受影响。
+     */
+    private static List<ChatStepDto> sanitizeReasoningDurations(List<ChatStepDto> steps) {
+        java.util.Map<Long, Integer> byDuration = new java.util.HashMap<>();
+        for (ChatStepDto step : steps) {
+            if (isReasoningStep(step) && step.duration() != null) {
+                byDuration.merge(step.duration(), 1, Integer::sum);
+            }
+        }
+        boolean anyDuplicated = byDuration.values().stream().anyMatch(count -> count > 1);
+        if (!anyDuplicated) return steps;
+        List<ChatStepDto> out = new java.util.ArrayList<>(steps.size());
+        for (ChatStepDto step : steps) {
+            boolean duplicated = isReasoningStep(step) && step.duration() != null
+                    && byDuration.getOrDefault(step.duration(), 0) > 1;
+            out.add(duplicated ? withDuration(step, null) : step);
+        }
+        return out;
+    }
+
+    /** 推理步骤：id 前缀 s-reasoning-（区别于 s-error 等同为 think 型的行）。 */
+    private static boolean isReasoningStep(ChatStepDto step) {
+        return "think".equals(step.type()) && step.id() != null && step.id().startsWith("s-reasoning-");
+    }
+
+    private static ChatStepDto withDuration(ChatStepDto step, Long duration) {
+        return new ChatStepDto(step.id(), step.type(), step.title(), step.detail(), duration, step.status(),
+                step.toolName(), step.input(), step.result(), step.roundIndex(), step.context());
     }
 
     /**

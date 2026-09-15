@@ -2738,8 +2738,16 @@ public class ChatOrchestrationService {
      * - qwen/glm:开关式字段,none 关、其余开。
      */
     private void applyReasoningRequest(ObjectNode body, ResolvedLlm llm) {
-        // responses 协议走 reasoning:{effort} 映射(见 streamUpstreamResponses),同样需要注入档位
-        if (!"openai".equalsIgnoreCase(llm.protocol()) && !"responses".equalsIgnoreCase(llm.protocol())) return;
+        // 协议白名单只排除 ollama:其原生 /api/chat 不认 reasoning_effort。
+        // openai / responses / anthropic 都注入——
+        //   responses 走 reasoning:{effort} 映射(见 streamUpstreamResponses);
+        //   anthropic 在本实现里同样以 chat.completions 形状发出(见 streamUpstream 协议分发),
+        //   档位也用 reasoning_effort。
+        // 此前按协议名直接 return,anthropic 选了档位也发不出去(实测 2026-09-15:
+        // protocol=anthropic 的请求体里没有 reasoning_effort,上游 reasoningChars=0;
+        // 同一 key 手工加 reasoning_effort=xhigh 立刻出 261 字符推理)。
+        // 不认该字段的上游由既有的降级重试兜底(见 effortRejectedModels)。
+        if ("ollama".equalsIgnoreCase(llm.protocol())) return;
         String model = llm.model() == null ? "" : llm.model().toLowerCase();
         String requested = llm.effectiveReasoningLevel();
         boolean hasRequested = requested != null && !requested.isBlank() && !"auto".equalsIgnoreCase(requested);
