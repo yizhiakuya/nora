@@ -7,7 +7,7 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useModelProviders, PROTOCOL_META, type ProviderProtocol, type ModelProvider } from "@/hooks/useModelProviders";
+import { useModelProviders, PROTOCOL_META, type ProviderProtocol, type ModelProvider, type ModelSettings } from "@/hooks/useModelProviders";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { modelsApi } from "@/lib/services/modelsApi";
 
@@ -85,7 +85,16 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
       setProtocol(editing.protocol);
       setDiscovered(editing.models.length > 0 ? editing.models : null);
       setSelected(new Set(editing.models));
-      setModelProtocols({});
+      // 回填逐模型协议覆盖:此前固定置空,已存的覆盖在表单里看不见,
+      // 用户看到的是"服务商默认协议"、实际跑的是被覆盖的那个(实测踩过:
+      // deepseek-v4.1-flash 存的是 responses,UI 却显示 Chat Completions)。
+      // 保存时只提交「与默认协议不同」的覆盖,未改动的不会丢。
+      const overrides: Record<string, ProviderProtocol> = {};
+      for (const m of editing.models) {
+        const p = editing.modelSettings?.[m]?.protocol;
+        if (p && p !== editing.protocol) overrides[m] = p;
+      }
+      setModelProtocols(overrides);
     } else {
       setName(""); setUrl(""); setKey("");
       setProtocol("openai");
@@ -177,10 +186,29 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
       return;
     }
     const chosenModels = discovered && selected.size > 0 ? Array.from(selected) : undefined;
-    const withProto = chosenModels?.filter((m) => modelProtocols[m]);
-    const modelSettings = withProto && withProto.length > 0
-      ? Object.fromEntries(withProto.map((m) => [m, { protocol: modelProtocols[m] }]))
-      : undefined;
+    // 逐模型协议覆盖:以已存 modelSettings 为基底合并,只写 protocol。
+    // 后端 PUT 对 modelSettings 是整体替换(见 ModelProviderService.update),
+    // 若只从 modelProtocols 重建,会把该模型已配的 vision/reasoningLevels/
+    // contextWindow 全部抹掉。此处保留基底,协议清空时回退为 provider 默认。
+    const modelSettings = (() => {
+      if (!chosenModels) return undefined;
+      const base = editing?.modelSettings ?? {};
+      const next: ModelSettings = { ...base };
+      let touched = false;
+      for (const m of chosenModels) {
+        const picked = modelProtocols[m];
+        if (picked && picked !== protocol) {
+          next[m] = { ...(base[m] ?? {}), protocol: picked };
+          touched = true;
+        } else if (base[m]?.protocol) {
+          // 回退到默认协议:删掉覆盖字段,保留该模型的其他设置
+          const { protocol: _drop, ...rest } = base[m];
+          next[m] = rest;
+          touched = true;
+        }
+      }
+      return touched ? next : undefined;
+    })();
 
     setSaving(true);
     try {

@@ -382,6 +382,18 @@ public class ChatOrchestrationService {
                         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                                 + (int) overhead;
                         retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
+                    } else if (isReasoningEffortUnsupported(result.errorMessage)
+                            && reasoningLevel != null && !reasoningLevel.isBlank()) {
+                        // 上游不认这个档位(gemini-3.5-flash 等报 invalid_reasoning_effort):
+                        // 记住结论并剥掉档位重试一次——思考等级是增强项,不该让整轮对话失败。
+                        // 记忆后该模型后续请求不再注入(见 applyReasoningRequest)。
+                        effortRejectedModels.add(effortKey(resolved));
+                        log.info("reasoning_effort rejected by {} ({}), retrying without it",
+                                resolved.model(), resolved.baseUrl());
+                        eventConsumer.step(new ChatStepDto("s-effort-" + round, "think", "模型不支持该思考等级",
+                                "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
+                                0L, "completed", null, null, null, round + 1));
+                        retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs);
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
                         // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
                         // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
@@ -841,6 +853,34 @@ public class ChatOrchestrationService {
      * 避免每次都要“失败→重试”白费一轮。进程内记忆(重启后重新探测)。
      */
     private final java.util.Set<String> visionRejectedModels = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 记忆“上游拒绝 reasoning_effort”的模型:实测部分模型/渠道对未知档位直接 400
+     * (gemini-3.5-flash 报 invalid_reasoning_effort:"the reasoning effort value
+     * is not supported by the current model")。
+     * 首次遇到后,该模型后续请求不再注入档位,省掉“失败→重试”的一轮浪费。
+     * 与 visionRejectedModels 同款:进程内记忆,重启后重新探测。
+     */
+    private final java.util.Set<String> effortRejectedModels = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** 探测记忆的键(与 visionKey 同构):同一上游端点上的同名模型共享结论。 */
+    private static String effortKey(ResolvedLlm llm) {
+        return (llm.baseUrl() == null ? "" : llm.baseUrl()) + "|" + (llm.model() == null ? "" : llm.model());
+    }
+
+    /**
+     * 上游是否明确拒绝 reasoning_effort 取值。
+     * 实测文案(中转站透传上游错误):
+     * "the reasoning effort value is not supported by the current model" /
+     * "invalid_reasoning_effort" / "unsupported value ... reasoning_effort"
+     */
+    private static boolean isReasoningEffortUnsupported(String errorMessage) {
+        if (errorMessage == null) return false;
+        String e = errorMessage.toLowerCase();
+        if (!e.contains("reasoning")) return false;
+        return e.contains("not supported") || e.contains("unsupported")
+                || e.contains("invalid") || e.contains("not valid");
+    }
 
     /**
      * 是否允许把图片附到该模型的请求里。
@@ -2284,6 +2324,21 @@ public class ChatOrchestrationService {
                     } catch (Exception parseError) {
                         continue; // keep-alive comments / partial lines
                     }
+                    // 流内错误块:部分中转以 HTTP 200 开流,再把上游 400 塞进 data 里
+                    // (形如 data: {"error": {"message": "{...invalid_reasoning_effort...}"}})。
+                    // 此前该块没有 choices,被静默忽略 → 最终只报 "empty stream",
+                    // 真正的错误文案(以及依赖它的降级判定)全部丢失。
+                    JsonNode errNode = chunkRoot.path("error");
+                    if (!errNode.isMissingNode() && !errNode.isNull()) {
+                        // 取原始 message 文本(可能仍是转义 JSON),交给 friendlyUpstreamError 统一解析
+                        String errText = errNode.isTextual() ? errNode.asText()
+                                : errNode.path("message").asText("");
+                        if (errText.isBlank()) errText = errNode.toString();
+                        log.warn("LLM upstream in-stream error: {}", abbreviate(errText, 300));
+                        sseLog.warn("upstream in-stream ERROR body={}", abbreviateForSse(errText, 400));
+                        return new StreamTurnResult(true, "上游 " + friendlyUpstreamError(errText),
+                                content.toString(), reasoning.toString(), null, List.of(), usage);
+                    }
                     // usage rides the last chunk with an empty choices array (relay-verified)
                     JsonNode usageNode = chunkRoot.path("usage");
                     if (usageNode.isObject() && !usageNode.isEmpty()) {
@@ -2673,9 +2728,10 @@ public class ChatOrchestrationService {
     /**
      * OpenAI-compatible reasoning switches; models with native reasoning need no override.
      * 生效等级(effectiveReasoningLevel)来自设置页 per-model 配置或对话框请求:
-     * - 支持 reasoning_effort 的家族(gpt-5/o/claude/gemini-*-high 等):none→minimal,
-     *   其余档位原样透传;未设置时 gpt-5/o 默认 medium,claude thinking 与带档位后缀
-     *   的模型不注入(由上游按模型自身默认决定,claude 不带该字段就没有推理内容)。
+     * - 用户显式选的档位一律原样透传(含 none=关闭);家族名单只决定“未指定时的默认值”:
+     *   gpt-5/o 默认 medium,claude thinking 与带档位后缀的模型不注入
+     *   (由上游按模型自身默认决定,claude 不带该字段就没有推理内容)。
+     *   上游拒绝该取值时自动剥离并重试,同时记住该模型(见 effortRejectedModels)。
      * - qwen/glm:开关式字段,none 关、其余开。
      */
     private void applyReasoningRequest(ObjectNode body, ResolvedLlm llm) {
@@ -2687,9 +2743,26 @@ public class ChatOrchestrationService {
         boolean off = hasRequested && "none".equalsIgnoreCase(requested);
         boolean effortFamily = supportsReasoningEffort(model);
         boolean openAiDefaultFamily = model.contains("gpt-5") || model.matches("(?s).*\\bo[1-9].*");
-        if (effortFamily) {
+        // 已探测到该模型拒绝该字段:跳过档位注入,避免每次都先撞 400 再重试。
+        // 只跳过 reasoning_effort,qwen/glm 的开关式字段仍照常处理(它们在下面)。
+        boolean effortRejected = effortRejectedModels.contains(effortKey(llm));
+        // 用户显式选的档位一律透传——家族白名单只管"未指定时的默认值"。
+        // 此前把显式档位也锁在 effortFamily 里,导致不在名单的模型(如 deepseek-v4.1-flash)
+        // 选了档位却被静默丢弃:responses 分支拿不到 reasoning_effort 就只发 summary:auto,
+        // 上游实测该形态不产出任何 reasoning(0 事件),思考等级等于失效。
+        // 实测(2026-09-15, 中转站 192.168.0.109:28765):
+        //   chat  + reasoning_effort=xhigh  → 4397 分片
+        //   chat  + reasoning_effort=minimal→ 5878 分片
+        //   responses + reasoning{effort:xhigh,summary:auto} → 7414 分片
+        //   responses + reasoning{summary:auto}(无 effort)    → 0 分片
+        // 不认该字段的模型家族由上游忽略即可,不会报错(glm 同发 reasoning_effort + thinking 实测 200)。
+        if (!effortRejected && (effortFamily || hasRequested)) {
             if (off) {
-                body.put("reasoning_effort", "minimal");
+                // 「none = 关闭思考」直传 none,不再降级成 minimal。
+                // 旧实现固定写 minimal,但实测该上游的 minimal 仍会思考
+                // (deepseek-v4.1-flash: responses+minimal → 2788 reasoning 分片),
+                // 导致用户选「none」根本关不掉;none 本身被上游接受(200)。
+                body.put("reasoning_effort", "none");
             } else if (hasRequested && isOpenAiEffort(requested)) {
                 body.put("reasoning_effort", requested);
             } else if (openAiDefaultFamily) {
@@ -3886,6 +3959,16 @@ public class ChatOrchestrationService {
             return "无返回信息";
         }
         final String trimmed = body.trim();
+        // 部分中转把上游错误体塞进 message 字段的**转义 JSON 字符串**里,形如
+        // {"error":{"message":"{\"code\":11150,\"msg\":\"the reasoning effort value
+        // is not supported...\"}"}}。朴素的“读到下一个引号”会在第一个 \" 处截断,
+        // 只剩 "{\" —— 调用方(如档位降级判定)就看不到真正的错误文案。
+        // 这里先把转义引号还原,再按嵌套结构取最内层的可读消息。
+        String unescaped = trimmed.replace("\\\"", "\"");
+        String inner = deepestMessage(unescaped);
+        if (inner != null) {
+            return abbreviate(inner, 160);
+        }
         // 常见错误体形如 {"error":{"message":"...","type":"..."}}
         final int msgIdx = trimmed.indexOf("\"message\"");
         if (msgIdx >= 0) {
@@ -3907,6 +3990,26 @@ public class ChatOrchestrationService {
             }
         }
         return abbreviate(trimmed, 160);
+    }
+
+    /**
+     * 从（已还原转义引号的）错误体里取最内层可读消息。
+     * 嵌套形如 {"error":{"message":"{\"code\":N,\"msg\":\"...\",\"extError\":{...}}"}}——
+     * 还原后外层 message 的值本身又是一段 JSON。取最内层的 msg/message 字段才有信息量。
+     * 取不到时返回 null，由调用方走原来的平铺解析。
+     */
+    private static String deepestMessage(String unescaped) {
+        String best = null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\"(?:msg|message)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+                .matcher(unescaped);
+        while (m.find()) {
+            String value = m.group(1).trim();
+            // 跳过纯 JSON 片段（值以 { 开头说明它自己还是个对象，不是可读文案）
+            if (value.isEmpty() || value.startsWith("{") || value.startsWith("[")) continue;
+            best = value;
+        }
+        return best;
     }
 
     /** Callbacks for the SSE events of one chat turn. */
