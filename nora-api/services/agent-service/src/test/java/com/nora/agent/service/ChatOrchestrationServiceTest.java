@@ -48,9 +48,9 @@ class ChatOrchestrationServiceTest {
 
     @Test
     void sqlGuardrailRejectsWritesAndMultipleStatements() {
-        ChatOrchestrationService.guardSql("UPDATE users SET x=1");
-        ChatOrchestrationService.guardSql("SELECT 1; DELETE FROM users");
-        ChatOrchestrationService.guardSql("SELECT 1;");
+        ChatToolExecutor.guardSql("UPDATE users SET x=1");
+        ChatToolExecutor.guardSql("SELECT 1; DELETE FROM users");
+        ChatToolExecutor.guardSql("SELECT 1;");
     }
 
     @Test
@@ -271,12 +271,12 @@ class ChatOrchestrationServiceTest {
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
         // 非法 action 拒绝(白名单)
-        ChatOrchestrationService.ToolOutcome bad = invokeExecute(svc, "manage_mcp", "{\"action\": \"drop\"}");
+        ChatToolExecutor.ToolOutcome bad = invokeExecute(svc, "manage_mcp", "{\"action\": \"drop\"}");
         bad.content();
         bad.content();
 
         // list 渲染服务器行(名称/状态/工具数)
-        ChatOrchestrationService.ToolOutcome list = invokeExecute(svc, "manage_mcp", "{\"action\": \"list\"}");
+        ChatToolExecutor.ToolOutcome list = invokeExecute(svc, "manage_mcp", "{\"action\": \"list\"}");
         list.content();
         list.content();
         list.content();
@@ -291,7 +291,7 @@ class ChatOrchestrationServiceTest {
         when(mcp.refresh(7L)).thenThrow(new IllegalStateException("connect timeout"));
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
-        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+        ChatToolExecutor.ToolOutcome out = invokeExecute(svc, "manage_mcp",
                 "{\"action\": \"register\", \"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
         out.content();
     }
@@ -306,7 +306,7 @@ class ChatOrchestrationServiceTest {
         when(mcp.refresh(9L)).thenReturn(List.of());
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
-        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+        ChatToolExecutor.ToolOutcome out = invokeExecute(svc, "manage_mcp",
                 "{\"action\": \"create\", \"name\": \"alias-mcp\", \"url\": \"https://x/mcp\"}");
         out.content();
 
@@ -324,7 +324,7 @@ class ChatOrchestrationServiceTest {
         when(mcp.refresh(12L)).thenReturn(List.of());
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
-        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+        ChatToolExecutor.ToolOutcome out = invokeExecute(svc, "manage_mcp",
                 "{\"action\": \"register\", \"name\": \"inferred\", \"command\": \"npx\", \"args\": [\"-y\", \"pkg\"]}");
         out.content();
 
@@ -343,7 +343,7 @@ class ChatOrchestrationServiceTest {
         when(mcp.refresh(11L)).thenReturn(List.of());
         ChatOrchestrationService svc = buildWithMcp(mcp);
 
-        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+        ChatToolExecutor.ToolOutcome out = invokeExecute(svc, "manage_mcp",
                 "{\"action\": \"register\", \"name\": \"local-fs\", \"transport\": \"STDIO\","
                         + " \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"D:/docs\"],"
                         + " \"env\": {\"API_KEY\": \"k1\"}}");
@@ -356,7 +356,7 @@ class ChatOrchestrationServiceTest {
         // STDIO 无 command:校验器拒绝,可自纠(错误里给出正确形态)
         McpServerService mcp = mock(McpServerService.class);
         ChatOrchestrationService svc = buildWithMcp(mcp);
-        ChatOrchestrationService.ToolOutcome out = invokeExecute(svc, "manage_mcp",
+        ChatToolExecutor.ToolOutcome out = invokeExecute(svc, "manage_mcp",
                 "{\"action\": \"register\", \"name\": \"local-fs\", \"transport\": \"STDIO\"}");
         out.content();
         out.content();
@@ -370,17 +370,25 @@ class ChatOrchestrationServiceTest {
                 null, null, null, null, null, null, mcp, null, null, null, 5, null);
     }
 
-    /** Invokes parseArgs + executeTool (both private) for one tool call. */
-    private ChatOrchestrationService.ToolOutcome invokeExecute(ChatOrchestrationService svc,
-                                                               String tool, String args) throws Exception {
+    /** Invokes parseArgs (facade) + executeTool (ChatToolExecutor) for one tool call. */
+    private ChatToolExecutor.ToolOutcome invokeExecute(ChatOrchestrationService svc,
+                                                       String tool, String args) throws Exception {
         var parse = ChatOrchestrationService.class.getDeclaredMethod("parseArgs", String.class, String.class);
         parse.setAccessible(true);
         Object parsed = parse.invoke(svc, tool, args);
-        var exec = ChatOrchestrationService.class.getDeclaredMethod("executeTool",
+        ChatToolExecutor executor = toolExecutorOf(svc);
+        var exec = ChatToolExecutor.class.getDeclaredMethod("executeTool",
                 String.class, String.class, parsed.getClass(), java.util.function.Consumer.class);
         exec.setAccessible(true);
-        return (ChatOrchestrationService.ToolOutcome) exec.invoke(svc, tool, args, parsed,
+        return (ChatToolExecutor.ToolOutcome) exec.invoke(executor, tool, args, parsed,
                 (java.util.function.Consumer<String>) s -> { });
+    }
+
+    /** 从 facade 取私有 toolExecutor 字段(2026-09-17 拆分后 executeTool 在新类)。 */
+    private ChatToolExecutor toolExecutorOf(ChatOrchestrationService svc) throws Exception {
+        var field = ChatOrchestrationService.class.getDeclaredField("toolExecutor");
+        field.setAccessible(true);
+        return (ChatToolExecutor) field.get(svc);
     }
 
     @Test
@@ -403,14 +411,14 @@ class ChatOrchestrationServiceTest {
     @Test
     void guardrailErrorsFollowThreePartShape() {
         // 三段式:拒绝什么 + 违反哪条 + 正确示例(错误即提示,引导模型自纠)
-        String write = ChatOrchestrationService.guardSql("DELETE FROM users");
+        String write = ChatToolExecutor.guardSql("DELETE FROM users");
         write.contains("拒绝执行");
         write.contains("SELECT");
         write.contains("示例");
-        String missing = ChatOrchestrationService.guardSql(" ");
+        String missing = ChatToolExecutor.guardSql(" ");
         missing.contains("缺少 sql 参数");
         missing.contains("示例");
-        String multi = ChatOrchestrationService.guardSql("SELECT 1; SELECT 2");
+        String multi = ChatToolExecutor.guardSql("SELECT 1; SELECT 2");
         multi.contains("一次只允许一条");
     }
 
@@ -507,10 +515,11 @@ class ChatOrchestrationServiceTest {
         small.summary();
     }
 
-    private ChatOrchestrationService.ToolOutcome invokeBounded(String input) throws Exception {
-        var method = ChatOrchestrationService.class.getDeclaredMethod("bounded", String.class, String.class);
+    private ChatToolExecutor.ToolOutcome invokeBounded(String input) throws Exception {
+        ChatToolExecutor executor = toolExecutorOf(service);
+        var method = ChatToolExecutor.class.getDeclaredMethod("bounded", String.class, String.class);
         method.setAccessible(true);
-        return (ChatOrchestrationService.ToolOutcome) method.invoke(service, input, null);
+        return (ChatToolExecutor.ToolOutcome) method.invoke(executor, input, null);
     }
 
     @Test
