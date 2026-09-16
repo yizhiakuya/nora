@@ -1,7 +1,13 @@
 # ChatOrchestrationService 拆分方案（2026-09-16）
 
 > 基线：`2e0f2e3`，文件 4,197 行 / 96 方法（含重载），单文件占全部 Java 的 18%。
-> 本文只做「怎么拆、拆完什么样、怎么验证」，不包含实施改动。
+>
+> **执行状态（2026-09-17 更新）**：四步全部完成并逐提交验证（`709b95d` / `e42590e` / `59fd154`）。
+> facade 最终 **4,178 → 1,502 行（-64%）**；实际拆出 8 个类：ChatToolsSpec(490) /
+> ChatToolExecutor(936) / UpstreamLlmClient(679) / ChatContextAssembler(579) /
+> ModelResolver(84) / ModelCapabilityRegistry(107) / Texts(43) + 3 个共享类型文件
+> （ResolvedLlm / StreamTurnResult / WireMessage）。每步均通过 122 测试 + 真实
+> E2E（打包重启 + SSE 工具链路冒烟）。本方案文档保留作为「为什么这样拆」的决策记录。
 
 ## 一、现状诊断
 

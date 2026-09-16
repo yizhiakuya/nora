@@ -82,9 +82,9 @@ env-service / env-api 的 Java 源码（4 个目录，~1.7k 行）曾被索引�
 
 **规模中等、分层健康、复杂度高度集中**——真正的复杂度风险几乎全部压在 agent-service 聊天编排这一条主线上，且它恰好是产品核心链路。
 
-1. **高**：按拆分方案重构 `ChatOrchestrationService`（独立文档）；
-2. 中：`AgentController` / `McpServerService` 按域拆分（会话 API / SSE 转发 / 审批端点；连接池 / STDIO 进程 / 注册表）；
-3. 低：`AgentThoughtBlock.tsx` 可拆子组件。
+1. ~~**高**：按拆分方案重构 `ChatOrchestrationService`~~ **已于 2026-09-17 完成**（四步拆分，facade 4,178 → 1,502 行，-64%；详见拆分方案文档的执行状态）；
+2. 中：`AgentController` / `McpServerService` 按域拆分（会话 API / SSE 转发 / 审批端点；连接池 / STDIO 进程 / 注册表）——**待办**；
+3. 低：`AgentThoughtBlock.tsx` 可拆子组件——**待办**。
 
 **剩余死代码候选（未处理，待定）**：`nora-web/src/app/loading.tsx`（RouteLoading）与 `error.tsx`（GlobalRouteError）——Next.js 约定文件残留，Vite 路由未接线（App.tsx 无引用）。删除或接线由后续决定。
 
