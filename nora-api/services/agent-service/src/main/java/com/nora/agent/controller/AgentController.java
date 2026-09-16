@@ -121,7 +121,7 @@ public class AgentController {
             var handle = new java.util.concurrent.FutureTask<>(() -> {
                 runChatTurn(sessionId, request.content().trim(),
                         request.model(), request.reasoningLevel(),
-                        PermissionMode.parse(request.permissionMode()), emitter);
+                        PermissionMode.parse(request.permissionMode()), request.providerId(), emitter);
                 return null;
             });
             activeTurns.put(sessionId, handle);
@@ -380,7 +380,7 @@ public class AgentController {
     }
 
     private void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
-                             com.nora.agent.service.PermissionMode permissionMode, SseEmitter emitter) {
+                             com.nora.agent.service.PermissionMode permissionMode, Long providerId, SseEmitter emitter) {
         // 每轮注册 live turn:事件进有界缓冲,SSE 断开(刷新/切页)后可重连回放;
         // 编排线程不受断开影响,收尾照常落库
         TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content);
@@ -393,7 +393,7 @@ public class AgentController {
             chatStoreService.saveMessage(sessionId, "user", content, null, null);
             // 仅本会话首次命名：后续轮次改标题会覆盖上一轮已经起好的名字
             if (firstTurn) {
-                scheduleTitleGeneration(sessionId, content, model, liveTurn, emitter);
+                scheduleTitleGeneration(sessionId, content, model, providerId, liveTurn, emitter);
             }
 
             List<ChatStepDto> steps = new java.util.ArrayList<>();
@@ -423,6 +423,7 @@ public class AgentController {
                     reasoningLevel,
                     permissionMode,
                     sessionId,
+                    providerId,
                     new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {
@@ -590,13 +591,13 @@ public class AgentController {
      *
      * <p>全程 best-effort：失败不影响对话，占位标题继续用。
      */
-    private void scheduleTitleGeneration(String sessionId, String content, String model,
+    private void scheduleTitleGeneration(String sessionId, String content, String model, Long providerId,
                                          TurnStreamRegistry.LiveTurn liveTurn, SseEmitter emitter) {
         titleExecutor.execute(TraceContext.wrap(() -> {
             // 标题是旁路任务：MDC 里只带 sessionId 便于检索，不与对话轮次共用 turnId
             TraceContext.setSessionId(sessionId);
             try {
-                String title = orchestrationService.generateSessionTitle(content, model);
+                String title = orchestrationService.generateSessionTitle(content, model, providerId);
                 if (title == null || title.isBlank()) {
                     return;
                 }
@@ -681,10 +682,15 @@ public class AgentController {
             long lastSeq) {
     }
 
-    /** POST /api/chat/sessions/{id}/messages body. */
-    public record MessageRequest(String content, String model, String reasoningLevel, String permissionMode) {
+    /** POST /api/chat/sessions/{id}/messages body. providerId = 前端选定的渠道(同名模型跨渠道时精确定位)。 */
+    public record MessageRequest(String content, String model, String reasoningLevel, String permissionMode,
+                                 Long providerId) {
         public MessageRequest(String content, String model, String reasoningLevel) {
-            this(content, model, reasoningLevel, null);
+            this(content, model, reasoningLevel, null, null);
+        }
+
+        public MessageRequest(String content, String model, String reasoningLevel, String permissionMode) {
+            this(content, model, reasoningLevel, permissionMode, null);
         }
     }
 

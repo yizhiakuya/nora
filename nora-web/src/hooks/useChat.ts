@@ -5,7 +5,7 @@ import { ChatMessage, type ChatResponder, type PermissionMode } from "@/lib/api/
 import { AgentAPI, attachLiveTurnStream, cancelTurnOnBackend, fetchAgentSettings, fetchLiveTurn, saveAgentSettings, truncateMessagesFrom, normalizeStep } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
-import { useModelProviders } from "./useModelProviders";
+import { useModelProviders, resolveDefaultProvider } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
 import { randomId } from "@/lib/utils";
 
@@ -69,6 +69,11 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
   const [input, setInput] = useState(initialInput);
   const [isSending, setIsSending] = useState(false);
   const model = useModelProviders((s) => s.defaultModel);
+  // 生效渠道:与后端 activeProvider(providerId, model) 同一回落顺序(显式 id → 按名)。
+  // 返回基本类型避免每次渲染生成新引用导致无限重渲。
+  const effectiveProviderId = useModelProviders(
+    (s) => resolveDefaultProvider(s.providers, s.defaultModel, s.defaultProviderId)?.id ?? null
+  );
   /** 对话框思考等级:全局覆写(持久);undefined = 跟随设置页该模型默认 */
   const [reasoningLevel, setReasoningLevel] = useState<string | undefined>(undefined);
   useEffect(() => {
@@ -325,7 +330,8 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
           model === "未配置" ? undefined : model,
           reasoningLevel,
           permissionMode,
-          controller.signal
+          controller.signal,
+          model === "未配置" ? undefined : effectiveProviderId ?? undefined
         );
         // responder 正常返回:用户停止时保留部分文本并标记 stopped
         if (controller.signal.aborted && mountedRef.current) {
@@ -355,7 +361,7 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
         if (sessionId) void useChatSessions.getState().awaitGeneratedTitle(sessionId);
       }
     },
-    [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage]
+    [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage, effectiveProviderId]
   );
 
   const sendMessage = useCallback(async () => {

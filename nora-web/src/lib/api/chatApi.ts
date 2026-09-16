@@ -136,7 +136,9 @@ export type ChatResponder = (
   reasoningLevel?: string,
   permissionMode?: PermissionMode,
   /** 中断本轮流式响应（停止生成按钮）；responder 实现方持有对应 AbortController */
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** 模型服务商(渠道)id;同名模型跨渠道时后端据此精确定位实际请求的渠道 */
+  providerId?: number
 ) => Promise<void>;
 
 /**

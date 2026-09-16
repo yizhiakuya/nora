@@ -55,6 +55,11 @@ export interface ModelProvider {
 interface ModelProvidersState {
   providers: ModelProvider[];
   defaultModel: string;
+  /**
+   * 默认模型所属渠道 id;null/undefined = 未指定(按模型名回落,兼容旧数据)。
+   * 同名模型可同时存在于多个渠道,只有「模型名 + 渠道 id」才能唯一确定请求目标。
+   */
+  defaultProviderId?: number | null;
   /** 后端模式:拉取服务端 provider 列表 */
   syncFromBackend: () => Promise<void>;
   addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[]; modelSettings?: Record<string, { protocol?: ProviderProtocol }> }) => void;
@@ -62,12 +67,31 @@ interface ModelProvidersState {
   editProvider: (id: number, patch: { name: string; url: string; key?: string; protocol: ProviderProtocol }) => void;
   removeProvider: (id: number) => void;
   toggleEnabled: (id: number) => void;
-  setDefaultModel: (m: string) => void;
+  setDefaultModel: (m: string, providerId?: number | null) => void;
   markStatus: (id: number, status: ModelProvider["status"]) => void;
   /** 更新单个模型的设置(上下文窗口/思考等级);merge 语义 */
   updateModelSettings: (id: number, model: string, patch: Partial<PerModelSettings>) => void;
   /** 真实连通测试(后端模式走 /test,Mock 模式由调用方自行模拟) */
   testProvider: (id: number) => Promise<"ok" | "fail">;
+}
+
+/**
+ * 解析默认模型实际生效的服务商(渠道):显式 id 优先(且启用、且仍提供该模型),
+ * 缺失/失效时按模型名取第一个启用的——与后端 activeProvider(providerId, model)
+ * 的回落顺序一致。渠道仍在但模型列表已不含该模型时,不静默改跑渠道首个模型,
+ * 而是按模型名在其它渠道重新解析。
+ */
+export function resolveDefaultProvider(
+  providers: ModelProvider[],
+  defaultModel: string,
+  defaultProviderId?: number | null
+): ModelProvider | undefined {
+  if (defaultProviderId != null) {
+    const byId = providers.find(
+      (p) => p.id === defaultProviderId && p.enabled && p.models.includes(defaultModel));
+    if (byId) return byId;
+  }
+  return providers.find((p) => p.enabled && p.models.includes(defaultModel));
 }
 
 /** 本地新增(后端不可用或 Mock 模式的回退路径) */
@@ -94,6 +118,7 @@ export const useModelProviders = create<ModelProvidersState>()(
     (set, get) => ({
       providers: [],
       defaultModel: "未配置",
+      defaultProviderId: null,
       syncFromBackend: async () => {
         if (!USE_BACKEND) return;
         try {
@@ -101,12 +126,21 @@ export const useModelProviders = create<ModelProvidersState>()(
           // 后端为准:有数据时整体替换本地
           if (providers.length > 0) {
             set((state) => {
-              const defaultStillThere = providers.some((p) => p.models.includes(state.defaultModel));
+              const defaultStillThere = resolveDefaultProvider(
+                providers, state.defaultModel, state.defaultProviderId);
+              if (defaultStillThere) {
+                // 保留用户的显式渠道选择(渠道临时禁用/恢复后仍能回到原选择);
+                // 仅旧数据(只有模型名、无渠道)时把它一次性钉到当前解析出的渠道
+                return {
+                  providers,
+                  defaultProviderId: state.defaultProviderId ?? defaultStillThere.id,
+                };
+              }
+              const fallback = providers.find((p) => p.enabled);
               return {
                 providers,
-                defaultModel: defaultStillThere
-                  ? state.defaultModel
-                  : providers.find((p) => p.enabled)?.models[0] ?? state.defaultModel,
+                defaultModel: fallback?.models[0] ?? state.defaultModel,
+                defaultProviderId: fallback?.id ?? state.defaultProviderId ?? null,
               };
             });
           }
@@ -153,12 +187,20 @@ export const useModelProviders = create<ModelProvidersState>()(
         }
       },
       removeProvider: (id) => {
-        const { providers, defaultModel } = get();
-        const target = providers.find((p) => p.id === id);
+        const { providers, defaultModel, defaultProviderId } = get();
         const next = providers.filter((p) => p.id !== id);
         const patch: Partial<ModelProvidersState> = { providers: next };
-        if (target?.models.includes(defaultModel)) {
-          patch.defaultModel = next.find((p) => p.enabled)?.models[0] ?? "未配置";
+        // 删后重新解析默认模型的实际渠道:删的正是默认渠道(或默认模型已无可用渠道)
+        // 时,重选到第一个启用渠道的首个模型;仅同名模型在其他渠道仍可解析则保留。
+        const stillValid = resolveDefaultProvider(next, defaultModel,
+            defaultProviderId === id ? null : defaultProviderId);
+        if (!stillValid) {
+          const fallback = next.find((p) => p.enabled);
+          patch.defaultModel = fallback?.models[0] ?? "未配置";
+          patch.defaultProviderId = fallback?.id ?? null;
+        } else if (defaultProviderId === id) {
+          // 同名模型回落到了另一渠道:把默认渠道改钉到回落结果,保持唯一解析
+          patch.defaultProviderId = stillValid.id;
         }
         set(patch as ModelProvidersState);
         if (USE_BACKEND && id < 1e12) {
@@ -175,7 +217,14 @@ export const useModelProviders = create<ModelProvidersState>()(
           modelsApi.updateProvider(id, { enabled: !target.enabled }).catch(() => { /* 乐观更新已生效 */ });
         }
       },
-      setDefaultModel: (m) => set({ defaultModel: m }),
+      setDefaultModel: (m, providerId) => set({
+        defaultModel: m,
+        // 未显式传渠道(旧调用点)时按模型名解析一次,尽量钉到具体渠道;
+        // 找不到(未配置/mock)时置 null,后端按模型名回落
+        defaultProviderId: providerId !== undefined
+          ? providerId
+          : resolveDefaultProvider(get().providers, m, null)?.id ?? null,
+      }),
       updateModelSettings: (id, model, patch) => {
         set((state) => ({
           providers: state.providers.map((p) => {

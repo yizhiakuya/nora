@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
-import { useModelProviders, REASONING_LEVELS } from "@/hooks/useModelProviders";
+import { useModelProviders, resolveDefaultProvider, REASONING_LEVELS } from "@/hooks/useModelProviders";
 import { PERMISSION_MODE_META, type PermissionMode } from "@/lib/api/chatApi";
 import {
   DropdownMenu,
@@ -38,12 +38,14 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const toggleSkill = useSkills((s) => s.toggleSkill);
   const providers = useModelProviders((s) => s.providers);
   const defaultModel = useModelProviders((s) => s.defaultModel);
+  const defaultProviderId = useModelProviders((s) => s.defaultProviderId);
   const setDefaultModel = useModelProviders((s) => s.setDefaultModel);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const contextPercent = Math.min(100, Math.round((contextTokens / contextLimit) * 100));
 
-  // 当前模型在设置页配置的思考等级白名单;空 = 全部等级
-  const activeProvider = providers.find((p) => p.enabled && p.models.includes(defaultModel));
+  // 当前生效渠道:显式 id 优先、失效时按模型名回落(与后端同一顺序)。
+  // 勾选判定用「渠道 + 模型名」双匹配——同名模型跨渠道时只勾选真实生效的那一条。
+  const activeProvider = resolveDefaultProvider(providers, defaultModel, defaultProviderId);
   const configuredLevels = activeProvider?.modelSettings?.[defaultModel]?.reasoningLevels ?? [];
   const availableLevels = configuredLevels.length
     ? REASONING_LEVELS.filter((l) => configuredLevels.includes(l))
@@ -211,29 +213,38 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 shrink">
+                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 shrink"
+                            title={activeProvider ? `当前渠道：${activeProvider.name}` : undefined}>
                             <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-52 rounded-xl">
+                        <DropdownMenuContent align="end" className="w-64 rounded-xl max-h-96 overflow-y-auto">
                           <DropdownMenuLabel className="text-xs text-muted-foreground">切换当前模型</DropdownMenuLabel>
+                          {/* 按渠道分组:同名模型跨渠道时展示各自来源,勾选只落生效的一条 */}
                           {providers
-                            .filter((p) => p.enabled)
-                            .flatMap((p) =>
-                              p.models.map((m) => (
-                                <DropdownMenuItem
-                                  key={`${p.id}-${m}`}
-                                  className="flex items-center justify-between cursor-pointer text-xs"
-                                  onClick={() => {
-                                    setDefaultModel(m);
-                                    toast.success(`已切换默认模型为 ${m}`);
-                                  }}
-                                >
-                                  <span>{m}</span>
-                                  {m === defaultModel && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
-                                </DropdownMenuItem>
-                              ))
-                            )}
+                            .filter((p) => p.enabled && p.models.length > 0)
+                            .map((p, idx) => (
+                              <div key={p.id}>
+                                {idx > 0 && <DropdownMenuSeparator />}
+                                <DropdownMenuLabel className="text-[10px] text-muted-foreground/80 py-1">{p.name}</DropdownMenuLabel>
+                                {p.models.map((m) => {
+                                  const isActive = activeProvider?.id === p.id && m === defaultModel;
+                                  return (
+                                    <DropdownMenuItem
+                                      key={`${p.id}-${m}`}
+                                      className="flex items-center justify-between cursor-pointer text-xs"
+                                      onClick={() => {
+                                        setDefaultModel(m, p.id);
+                                        toast.success(`已切换默认模型为 ${m}（${p.name}）`);
+                                      }}
+                                    >
+                                      <span className="truncate">{m}</span>
+                                      {isActive && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />}
+                                    </DropdownMenuItem>
+                                  );
+                                })}
+                              </div>
+                            ))}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer flex items-center gap-1.5"

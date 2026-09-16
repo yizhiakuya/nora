@@ -152,7 +152,7 @@ export async function resolveApproval(
 }
 
 export const AgentAPI: { sendMessage: ChatResponder } = {
-  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode, signal) {
+  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode, signal, providerId) {
     if (!sessionId) {
       throw new Error("Agent API requires a sessionId");
     }
@@ -167,6 +167,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
           model,
           reasoningLevel: reasoningLevel || null,
           permissionMode: permissionMode ?? "assist",
+          providerId: providerId ?? null,
         }),
         // 请求阶段可被「停止」按钮中断;流阶段由 reader.cancel 兜底
         signal,

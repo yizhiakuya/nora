@@ -3,7 +3,7 @@
 import { Zap, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
-import { useModelProviders, type PerModelSettings } from "@/hooks/useModelProviders";
+import { useModelProviders, resolveDefaultProvider, type PerModelSettings } from "@/hooks/useModelProviders";
 import { ReasoningLevelPicker } from "@/components/settings/model/ReasoningLevelConfig";
 import { Switch } from "@/components/ui/switch";
 
@@ -15,8 +15,11 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
   const providers = useModelProviders((s) => s.providers);
   const updateModelSettings = useModelProviders((s) => s.updateModelSettings);
   const defaultModel = useModelProviders((s) => s.defaultModel);
+  const defaultProviderId = useModelProviders((s) => s.defaultProviderId);
   const enabledProviders = providers.filter((p) => p.enabled);
   const enabledModels = enabledProviders.flatMap((p) => p.models);
+  // 默认标记只落在真实生效的「渠道 + 模型」组合上(同名模型跨渠道时只有一条)
+  const activeProvider = resolveDefaultProvider(providers, defaultModel, defaultProviderId);
 
   if (enabledModels.length === 0) {
     return (
@@ -43,7 +46,10 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
           </div>
           <div>
             <div className="text-xs text-muted-foreground">当前默认模型</div>
-            <div className="text-sm font-bold text-foreground">{defaultModel}</div>
+            <div className="text-sm font-bold text-foreground">
+              {defaultModel}
+              {activeProvider && <span className="text-xs font-normal text-muted-foreground ml-1.5">· {activeProvider.name}</span>}
+            </div>
           </div>
         </div>
         <span className="text-[10px] text-muted-foreground">对话页与自动任务未单独指定时使用</span>
@@ -72,7 +78,7 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
                 <div key={m} className="grid grid-cols-[1fr_110px_90px_220px] gap-3 px-4 py-2 items-center hover:bg-muted/20 transition-colors">
                   <div className="min-w-0">
                     <span className="text-xs font-mono font-medium text-foreground truncate block" title={m}>{m}</span>
-                    {m === defaultModel && <span className="text-[10px] text-primary">默认</span>}
+                    {m === defaultModel && activeProvider?.id === p.id && <span className="text-[10px] text-primary">默认</span>}
                   </div>
                   <input
                     type="number"

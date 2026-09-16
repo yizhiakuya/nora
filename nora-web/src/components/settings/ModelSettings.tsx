@@ -5,7 +5,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProvidersTab } from "@/components/settings/model/ProvidersTab";
 import { ModelsTab } from "@/components/settings/model/ModelsTab";
 import { AddProviderDialog } from "@/components/settings/model/AddProviderDialog";
-import { useModelProviders, type ModelProvider } from "@/hooks/useModelProviders";
+import { useModelProviders, resolveDefaultProvider, type ModelProvider } from "@/hooks/useModelProviders";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -15,9 +15,11 @@ export function ModelSettings() {
   const [editing, setEditing] = useState<ModelProvider | null>(null);
   const providers = useModelProviders((s) => s.providers);
   const defaultModel = useModelProviders((s) => s.defaultModel);
+  const defaultProviderId = useModelProviders((s) => s.defaultProviderId);
   const syncFromBackend = useModelProviders((s) => s.syncFromBackend);
   const enabledModels = useMemo(() => providers.filter((p) => p.enabled).flatMap((p) => p.models), [providers]);
   const connectedCount = providers.filter((p) => p.status === "ok").length;
+  const activeProvider = resolveDefaultProvider(providers, defaultModel, defaultProviderId);
 
   // 支持 ?tab=models 深链
   useEffect(() => {
@@ -42,7 +44,7 @@ export function ModelSettings() {
             <h2 className="text-sm font-bold text-foreground">模型接入</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               {connectedCount > 0
-                ? `${connectedCount} 个服务商已连通 · ${enabledModels.length} 个可用模型 · 默认 ${defaultModel}`
+                ? `${connectedCount} 个服务商已连通 · ${enabledModels.length} 个可用模型 · 默认 ${defaultModel}${activeProvider ? `（${activeProvider.name}）` : ""}`
                 : "尚未接入任何服务商，请先添加并测试连通性"}
             </p>
           </div>

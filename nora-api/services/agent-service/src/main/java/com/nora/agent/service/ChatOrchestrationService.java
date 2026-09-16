@@ -263,13 +263,30 @@ public class ChatOrchestrationService {
                                             PermissionMode permissionMode,
                                             String sessionId,
                                             ChatEventConsumer eventConsumer) {
+        return chat(userMessage, history, reflections, requestedModel, requestedReasoningLevel,
+                permissionMode, sessionId, null, eventConsumer);
+    }
+
+    /**
+     * @param sessionId 会话 ID(审批请求绑定用;null = 不启用审批门,全部自动执行)
+     * @param providerId 前端选定的模型服务商(渠道)id;同名模型跨渠道时精确定位,null = 按模型名解析
+     */
+    public CompletableFuture<ChatTurn> chat(String userMessage,
+                                            List<ChatStoreService.StoredMessage> history,
+                                            List<String> reflections,
+                                            String requestedModel,
+                                            String requestedReasoningLevel,
+                                            PermissionMode permissionMode,
+                                            String sessionId,
+                                            Long providerId,
+                                            ChatEventConsumer eventConsumer) {
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
         if (userMessage.length() > 8000) {
             throw new IllegalArgumentException("message exceeds 8000 characters");
         }
-        if (!configured(requestedModel)) {
+        if (!configured(requestedModel, providerId)) {
             eventConsumer.step(new ChatStepDto("s-config", "think", "模型未配置",
                     "请先在设置中心配置 LLM API Key 和端点", 0L, "failed"));
             String message = "当前尚未配置可用的模型。请到设置中心配置 LLM 服务商、端点和 API Key 后重试。";
@@ -295,7 +312,7 @@ public class ChatOrchestrationService {
         // from upstream; tool_call argument fragments accumulate locally and the
         // tools execute after the stream closes.
         // 先解析一次拿到合并后的思考等级(请求级 > 设置页该模型默认),工具轮与最终回答共用
-        ResolvedLlm resolved = resolveLlm(requestedModel, requestedReasoningLevel);
+        ResolvedLlm resolved = resolveLlm(requestedModel, requestedReasoningLevel, providerId);
         if (resolved == null) {
             // configured() 已校验过,这里防御性兜底
             throw new IllegalStateException("no LLM provider resolved for model: " + requestedModel);
@@ -344,7 +361,7 @@ public class ChatOrchestrationService {
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                         + (int) overhead;
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
-                        round + 1, eventConsumer, ttftMs, turnStartMs);
+                        round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
                 if (result.usage() != null) {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
@@ -367,7 +384,7 @@ public class ChatOrchestrationService {
                         log.info("vision retry for {} ({}): stripped {} image(s), explicit={}",
                                 resolved.model(), resolved.baseUrl(), stripped, explicitVisionReject);
                         StreamTurnResult visionRetry = streamTurn(messages, requestedModel, reasoningLevel,
-                                round + 1, eventConsumer, ttftMs, turnStartMs);
+                                round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
                         if (!visionRetry.failed) {
                             // 确认:这个模型确实看不了图(下一次直接不发图片)
                             visionRejectedModels.add(visionKey(resolved));
@@ -381,7 +398,7 @@ public class ChatOrchestrationService {
                         compactForRound(messages, budget, true, overhead);
                         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                                 + (int) overhead;
-                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
+                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
                     } else if (isReasoningEffortUnsupported(result.errorMessage)
                             && reasoningLevel != null && !reasoningLevel.isBlank()) {
                         // 上游不认这个档位(gemini-3.5-flash 等报 invalid_reasoning_effort):
@@ -397,7 +414,7 @@ public class ChatOrchestrationService {
                         effortRejectedModels.add(stripKey);
                         log.info("reasoning_effort rejected by {} ({}), retrying without it",
                                 resolved.model(), resolved.baseUrl());
-                        retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs);
+                        retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
                         if (!retry.failed) {
                             eventConsumer.step(new ChatStepDto("s-effort-" + round, "think", "模型不支持该思考等级",
                                     "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
@@ -409,7 +426,7 @@ public class ChatOrchestrationService {
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
                         // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
                         // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
-                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs);
+                        retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
                     }
                     if (retry != null) {
                         if (retry.usage() != null) {
@@ -476,7 +493,7 @@ public class ChatOrchestrationService {
         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                 + (int) answerOverhead;
         StreamTurnResult finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
-                reasoningRound, eventConsumer, ttftMs, turnStartMs);
+                reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
         // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试。
         // 线程被中断(用户取消)绝不重试——那会让取消多烧一整轮上游 token
         if (finalResult.failed && finalResult.content().isBlank() && !Thread.currentThread().isInterrupted()) {
@@ -485,7 +502,7 @@ public class ChatOrchestrationService {
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                         + (int) answerOverhead;
                 finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
-                        reasoningRound, eventConsumer, ttftMs, turnStartMs);
+                        reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
             } else if (isReasoningEffortUnsupported(finalResult.errorMessage)
                     && reasoningLevel != null && !reasoningLevel.isBlank()) {
                 // 工具循环在首个上游请求前异常退出(catch 兜底走强制回答)时,这一轮
@@ -499,7 +516,7 @@ public class ChatOrchestrationService {
                 log.info("reasoning_effort rejected on final answer for {} ({}), retrying without it",
                         resolved.model(), resolved.baseUrl());
                 finalResult = streamFinalAnswer(messages, requestedModel, null,
-                        reasoningRound, eventConsumer, ttftMs, turnStartMs);
+                        reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
                 if (!finalResult.failed) {
                     eventConsumer.step(new ChatStepDto("s-effort-final", "think", "模型不支持该思考等级",
                             "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
@@ -510,7 +527,7 @@ public class ChatOrchestrationService {
                 }
             } else {
                 finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
-                        reasoningRound, eventConsumer, ttftMs, turnStartMs);
+                        reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
             }
         }
         if (!finalResult.failed) {
@@ -1387,11 +1404,18 @@ public class ChatOrchestrationService {
      * @return 清理后的标题；未配置模型或上游失败返回 null（调用方保留占位标题）
      */
     public String generateSessionTitle(String userMessage, String requestedModel) {
+        return generateSessionTitle(userMessage, requestedModel, null);
+    }
+
+    /**
+     * @param providerId 渠道 id(与对话同一解析口径,同名模型跨渠道时标题也走用户所选渠道)
+     */
+    public String generateSessionTitle(String userMessage, String requestedModel, Long providerId) {
         if (userMessage == null || userMessage.isBlank()) {
             return null;
         }
         // 标题是纯转写任务，不需要推理：显式压到最低档省钱省时
-        ResolvedLlm llm = withLevel(resolveLlm(requestedModel), "none");
+        ResolvedLlm llm = withLevel(resolveLlm(requestedModel, null, providerId), "none");
         if (llm == null) {
             return null;
         }
@@ -1446,20 +1470,27 @@ public class ChatOrchestrationService {
         return resolveLlm(requestedModel) != null;
     }
 
+    /** Variant honouring an explicit provider id (渠道精确解析)。 */
+    public boolean configured(String requestedModel, Long providerId) {
+        return resolveLlm(requestedModel, null, providerId) != null;
+    }
+
     private ResolvedLlm resolveLlm(String requestedModel) {
-        return resolveLlm(requestedModel, null);
+        return resolveLlm(requestedModel, null, null);
     }
 
     /**
      * 解析执行端点与思考等级:请求级等级 > 设置页该模型默认等级 > auto。
      * 该模型的 reasoningLevels 白名单同时约束请求级取值(不在白名单内则回落默认)。
+     *
+     * @param providerId 前端选定的渠道 id(同名模型跨渠道时精确定位);null = 按模型名解析
      */
-    private ResolvedLlm resolveLlm(String requestedModel, String requestedReasoningLevel) {
+    private ResolvedLlm resolveLlm(String requestedModel, String requestedReasoningLevel, Long providerId) {
         // 设置中心(数据库 provider store)优先:模型选择/思考等级/每模型协议都源于此。
         // 静态 nora.llm.* 配置仅作兜底(全新部署还没配 provider 时可用),
         // 否则环境变量一存在就会短路整个 provider 体系——UI 上怎么选模型都不生效。
         if (modelProviderService != null) {
-            ResolvedLlm fromStore = resolveFromStore(requestedModel, requestedReasoningLevel);
+            ResolvedLlm fromStore = resolveFromStore(requestedModel, requestedReasoningLevel, providerId);
             if (fromStore != null) return fromStore;
         }
         if (llmProperties.configured()) {
@@ -1469,9 +1500,9 @@ public class ChatOrchestrationService {
         return null;
     }
 
-    /** Provider-store leg of {@link #resolveLlm}; null when nothing usable is enabled. */
-    private ResolvedLlm resolveFromStore(String requestedModel, String requestedReasoningLevel) {
-        ModelProviderService.ActiveProvider provider = modelProviderService.activeProvider(requestedModel);
+    /** Provider-store leg of {@link #resolveLlm}; providerId 优先,缺失/失效时按模型名回落。 */
+    private ResolvedLlm resolveFromStore(String requestedModel, String requestedReasoningLevel, Long providerId) {
+        ModelProviderService.ActiveProvider provider = modelProviderService.activeProvider(providerId, requestedModel);
         if (provider == null || provider.endpoint() == null || provider.endpoint().isBlank()) return null;
         // 请求级模型名优先(activeProvider 已按它筛选供应商);仅在请求未指定时回落
         // 到该供应商模型列表的第一个。此前固定取 models.get(0),导致对话框里选的
@@ -2256,7 +2287,14 @@ public class ChatOrchestrationService {
                                         String reasoningLevel, int round,
                                         ChatEventConsumer eventConsumer,
                                         long[] ttftMs, long turnStartMs) {
-        ResolvedLlm llm = withLevel(resolveLlm(requestedModel), reasoningLevel);
+        return streamTurn(messages, requestedModel, reasoningLevel, round, eventConsumer, ttftMs, turnStartMs, null);
+    }
+
+    private StreamTurnResult streamTurn(List<WireMessage> messages, String requestedModel,
+                                        String reasoningLevel, int round,
+                                        ChatEventConsumer eventConsumer,
+                                        long[] ttftMs, long turnStartMs, Long providerId) {
+        ResolvedLlm llm = withLevel(resolveLlm(requestedModel, null, providerId), reasoningLevel);
         ObjectNode body = baseBody(true, llm);
         body.set("messages", messagesArray(messages));
         body.set("tools", toolsSpec());
@@ -2276,7 +2314,14 @@ public class ChatOrchestrationService {
                                                String reasoningLevel, int round,
                                                ChatEventConsumer eventConsumer,
                                                long[] ttftMs, long turnStartMs) {
-        ResolvedLlm llm = withLevel(resolveLlm(requestedModel), reasoningLevel);
+        return streamFinalAnswer(messages, requestedModel, reasoningLevel, round, eventConsumer, ttftMs, turnStartMs, null);
+    }
+
+    private StreamTurnResult streamFinalAnswer(List<WireMessage> messages, String requestedModel,
+                                               String reasoningLevel, int round,
+                                               ChatEventConsumer eventConsumer,
+                                               long[] ttftMs, long turnStartMs, Long providerId) {
+        ResolvedLlm llm = withLevel(resolveLlm(requestedModel, null, providerId), reasoningLevel);
         ObjectNode body = baseBody(true, llm);
         body.set("messages", messagesArray(messages));
         body.set("tools", toolsSpec());

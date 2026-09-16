@@ -196,6 +196,30 @@ public class ModelProviderService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    /**
+     * Returns the enabled live provider for chat execution. 显式渠道 id 优先——
+     * 同名模型可同时存在于多个渠道,前端把所选渠道随请求下发,这里按 id 精确定位;
+     * 渠道已删除/禁用、或模型列表已不含该模型(测试连通时被上游列表覆盖)时,
+     * 按模型名回落解析(旧行为,保证历史请求仍可用)。绝不静默改跑该渠道的
+     * 首个模型——「选的模型与实际请求不一致」是已修过的坑。
+     */
+    public ActiveProvider activeProvider(Long providerId, String requestedModel) {
+        if (providerId != null) {
+            List<ActiveProvider> rows = jdbcTemplate.query(
+                    "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider "
+                            + "WHERE id = ? AND enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' AND deleted_at IS NULL",
+                    SETTINGS_ROW_MAPPER, providerId);
+            if (!rows.isEmpty()) {
+                ActiveProvider provider = rows.get(0);
+                if (requestedModel == null || requestedModel.isBlank()
+                        || (provider.models() != null && provider.models().contains(requestedModel))) {
+                    return provider;
+                }
+            }
+        }
+        return activeProvider(requestedModel);
+    }
+
     private static final org.springframework.jdbc.core.RowMapper<ActiveProvider> SETTINGS_ROW_MAPPER =
             (rs, rowNum) -> {
                 String raw = rs.getString("model_settings");

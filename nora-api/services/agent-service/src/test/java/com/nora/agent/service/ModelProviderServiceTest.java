@@ -130,6 +130,53 @@ class ModelProviderServiceTest {
     }
 
     @Test
+    void activeProviderPrefersExplicitProviderId() {
+        // 同名模型跨渠道:显式渠道 id 命中时直接用它(不再按模型名取第一个)
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq(7L)))
+                .thenAnswer(inv -> {
+                    RowMapper<ModelProviderService.ActiveProvider> mapper = inv.getArgument(1);
+                    return List.of(mapper.mapRow(newFakeActiveRs("anthropic"), 1));
+                });
+
+        ModelProviderService.ActiveProvider provider = service.activeProvider(7L, "deepseek-v4.1-flash");
+
+        provider.endpoint();
+        provider.protocol();
+        provider.modelSettingsJson();
+    }
+
+    @Test
+    void activeProviderFallsBackToModelNameWhenIdMisses() {
+        // 渠道已删/禁用:按 id 查不到 → 回落按模型名解析(旧行为)
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq(99L)))
+                .thenReturn(List.of());
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq("m1")))
+                .thenAnswer(inv -> {
+                    RowMapper<ModelProviderService.ActiveProvider> mapper = inv.getArgument(1);
+                    return List.of(mapper.mapRow(newFakeActiveRs("openai"), 1));
+                });
+
+        ModelProviderService.ActiveProvider provider = service.activeProvider(99L, "m1");
+
+        provider.endpoint();
+    }
+
+    private static java.sql.ResultSet newFakeActiveRs(String protocol) {
+        java.sql.ResultSet rs = org.mockito.Mockito.mock(java.sql.ResultSet.class);
+        java.sql.Array models = org.mockito.Mockito.mock(java.sql.Array.class);
+        try {
+            when(models.getArray()).thenReturn(new String[]{"deepseek-v4.1-flash", "m1"});
+            when(rs.getString("endpoint")).thenReturn("http://up/v1");
+            when(rs.getString("api_key")).thenReturn("sk-key123456789");
+            when(rs.getArray("models")).thenReturn(models);
+            when(rs.getString("protocol")).thenReturn(protocol);
+            when(rs.getString("model_settings")).thenReturn("{}");
+        } catch (java.sql.SQLException ignored) {
+        }
+        return rs;
+    }
+
+    @Test
     void modelSettingsSerializesFlatShape() throws Exception {
         // REST 契约:ModelSettings 序列化为扁平 {model: settings},与前端/JSONB 列同形
         var settings = new ModelProviderService.ModelSettings(java.util.Map.of(
