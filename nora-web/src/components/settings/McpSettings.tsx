@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Trash2, RefreshCw, Loader2, Server as ServerIcon, Plug } from "lucide-react";
+import { Trash2, RefreshCw, Loader2, Server as ServerIcon, Plug, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -13,6 +13,7 @@ import {
   type McpServer,
 } from "@/lib/api/mcpApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { McpToolsModal } from "@/components/settings/McpToolsModal";
 
 const STATUS_META: Record<McpServer["status"], { label: string; className: string; dot: string }> = {
   connected: { label: "已连接", className: "text-green-600 dark:text-green-400", dot: "bg-green-500" },
@@ -29,6 +30,8 @@ export function McpManager({ listVersion }: { listVersion: number }) {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
+  /** 工具列表弹窗的目标服务器;null = 关闭 */
+  const [toolsFor, setToolsFor] = useState<McpServer | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -147,9 +150,17 @@ export function McpManager({ listVersion }: { listVersion: number }) {
                 )}
 
                 <div className="flex items-center justify-between pt-1 border-t border-border/60">
-                  <span className="text-[11px] text-muted-foreground">
-                    {s.transport === "STDIO" ? "本地进程 (STDIO)" : s.transport === "SSE" ? "SSE" : "Streamable HTTP"} · {s.toolCount} 个工具
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setToolsFor(s)}
+                    title="查看工具列表与详情"
+                    className="text-[11px] text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer inline-flex items-center gap-1"
+                  >
+                    {s.transport === "STDIO" ? "本地进程 (STDIO)" : s.transport === "SSE" ? "SSE" : "Streamable HTTP"}
+                    <span className="inline-flex items-center gap-0.5 underline decoration-dotted underline-offset-2">
+                      <Wrench className="w-3 h-3" />{s.toolCount} 个工具
+                    </span>
+                  </button>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground" disabled={busy} onClick={() => void handleRefresh(s)}>
                       {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} 测试连接
@@ -167,8 +178,14 @@ export function McpManager({ listVersion }: { listVersion: number }) {
 
       <p className="text-[11px] text-muted-foreground leading-relaxed flex items-start gap-2">
         <Plug className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        已启用服务器的工具对所有对话生效,以 <code className="font-mono text-foreground">mcp__服务器名__工具名</code> 挂载;MCP 工具调用默认按高风险处理——「帮我批准」档位下每次执行都会请求确认。停用不会删除配置。
+        已启用服务器的工具对所有对话生效,以 <code className="font-mono text-foreground">mcp__服务器名__工具名</code> 挂载;MCP 工具调用默认按高风险处理——「帮我批准」档位下每次执行都会请求确认。停用不会删除配置。点击卡片上的工具数可查看工具列表与参数详情。
       </p>
+
+      {/* 工具列表/详情弹窗(点击卡片工具数打开) */}
+      <McpToolsModal
+        server={toolsFor}
+        onClose={() => setToolsFor(null)}
+      />
     </div>
   );
 }

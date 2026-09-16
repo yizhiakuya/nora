@@ -412,6 +412,40 @@ public class McpServerService {
         return out;
     }
 
+    /**
+     * Reads the cached tool snapshot of one server (for the admin UI's tool
+     * list / detail view). Never triggers a remote call — the cache is
+     * refreshed by {@link #refresh}; empty list when never connected.
+     *
+     * @return tool entries (name/description/inputSchema), or null when the
+     *         server id is unknown (soft-deleted included).
+     */
+    public List<ToolEntry> cachedTools(long id) {
+        List<String> rows = jdbcTemplate.query(
+                "SELECT COALESCE(tools_cache, '') FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
+                (rs, i) -> rs.getString(1), id);
+        if (rows.isEmpty()) {
+            return null;
+        }
+        String cache = rows.get(0);
+        if (cache == null || cache.isBlank()) {
+            return List.of();
+        }
+        List<ToolEntry> out = new ArrayList<>();
+        try {
+            JsonNode root = objectMapper.readTree(cache);
+            for (JsonNode t : root.path("tools")) {
+                out.add(new ToolEntry(t.path("name").asText(),
+                        t.path("description").asText(""),
+                        t.has("inputSchema") ? t.get("inputSchema") : null));
+            }
+        } catch (Exception e) {
+            log.warn("mcp tools_cache parse failed for server {}: {}", id, e.getMessage());
+            return List.of();
+        }
+        return out;
+    }
+
     /** Resolves a mounted (namespaced) tool name to its server row. */
     public RawServer serverForMountedTool(String mountedName) {
         if (mountedName == null || !mountedName.startsWith("mcp__")) {

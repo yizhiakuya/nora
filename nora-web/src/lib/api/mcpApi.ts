@@ -24,6 +24,14 @@ export interface McpToolInfo {
   description: string | null;
 }
 
+/** 工具详情(带完整 inputSchema;来自 tools_cache 快照,不触发远端调用) */
+export interface McpToolDetail {
+  name: string;
+  description: string | null;
+  /** JSON Schema(inputSchema),未提供时为 null */
+  inputSchema: Record<string, unknown> | null;
+}
+
 export interface McpRefreshResult {
   status: string;
   error: string | null;
@@ -33,6 +41,13 @@ export interface McpRefreshResult {
 export async function fetchMcpServers(): Promise<McpServer[]> {
   if (!USE_BACKEND) return [];
   return requestJson("/mcp/servers");
+}
+
+/** 读取某服务器缓存的工具清单(名称/描述/参数 Schema);未测试过时为空数组 */
+export async function fetchMcpTools(id: number): Promise<McpToolDetail[]> {
+  if (!USE_BACKEND) return [];
+  const result = await requestJson<{ tools: McpToolDetail[] }>(`/mcp/servers/${id}/tools`);
+  return result.tools ?? [];
 }
 
 export async function createMcpServer(input: {

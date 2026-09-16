@@ -98,6 +98,22 @@ public class McpServerController {
         }
     }
 
+    /**
+     * Reads one server's cached tool snapshot (name/description/inputSchema)
+     * for the admin UI's tool list & detail view — never triggers a remote
+     * call; the cache is filled by refresh/test-connection.
+     */
+    @GetMapping("/{id}/tools")
+    public ApiResponse<ToolDetailResult> tools(@PathVariable long id) {
+        List<McpServerService.ToolEntry> tools = mcpServerService.cachedTools(id);
+        if (tools == null) {
+            throw new BusinessException(404, "mcp server not found: " + id);
+        }
+        return ApiResponse.ok(new ToolDetailResult(tools.stream()
+                .map(t -> new ToolDetail(t.name(), t.description(), t.inputSchema()))
+                .toList()));
+    }
+
     public record CreateRequest(String name, String url, String transport, Map<String, String> headers,
                                 String command, List<String> args, Map<String, String> env) {
     }
@@ -106,6 +122,14 @@ public class McpServerController {
     }
 
     public record ToolInfo(String name, String description) {
+    }
+
+    /** Tool entry with full inputSchema for the detail view (JsonNode 序列化为 JSON 对象)。 */
+    public record ToolDetail(String name, String description,
+                             com.fasterxml.jackson.databind.JsonNode inputSchema) {
+    }
+
+    public record ToolDetailResult(List<ToolDetail> tools) {
     }
 
     public record RefreshResult(String status, String error, List<ToolInfo> tools) {
