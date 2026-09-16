@@ -19,4 +19,13 @@ final class Texts {
     static String firstNonNull(String a, String b) {
         return a != null ? a : b;
     }
+
+    /** 中断识别:JDK HttpClient 阻塞读被 interrupt 时抛 IOException(cause=InterruptedException),逐层找。 */
+    static boolean isInterruption(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof InterruptedException) return true;
+            if (c.getCause() == c) break; // 自引用防环
+        }
+        return false;
+    }
 }

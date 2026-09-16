@@ -915,22 +915,13 @@ class ChatOrchestrationServiceTest {
 
     // ---- 思考等级(reasoning level)注入规则 ----
 
-    /** Builds the service whose private applyReasoningRequest is under test. */
-    private ChatOrchestrationService reasoningService() {
-        return new ChatOrchestrationService(
-                new LlmProperties("key", "http://localhost:9/v1", "test-model"),
-                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper());
-    }
-
     private com.fasterxml.jackson.databind.node.ObjectNode applyReasoning(String model, String protocol, String level)
             throws Exception {
-        ChatOrchestrationService svc = reasoningService();
-        var resolved = new ChatOrchestrationService.ResolvedLlm("http://up/v1", "key", model, protocol, level, null, null);
-        var method = ChatOrchestrationService.class.getDeclaredMethod("applyReasoningRequest",
-                com.fasterxml.jackson.databind.node.ObjectNode.class, ChatOrchestrationService.ResolvedLlm.class);
-        method.setAccessible(true);
+        // 2026-09-17 拆分后 applyReasoningRequest 在 UpstreamLlmClient(包可见),直接构造调用
+        UpstreamLlmClient client = new UpstreamLlmClient(new ObjectMapper(), new ModelCapabilityRegistry());
+        var resolved = new ResolvedLlm("http://up/v1", "key", model, protocol, level, null, null);
         var body = new ObjectMapper().createObjectNode();
-        method.invoke(svc, body, resolved);
+        client.applyReasoningRequest(body, resolved);
         return body;
     }
 

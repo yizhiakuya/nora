@@ -10,13 +10,10 @@ import com.nora.agent.dto.CitationDto;
 import com.nora.agent.dto.ApprovalRequestDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -46,8 +43,6 @@ import java.util.concurrent.CompletableFuture;
 public class ChatOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestrationService.class);
-    /** 上游 LLM SSE 事件时间线专用 logger(独立文件 agent-service-sse.log,见 logback) */
-    private static final Logger sseLog = LoggerFactory.getLogger("com.nora.agent.sse");
 
     /**
      * 基础系统提示(harness 协议层,设计对齐 Hermes 的 stable 层哲学):
@@ -116,6 +111,12 @@ public class ChatOrchestrationService {
     private final ChatToolsSpec toolsSpecBuilder;
     /** 工具执行器(从本类拆出,2026-09-17 复杂度审计 Step 2)。 */
     private final ChatToolExecutor toolExecutor;
+    /** 模型能力降级注册表(进程内记忆,2026-09-17 拆分 Step 3)。 */
+    private final ModelCapabilityRegistry capabilityRegistry;
+    /** LLM 上游流式客户端(2026-09-17 拆分 Step 3)。 */
+    private final UpstreamLlmClient upstreamClient;
+    /** 模型/渠道解析器(2026-09-17 拆分 Step 3)。 */
+    private final ModelResolver modelResolver;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -161,6 +162,9 @@ public class ChatOrchestrationService {
         this.toolExecutor = new ChatToolExecutor(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient,
                 containerControlClient, dataSourceManageClient, serviceManageClient, fileToolClient,
                 mcpServerService, terminalService, agentWorkspaceService, agentSkillService);
+        this.capabilityRegistry = new ModelCapabilityRegistry();
+        this.upstreamClient = new UpstreamLlmClient(objectMapper, capabilityRegistry);
+        this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
     }
 
     public ChatOrchestrationService(LlmProperties llmProperties,
@@ -299,7 +303,7 @@ public class ChatOrchestrationService {
         // from upstream; tool_call argument fragments accumulate locally and the
         // tools execute after the stream closes.
         // 先解析一次拿到合并后的思考等级(请求级 > 设置页该模型默认),工具轮与最终回答共用
-        ResolvedLlm resolved = resolveLlm(requestedModel, requestedReasoningLevel, providerId);
+        ResolvedLlm resolved = modelResolver.resolve(requestedModel, requestedReasoningLevel, providerId);
         if (resolved == null) {
             // configured() 已校验过,这里防御性兜底
             throw new IllegalStateException("no LLM provider resolved for model: " + requestedModel);
@@ -352,7 +356,7 @@ public class ChatOrchestrationService {
                 if (result.usage() != null) {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
-                if (result.failed) {
+                if (result.failed()) {
                     if (Thread.currentThread().isInterrupted()) {
                         // 取消:中断被上游阻塞读转成 failed 结果(streamUpstream 已恢复标志),
                         // 这里短路——绝不当「空响应」重试,否则取消变成多烧一整轮 token
@@ -360,9 +364,9 @@ public class ChatOrchestrationService {
                         return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
                     }
                     StreamTurnResult retry = null;
-                    boolean explicitVisionReject = isVisionUnsupported(result.errorMessage);
+                    boolean explicitVisionReject = ModelCapabilityRegistry.isVisionUnsupported(result.errorMessage());
                     boolean maybeVisionReject = !explicitVisionReject
-                            && hasImagesInMessages(messages) && isGenericUpstream400(result.errorMessage);
+                            && hasImagesInMessages(messages) && ModelCapabilityRegistry.isGenericUpstream400(result.errorMessage());
                     if (explicitVisionReject || maybeVisionReject) {
                         // 模型不支持识图(上游拒绝图片):剥离图片后重试。
                         // 中转流式下的 400 只有模糊文案(maybeVisionReject),因此以“剥图后重试是否成功”
@@ -372,21 +376,21 @@ public class ChatOrchestrationService {
                                 resolved.model(), resolved.baseUrl(), stripped, explicitVisionReject);
                         StreamTurnResult visionRetry = streamTurn(messages, requestedModel, reasoningLevel,
                                 round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
-                        if (!visionRetry.failed) {
+                        if (!visionRetry.failed()) {
                             // 确认:这个模型确实看不了图(下一次直接不发图片)
-                            visionRejectedModels.add(visionKey(resolved));
+                            capabilityRegistry.markVisionRejected(resolved);
                             eventConsumer.step(new ChatStepDto("s-vision-" + round, "think", "模型不支持识图",
                                     "已自动跳过图片内容继续回答（可在设置中切换支持识图的模型）",
                                     0L, "completed", null, null, null, round + 1));
                         }
                         retry = visionRetry;
-                    } else if (isContextOverflow(result.errorMessage)) {
+                    } else if (isContextOverflow(result.errorMessage())) {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
                         compactForRound(messages, budget, true, overhead);
                         lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                                 + (int) overhead;
                         retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
-                    } else if (isReasoningEffortUnsupported(result.errorMessage)
+                    } else if (ModelCapabilityRegistry.isReasoningEffortUnsupported(result.errorMessage())
                             && reasoningLevel != null && !reasoningLevel.isBlank()) {
                         // 上游不认这个档位(gemini-3.5-flash 等报 invalid_reasoning_effort):
                         // 剥掉档位重试一次——思考等级是增强项,不该让整轮对话失败。
@@ -395,20 +399,18 @@ public class ChatOrchestrationService {
                         // 会回落注入 medium,只挂前者重试就不是"剥掉");
                         // 重试成功才保留结论(后续同档位请求不再撞 400,且换成别的档位
                         // 仍会正常尝试注入);失败则撤销(瞬时错误不拉黑)。
-                        String rejectedKey = effortKey(resolved);
-                        String stripKey = effortKey(withLevel(resolved, null));
-                        effortRejectedModels.add(rejectedKey);
-                        effortRejectedModels.add(stripKey);
+                        capabilityRegistry.markEffortRejected(resolved);
+                        capabilityRegistry.markEffortStripped(resolved);
                         log.info("reasoning_effort rejected by {} ({}), retrying without it",
                                 resolved.model(), resolved.baseUrl());
                         retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs, providerId);
-                        if (!retry.failed) {
+                        if (!retry.failed()) {
                             eventConsumer.step(new ChatStepDto("s-effort-" + round, "think", "模型不支持该思考等级",
                                     "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
                                     0L, "completed", null, null, null, round + 1));
                         } else {
-                            effortRejectedModels.remove(rejectedKey);
-                            effortRejectedModels.remove(stripKey);
+                            capabilityRegistry.clearEffortRejected(resolved);
+                            capabilityRegistry.clearEffortStripped(resolved);
                         }
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
                         // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
@@ -419,30 +421,30 @@ public class ChatOrchestrationService {
                         if (retry.usage() != null) {
                             totalUsage = totalUsage == null ? retry.usage() : totalUsage.add(retry.usage());
                         }
-                        if (!retry.failed) {
+                        if (!retry.failed()) {
                             result = retry;
                         }
                     }
                 }
-                if (result.failed) {
+                if (result.failed()) {
                     if (Thread.currentThread().isInterrupted()) {
                         // 流中取消(已转发部分内容):不发 s-error step,直接按取消收场
                         log.info("tool round interrupted (user cancel) with partial content, abort turn");
                         return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
                     }
                     eventConsumer.step(new ChatStepDto("s-error", "think", "模型返回空响应",
-                            result.errorMessage != null ? result.errorMessage : "上游未返回内容,请重试",
+                            result.errorMessage() != null ? result.errorMessage() : "上游未返回内容,请重试",
                             null, "failed", null, null, null, round + 1));
                     break;
                 }
-                if (result.toolCalls.isEmpty()) {
+                if (result.toolCalls().isEmpty()) {
                     // 回答(与推理)已随流逐 token 转发完毕
                     // 校准用**当轮** usage:传累计值会与单轮估算相除产生虚高比值
                     logCalibration(lastPromptEstimate[0], result.usage(), budget);
-                    return CompletableFuture.completedFuture(new ChatTurn(result.content, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
+                    return CompletableFuture.completedFuture(new ChatTurn(result.content(), citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
                 }
-                messages.add(new WireMessage(result.assistantMessage));
-                for (JsonNode call : result.toolCalls) {
+                messages.add(new WireMessage(result.assistantMessage()));
+                for (JsonNode call : result.toolCalls()) {
                     String callId = call.path("id").asText();
                     String name = call.path("function").path("name").asText();
                     String args = call.path("function").path("arguments").asText("{}");
@@ -458,7 +460,7 @@ public class ChatOrchestrationService {
         } catch (Exception e) {
             // 取消穿透工具循环(审批等待 join 被中断抛 CompletionException(InterruptedException)
             // 且消费掉标志;或流内异常带中断 cause):不回落强制回答,直接按取消收场
-            if (isInterruption(e) || Thread.currentThread().isInterrupted()) {
+            if (Texts.isInterruption(e) || Thread.currentThread().isInterrupted()) {
                 Thread.currentThread().interrupt();
                 log.info("tool loop interrupted (user cancel), abort turn");
                 return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
@@ -483,42 +485,40 @@ public class ChatOrchestrationService {
                 reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
         // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试。
         // 线程被中断(用户取消)绝不重试——那会让取消多烧一整轮上游 token
-        if (finalResult.failed && finalResult.content().isBlank() && !Thread.currentThread().isInterrupted()) {
-            if (isContextOverflow(finalResult.errorMessage)) {
+        if (finalResult.failed() && finalResult.content().isBlank() && !Thread.currentThread().isInterrupted()) {
+            if (isContextOverflow(finalResult.errorMessage())) {
                 compactForRound(messages, budget, true, answerOverhead);
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                         + (int) answerOverhead;
                 finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                         reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
-            } else if (isReasoningEffortUnsupported(finalResult.errorMessage)
+            } else if (ModelCapabilityRegistry.isReasoningEffortUnsupported(finalResult.errorMessage())
                     && reasoningLevel != null && !reasoningLevel.isBlank()) {
                 // 工具循环在首个上游请求前异常退出(catch 兜底走强制回答)时,这一轮
                 // 是本轮第一个上游请求:坏档位要在这里也能降级,否则整轮失败且每轮
                 // 复现。与工具轮同款:挂两条结论(档位被拒 + 该模型不注入档位)让重试
                 // 真正不带 reasoning_effort,重试成功才保留。
-                String rejectedKey = effortKey(resolved);
-                String stripKey = effortKey(withLevel(resolved, null));
-                effortRejectedModels.add(rejectedKey);
-                effortRejectedModels.add(stripKey);
+                capabilityRegistry.markEffortRejected(resolved);
+                capabilityRegistry.markEffortStripped(resolved);
                 log.info("reasoning_effort rejected on final answer for {} ({}), retrying without it",
                         resolved.model(), resolved.baseUrl());
                 finalResult = streamFinalAnswer(messages, requestedModel, null,
                         reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
-                if (!finalResult.failed) {
+                if (!finalResult.failed()) {
                     eventConsumer.step(new ChatStepDto("s-effort-final", "think", "模型不支持该思考等级",
                             "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
                             0L, "completed", null, null, null, reasoningRound));
                 } else {
-                    effortRejectedModels.remove(rejectedKey);
-                    effortRejectedModels.remove(stripKey);
+                    capabilityRegistry.clearEffortRejected(resolved);
+                    capabilityRegistry.clearEffortStripped(resolved);
                 }
             } else {
                 finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
                         reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
             }
         }
-        if (!finalResult.failed) {
-            String answerText = finalResult.content;
+        if (!finalResult.failed()) {
+            String answerText = finalResult.content();
             if (finalResult.usage() != null) {
                 totalUsage = totalUsage == null ? finalResult.usage() : totalUsage.add(finalResult.usage());
             }
@@ -542,10 +542,10 @@ public class ChatOrchestrationService {
             return CompletableFuture.completedFuture(new ChatTurn(fallback, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
         }
         eventConsumer.step(new ChatStepDto("s-error", "think", "模型调用失败",
-                finalResult.errorMessage, System.currentTimeMillis() - answerStart, "failed",
+                finalResult.errorMessage(), System.currentTimeMillis() - answerStart, "failed",
                 null, null, null, null));
         return CompletableFuture.failedFuture(
-                new IllegalStateException(finalResult.errorMessage != null ? finalResult.errorMessage : "LLM stream failed"));
+                new IllegalStateException(finalResult.errorMessage() != null ? finalResult.errorMessage() : "LLM stream failed"));
     }
 
     /**
@@ -723,7 +723,7 @@ public class ChatOrchestrationService {
         toolMsg.put("role", "tool");
         toolMsg.put("tool_call_id", callId);
         boolean wantImages = images != null && !images.isEmpty();
-        boolean canSee = wantImages && visionAllowed(llm, images.size());
+        boolean canSee = wantImages && capabilityRegistry.visionAllowed(llm, images.size());
         if (!wantImages) {
             toolMsg.put("content", content);
         } else if (canSee) {
@@ -745,71 +745,12 @@ public class ChatOrchestrationService {
         messages.add(new WireMessage(toolMsg));
     }
 
-    /**
-     * 记忆“上游拒绝图片”的模型:首次遇到拒绝后,后续轮次直接不再附加图片,
-     * 避免每次都要“失败→重试”白费一轮。进程内记忆(重启后重新探测)。
-     */
-    private final java.util.Set<String> visionRejectedModels = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    /**
-     * 记忆“上游拒绝 reasoning_effort”的模型:实测部分模型/渠道对未知档位直接 400
-     * (gemini-3.5-flash 报 invalid_reasoning_effort:"the reasoning effort value
-     * is not supported by the current model")。
-     * 首次遇到后,该模型后续请求不再注入**该档位**,省掉“失败→重试”的一轮浪费。
-     * 键含档位:上游拒绝的是具体取值,用户换成受支持的档位后仍会正常尝试注入。
-     * 与 visionRejectedModels 同款:进程内记忆,重启后重新探测;且只在
-     * 「剥档位重试成功」后才写入(瞬时错误不拉黑)。
-     */
-    private final java.util.Set<String> effortRejectedModels = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    /** 探测记忆的键:上游端点 + 模型 + 档位(上游拒绝的是具体取值,不能整模型拉黑)。 */
-    private static String effortKey(ResolvedLlm llm) {
-        return (llm.baseUrl() == null ? "" : llm.baseUrl()) + "|" + (llm.model() == null ? "" : llm.model())
-                + "|" + (llm.effectiveReasoningLevel() == null ? "" : llm.effectiveReasoningLevel().toLowerCase());
-    }
 
-    /**
-     * 上游是否明确拒绝 reasoning_effort 取值。
-     * 实测文案(中转站透传上游错误):
-     * "the reasoning effort value is not supported by the current model" /
-     * "invalid_reasoning_effort" / "unsupported value ... reasoning_effort"
-     */
-    private static boolean isReasoningEffortUnsupported(String errorMessage) {
-        if (errorMessage == null) return false;
-        String e = errorMessage.toLowerCase();
-        if (!e.contains("reasoning")) return false;
-        return e.contains("not supported") || e.contains("unsupported")
-                || e.contains("invalid") || e.contains("not valid");
-    }
 
-    /**
-     * 是否允许把图片附到该模型的请求里。
-     * 优先级:设置页显式开关 > 运行时探测记忆 > 默认尝试(上游拒绝则自动剥离)。
-     */
-    private boolean visionAllowed(ResolvedLlm llm, int imageCount) {
-        if (llm == null || imageCount <= 0) return false;
-        if (Boolean.FALSE.equals(llm.vision())) return false;
-        if (Boolean.TRUE.equals(llm.vision())) return true;
-        return !visionRejectedModels.contains(visionKey(llm));
-    }
 
-    /** 探测记忆的键:同一上游端点上的同名模型共享结论。 */
-    private static String visionKey(ResolvedLlm llm) {
-        return (llm.baseUrl() == null ? "" : llm.baseUrl()) + "|" + (llm.model() == null ? "" : llm.model());
-    }
 
-    /**
-     * 上游错误是否为“不支持图像输入”。
-     * 实测拒绝文案示例:
-     * "Model X does not support image input. Remove the image content or use a vision-capable model."
-     */
-    private static boolean isVisionUnsupported(String errorMessage) {
-        if (errorMessage == null) return false;
-        String e = errorMessage.toLowerCase();
-        return e.contains("does not support image") || e.contains("not support image")
-                || e.contains("vision-capable") || e.contains("image input")
-                || e.contains("invalid image") || e.contains("unsupported image");
-    }
 
     /**
      * 请求里是否携带图片附件(多模态 tool 消息)。
@@ -825,18 +766,6 @@ public class ChatOrchestrationService {
         return false;
     }
 
-    /**
-     * 中转以流式返回时会把上游 400 粒度化为 "Upstream error: 400"——
-     * 看不到“不支持图像输入”原文。因此当请求里带图且收到 400 时,
-     * 按“可能是识图不支持”处理(剥图重试一次,成功则记住结论)。
-     */
-    private static boolean isGenericUpstream400(String errorMessage) {
-        if (errorMessage == null) return false;
-        String e = errorMessage.toLowerCase();
-        boolean has400 = e.contains("400");
-        boolean vague = e.contains("upstream error") || e.contains("上游");
-        return has400 && vague;
-    }
 
     /** 从 messages 里剥离所有图片附件,返回被剥离的张数。 */
     private int stripImagesFromMessages(List<WireMessage> messages) {
@@ -1258,12 +1187,12 @@ public class ChatOrchestrationService {
             return null;
         }
         // 标题是纯转写任务，不需要推理：显式压到最低档省钱省时
-        ResolvedLlm llm = withLevel(resolveLlm(requestedModel, null, providerId), "none");
+        ResolvedLlm llm = ResolvedLlm.withLevel(modelResolver.resolve(requestedModel, null, providerId), "none");
         if (llm == null) {
             return null;
         }
         try {
-            ObjectNode body = baseBody(true, llm);
+            ObjectNode body = upstreamClient.baseBody(true, llm);
             ArrayNode messages = body.putArray("messages");
             messages.addObject().put("role", "system").put("content", TITLE_SYSTEM_PROMPT);
             String excerpt = userMessage.length() <= TITLE_EXCERPT_CHARS
@@ -1271,7 +1200,7 @@ public class ChatOrchestrationService {
                     : userMessage.substring(0, TITLE_EXCERPT_CHARS);
             messages.addObject().put("role", "user").put("content", excerpt);
             // 不带 tools：标题任务不允许调用工具
-            StreamTurnResult result = streamUpstream(llm, body, (content, reasoning) -> {
+            StreamTurnResult result = upstreamClient.streamUpstream(llm, body, (content, reasoning) -> {
             });
             if (result.failed()) {
                 log.warn("session title generation failed: {}", result.errorMessage());
@@ -1310,92 +1239,12 @@ public class ChatOrchestrationService {
     }
 
     public boolean configured(String requestedModel) {
-        return resolveLlm(requestedModel) != null;
+        return modelResolver.resolve(requestedModel) != null;
     }
 
     /** Variant honouring an explicit provider id (渠道精确解析)。 */
     public boolean configured(String requestedModel, Long providerId) {
-        return resolveLlm(requestedModel, null, providerId) != null;
-    }
-
-    private ResolvedLlm resolveLlm(String requestedModel) {
-        return resolveLlm(requestedModel, null, null);
-    }
-
-    /**
-     * 解析执行端点与思考等级:请求级等级 > 设置页该模型默认等级 > auto。
-     * 该模型的 reasoningLevels 白名单同时约束请求级取值(不在白名单内则回落默认)。
-     *
-     * @param providerId 前端选定的渠道 id(同名模型跨渠道时精确定位);null = 按模型名解析
-     */
-    private ResolvedLlm resolveLlm(String requestedModel, String requestedReasoningLevel, Long providerId) {
-        // 设置中心(数据库 provider store)优先:模型选择/思考等级/每模型协议都源于此。
-        // 静态 nora.llm.* 配置仅作兜底(全新部署还没配 provider 时可用),
-        // 否则环境变量一存在就会短路整个 provider 体系——UI 上怎么选模型都不生效。
-        if (modelProviderService != null) {
-            ResolvedLlm fromStore = resolveFromStore(requestedModel, requestedReasoningLevel, providerId);
-            if (fromStore != null) return fromStore;
-        }
-        if (llmProperties.configured()) {
-            return new ResolvedLlm(llmProperties.baseUrl(), llmProperties.apiKey(), llmProperties.model(), "openai",
-                    null, null, null);
-        }
-        return null;
-    }
-
-    /** Provider-store leg of {@link #resolveLlm}; providerId 优先,缺失/失效时按模型名回落。 */
-    private ResolvedLlm resolveFromStore(String requestedModel, String requestedReasoningLevel, Long providerId) {
-        ModelProviderService.ActiveProvider provider = modelProviderService.activeProvider(providerId, requestedModel);
-        if (provider == null || provider.endpoint() == null || provider.endpoint().isBlank()) return null;
-        // 请求级模型名优先(activeProvider 已按它筛选供应商);仅在请求未指定时回落
-        // 到该供应商模型列表的第一个。此前固定取 models.get(0),导致对话框里选的
-        // 模型被静默替换成供应商第一个模型(如选 nemotron 实际跑 muse)。
-        String model = requestedModel != null && !requestedModel.isBlank()
-                && (provider.models() == null || provider.models().contains(requestedModel))
-                ? requestedModel
-                : (provider.models() == null || provider.models().isEmpty()
-                        ? LlmProperties.DEFAULT_MODEL : provider.models().get(0));
-        String effectiveLevel = effectiveReasoningLevel(provider, model, requestedReasoningLevel);
-        // 协议按模型覆盖:modelSettings[model].protocol 优先,否则继承 provider 级协议
-        ModelProviderService.PerModelSettings perModel =
-                ModelProviderService.parseModelSettingsStatic(provider.modelSettingsJson()).forModel(model);
-        String protocol = perModel.protocol() != null && !perModel.protocol().isBlank()
-                ? perModel.protocol() : provider.protocol();
-        return new ResolvedLlm(provider.endpoint(), provider.apiKey(), model, protocol, effectiveLevel,
-                perModel.contextWindow(), perModel.vision());
-    }
-
-    /** Merges the per-request level with the per-model default from settings. */
-    private String effectiveReasoningLevel(ModelProviderService.ActiveProvider provider, String model,
-                                           String requestedLevel) {
-        ModelProviderService.PerModelSettings settings =
-                ModelProviderService.parseModelSettingsStatic(provider.modelSettingsJson()).forModel(model);
-        List<String> whitelist = settings.reasoningLevels();
-        boolean hasRequested = requestedLevel != null && !requestedLevel.isBlank() && !"auto".equalsIgnoreCase(requestedLevel);
-        if (hasRequested && (whitelist.isEmpty() || whitelist.contains(requestedLevel))) {
-            return requestedLevel;
-        }
-        String configured = settings.defaultReasoningLevel();
-        if (configured != null && !configured.isBlank() && !"auto".equalsIgnoreCase(configured)
-                && (whitelist.isEmpty() || whitelist.contains(configured))) {
-            return configured;
-        }
-        return null;
-    }
-
-
-
-
-
-
-
-
-
-
-    /** One streamed model turn: forwarded content/reasoning plus accumulated tool_calls. */
-    record StreamTurnResult(boolean failed, String errorMessage, String content,
-                            String reasoning, ObjectNode assistantMessage, List<JsonNode> toolCalls,
-                            TokenUsage usage) {
+        return modelResolver.resolve(requestedModel, null, providerId) != null;
     }
 
     /** Provider token accounting from one streamed turn (null fields when relay omits usage). */
@@ -1416,21 +1265,6 @@ public class ChatOrchestrationService {
         }
     }
 
-    /**
-     * One streaming model round. Upstream SSE is consumed line-by-line and every
-     * content/reasoning token is forwarded to the client as it arrives (真流式);
-     * tool_call argument fragments are accumulated locally and returned for
-     * execution after the stream closes. Blocks the calling thread until the
-     * upstream stream ends — run on a worker executor.
-     */
-    /** 中断识别:JDK HttpClient 阻塞读被 interrupt 时抛 IOException(cause=InterruptedException),逐层找。 */
-    private static boolean isInterruption(Throwable t) {
-        for (Throwable c = t; c != null; c = c.getCause()) {
-            if (c instanceof InterruptedException) return true;
-            if (c.getCause() == c) break; // 自引用防环
-        }
-        return false;
-    }
 
     private StreamTurnResult streamTurn(List<WireMessage> messages, String requestedModel,
                                         String reasoningLevel, int round,
@@ -1443,13 +1277,13 @@ public class ChatOrchestrationService {
                                         String reasoningLevel, int round,
                                         ChatEventConsumer eventConsumer,
                                         long[] ttftMs, long turnStartMs, Long providerId) {
-        ResolvedLlm llm = withLevel(resolveLlm(requestedModel, null, providerId), reasoningLevel);
-        ObjectNode body = baseBody(true, llm);
-        body.set("messages", messagesArray(messages));
+        ResolvedLlm llm = ResolvedLlm.withLevel(modelResolver.resolve(requestedModel, null, providerId), reasoningLevel);
+        ObjectNode body = upstreamClient.baseBody(true, llm);
+        body.set("messages", upstreamClient.messagesArray(messages));
         body.set("tools", toolsSpec());
         // 请求即将发出:刷新消费方的推理计时锚点(RAG/装配时间不计入思考时长)
         eventConsumer.upstreamRequestStarted();
-        return streamUpstream(llm, body, (contentToken, reasoningToken) -> {
+        return upstreamClient.streamUpstream(llm, body, (contentToken, reasoningToken) -> {
             if (ttftMs[0] < 0 && (contentToken != null || reasoningToken != null)) {
                 ttftMs[0] = System.currentTimeMillis() - turnStartMs;
             }
@@ -1470,14 +1304,14 @@ public class ChatOrchestrationService {
                                                String reasoningLevel, int round,
                                                ChatEventConsumer eventConsumer,
                                                long[] ttftMs, long turnStartMs, Long providerId) {
-        ResolvedLlm llm = withLevel(resolveLlm(requestedModel, null, providerId), reasoningLevel);
-        ObjectNode body = baseBody(true, llm);
-        body.set("messages", messagesArray(messages));
+        ResolvedLlm llm = ResolvedLlm.withLevel(modelResolver.resolve(requestedModel, null, providerId), reasoningLevel);
+        ObjectNode body = upstreamClient.baseBody(true, llm);
+        body.set("messages", upstreamClient.messagesArray(messages));
         body.set("tools", toolsSpec());
         // final round: the model must answer, not call more tools
         body.put("tool_choice", "none");
         eventConsumer.upstreamRequestStarted();
-        return streamUpstream(llm, body, (contentToken, reasoningToken) -> {
+        return upstreamClient.streamUpstream(llm, body, (contentToken, reasoningToken) -> {
             if (ttftMs[0] < 0 && (contentToken != null || reasoningToken != null)) {
                 ttftMs[0] = System.currentTimeMillis() - turnStartMs;
             }
@@ -1486,450 +1320,12 @@ public class ChatOrchestrationService {
         });
     }
 
-    /** Pair of forwarded tokens for one SSE chunk. */
-    private record Tokens(String content, String reasoning) {
-    }
 
-    private interface TokenSink {
-        void accept(String content, String reasoning);
-    }
 
-    /**
-     * Executes the request and relays upstream SSE chunks as they arrive.
-     * Uses raw byte reading with incremental UTF-8 decoding (the relay can split
-     * multi-byte characters across chunks — RestClient's string converter also
-     * mangles text/event-stream to ISO-8859-1, browser-verified 2026-09-05).
-     * Protocol dispatch: openai → POST /chat/completions (stream),
-     * responses → POST /responses (stream) with event-name mapping.
-     */
-    private StreamTurnResult streamUpstream(ResolvedLlm llm, ObjectNode body, TokenSink sink) {
-        logUpstreamRequest(llm, body);
-        if ("responses".equalsIgnoreCase(llm.protocol())) {
-            return streamUpstreamResponses(llm, body, sink);
-        }
-        StringBuilder content = new StringBuilder();
-        StringBuilder reasoning = new StringBuilder();
-        // tool_calls accumulation: index → {id, name, args-builder} (fragments arrive out of order)
-        Map<Integer, String> callIds = new HashMap<>();
-        Map<Integer, String> callNames = new HashMap<>();
-        Map<Integer, StringBuilder> callArgs = new HashMap<>();
-        List<JsonNode> orderedCalls = new ArrayList<>();
-        TokenUsage usage = null;
 
-        try {
-            java.net.http.HttpClient.Builder clientBuilder = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10));
-            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder
-                    .addressFor(llm.baseUrl());
-            if (proxyAddr != null) {
-                clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
-            }
-            java.net.http.HttpClient client = clientBuilder.build();
-            java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/chat/completions"))
-                    .timeout(Duration.ofSeconds(120))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + llm.apiKey())
-                    .header("Accept", MediaType.ALL_VALUE);
-            applyExtraHeaders(requestBuilder, llm);
-            java.net.http.HttpRequest request = requestBuilder
-                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
-                            objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
-                    .build();
-            java.net.http.HttpResponse<java.io.InputStream> response = client.send(
-                    request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
-            sseLog.info("upstream POST {} -> HTTP {} (model={})",
-                    stripTrailingSlash(llm.baseUrl()), response.statusCode(), llm.model());
-            if (response.statusCode() >= 400) {
-                String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                log.warn("LLM upstream {} → HTTP {}: body={}", llm.baseUrl(), response.statusCode(), err);
-                sseLog.warn("upstream ERROR body={}", abbreviateForSse(err, 400));
-                return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
-                        "", "", null, List.of(), null);
-            }
-            boolean done = false;
-            try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (!line.startsWith("data:")) continue;
-                    String payload = line.substring(5).trim();
-                    if ("[DONE]".equals(payload)) { done = true; break; }
-                    JsonNode chunkRoot;
-                    try {
-                        chunkRoot = objectMapper.readTree(payload);
-                    } catch (Exception parseError) {
-                        continue; // keep-alive comments / partial lines
-                    }
-                    // 流内错误块:部分中转以 HTTP 200 开流,再把上游 400 塞进 data 里
-                    // (形如 data: {"error": {"message": "{...invalid_reasoning_effort...}"}})。
-                    // 此前该块没有 choices,被静默忽略 → 最终只报 "empty stream",
-                    // 真正的错误文案(以及依赖它的降级判定)全部丢失。
-                    // 判定收紧:仅 textual 非空 或 object 非空才算错误——{"error":false}/
-                    // {"error":0}/{"error":{}} 这类假值块不能打断正常流。
-                    JsonNode errNode = chunkRoot.path("error");
-                    if ((errNode.isTextual() && !errNode.asText().isBlank())
-                            || (errNode.isObject() && !errNode.isEmpty())) {
-                        // 取原始 message 文本(可能仍是转义 JSON),交给 friendlyUpstreamError 统一解析
-                        String errText = errNode.isTextual() ? errNode.asText()
-                                : errNode.path("message").asText("");
-                        if (errText.isBlank()) errText = errNode.toString();
-                        log.warn("LLM upstream in-stream error: {}", Texts.abbreviate(errText, 300));
-                        sseLog.warn("upstream in-stream ERROR body={}", abbreviateForSse(errText, 400));
-                        return new StreamTurnResult(true, "上游 " + friendlyUpstreamError(errText),
-                                content.toString(), reasoning.toString(), null, List.of(), usage);
-                    }
-                    // usage rides the last chunk with an empty choices array (relay-verified)
-                    JsonNode usageNode = chunkRoot.path("usage");
-                    if (usageNode.isObject() && !usageNode.isEmpty()) {
-                        usage = new TokenUsage(
-                                usageNode.path("prompt_tokens").isInt() ? usageNode.path("prompt_tokens").asInt() : null,
-                                usageNode.path("completion_tokens").isInt() ? usageNode.path("completion_tokens").asInt() : null,
-                                usageNode.path("total_tokens").isInt() ? usageNode.path("total_tokens").asInt() : null);
-                    }
-                    JsonNode delta = chunkRoot.path("choices").path(0).path("delta");
-                    JsonNode rc = delta.path("reasoning_content");
-                    if (!rc.isTextual()) rc = delta.path("reasoning");
-                    if (rc.isTextual() && !rc.asText().isEmpty()) {
-                        reasoning.append(rc.asText());
-                        sink.accept(null, rc.asText());
-                    }
-                    JsonNode ct = delta.path("content");
-                    if (ct.isTextual() && !ct.asText().isEmpty()) {
-                        content.append(ct.asText());
-                        sink.accept(ct.asText(), null);
-                    }
-                    JsonNode tcs = delta.path("tool_calls");
-                    if (tcs.isArray()) {
-                        for (JsonNode tc : tcs) {
-                            int idx = tc.path("index").asInt(callIds.size());
-                            callIds.computeIfAbsent(idx, k -> tc.path("id").asText(""));
-                            JsonNode fn = tc.path("function");
-                            if (fn.has("name") && fn.path("name").isTextual() && !fn.path("name").asText().isEmpty()) {
-                                // 工具名只完整出现一次;若中转把 name 分片/重复发送(含 JSON null),
-                                // 直接覆盖而非拼串,避免拼成 "execute_sqlnullnull…"
-                                callNames.put(idx, fn.path("name").asText());
-                            }
-                            JsonNode args = fn.path("arguments");
-                            if (args.isTextual() && !args.asText().isEmpty()) {
-                                callArgs.computeIfAbsent(idx, k -> new StringBuilder()).append(args.asText());
-                            }
-                        }
-                    }
-                }
-            }
-            if (!done && content.isEmpty() && reasoning.isEmpty() && callArgs.isEmpty()) {
-                return new StreamTurnResult(true, "empty stream", "", "", null, List.of(), usage);
-            }
-            // rebuild tool_calls in index order with accumulated ids/names/args
-            for (Integer idx : new java.util.TreeSet<>(callArgs.isEmpty() ? callIds.keySet() : unionKeys(callIds, callArgs))) {
-                ObjectNode call = objectMapper.createObjectNode();
-                call.put("id", callIds.getOrDefault(idx, "call_" + idx));
-                ObjectNode fn = call.putObject("function");
-                fn.put("name", callNames.getOrDefault(idx, ""));
-                fn.put("arguments", callArgs.containsKey(idx) ? callArgs.get(idx).toString() : "{}");
-                orderedCalls.add(call);
-            }
-            ObjectNode assistant = objectMapper.createObjectNode();
-            assistant.put("role", "assistant");
-            assistant.put("content", content.toString());
-            if (!orderedCalls.isEmpty()) {
-                ArrayNode arr = assistant.putArray("tool_calls");
-                for (JsonNode call : orderedCalls) {
-                    // 部分上游(实测 DeepSeek-V4-Flash)严格要求每个 tool_call 带
-                    // "type":"function",缺失即 400(报错被中转粒化为 "Upstream error: 400",
-                    // 极难定位)。这里统一补齐,对宽松上游无副作用。
-                    if (call.isObject() && !call.has("type")) {
-                        ((ObjectNode) call).put("type", "function");
-                    }
-                    arr.add(call);
-                }
-            }
-            sseLog.info("upstream round done: contentChars={} reasoningChars={} toolCalls={} usage={}",
-                    content.length(), reasoning.length(), orderedCalls.size(),
-                    usage == null ? "none" : "in=" + usage.inputTokens() + " out=" + usage.outputTokens());
-            return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
-                    assistant, orderedCalls, usage);
-        } catch (Exception e) {
-            // 用户取消时 HttpClient 阻塞读抛 IOException(InterruptedException):
-            // 恢复中断标志让编排层据此短路(不做空响应重试/最终回答兜底)
-            if (isInterruption(e)) {
-                Thread.currentThread().interrupt();
-                sseLog.warn("upstream STREAM FAILED: {} (turn cancelled)", e.toString());
-            } else {
-                sseLog.warn("upstream STREAM FAILED: {}", e.toString());
-            }
-            log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
-            return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
-                    null, List.of(), usage);
-        }
-    }
-
-    /**
-     * Responses API (POST {base}/responses, SSE) variant of {@link #streamUpstream}.
-     * Body conversion (chat.completions shape → responses shape):
-     * - messages → input[] with type: message(role/content)
-     * - assistant tool_calls → output_item message with type: function_call + call_id
-     * - tool results → input item type: function_call_output
-     * - tools[] flatten function → {type:"function", name, description, parameters}
-     * - reasoning_effort passes through; stream_options dropped
-     * Event mapping (SSE `event:` lines):
-     * - response.output_text.delta            → content token
-     * - response.reasoning_summary_text.delta → reasoning token
-     * - response.output_item.added (function_call) / response.function_call_arguments.delta → tool accumulation
-     * - response.completed → usage from response.usage
-     */
-    private StreamTurnResult streamUpstreamResponses(ResolvedLlm llm, ObjectNode chatBody, TokenSink sink) {
-        StringBuilder content = new StringBuilder();
-        StringBuilder reasoning = new StringBuilder();
-        // function_call accumulation keyed by item_id
-        Map<String, String> callIds = new LinkedHashMap<>();
-        Map<String, String> callNames = new LinkedHashMap<>();
-        Map<String, StringBuilder> callArgs = new LinkedHashMap<>();
-        TokenUsage usage = null;
-
-        try {
-            ObjectNode body = objectMapper.createObjectNode();
-            body.put("model", chatBody.path("model").asText());
-            body.put("stream", true);
-            if (chatBody.hasNonNull("reasoning_effort")) {
-                body.putObject("reasoning").put("effort", chatBody.get("reasoning_effort").asText());
-            }
-            // 摘要推理:部分模型(如 muse 系列)原始推理内容是 encrypted_content,不请求
-            // summary 就没有任何可见的思考文本——上游支持时必须带 summary=auto,
-            // 否则前端"思考过程"时间线对这类模型永远是空的。
-            if (!body.has("reasoning")) {
-                body.putObject("reasoning").put("summary", "auto");
-            } else {
-                JsonNode reasoningNode = body.path("reasoning");
-                if (reasoningNode.isObject()) {
-                    ((ObjectNode) reasoningNode).put("summary", "auto");
-                }
-            }
-            // tools: flatten {type:function, function:{...}} → {type:function, name, ...}
-            ArrayNode tools = body.putArray("tools");
-            for (JsonNode t : chatBody.path("tools")) {
-                if (!"function".equals(t.path("type").asText())) continue;
-                ObjectNode flat = tools.addObject();
-                flat.put("type", "function");
-                flat.put("name", t.path("function").path("name").asText());
-                flat.put("description", t.path("function").path("description").asText(""));
-                flat.set("parameters", t.path("function").path("parameters"));
-            }
-            // messages → input[]; tool results → function_call_output items.
-            // Responses API has no system role: the system prompt rides as instructions.
-            StringBuilder instructions = new StringBuilder();
-            ArrayNode input = body.putArray("input");
-            for (WireMessage wm : wireMessagesOf(chatBody)) {
-                ObjectNode m = wm.node();
-                String role = m.path("role").asText("");
-                if ("tool".equals(role)) {
-                    ObjectNode item = input.addObject();
-                    item.put("type", "function_call_output");
-                    item.put("call_id", m.path("tool_call_id").asText(""));
-                    JsonNode toolContent = m.path("content");
-                    if (toolContent.isArray()) {
-                        // 多模态工具结果:转为 output 数组(input_text + input_image)。
-                        // 实测验证:responses 协议的 function_call_output.output 支持该形式。
-                        ArrayNode outParts = item.putArray("output");
-                        for (JsonNode part : toolContent) {
-                            String pType = part.path("type").asText("");
-                            if ("text".equals(pType)) {
-                                outParts.addObject().put("type", "input_text").put("text", part.path("text").asText(""));
-                            } else if ("image_url".equals(pType)) {
-                                outParts.addObject().put("type", "input_image")
-                                        .put("image_url", part.path("image_url").path("url").asText(""));
-                            }
-                        }
-                    } else {
-                        item.put("output", toolContent.asText(""));
-                    }
-                    continue;
-                }
-                if ("system".equals(role)) {
-                    if (instructions.length() > 0) instructions.append("\n\n");
-                    instructions.append(m.path("content").asText(""));
-                    continue;
-                }
-                ObjectNode msgItem = input.addObject();
-                msgItem.put("type", "message");
-                msgItem.put("role", "assistant".equals(role) ? "assistant" : "user");
-                ArrayNode parts = msgItem.putArray("content");
-                ObjectNode part = parts.addObject();
-                part.put("type", "assistant".equals(role) ? "output_text" : "input_text");
-                part.put("text", m.path("content").asText(""));
-                // assistant turn that issued tool_calls: emit function_call items after the message
-                JsonNode calls = m.path("tool_calls");
-                if (calls.isArray()) {
-                    for (JsonNode c : calls) {
-                        ObjectNode callItem = input.addObject();
-                        callItem.put("type", "function_call");
-                        callItem.put("call_id", c.path("id").asText());
-                        callItem.put("name", c.path("function").path("name").asText());
-                        callItem.put("arguments", c.path("function").path("arguments").asText("{}"));
-                    }
-                }
-            }
-            if (instructions.length() > 0) {
-                body.put("instructions", instructions.toString());
-            }
-
-            java.net.http.HttpClient.Builder clientBuilder = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10));
-            java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder
-                    .addressFor(llm.baseUrl());
-            if (proxyAddr != null) {
-                clientBuilder.proxy(java.net.ProxySelector.of(proxyAddr));
-            }
-            java.net.http.HttpClient client = clientBuilder.build();
-            java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(stripTrailingSlash(llm.baseUrl()) + "/responses"))
-                    .timeout(Duration.ofSeconds(120))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + llm.apiKey())
-                    .header("Accept", MediaType.ALL_VALUE);
-            applyExtraHeaders(requestBuilder, llm);
-            java.net.http.HttpRequest request = requestBuilder
-                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
-                            objectMapper.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8))
-                    .build();
-            java.net.http.HttpResponse<java.io.InputStream> response = client.send(
-                    request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
-            sseLog.info("upstream POST {} -> HTTP {} (model={})",
-                    stripTrailingSlash(llm.baseUrl()), response.statusCode(), llm.model());
-            if (response.statusCode() >= 400) {
-                String err = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                log.warn("LLM upstream {} → HTTP {}: body={}", llm.baseUrl(), response.statusCode(), err);
-                sseLog.warn("upstream ERROR body={}", abbreviateForSse(err, 400));
-                return new StreamTurnResult(true, "上游 " + response.statusCode() + ": " + friendlyUpstreamError(err),
-                        "", "", null, List.of(), null);
-            }
-            try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
-                String line;
-                String eventName = "";
-                while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("event:")) { eventName = line.substring(6).trim(); continue; }
-                    if (!line.startsWith("data:")) continue;
-                    String payload = line.substring(5).trim();
-                    if ("[DONE]".equals(payload)) break;
-                    JsonNode root;
-                    try { root = objectMapper.readTree(payload); } catch (Exception e) { continue; }
-                    String type = root.path("type").asText(eventName);
-                    // 流内错误:responses 协议有标准失败事件(response.failed / error),
-                    // 部分中转还会把上游错误塞进 data 的 error 字段。与 chat 路径同款:
-                    // 取出真实错误文案返回 failed——否则只报 "empty stream",依赖错误
-                    // 文案的降级判定(invalid_reasoning_effort)永远不会触发。
-                    if ("error".equals(type) || "response.failed".equals(type)
-                            || (root.path("error").isObject() && !root.path("error").isEmpty())
-                            || (root.path("error").isTextual() && !root.path("error").asText().isBlank())) {
-                        JsonNode errNode = root.path("error");
-                        if (errNode.isMissingNode() || errNode.isNull()) {
-                            errNode = root.path("response").path("error");
-                        }
-                        String errText = errNode.isTextual() ? errNode.asText()
-                                : errNode.path("message").asText("");
-                        if (errText.isBlank()) errText = errNode.isMissingNode() ? root.toString() : errNode.toString();
-                        log.warn("LLM upstream in-stream error (responses): {}", Texts.abbreviate(errText, 300));
-                        sseLog.warn("upstream in-stream ERROR body={}", abbreviateForSse(errText, 400));
-                        return new StreamTurnResult(true, "上游 " + friendlyUpstreamError(errText),
-                                content.toString(), reasoning.toString(), null, List.of(), usage);
-                    }
-                    if ("response.output_text.delta".equals(type)) {
-                        String delta = root.path("delta").asText("");
-                        if (!delta.isEmpty()) { content.append(delta); sink.accept(delta, null); }
-                    } else if ("response.reasoning_summary_text.delta".equals(type)
-                            || "response.reasoning_text.delta".equals(type)) {
-                        String delta = root.path("delta").asText("");
-                        if (!delta.isEmpty()) { reasoning.append(delta); sink.accept(null, delta); }
-                    } else if ("response.output_item.added".equals(type)) {
-                        JsonNode item = root.path("item");
-                        if ("function_call".equals(item.path("type").asText())) {
-                            String itemId = item.path("id").asText();
-                            callIds.putIfAbsent(itemId, item.path("call_id").asText(itemId));
-                            callNames.putIfAbsent(itemId, item.path("name").asText(""));
-                            callArgs.computeIfAbsent(itemId, k -> new StringBuilder())
-                                    .append(item.path("arguments").asText(""));
-                        }
-                    } else if ("response.function_call_arguments.delta".equals(type)) {
-                        String itemId = root.path("item_id").asText("");
-                        String delta = root.path("delta").asText("");
-                        if (!itemId.isEmpty() && !delta.isEmpty()) {
-                            callArgs.computeIfAbsent(itemId, k -> new StringBuilder()).append(delta);
-                        }
-                    } else if ("response.completed".equals(type)) {
-                        JsonNode u = root.path("response").path("usage");
-                        if (u.isObject() && !u.isEmpty()) {
-                            usage = new TokenUsage(
-                                    u.path("input_tokens").isInt() ? u.path("input_tokens").asInt() : null,
-                                    u.path("output_tokens").isInt() ? u.path("output_tokens").asInt() : null,
-                                    u.path("total_tokens").isInt() ? u.path("total_tokens").asInt() : null);
-                        }
-                    }
-                }
-            }
-            if (content.isEmpty() && reasoning.isEmpty() && callArgs.isEmpty()) {
-                return new StreamTurnResult(true, "empty stream", "", "", null, List.of(), usage);
-            }
-            // rebuild assistant message: content + tool_calls (chat.completions shape, so the
-            // ReAct loop / persistence layers stay protocol-agnostic)
-            ObjectNode assistant = objectMapper.createObjectNode();
-            assistant.put("role", "assistant");
-            assistant.put("content", content.toString());
-            List<JsonNode> orderedCalls = new ArrayList<>();
-            for (String itemId : callArgs.keySet()) {
-                ObjectNode call = objectMapper.createObjectNode();
-                call.put("id", callIds.getOrDefault(itemId, itemId));
-                ObjectNode fn = call.putObject("function");
-                fn.put("name", callNames.getOrDefault(itemId, ""));
-                fn.put("arguments", callArgs.get(itemId).toString());
-                orderedCalls.add(call);
-            }
-            if (!orderedCalls.isEmpty()) {
-                ArrayNode arr = assistant.putArray("tool_calls");
-                for (JsonNode call : orderedCalls) {
-                    // 同 openai 路径:补齐 "type":"function"(部分上游严格校验)
-                    if (call.isObject() && !call.has("type")) {
-                        ((ObjectNode) call).put("type", "function");
-                    }
-                    arr.add(call);
-                }
-            }
-            // reasoningChars 必须记录:此前 responses 分支漏了这一项,排查
-            // 「思考等级失效」时只能靠直连上游重放才能判断上游到底有没有产推理,
-            // 日志里看不出(openai 分支一直是全的)。
-            sseLog.info("upstream round done (responses): contentChars={} reasoningChars={} toolCalls={} usage={}",
-                    content.length(), reasoning.length(), orderedCalls.size(),
-                    usage == null ? "none" : "in=" + usage.inputTokens() + " out=" + usage.outputTokens());
-            return new StreamTurnResult(false, null, content.toString(), reasoning.toString(),
-                    assistant, orderedCalls, usage);
-        } catch (Exception e) {
-            if (isInterruption(e)) {
-                Thread.currentThread().interrupt();
-                sseLog.warn("upstream STREAM FAILED: {} (turn cancelled)", e.toString());
-            } else {
-                sseLog.warn("upstream STREAM FAILED: {}", e.toString());
-            }
-            log.error("LLM upstream stream failed (protocol={}): {}", llm.protocol(), e.toString(), e);
-            return new StreamTurnResult(true, e.toString(), content.toString(), reasoning.toString(),
-                    null, List.of(), usage);
-        }
-    }
 
     /** chat.completions body's messages array as WireMessage list (responses conversion helper). */
-    private List<WireMessage> wireMessagesOf(ObjectNode chatBody) {
-        List<WireMessage> result = new ArrayList<>();
-        for (JsonNode m : chatBody.path("messages")) {
-            if (m instanceof ObjectNode o) result.add(new WireMessage(o));
-        }
-        return result;
-    }
 
-    private static java.util.Set<Integer> unionKeys(Map<Integer, String> a, Map<Integer, StringBuilder> b) {
-        java.util.Set<Integer> all = new java.util.TreeSet<>(a.keySet());
-        all.addAll(b.keySet());
-        return all;
-    }
 
     /**
      * Per-provider extra HTTP headers. OpenCode's free tier rejects requests
@@ -1938,19 +1334,6 @@ public class ChatOrchestrationService {
      * (provider-side session continuity) without leaking anything.
      */
     /** DEBUG 报文日志:协议/模型/档位/URL/请求体(api_key 不入日志,Authorization 头不拼进 body)。 */
-    private void logUpstreamRequest(ResolvedLlm llm, ObjectNode body) {
-        if (!log.isDebugEnabled()) {
-            return;
-        }
-        try {
-            log.debug("LLM upstream request: protocol={} model={} level={} url={}/... body={}",
-                    llm.protocol(), llm.model(), llm.effectiveReasoningLevel(),
-                    stripTrailingSlash(llm.baseUrl()), objectMapper.writeValueAsString(body));
-        } catch (Exception e) {
-            log.debug("LLM upstream request: protocol={} model={} url={} (body serialize failed: {})",
-                    llm.protocol(), llm.model(), llm.baseUrl(), e.toString());
-        }
-    }
 
     /**
      * Provider 专属附加头(opencode 需要 X-Session-ID)。
@@ -1958,105 +1341,12 @@ public class ChatOrchestrationService {
      * JDK 对 0 个参数同样抛 IAE "wrong number, 0, of parameters"(varargs
      * 成对校验不接受空数组),曾在所有普通 provider 上导致每轮请求必失败。
      */
-    private java.net.http.HttpRequest.Builder applyExtraHeaders(java.net.http.HttpRequest.Builder builder, ResolvedLlm llm) {
-        String[] extra = providerExtraHeaders(llm);
-        if (extra.length > 0) {
-            builder.headers(extra);
-        }
-        return builder;
-    }
 
-    private String[] providerExtraHeaders(ResolvedLlm llm) {
-        if (llm.baseUrl() != null && llm.baseUrl().contains("opencode.ai")) {
-            String key = llm.apiKey() == null ? "" : llm.apiKey();
-            String sessionId = "nora-" + Integer.toHexString(key.hashCode());
-            return new String[]{"X-Session-ID", sessionId};
-        }
-        return new String[0];
-    }
 
-    private static String stripTrailingSlash(String url) {
-        return url == null ? "" : url.replaceAll("/+$", "");
-    }
 
-    private ObjectNode baseBody(boolean stream, ResolvedLlm llm) {
-        ObjectNode body = objectMapper.createObjectNode();
-        body.put("model", llm.model());
-        body.put("stream", stream);
-        applyReasoningRequest(body, llm);
-        return body;
-    }
 
-    /**
-     * OpenAI-compatible reasoning switches; models with native reasoning need no override.
-     * 生效等级(effectiveReasoningLevel)来自设置页 per-model 配置或对话框请求:
-     * - 用户显式选的档位一律原样透传(含 none=关闭);家族名单只决定“未指定时的默认值”:
-     *   gpt-5/o 默认 medium,claude thinking 与带档位后缀的模型不注入
-     *   (由上游按模型自身默认决定,claude 不带该字段就没有推理内容)。
-     *   上游拒绝该取值时自动剥离并重试,重试成功才记住该档位(见 effortRejectedModels)。
-     * - qwen/glm:开关式字段,none 关、其余开。
-     */
-    private void applyReasoningRequest(ObjectNode body, ResolvedLlm llm) {
-        // 协议白名单只排除 ollama:其原生 /api/chat 不认 reasoning_effort。
-        // openai / responses / anthropic 都注入——
-        //   responses 走 reasoning:{effort} 映射(见 streamUpstreamResponses);
-        //   anthropic 在本实现里同样以 chat.completions 形状发出(见 streamUpstream 协议分发),
-        //   档位也用 reasoning_effort。
-        // 此前按协议名直接 return,anthropic 选了档位也发不出去(实测 2026-09-15:
-        // protocol=anthropic 的请求体里没有 reasoning_effort,上游 reasoningChars=0;
-        // 同一 key 手工加 reasoning_effort=xhigh 立刻出 261 字符推理)。
-        // 不认该字段的上游由既有的降级重试兜底(见 effortRejectedModels)。
-        if ("ollama".equalsIgnoreCase(llm.protocol())) return;
-        String model = llm.model() == null ? "" : llm.model().toLowerCase();
-        String requested = llm.effectiveReasoningLevel();
-        boolean hasRequested = requested != null && !requested.isBlank() && !"auto".equalsIgnoreCase(requested);
-        boolean off = hasRequested && "none".equalsIgnoreCase(requested);
-        boolean effortFamily = supportsReasoningEffort(model);
-        boolean openAiDefaultFamily = model.contains("gpt-5") || model.matches("(?s).*\\bo[1-9].*");
-        // 已探测到该模型拒绝**这个档位**:跳过注入,避免每次都先撞 400 再重试。
-        // 键含档位——用户换成受支持的等级后仍会正常注入(见 effortKey)。
-        // 只跳过 reasoning_effort,qwen/glm 的开关式字段仍照常处理(它们在下面)。
-        boolean effortRejected = effortRejectedModels.contains(effortKey(llm));
-        // 用户显式选的档位一律透传——家族白名单只管"未指定时的默认值"。
-        // 此前把显式档位也锁在 effortFamily 里,导致不在名单的模型(如 deepseek-v4.1-flash)
-        // 选了档位却被静默丢弃:responses 分支拿不到 reasoning_effort 就只发 summary:auto,
-        // 上游实测该形态不产出任何 reasoning(0 事件),思考等级等于失效。
-        // 实测(2026-09-15, 中转站 192.168.0.109:28765):
-        //   chat  + reasoning_effort=xhigh  → 4397 分片
-        //   chat  + reasoning_effort=minimal→ 5878 分片
-        //   responses + reasoning{effort:xhigh,summary:auto} → 7414 分片
-        //   responses + reasoning{summary:auto}(无 effort)    → 0 分片
-        // 不认该字段的模型家族由上游忽略即可,不会报错(glm 同发 reasoning_effort + thinking 实测 200)。
-        if (!effortRejected && (effortFamily || hasRequested)) {
-            if (off) {
-                // 「none = 关闭思考」直传 none,不再降级成 minimal。
-                // 旧实现固定写 minimal,但实测该上游的 minimal 仍会思考
-                // (deepseek-v4.1-flash: responses+minimal → 2788 reasoning 分片),
-                // 导致用户选「none」根本关不掉;none 本身被上游接受(200)。
-                body.put("reasoning_effort", "none");
-            } else if (hasRequested && isOpenAiEffort(requested)) {
-                body.put("reasoning_effort", requested);
-            } else if (openAiDefaultFamily) {
-                // 历史默认:OpenAI 家族不指定时也要 medium(上游不默认开推理)
-                body.put("reasoning_effort", "medium");
-            }
-            // 其余家族(claude/带后缀)未指定时不注入,交由上游默认
-        }
-        if (model.contains("qwen")) {
-            body.put("enable_thinking", !off);
-        }
-        if (model.contains("glm")) {
-            body.putObject("thinking").put("type", off ? "disabled" : "enabled");
-        }
-    }
 
     /** OpenAI reasoning_effort 合法值(截至今日上游公开档位)。 */
-    private static boolean isOpenAiEffort(String level) {
-        return switch (level.toLowerCase()) {
-            case "none", "minimal", "low", "medium", "high", "xhigh", "max" -> true;
-            default -> false;
-        };
-    }
 
     /**
      * 是否支持/需要 reasoning_effort 透传的模型家族:
@@ -2064,49 +1354,10 @@ public class ChatOrchestrationService {
      * 不带 reasoning_effort 时中转站不返回 reasoning_content)、
      * 中转站档位后缀命名(gemini-*-high 等)。
      */
-    private static boolean supportsReasoningEffort(String model) {
-        if (model.contains("gpt-5") || model.matches("(?s).*\\bo[1-9].*")) return true;
-        if (model.contains("claude")) return true;
-        // 中转站为非 OpenAI 模型附加的思考档位后缀:gemini-3.6-flash-high / deepseek-v4-pro-high 等
-        return model.matches("(?s).*(high|xhigh|max|minimal|low)$");
-    }
 
     /** Reads the common reasoning fields emitted by OpenAI-compatible relays. */
-    private String messageReasoning(JsonNode message) {
-        JsonNode node = message.path("reasoning_content");
-        if (!node.isTextual()) node = message.path("reasoning");
-        if (!node.isTextual()) node = message.path("thinking");
-        return node.isTextual() ? node.asText("") : "";
-    }
 
-    /** Returns a copy of the resolved endpoint carrying the given reasoning level. */
-    private static ResolvedLlm withLevel(ResolvedLlm llm, String reasoningLevel) {
-        if (llm == null) return null;
-        return new ResolvedLlm(llm.baseUrl(), llm.apiKey(), llm.model(), llm.protocol(), reasoningLevel,
-                llm.contextWindow(), llm.vision());
-    }
 
-    /** Returns a copy of the resolved endpoint carrying the given reasoning level. */
-
-    /** Package-visible for tests; never returned outside the service. */
-    record ResolvedLlm(String baseUrl, String apiKey, String model, String protocol,
-                       /** 生效思考等级(已合并请求级与设置页默认);null = auto */
-                       String effectiveReasoningLevel,
-                       /** 模型上下文窗口(tokens);null = 未配置 */
-                       Long contextWindow,
-                       /**
-                        * 识图能力(设置页每模型开关):TRUE/FALSE = 强制;null = 运行时自适应
-                        * (默认尝试附加图片,上游以“不支持图片”拒绝时自动剥离并记忆)。
-                        */
-                       Boolean vision) {}
-
-    private ArrayNode messagesArray(List<WireMessage> messages) {
-        ArrayNode array = objectMapper.createArrayNode();
-        for (WireMessage message : messages) {
-            array.add(message.node());
-        }
-        return array;
-    }
 
     /** tools spec 装配委托(实现见 ChatToolsSpec,2026-09-17 拆分)。 */
     private ArrayNode toolsSpec() {
@@ -2641,10 +1892,6 @@ public class ChatOrchestrationService {
         return null;
     }
 
-    private static String abbreviateForSse(String text, int max) {
-        if (text == null) return "";
-        return text.length() <= max ? text : text.substring(0, max) + "…(" + text.length() + " chars)";
-    }
 
     /**
      * 工具调用日志的 args 脱敏:凭据类字段(headers 的值、password、token 等)
@@ -2721,75 +1968,8 @@ public class ChatOrchestrationService {
 
 
 
-    /**
-     * 把上游返回的错误体转成一行可读信息:能解析出 {@code error.message} 就取它,
-     * 否则退化为 HTTP 状态码短语——避免把整段 {@code {"error":{...}}} JSON 甩给前端/用户。
-     */
-    private static String friendlyUpstreamError(String body) {
-        if (body == null || body.isBlank()) {
-            return "无返回信息";
-        }
-        final String trimmed = body.trim();
-        // 部分中转把上游错误体塞进 message 字段的**转义 JSON 字符串**里,形如
-        // {"error":{"message":"{\"code\":11150,\"msg\":\"the reasoning effort value
-        // is not supported...\"}"}}。朴素的“读到下一个引号”会在第一个 \" 处截断,
-        // 只剩 "{\" —— 调用方(如档位降级判定)就看不到真正的错误文案。
-        // 这里先把转义引号还原,再按嵌套结构取最内层的可读消息。
-        String unescaped = trimmed.replace("\\\"", "\"");
-        String inner = deepestMessage(unescaped);
-        if (inner != null) {
-            return withUpstreamHint(inner);
-        }
-        // 常见错误体形如 {"error":{"message":"...","type":"..."}}
-        final int msgIdx = trimmed.indexOf("\"message\"");
-        if (msgIdx >= 0) {
-            int start = trimmed.indexOf(':', msgIdx) + 1;
-            while (start < trimmed.length() && (trimmed.charAt(start) == ' ' || trimmed.charAt(start) == '"')) {
-                start++;
-            }
-            int end = start;
-            while (end < trimmed.length() && trimmed.charAt(end) != '"') {
-                end++;
-            }
-            String message = end > start ? trimmed.substring(start, end) : null;
-            if (message != null && !message.isBlank()) {
-                return withUpstreamHint(message);
-            }
-        }
-        return Texts.abbreviate(trimmed, 160);
-    }
 
-    /**
-     * 中转站透传的 "Upstream error: N" 无信息量,补一句状态码语义。
-     * 提取成共用逻辑:嵌套转义 JSON 的早返回路径与平铺路径都要带上这条提示
-     * (此前早返回把该提示挤成死代码,9c346a0 修复的语义丢失)。
-     */
-    private static String withUpstreamHint(String message) {
-        if (message.matches("(?i)upstream (error|unavailable).*")) {
-            return message + "（上游模型服务暂不可用,稍后重试）";
-        }
-        return Texts.abbreviate(message, 160);
-    }
 
-    /**
-     * 从（已还原转义引号的）错误体里取最内层可读消息。
-     * 嵌套形如 {"error":{"message":"{\"code\":N,\"msg\":\"...\",\"extError\":{...}}"}}——
-     * 还原后外层 message 的值本身又是一段 JSON。取最内层的 msg/message 字段才有信息量。
-     * 取不到时返回 null，由调用方走原来的平铺解析。
-     */
-    private static String deepestMessage(String unescaped) {
-        String best = null;
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("\"(?:msg|message)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
-                .matcher(unescaped);
-        while (m.find()) {
-            String value = m.group(1).trim();
-            // 跳过纯 JSON 片段（值以 { 开头说明它自己还是个对象，不是可读文案）
-            if (value.isEmpty() || value.startsWith("{") || value.startsWith("[")) continue;
-            best = value;
-        }
-        return best;
-    }
 
     /** Callbacks for the SSE events of one chat turn. */
     public interface ChatEventConsumer {
@@ -2820,27 +2000,4 @@ public class ChatOrchestrationService {
     }
 
     /** Wire-format message wrapper (JsonNode so tool messages mix in). */
-    private record WireMessage(ObjectNode node) {
-
-        static WireMessage system(ObjectMapper mapper, String content) {
-            ObjectNode n = mapper.createObjectNode();
-            n.put("role", "system");
-            n.put("content", content);
-            return new WireMessage(n);
-        }
-
-        static WireMessage user(ObjectMapper mapper, String content) {
-            ObjectNode n = mapper.createObjectNode();
-            n.put("role", "user");
-            n.put("content", content);
-            return new WireMessage(n);
-        }
-
-        static WireMessage assistant(ObjectMapper mapper, String content) {
-            ObjectNode n = mapper.createObjectNode();
-            n.put("role", "assistant");
-            n.put("content", content);
-            return new WireMessage(n);
-        }
-    }
 }
