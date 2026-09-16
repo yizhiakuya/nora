@@ -197,11 +197,16 @@ export function AddProviderDialog({ isOpen, onClose, editing }: AddProviderDialo
       let touched = false;
       for (const m of chosenModels) {
         const picked = modelProtocols[m];
+        const stored = base[m]?.protocol;
         if (picked && picked !== protocol) {
           next[m] = { ...(base[m] ?? {}), protocol: picked };
           touched = true;
-        } else if (base[m]?.protocol) {
-          // 回退到默认协议:删掉覆盖字段,保留该模型的其他设置
+        } else if (stored && picked !== stored) {
+          // 用户明确把该模型下拉选成了「跟随默认」（与已存覆盖不同）:删掉覆盖,保留其他设置。
+          // 判据必须是 picked !== stored(用户动过下拉),不能用 picked === protocol——
+          // 后者会把「没动过下拉、但默认协议恰好被改成与覆盖同值」的模型误判为主动清覆盖
+          // （实测踩过:deepseek 覆盖 anthropic、用户把默认协议也改成 anthropic,覆盖被
+          // 静默删掉）。stored 为 undefined 时不动:回填未产生覆盖,也无从"清"。
           const { protocol: _drop, ...rest } = base[m];
           next[m] = rest;
           touched = true;

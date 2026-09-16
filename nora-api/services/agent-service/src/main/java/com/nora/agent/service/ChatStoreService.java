@@ -126,8 +126,10 @@ public class ChatStoreService {
         for (int i = 0; i < loaded.size(); i++) {
             List<ChatStepDto> steps = loaded.get(i).steps();
             if (steps == null || steps.isEmpty()) continue;
+            // duration_ms IS NULL = 旧写入路径落的库(推理时长是整轮戳记,需要清洗);
+            // 新行写入侧已按轮计时,直接保留。
             loaded.set(i, new StoredMessage(loaded.get(i).role(), loaded.get(i).content(),
-                    mergeSteps(steps), loaded.get(i).sources(),
+                    mergeSteps(steps, loaded.get(i).durationMs() == null), loaded.get(i).sources(),
                     loaded.get(i).durationMs(), loaded.get(i).createdAt()));
         }
         return loaded;
@@ -135,6 +137,14 @@ public class ChatStoreService {
 
     /** Collapses append-only step rows: terminal status wins; dangling running steps are dropped. */
     static List<ChatStepDto> mergeSteps(List<ChatStepDto> steps) {
+        return mergeSteps(steps, true);
+    }
+
+    /**
+     * @param legacy 该消息由旧写入路径落库({@code chat_message.duration_ms IS NULL}):
+     *               推理时长是整轮戳记,需要清洗;新行(false)按轮计时直接保留。
+     */
+    static List<ChatStepDto> mergeSteps(List<ChatStepDto> steps, boolean legacy) {
         java.util.LinkedHashMap<String, ChatStepDto> byId = new java.util.LinkedHashMap<>();
         for (ChatStepDto step : steps) {
             ChatStepDto prev = byId.get(step.id());
@@ -143,35 +153,34 @@ public class ChatStoreService {
                 byId.put(step.id(), step);
             }
         }
-        return sanitizeReasoningDurations(orderByRound(byId.values().stream()
+        List<ChatStepDto> merged = orderByRound(byId.values().stream()
                 .filter(s -> !"running".equals(s.status()) && !"pending".equals(s.status()))
-                .toList()));
+                .toList());
+        return legacy ? sanitizeReasoningDurations(merged) : merged;
     }
 
     /**
-     * 清掉旧数据里被整轮耗时污染的推理计时。
+     * 清掉存量行里被整轮耗时污染的推理计时。
      *
      * <p>背景（2026-09-15，用户实报）：旧写入路径在整轮收尾时把「整轮耗时」盖给该轮
      * 每条推理步骤，于是一个含 4 轮推理的轮次里 4 条「已深度思考」全都显示 17.61s。
-     * 写入侧已改为按轮计时（见 AgentController.reasoningDelta）；这里对存量行做等价
-     * 清理：同一消息内若 ≥2 条推理步骤携带完全相同的时长，判定为整轮戳记，置空
-     * （前端隐藏秒数——显示一个错数字比不显示更糟）。新数据各轮时长是各自的首末
-     * 事件间隔，几乎不可能完全相同，不受影响。
+     * 旧数据（{@code duration_ms IS NULL}）里推理步骤的 duration 不可信——早期一律是
+     * 整轮戳记（单步骤消息同样是错数字），此后到 duration_ms 落库前的一段窗口也无法
+     * 逐条甄别，统一置空（前端隐藏秒数——显示一个错数字比不显示更糟）。
+     * 仅对存量行调用（见 {@link #mergeSteps(List, boolean)}）；新行写入侧已按轮计时。
      */
     private static List<ChatStepDto> sanitizeReasoningDurations(List<ChatStepDto> steps) {
-        java.util.Map<Long, Integer> byDuration = new java.util.HashMap<>();
+        boolean any = false;
         for (ChatStepDto step : steps) {
             if (isReasoningStep(step) && step.duration() != null) {
-                byDuration.merge(step.duration(), 1, Integer::sum);
+                any = true;
+                break;
             }
         }
-        boolean anyDuplicated = byDuration.values().stream().anyMatch(count -> count > 1);
-        if (!anyDuplicated) return steps;
+        if (!any) return steps;
         List<ChatStepDto> out = new java.util.ArrayList<>(steps.size());
         for (ChatStepDto step : steps) {
-            boolean duplicated = isReasoningStep(step) && step.duration() != null
-                    && byDuration.getOrDefault(step.duration(), 0) > 1;
-            out.add(duplicated ? withDuration(step, null) : step);
+            out.add(isReasoningStep(step) && step.duration() != null ? withDuration(step, null) : step);
         }
         return out;
     }
@@ -195,11 +204,16 @@ public class ChatStoreService {
      * 界面上看到的过程一致）。写入侧已改为首个推理 token 即原位占位；这里对存量行
      * 做等价重排：只把「落在同轮工具之后」的推理步骤挪到该轮首个工具之前，
      * 其余步骤（含缺 roundIndex 的旧行、上下文注入、错误行）相对顺序一概不动。
+     *
+     * <p>只处理 {@code s-reasoning-*}（isReasoningStep）：同为 think 型的
+     * {@code s-compact-N}（整理上下文，roundIndex 是 0 基循环下标，与 1 基的
+     * 工具轮号错位）与 {@code s-effort/s-vision} 通知行必须原地不动——曾用宽松的
+     * type==think 判定，把压缩步骤错误前移到同轮工具之前（实测复现）。
      */
     private static List<ChatStepDto> orderByRound(List<ChatStepDto> steps) {
         List<ChatStepDto> ordered = new java.util.ArrayList<>(steps);
         for (ChatStepDto step : steps) {
-            if (!"think".equals(step.type()) || step.roundIndex() == null) continue;
+            if (!isReasoningStep(step) || step.roundIndex() == null) continue;
             int from = ordered.indexOf(step);
             if (from < 0) continue;
             int firstTool = -1;

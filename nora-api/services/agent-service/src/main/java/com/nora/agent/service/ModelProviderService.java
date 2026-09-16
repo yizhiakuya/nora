@@ -218,10 +218,14 @@ public class ModelProviderService {
                     models == null ? null : models.toArray(new String[0]), status, settingsJson);
             id = newId;
         } else {
+            // protocol/endpoint/api_key 必须写:update() 已把 null 解析为现值,upsert
+            // 收到的就是最终值。此前 UPDATE 漏掉这三列,编辑弹窗改端点/密钥/默认协议
+            // 显示成功但实际未落库(响应回显新值、DB 还是旧值——"显示与实际不一致"的根因)。
             jdbcTemplate.update(
-                    "UPDATE model_provider SET name = ?, enabled = ?, models = ?, status = ?, "
-                            + "model_settings = ?::jsonb WHERE id = ?",
-                    name, enabled, models == null ? null : models.toArray(new String[0]), status,
+                    "UPDATE model_provider SET name = ?, protocol = ?, endpoint = ?, api_key = ?, "
+                            + "enabled = ?, models = ?, status = ?, model_settings = ?::jsonb WHERE id = ?",
+                    name, protocol, endpoint, apiKey, enabled,
+                    models == null ? null : models.toArray(new String[0]), status,
                     settingsJson, id);
         }
         return new ProviderView(id, name, protocol, endpoint, mask(apiKey), enabled,

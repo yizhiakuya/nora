@@ -466,6 +466,14 @@ public class AgentController {
                         }
 
                         @Override
+                        public void upstreamRequestStarted() {
+                            // 请求即将发出:把推理计时锚点推到此刻——首轮无前置 step 时
+                            // 起点不再落到编排之前,会话加载/RAG 检索/提示词装配不计入
+                            // 「已深度思考」时长(与"按轮真实思考时长"口径一致)。
+                            lastEventMs[0] = System.currentTimeMillis();
+                        }
+
+                        @Override
                         public void approvalRequired(com.nora.agent.dto.ApprovalRequestDto request) {
                             send(emitter, "approval_required", request);
                             turnStreams.publish(liveTurn, "approval_required", toJson(request));

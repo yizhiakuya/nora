@@ -385,15 +385,27 @@ public class ChatOrchestrationService {
                     } else if (isReasoningEffortUnsupported(result.errorMessage)
                             && reasoningLevel != null && !reasoningLevel.isBlank()) {
                         // 上游不认这个档位(gemini-3.5-flash 等报 invalid_reasoning_effort):
-                        // 记住结论并剥掉档位重试一次——思考等级是增强项,不该让整轮对话失败。
-                        // 记忆后该模型后续请求不再注入(见 applyReasoningRequest)。
-                        effortRejectedModels.add(effortKey(resolved));
+                        // 剥掉档位重试一次——思考等级是增强项,不该让整轮对话失败。
+                        // 重试期间同时挂上「该档位被拒」与「该模型不注入档位」两条结论:
+                        // 后者让重试真正不带 reasoning_effort(传 null 档位时 gpt-5 家族
+                        // 会回落注入 medium,只挂前者重试就不是"剥掉");
+                        // 重试成功才保留结论(后续同档位请求不再撞 400,且换成别的档位
+                        // 仍会正常尝试注入);失败则撤销(瞬时错误不拉黑)。
+                        String rejectedKey = effortKey(resolved);
+                        String stripKey = effortKey(withLevel(resolved, null));
+                        effortRejectedModels.add(rejectedKey);
+                        effortRejectedModels.add(stripKey);
                         log.info("reasoning_effort rejected by {} ({}), retrying without it",
                                 resolved.model(), resolved.baseUrl());
-                        eventConsumer.step(new ChatStepDto("s-effort-" + round, "think", "模型不支持该思考等级",
-                                "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
-                                0L, "completed", null, null, null, round + 1));
                         retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs);
+                        if (!retry.failed) {
+                            eventConsumer.step(new ChatStepDto("s-effort-" + round, "think", "模型不支持该思考等级",
+                                    "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
+                                    0L, "completed", null, null, null, round + 1));
+                        } else {
+                            effortRejectedModels.remove(rejectedKey);
+                            effortRejectedModels.remove(stripKey);
+                        }
                     } else if (result.content().isEmpty() && result.toolCalls().isEmpty()) {
                         // 中转渠道偶发 4xx/5xx(无内容返回):自动重试一次,重试仍失败才放弃本轮。
                         // 已有部分内容/工具调用的失败不重试(内容已随流转发,重发会重复输出)
@@ -472,9 +484,34 @@ public class ChatOrchestrationService {
                 compactForRound(messages, budget, true, answerOverhead);
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatOrchestrationService::messageTokens).sum()
                         + (int) answerOverhead;
+                finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
+                        reasoningRound, eventConsumer, ttftMs, turnStartMs);
+            } else if (isReasoningEffortUnsupported(finalResult.errorMessage)
+                    && reasoningLevel != null && !reasoningLevel.isBlank()) {
+                // 工具循环在首个上游请求前异常退出(catch 兜底走强制回答)时,这一轮
+                // 是本轮第一个上游请求:坏档位要在这里也能降级,否则整轮失败且每轮
+                // 复现。与工具轮同款:挂两条结论(档位被拒 + 该模型不注入档位)让重试
+                // 真正不带 reasoning_effort,重试成功才保留。
+                String rejectedKey = effortKey(resolved);
+                String stripKey = effortKey(withLevel(resolved, null));
+                effortRejectedModels.add(rejectedKey);
+                effortRejectedModels.add(stripKey);
+                log.info("reasoning_effort rejected on final answer for {} ({}), retrying without it",
+                        resolved.model(), resolved.baseUrl());
+                finalResult = streamFinalAnswer(messages, requestedModel, null,
+                        reasoningRound, eventConsumer, ttftMs, turnStartMs);
+                if (!finalResult.failed) {
+                    eventConsumer.step(new ChatStepDto("s-effort-final", "think", "模型不支持该思考等级",
+                            "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
+                            0L, "completed", null, null, null, reasoningRound));
+                } else {
+                    effortRejectedModels.remove(rejectedKey);
+                    effortRejectedModels.remove(stripKey);
+                }
+            } else {
+                finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
+                        reasoningRound, eventConsumer, ttftMs, turnStartMs);
             }
-            finalResult = streamFinalAnswer(messages, requestedModel, reasoningLevel,
-                    reasoningRound, eventConsumer, ttftMs, turnStartMs);
         }
         if (!finalResult.failed) {
             String answerText = finalResult.content;
@@ -858,14 +895,17 @@ public class ChatOrchestrationService {
      * 记忆“上游拒绝 reasoning_effort”的模型:实测部分模型/渠道对未知档位直接 400
      * (gemini-3.5-flash 报 invalid_reasoning_effort:"the reasoning effort value
      * is not supported by the current model")。
-     * 首次遇到后,该模型后续请求不再注入档位,省掉“失败→重试”的一轮浪费。
-     * 与 visionRejectedModels 同款:进程内记忆,重启后重新探测。
+     * 首次遇到后,该模型后续请求不再注入**该档位**,省掉“失败→重试”的一轮浪费。
+     * 键含档位:上游拒绝的是具体取值,用户换成受支持的档位后仍会正常尝试注入。
+     * 与 visionRejectedModels 同款:进程内记忆,重启后重新探测;且只在
+     * 「剥档位重试成功」后才写入(瞬时错误不拉黑)。
      */
     private final java.util.Set<String> effortRejectedModels = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    /** 探测记忆的键(与 visionKey 同构):同一上游端点上的同名模型共享结论。 */
+    /** 探测记忆的键:上游端点 + 模型 + 档位(上游拒绝的是具体取值,不能整模型拉黑)。 */
     private static String effortKey(ResolvedLlm llm) {
-        return (llm.baseUrl() == null ? "" : llm.baseUrl()) + "|" + (llm.model() == null ? "" : llm.model());
+        return (llm.baseUrl() == null ? "" : llm.baseUrl()) + "|" + (llm.model() == null ? "" : llm.model())
+                + "|" + (llm.effectiveReasoningLevel() == null ? "" : llm.effectiveReasoningLevel().toLowerCase());
     }
 
     /**
@@ -2220,6 +2260,8 @@ public class ChatOrchestrationService {
         ObjectNode body = baseBody(true, llm);
         body.set("messages", messagesArray(messages));
         body.set("tools", toolsSpec());
+        // 请求即将发出:刷新消费方的推理计时锚点(RAG/装配时间不计入思考时长)
+        eventConsumer.upstreamRequestStarted();
         return streamUpstream(llm, body, (contentToken, reasoningToken) -> {
             if (ttftMs[0] < 0 && (contentToken != null || reasoningToken != null)) {
                 ttftMs[0] = System.currentTimeMillis() - turnStartMs;
@@ -2240,6 +2282,7 @@ public class ChatOrchestrationService {
         body.set("tools", toolsSpec());
         // final round: the model must answer, not call more tools
         body.put("tool_choice", "none");
+        eventConsumer.upstreamRequestStarted();
         return streamUpstream(llm, body, (contentToken, reasoningToken) -> {
             if (ttftMs[0] < 0 && (contentToken != null || reasoningToken != null)) {
                 ttftMs[0] = System.currentTimeMillis() - turnStartMs;
@@ -2328,8 +2371,11 @@ public class ChatOrchestrationService {
                     // (形如 data: {"error": {"message": "{...invalid_reasoning_effort...}"}})。
                     // 此前该块没有 choices,被静默忽略 → 最终只报 "empty stream",
                     // 真正的错误文案(以及依赖它的降级判定)全部丢失。
+                    // 判定收紧:仅 textual 非空 或 object 非空才算错误——{"error":false}/
+                    // {"error":0}/{"error":{}} 这类假值块不能打断正常流。
                     JsonNode errNode = chunkRoot.path("error");
-                    if (!errNode.isMissingNode() && !errNode.isNull()) {
+                    if ((errNode.isTextual() && !errNode.asText().isBlank())
+                            || (errNode.isObject() && !errNode.isEmpty())) {
                         // 取原始 message 文本(可能仍是转义 JSON),交给 friendlyUpstreamError 统一解析
                         String errText = errNode.isTextual() ? errNode.asText()
                                 : errNode.path("message").asText("");
@@ -2576,6 +2622,25 @@ public class ChatOrchestrationService {
                     JsonNode root;
                     try { root = objectMapper.readTree(payload); } catch (Exception e) { continue; }
                     String type = root.path("type").asText(eventName);
+                    // 流内错误:responses 协议有标准失败事件(response.failed / error),
+                    // 部分中转还会把上游错误塞进 data 的 error 字段。与 chat 路径同款:
+                    // 取出真实错误文案返回 failed——否则只报 "empty stream",依赖错误
+                    // 文案的降级判定(invalid_reasoning_effort)永远不会触发。
+                    if ("error".equals(type) || "response.failed".equals(type)
+                            || (root.path("error").isObject() && !root.path("error").isEmpty())
+                            || (root.path("error").isTextual() && !root.path("error").asText().isBlank())) {
+                        JsonNode errNode = root.path("error");
+                        if (errNode.isMissingNode() || errNode.isNull()) {
+                            errNode = root.path("response").path("error");
+                        }
+                        String errText = errNode.isTextual() ? errNode.asText()
+                                : errNode.path("message").asText("");
+                        if (errText.isBlank()) errText = errNode.isMissingNode() ? root.toString() : errNode.toString();
+                        log.warn("LLM upstream in-stream error (responses): {}", abbreviate(errText, 300));
+                        sseLog.warn("upstream in-stream ERROR body={}", abbreviateForSse(errText, 400));
+                        return new StreamTurnResult(true, "上游 " + friendlyUpstreamError(errText),
+                                content.toString(), reasoning.toString(), null, List.of(), usage);
+                    }
                     if ("response.output_text.delta".equals(type)) {
                         String delta = root.path("delta").asText("");
                         if (!delta.isEmpty()) { content.append(delta); sink.accept(delta, null); }
@@ -2734,7 +2799,7 @@ public class ChatOrchestrationService {
      * - 用户显式选的档位一律原样透传(含 none=关闭);家族名单只决定“未指定时的默认值”:
      *   gpt-5/o 默认 medium,claude thinking 与带档位后缀的模型不注入
      *   (由上游按模型自身默认决定,claude 不带该字段就没有推理内容)。
-     *   上游拒绝该取值时自动剥离并重试,同时记住该模型(见 effortRejectedModels)。
+     *   上游拒绝该取值时自动剥离并重试,重试成功才记住该档位(见 effortRejectedModels)。
      * - qwen/glm:开关式字段,none 关、其余开。
      */
     private void applyReasoningRequest(ObjectNode body, ResolvedLlm llm) {
@@ -2754,7 +2819,8 @@ public class ChatOrchestrationService {
         boolean off = hasRequested && "none".equalsIgnoreCase(requested);
         boolean effortFamily = supportsReasoningEffort(model);
         boolean openAiDefaultFamily = model.contains("gpt-5") || model.matches("(?s).*\\bo[1-9].*");
-        // 已探测到该模型拒绝该字段:跳过档位注入,避免每次都先撞 400 再重试。
+        // 已探测到该模型拒绝**这个档位**:跳过注入,避免每次都先撞 400 再重试。
+        // 键含档位——用户换成受支持的等级后仍会正常注入(见 effortKey)。
         // 只跳过 reasoning_effort,qwen/glm 的开关式字段仍照常处理(它们在下面)。
         boolean effortRejected = effortRejectedModels.contains(effortKey(llm));
         // 用户显式选的档位一律透传——家族白名单只管"未指定时的默认值"。
@@ -3978,7 +4044,7 @@ public class ChatOrchestrationService {
         String unescaped = trimmed.replace("\\\"", "\"");
         String inner = deepestMessage(unescaped);
         if (inner != null) {
-            return abbreviate(inner, 160);
+            return withUpstreamHint(inner);
         }
         // 常见错误体形如 {"error":{"message":"...","type":"..."}}
         final int msgIdx = trimmed.indexOf("\"message\"");
@@ -3993,14 +4059,22 @@ public class ChatOrchestrationService {
             }
             String message = end > start ? trimmed.substring(start, end) : null;
             if (message != null && !message.isBlank()) {
-                // 中转站透传的 "Upstream error: N" 无信息量,补一句状态码语义
-                if (message.matches("(?i)upstream (error|unavailable).*")) {
-                    return message + "（上游模型服务暂不可用,稍后重试）";
-                }
-                return abbreviate(message, 160);
+                return withUpstreamHint(message);
             }
         }
         return abbreviate(trimmed, 160);
+    }
+
+    /**
+     * 中转站透传的 "Upstream error: N" 无信息量,补一句状态码语义。
+     * 提取成共用逻辑:嵌套转义 JSON 的早返回路径与平铺路径都要带上这条提示
+     * (此前早返回把该提示挤成死代码,9c346a0 修复的语义丢失)。
+     */
+    private static String withUpstreamHint(String message) {
+        if (message.matches("(?i)upstream (error|unavailable).*")) {
+            return message + "（上游模型服务暂不可用,稍后重试）";
+        }
+        return abbreviate(message, 160);
     }
 
     /**
@@ -4031,6 +4105,10 @@ public class ChatOrchestrationService {
         void delta(String token);
 
         default void reasoningDelta(Integer roundIndex, String token) {
+        }
+
+        /** 即将向上游发出一次模型请求:消费方用它刷新推理计时锚点(排除 RAG/装配耗时)。 */
+        default void upstreamRequestStarted() {
         }
 
         default void approvalRequired(ApprovalRequestDto request) {

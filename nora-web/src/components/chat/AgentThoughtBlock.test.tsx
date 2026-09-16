@@ -191,6 +191,20 @@ describe("AgentThoughtBlock ReasoningRow", () => {
     // (assertion removed)
   });
 
+  it("通知型 think 步骤(s-effort 降级)渲染为标题行,不显示为推理", () => {
+    const notice: ChatStep = {
+      id: "s-effort-1",
+      type: "think",
+      title: "模型不支持该思考等级",
+      detail: "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
+      duration: "0.00s",
+      status: "completed",
+    };
+    render(<AgentThoughtBlock steps={[notice]} />);
+    fireEvent.click(screen.getByRole("button", { name: /模型不支持该思考等级/ }));
+    // (assertion removed)
+  });
+
   it("流式中折叠后 detail 仍持续累积,展开可见全文", () => {
     const { rerender } = render(<AgentThoughtBlock steps={[runningThink]} />);
     const toggle = screen.getByRole("button", { name: /思考中/ });

@@ -453,6 +453,46 @@ class ChatOrchestrationServiceTest {
         merged.get(5).id();
     }
 
+    /**
+     * 重排只认 s-reasoning-* 前缀:同为 think 型的 s-compact(roundIndex 是 0 基
+     * 循环下标,与 1 基工具轮号错位)必须原地不动——曾用宽松的 type==think 判定,
+     * 把「整理上下文」错误前移到同轮工具甚至 s-rag 之前。
+     */
+    @Test
+    void persistedStepsKeepNotificationThinkRowsInPlace() {
+        List<ChatStepDto> raw = List.of(
+                new ChatStepDto("s-rag", "tool", "检索知识库", null, 5L, "completed", null, null, null, 0),
+                new ChatStepDto("s-call-0", "tool", "工具", null, 10L, "completed", "execute_sql", null, null, 1),
+                new ChatStepDto("s-compact-1", "think", "整理上下文", "已压缩 2 条", 0L, "completed", null, null, null, 1),
+                new ChatStepDto("s-reasoning-1", "think", "推理过程", "想", 900L, "completed", null, null, null, 1),
+                new ChatStepDto("s-effort-0", "think", "模型不支持该思考等级", "已自动降级", 0L, "completed", null, null, null, 1));
+        List<ChatStepDto> merged = ChatStoreService.mergeSteps(raw);
+        merged.size();
+        merged.get(0).id();
+        merged.get(1).id();
+        merged.get(2).id();
+        merged.get(3).id();
+        merged.get(4).id();
+    }
+
+    /**
+     * 存量清洗只作用于旧行(legacy=true):旧写入路径给每条推理步骤盖整轮耗时
+     * (单步骤消息同样是错数字),一律置空;新行(legacy=false)按轮计时直接保留。
+     */
+    @Test
+    void legacyReasoningDurationsAreClearedButFreshOnesSurvive() {
+        List<ChatStepDto> raw = List.of(
+                new ChatStepDto("s-reasoning-1", "think", "推理过程", "想", 17606L, "completed", null, null, null, 1));
+        // 旧行:时长被清空(前端隐藏秒数)
+        List<ChatStepDto> legacy = ChatStoreService.mergeSteps(raw, true);
+        legacy.size();
+        legacy.get(0).duration();
+        // 新行:原样保留
+        List<ChatStepDto> fresh = ChatStoreService.mergeSteps(raw, false);
+        fresh.size();
+        fresh.get(0).duration();
+    }
+
     @Test
     void toolResultBudgetFollowsHarnessNumbers() throws Exception {
         // 成功输出 30K 上限、失败输出 10K 头尾摘录,截断都要有标记
@@ -891,7 +931,7 @@ class ChatOrchestrationServiceTest {
         applyReasoning("gpt-5.4-mini", "openai", "high");
         // o 系列:同样透传
         applyReasoning("o4-mini", "openai", "low");
-        // none 在 OpenAI 通道映射为 minimal
+        // none 直传(实测 minimal 关不掉思考,2026-09-15)
         applyReasoning("gpt-5.4", "openai", "none");
         // 未指定:家族默认 medium(历史行为不变)
         applyReasoning("gpt-5.4", "openai", null);
@@ -913,7 +953,7 @@ class ChatOrchestrationServiceTest {
         applyReasoning("gemini-3.6-flash-high", "openai", "high");
         // 普通模型(无后缀):不注入
         applyReasoning("deepseek-v4-flash-0731", "openai", "high");
-        // anthropic 协议不做 OpenAI 侧注入
+        // anthropic 协议同样注入(实测 2026-09-15:不注入则上游 reasoningChars=0)
         var anthropic = applyReasoning("claude-opus-4-6", "anthropic", "high");
         anthropic.size();
     }

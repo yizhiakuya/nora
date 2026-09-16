@@ -1,4 +1,4 @@
-import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, FileText, Loader2, Wrench, Ban } from "lucide-react";
+import { AlertTriangle, Brain, Check, ChevronDown, ChevronRight, FileText, Info, Loader2, Wrench, Ban } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ContextFile } from "@/lib/api/chatApi";
 import { GalleryBlock, parseGalleryFence, type GalleryData } from "./GalleryBlock";
@@ -84,6 +84,38 @@ function ReasoningRow({ step }: { step: ChatStep }) {
       <div className="flex items-center gap-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400 animate-in fade-in slide-in-from-top-1">
         <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
         <span className="truncate">{step.detail || step.title || "模型轮失败"}</span>
+      </div>
+    );
+  }
+
+  // 通知型 think 步骤(s-effort 档位降级 / s-vision 不识图 / s-compact 上下文压缩等):
+  // 标题即语义,渲染为中性通知行——此前一律按推理行显示成「已深度思考 0.00s」,
+  // 与真实含义相反,降级说明还被折叠隐藏。
+  if (!step.id.startsWith("s-reasoning-")) {
+    const expandable = Boolean(step.detail);
+    return (
+      <div className="animate-in fade-in slide-in-from-top-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => expandable && setUserOpen(!open)}
+          className={`w-full flex items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left transition-colors group ${
+            expandable ? "hover:bg-muted/60 cursor-pointer" : "cursor-default"
+          }`}
+        >
+          <Info className="w-3.5 h-3.5 text-sky-500/80 dark:text-sky-400/80 shrink-0" />
+          <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+            {step.title}
+          </span>
+          {expandable && (
+            <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform ${open ? "" : "-rotate-90"}`} />
+          )}
+        </button>
+        {open && step.detail && (
+          <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground border-l-2 border-sky-200 dark:border-sky-900 pl-3 ml-[6px] mt-1 mb-2 max-h-64 overflow-auto">
+            {step.detail}
+          </pre>
+        )}
       </div>
     );
   }
