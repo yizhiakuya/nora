@@ -43,19 +43,19 @@ class ContextBudgetTest {
     @Test
     void compactToolContentKeepsHeadAndTail() {
         String big = "x".repeat(2_000);
-        String out = ChatOrchestrationService.compactToolContent(big);
+        String out = ChatContextAssembler.compactToolContent(big);
         out.length();
         out.contains("已压缩");
         // 短结果原样返回
-        ChatOrchestrationService.compactToolContent("short");
+        ChatContextAssembler.compactToolContent("short");
     }
 
     @Test
     void overflowDetectorMatchesRelayWording() {
-        ChatOrchestrationService.isContextOverflow("上游 400: This model's maximum context length is 8192 tokens");
-        ChatOrchestrationService.isContextOverflow("context_length_exceeded");
-        ChatOrchestrationService.isContextOverflow("请求超过上下文长度限制");
-        ChatOrchestrationService.isContextOverflow("connection reset");
-        ChatOrchestrationService.isContextOverflow(null);
+        ChatContextAssembler.isContextOverflow("上游 400: This model's maximum context length is 8192 tokens");
+        ChatContextAssembler.isContextOverflow("context_length_exceeded");
+        ChatContextAssembler.isContextOverflow("请求超过上下文长度限制");
+        ChatContextAssembler.isContextOverflow("connection reset");
+        ChatContextAssembler.isContextOverflow(null);
     }
 }

@@ -249,17 +249,25 @@ class ChatOrchestrationServiceTest {
         json.stream();
     }
 
-    /** buildMessages 反射调用(私有装配方法):返回 wire 消息列表。 */
+    /** buildMessages 反射调用(2026-09-17 拆分后位于 ChatContextAssembler):返回 wire 消息列表。 */
     private List<?> invokeBuildMessages(ChatOrchestrationService svc, String userMessage,
                                         List<ChatStoreService.StoredMessage> history) throws Exception {
+        ChatContextAssembler assembler = contextAssemblerOf(svc);
         Class<?> promptResultClass = Class.forName(
-                "com.nora.agent.service.ChatOrchestrationService$SystemPromptResult");
+                "com.nora.agent.service.ChatContextAssembler$SystemPromptResult");
         Object promptOut = java.lang.reflect.Array.newInstance(promptResultClass, 1);
-        var method = ChatOrchestrationService.class.getDeclaredMethod("buildMessages",
+        var method = ChatContextAssembler.class.getDeclaredMethod("buildMessages",
                 String.class, List.class, List.class, List.class, ContextBudget.class, promptOut.getClass());
         method.setAccessible(true);
-        return (List<?>) method.invoke(svc, userMessage, history, List.of(), List.of(),
+        return (List<?>) method.invoke(assembler, userMessage, history, List.of(), List.of(),
                 new ContextBudget(null), promptOut);
+    }
+
+    /** 从 facade 取私有 contextAssembler 字段(2026-09-17 拆分 Step 4)。 */
+    private ChatContextAssembler contextAssemblerOf(ChatOrchestrationService svc) throws Exception {
+        var field = ChatOrchestrationService.class.getDeclaredField("contextAssembler");
+        field.setAccessible(true);
+        return (ChatContextAssembler) field.get(svc);
     }
 
     @Test
@@ -793,14 +801,15 @@ class ChatOrchestrationServiceTest {
                     new ChatStoreService.StoredMessage("user", "第一问", null, null),
                     new ChatStoreService.StoredMessage("assistant", "第一答", persisted, null));
 
-            // buildMessages 是私有装配方法:反射直调,拿真实请求消息数组
+            // buildMessages 在 ChatContextAssembler(2026-09-17 拆分 Step 4):反射直调,拿真实请求消息数组
+            ChatContextAssembler assembler = contextAssemblerOf(svc);
             Class<?> promptResultClass = Class.forName(
-                    "com.nora.agent.service.ChatOrchestrationService$SystemPromptResult");
+                    "com.nora.agent.service.ChatContextAssembler$SystemPromptResult");
             Object promptOut = java.lang.reflect.Array.newInstance(promptResultClass, 1);
-            var method = ChatOrchestrationService.class.getDeclaredMethod("buildMessages",
+            var method = ChatContextAssembler.class.getDeclaredMethod("buildMessages",
                     String.class, List.class, List.class, List.class, ContextBudget.class, promptOut.getClass());
             method.setAccessible(true);
-            List<?> messages = (List<?>) method.invoke(svc, "第二问", history, List.of(), List.of(),
+            List<?> messages = (List<?>) method.invoke(assembler, "第二问", history, List.of(), List.of(),
                     new ContextBudget(null), promptOut);
 
             List<String> json = new java.util.ArrayList<>();
