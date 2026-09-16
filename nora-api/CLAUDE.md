@@ -42,6 +42,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - execute_sql guardrail:单条 SELECT/SHOW/EXPLAIN
 - **取消语义**:cancel/超时中断编排线程后,JDK HttpClient 阻塞读抛 `IOException(InterruptedException)` 进 streamUpstream 的 `failed` 结果——编排层到处检查 `Thread.currentThread().isInterrupted()`/`isInterruption(cause)` 短路返回 `failedFuture(CancellationException)`,**任何空响应重试/最终回答兜底都必须排除中断**,否则取消变成多烧一整轮 token 且取消轮被当正常完成落库;控制器收尾的 `answer` StringBuilder 靠 `delta()` append 维持半截内容
 - **`.env.local` 启动自动加载**:nora-common `DotenvEnvironmentPostProcessor`(spring.factories 注册)以最低优先级加载 `nora-api/.env.local`,真实环境变量优先;key 找不到会走默认空值 → rag 报 "embedding not configured"、外网调用直连超时(需 `NORA_PROXY_ENABLED=true`)——排障先查 dotenv 日志与 key/代理
+- **env-service FILE 源路径**:纳管源日志路径须指向 `D:\claude\Nora\logs\<svc>-text.log`(logback 输出;`<repo>/<svc>.stdout.log` 与 `/opt/nora/logs/*.out.log` 均已失效,V9 迁移负责修正);判断文件存在必须 `isFile()`——`File.lastModified()` 对不存在文件返回 0 不抛异常,会算出「日志活跃于 497091 小时前」并吞掉「文件不存在」分支
 
 ## LLM 通道
 

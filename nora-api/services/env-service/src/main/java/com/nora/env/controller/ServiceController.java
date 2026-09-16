@@ -147,8 +147,15 @@ public class ServiceController {
     /** 日志文件距今的分钟数;文件不存在/不可读返回 null。 */
     private Long fileAgeMinutes(String path) {
         try {
-            long ageMs = System.currentTimeMillis() - new java.io.File(path).lastModified();
-            return ageMs / 60_000;
+            java.io.File f = new java.io.File(path);
+            // 必须显式 isFile():File.lastModified() 对不存在的文件返回 0 而不抛异常,
+            // 直接相减会算出 1970 年以来的分钟数(实测「日志活跃于 497091 小时前」),
+            // 且让上层的「日志文件不存在」分支永远不触发。
+            if (!f.isFile()) {
+                return null;
+            }
+            long ageMs = System.currentTimeMillis() - f.lastModified();
+            return Math.max(0, ageMs / 60_000);
         } catch (Exception e) {
             return null;
         }
@@ -159,7 +166,8 @@ public class ServiceController {
         if (min < 1) return "刚刚";
         if (min < 60) return min + " 分钟前";
         long h = min / 60;
-        return h + " 小时前";
+        if (h < 48) return h + " 小时前";
+        return (h / 24) + " 天前";
     }
 
     // ---------- 纳管清单 CRUD ----------

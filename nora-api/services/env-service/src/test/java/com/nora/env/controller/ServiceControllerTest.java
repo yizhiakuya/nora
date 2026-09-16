@@ -77,6 +77,45 @@ class ServiceControllerTest {
     }
 
     @Test
+    void servicesReportsMissingLogFileInsteadOf1970Age() {
+        // File.lastModified() 对不存在的文件返回 0 而不抛异常:直接相减会算出
+        // 「日志活跃于 497091 小时前」并把「日志文件不存在」分支永远跳过(实测 bug)。
+        // 修复后必须报 error/down/日志文件不存在。
+        when(managed.list()).thenReturn(List.of(
+                new ManagedSourceService.SourceView(4L, "FILE", "ghost-service",
+                        "D:\\__nora_missing__\\ghost.log", null, true)));
+        when(docker.list()).thenReturn(List.of());
+        when(docker.stats()).thenReturn(java.util.Map.of());
+
+        List<java.util.Map<String, Object>> items = controller.services().data();
+
+        items.get(0).get("status");
+        items.get(0).get("health");
+        items.get(0).get("detail");
+    }
+
+    @Test
+    void servicesReportsFreshLogFileAsHealthy() throws Exception {
+        // 存在的文件(刚写入)→ healthy + 「日志活跃于 刚刚」
+        java.nio.file.Path tmp = java.nio.file.Files.createTempFile("nora-fresh-log", ".log");
+        try {
+            java.nio.file.Files.writeString(tmp, "line\n");
+            when(managed.list()).thenReturn(List.of(
+                    new ManagedSourceService.SourceView(5L, "FILE", "fresh-service",
+                            tmp.toString(), null, true)));
+            when(docker.list()).thenReturn(List.of());
+            when(docker.stats()).thenReturn(java.util.Map.of());
+
+            List<java.util.Map<String, Object>> items = controller.services().data();
+
+            items.get(0).get("health");
+            items.get(0).get("detail");
+        } finally {
+            java.nio.file.Files.deleteIfExists(tmp);
+        }
+    }
+
+    @Test
     void startMapsErrorDetail() {
         when(docker.start("nora-postgres")).thenReturn("ok");
 
