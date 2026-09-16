@@ -1,6 +1,9 @@
 # Next.js → Vite 迁移记录 · 2026-09-04
 
 > 状态：已完成 · 范围：构建工具从 Next.js 14 迁移到 Vite 7 + react-router-dom v7
+>
+> **后续更新（2026-09-16）**：兼容层清理——`next/link` / `next/image` / `next/navigation` 三个 shim 全仓库零引用，
+> 已连同 vite/tsconfig 别名一并删除；仅保留 `next/dynamic`（Markdown.tsx 在用）与 `next-themes`（自写 ThemeProvider）。
 
 ## 1. 迁移动因
 

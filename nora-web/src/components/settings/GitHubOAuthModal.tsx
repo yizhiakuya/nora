@@ -74,37 +74,42 @@ export function GitHubOAuthModal({ isOpen, onClose, onLoggedIn }: {
   }, [isOpen]);
 
   const schedulePoll = useCallback((flowId: string, intervalSec: number) => {
-    pollTimer.current = setTimeout(async () => {
-      if (stopped.current) return;
-      try {
-        const result = await pollGitHubOAuth(flowId);
+    // 用局部递归函数承载续轮询,避免回调自引用 useCallback 变量
+    // (react-hooks/immutability:自引用闭包在并发渲染下可能拿到旧值)
+    const poll = (fid: string, sec: number) => {
+      pollTimer.current = setTimeout(async () => {
         if (stopped.current) return;
-        switch (result.status) {
-          case "pending":
-            schedulePoll(flowId, intervalSec);
-            break;
-          case "slow_down":
-            schedulePoll(flowId, intervalSec + 5);
-            break;
-          case "complete":
-            setPhase("done");
-            setToolCount(result.toolCount);
-            setWarning(result.warning);
-            onLoggedIn();
-            break;
-          case "denied":
-          case "expired":
-          case "error":
-          default:
-            setPhase("failed");
-            setMessage(result.message ?? "授权失败");
-            break;
+        try {
+          const result = await pollGitHubOAuth(fid);
+          if (stopped.current) return;
+          switch (result.status) {
+            case "pending":
+              poll(fid, sec);
+              break;
+            case "slow_down":
+              poll(fid, sec + 5);
+              break;
+            case "complete":
+              setPhase("done");
+              setToolCount(result.toolCount);
+              setWarning(result.warning);
+              onLoggedIn();
+              break;
+            case "denied":
+            case "expired":
+            case "error":
+            default:
+              setPhase("failed");
+              setMessage(result.message ?? "授权失败");
+              break;
+          }
+        } catch (e) {
+          // 网络抖动:继续轮询(后端也容错)
+          if (!stopped.current) poll(fid, sec);
         }
-      } catch (e) {
-        // 网络抖动:继续轮询(后端也容错)
-        if (!stopped.current) schedulePoll(flowId, intervalSec);
-      }
-    }, Math.max(5, intervalSec) * 1000);
+      }, Math.max(5, sec) * 1000);
+    };
+    poll(flowId, intervalSec);
   }, [onLoggedIn]);
 
   const handleSaveClientId = async () => {

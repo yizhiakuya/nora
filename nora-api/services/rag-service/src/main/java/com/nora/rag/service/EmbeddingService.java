@@ -169,16 +169,6 @@ public class EmbeddingService {
         return vector;
     }
 
-    /** Configured model name, surfaced in index stats. */
-    public String modelName() {
-        return properties.model();
-    }
-
-    /** Configured vector dimension, surfaced in index stats. */
-    public int dimensions() {
-        return properties.dimensions();
-    }
-
     private EmbeddingModel model() {
         dev.langchain4j.http.client.jdk.JdkHttpClientBuilder httpClientBuilder =
                 new dev.langchain4j.http.client.jdk.JdkHttpClientBuilder();

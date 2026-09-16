@@ -18,9 +18,6 @@
     "incremental": true,
     "paths": {
       "@/*": ["./src/*"],
-      "next/navigation": ["./src/lib/next-shims/navigation.ts"],
-      "next/link": ["./src/lib/next-shims/Link.tsx"],
-      "next/image": ["./src/lib/next-shims/Image.tsx"],
       "next/dynamic": ["./src/lib/next-shims/dynamic.tsx"],
       "next-themes": ["./src/components/ThemeProvider.tsx"]
     }

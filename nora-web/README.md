@@ -56,7 +56,7 @@ nora-web/
 │   ├── lib/
 │   │   ├── api/            # HTTP 客户端 / SSE / 请求缓存（client.ts、sse.ts、agentApi.ts、chatApi.ts、requestCache.ts）
 │   │   ├── services/       # 后端 API 契约层（filesApi / ragService / datasourcesApi / environmentApi / automationsApi / modelsApi）
-│   │   ├── next-shims/     # Next.js → React Router 兼容层
+│   │   ├── next-shims/     # Next.js 兼容残留（仅 dynamic.tsx，其余已删）
 │   │   ├── knowledgeSourceMeta.ts  # 文档来源的展示元数据
 │   │   └── utils.ts        # 通用工具
 │   └── types/              # 全局 TypeScript 接口

@@ -12,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -107,7 +106,6 @@ public class ChatOrchestrationService {
     private final SqlToolClient sqlToolClient;
     private final ServiceLogClient serviceLogClient;
     private final ObjectMapper objectMapper;
-    private final RestClient llmClient;
     /** 出站代理配置(可为 disabled):外网 LLM 上游走代理,内网服务互调直连 */
     private final com.nora.common.http.ProxyProperties proxyProperties;
     private final ModelProviderService modelProviderService;
@@ -164,16 +162,6 @@ public class ChatOrchestrationService {
         this.terminalService = terminalService;
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
-        // 显式超时:上游中转对带长 tool 消息的请求可能长时间不响应,
-        // 默认无超时的 RestClient 会永远挂起整轮对话
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(120_000);
-        this.llmClient = RestClient.builder()
-                .baseUrl(llmProperties.baseUrl())
-                .requestFactory(factory)
-                .build();
     }
 
     public ChatOrchestrationService(LlmProperties llmProperties,
@@ -1538,14 +1526,6 @@ public class ChatOrchestrationService {
             return configured;
         }
         return null;
-    }
-
-    private RestClient clientFor(ResolvedLlm llm) {
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(120_000);
-        return RestClient.builder().baseUrl(llm.baseUrl()).requestFactory(factory).build();
     }
 
     /** One executed tool call: bounded content plus UI-facing metadata. */

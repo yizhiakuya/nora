@@ -72,15 +72,15 @@ Hook 中按 `USE_BACKEND` 分流；保留同步 Mock 函数作为回退，**并�
 - `/src/hooks`: 前端业务逻辑钩子（Zustand store + persist 或纯状态机）。
 - `/src/lib/api`: HTTP 客户端、SSE 客户端、Mock API（`client.ts` / `sse.ts` / `agentApi.ts` / `chatApi.ts` / `mockApi.ts`）。
 - `/src/lib/services`: 后端 API 契约层（`filesApi.ts` / `ragService.ts` / `datasourcesApi.ts` / `environmentApi.ts` / `automationsApi.ts` / `modelsApi.ts`）。
-- `/src/lib/next-shims`: Next.js → React Router 兼容层（Link / Image / dynamic / navigation / usePathname / redirect）。
+- `/src/lib/next-shims`: Next.js 兼容残留（仅 `dynamic.tsx`；Link / Image / navigation / usePathname / redirect 已于 2026-09-16 删除——全仓库零引用）。
 - `/src/lib`: 全局工具函数与静态 Mock 数据总线。
 - `/src/types`: 全局 TypeScript 接口定义。
 
 ## 🔄 Next.js 兼容层 (next-shims)
 本项目从 Next.js 14 迁移至 Vite 7 + react-router-dom v7。
-原有 `next/link` / `next/image` / `next/navigation` / `next/dynamic` / `next-themes` 的调用通过
-`src/lib/next-shims/*` 映射到 React Router 等价物，业务组件无需改动即可工作。
-新增组件时优先直接使用 `react-router-dom` 的 `Link` / `useNavigate` / `useLocation`，逐步替换 shim。
+`src/lib/next-shims/` 仅剩 `dynamic.tsx`（经 `next/dynamic` 别名被 Markdown.tsx 使用）与 `next-themes`（指向自写 ThemeProvider）。
+其余 shim（Link / Image / navigation / usePathname / redirect）已于 2026-09-16 删除——业务组件全部使用 react-router-dom 原生 API，全仓库零引用。
+新增组件一律直接使用 `react-router-dom` 的 `Link` / `useNavigate` / `useLocation`。
 
 ## 📦 包管理器规约 (Package Manager)
 - 本项目**必须使用 `pnpm`** 管理依赖与运行脚本（如 `pnpm install`、`pnpm add -D xxx`、`pnpm dev`、`pnpm build`、`pnpm test`）。

@@ -1,0 +1,7 @@
+# codebase-memory 索引配置
+#
+# 索引器内置 skip-list 按目录名匹配 Python 惯例目录（env/venv/__pycache__ 等），
+# 误伤了 Java 包路径 com/nora/env（env-service / env-api 的源码目录），
+# 导致约 1.7k 行 Java 不在知识图谱中（gitignore 并未忽略它们）。
+# 取反规则恢复这些目录；node_modules/.venv 内的同名目录仍被上层规则挡住（已实测）。
+!**/env/
