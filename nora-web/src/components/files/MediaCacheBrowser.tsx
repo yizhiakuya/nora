@@ -6,6 +6,7 @@ import {
   mediaCacheApi,
   cachedItemLabel,
   isVideoItem,
+  thumbUrlFor,
   type CachedMediaItem,
   type CachedMediaList,
 } from "@/lib/services/mediaCacheApi";
@@ -132,18 +133,19 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
                     title={`${cachedItemLabel(item)}\n${humanSize(item.size)} · ${formatTime(item.savedAt)}\n${item.url}`}
                     onClick={() => setViewing(item)}
                   >
-                    {isVideoItem(item) ? (
-                      // 视频条目:黑底 + 播放角标(不做静帧提取,轻量展示)
-                      <span className="absolute inset-0 flex items-center justify-center bg-black/60">
-                        <Play className="w-6 h-6 text-white/90 fill-white/90" />
+                    {/* 统一用缩略图铺底:视频条目(播放流/原片)也改写为手机 /thumb
+                        端点(封面帧)——不再只有播放角标,一眼能认出是哪张 */}
+                    <img
+                      src={mediaCacheApi.previewUrl(thumbUrlFor(item))}
+                      alt={cachedItemLabel(item)}
+                      loading="lazy"
+                      className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                    />
+                    {isVideoItem(item) && (
+                      // 视频角标:叠在缩略图右上角
+                      <span className="absolute top-1 left-1 w-5 h-5 rounded-full bg-black/55 flex items-center justify-center pointer-events-none">
+                        <Play className="w-3 h-3 text-white fill-white" />
                       </span>
-                    ) : (
-                      <img
-                        src={mediaCacheApi.previewUrl(item.url)}
-                        alt={cachedItemLabel(item)}
-                        loading="lazy"
-                        className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                      />
                     )}
                   </button>
                   {/* 底部信息条:名称 + 大小/档位 */}

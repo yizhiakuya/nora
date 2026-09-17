@@ -55,13 +55,27 @@ export const mediaCacheApi = {
 export function cachedItemLabel(item: CachedMediaItem): string {
   const m = item.url.match(/\/photo\/(\d+)\/(content|thumb|video|sheet)/);
   if (!m) return item.key.slice(0, 12);
+  const isVideo = item.contentType.startsWith("video/");
   const kindText: Record<string, string> = {
-    content: "原片/原图",
+    content: isVideo ? "原片" : "原图",
     thumb: "缩略图",
     video: "播放流",
     sheet: "拼图",
   };
   return `${m[1]} · ${kindText[m[2]] ?? m[2]}`;
+}
+
+/**
+ * 网格展示用的缩略图 URL。
+ *
+ * 视频缓存条目(播放流/原片)没有内嵌封面——改写为手机同 id 的 `/thumb`
+ * 端点(它对视频返回封面帧),经 /api/media/cache 拉取(小图,顺手入缓存)。
+ * 已是缩略图的条目直接用;拼图等无法改写的返回原 URL(本身就是小图)。
+ */
+export function thumbUrlFor(item: CachedMediaItem): string {
+  if (/\/photo\/\d+\/thumb/.test(item.url)) return item.url;
+  const derived = item.url.replace(/\/(video|content)(\?|$)/, "/thumb$2");
+  return derived;
 }
 
 /** 条目是否视频(播放流/原片 mime 判断)。 */
