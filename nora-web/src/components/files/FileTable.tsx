@@ -16,6 +16,11 @@ import { FileItem } from "@/types";
 
 type FileSelection = SelectionResult<number>;
 
+/** 是否图片文件(列表里显示真实缩略图)。 */
+function isImageFile(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
+}
+
 /** 特殊文件夹行(如 Agent 工作区):文件系统视图里的"目录",点击进入。 */
 export interface FolderRow {
   name: string;
@@ -26,6 +31,8 @@ export interface FolderRow {
   onRename?: () => void;
   /** 删除(仅用户文件夹;系统文件夹不传) */
   onDelete?: () => void;
+  /** 接收拖入的文件(拖拽文件到文件夹行 = 移动到该文件夹) */
+  onDropFiles?: (ids: number[]) => void;
 }
 
 interface FileTableProps {
@@ -107,6 +114,24 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                 className="border-b border-border transition-colors group cursor-pointer hover:bg-muted"
                 onClick={folder.onOpen}
                 title={folder.description}
+                // 拖拽文件到文件夹行 = 移动(有 onDropFiles 时才响应)
+                onDragOver={folder.onDropFiles ? (e) => {
+                  e.preventDefault();
+                  e.currentTarget.classList.add("bg-blue-50", "dark:bg-blue-950/40");
+                } : undefined}
+                onDragLeave={folder.onDropFiles ? (e) => {
+                  e.currentTarget.classList.remove("bg-blue-50", "dark:bg-blue-950/40");
+                } : undefined}
+                onDrop={folder.onDropFiles ? (e) => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove("bg-blue-50", "dark:bg-blue-950/40");
+                  const raw = e.dataTransfer.getData("application/x-nora-file-ids");
+                  if (!raw) return;
+                  try {
+                    const ids = JSON.parse(raw) as number[];
+                    if (ids.length > 0) folder.onDropFiles?.(ids);
+                  } catch { /* 忽略坏数据 */ }
+                } : undefined}
               >
                 <td className="p-3 pl-4 w-10" />
                 <td className="p-3 max-w-[200px]">
@@ -157,6 +182,13 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                   key={file.id}
                   className={`border-b border-border transition-colors group cursor-pointer ${isSelected ? "bg-blue-50/50 dark:bg-blue-950/30" : "hover:bg-muted"}`}
                   onClick={() => selection.toggleSelect(file.id)}
+                  // 可拖拽:拖到文件夹行 = 移动(数据用自定义 MIME 传递)
+                  draggable
+                  onDragStart={(e) => {
+                    const ids = isSelected ? selection.selectedIds : [file.id];
+                    e.dataTransfer.setData("application/x-nora-file-ids", JSON.stringify(ids));
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
                 >
                   <td className="p-3 pl-4 w-10" onClick={(e) => e.stopPropagation()}>
                     <input
@@ -168,7 +200,17 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                   </td>
                   <td className="p-3 max-w-[200px]">
                     <div className="flex items-center gap-3">
-                      <Icon className={`${file.color} w-5 h-5 shrink-0`} />
+                      {/* 图片文件显示真实缩略图(小圆角),其他类型用类型图标 */}
+                      {isImageFile(file.name) ? (
+                        <img
+                          src={`/api/files/${file.id}/raw`}
+                          alt=""
+                          loading="lazy"
+                          className="w-8 h-8 rounded object-cover border border-border shrink-0 bg-muted"
+                        />
+                      ) : (
+                        <Icon className={`${file.color} w-5 h-5 shrink-0`} />
+                      )}
                       <span
                         className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate cursor-pointer hover:underline underline-offset-2"
                         title="点击预览"

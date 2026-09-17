@@ -431,6 +431,20 @@ export default function FilesPage() {
                       setFolderDialog({ mode: "rename", folder });
                     } : undefined,
                     onDelete: USE_BACKEND ? () => void handleDeleteFolder(folder) : undefined,
+                    // 拖拽文件到此文件夹行 = 移动(拖拽整理的自然交互)
+                    onDropFiles: USE_BACKEND ? (ids: number[]) => {
+                      void (async () => {
+                        try {
+                          const moved = await filesApi.moveFiles(ids, folder.id);
+                          toast.success(`已移动 ${moved} 个文件到「${folder.name}」`);
+                          selection.clearSelection();
+                          await syncFromBackend();
+                          refreshFolders();
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "移动失败");
+                        }
+                      })();
+                    } : undefined,
                   })),
                 ] : []}
               />
