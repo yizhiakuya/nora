@@ -32,22 +32,35 @@ class MessageRefResolver {
     private static final int FILE_INJECT_CHARS = 8_000;
     /** 单文档多 chunk 注入总量上限(字符)。 */
     private static final int DOC_INJECT_CHARS = 12_000;
+    /** 技能正文注入上限(字符)。 */
+    private static final int SKILL_INJECT_CHARS = 8_000;
 
     private static final Pattern FILE_REF =
             Pattern.compile("^\\[引用文件\\]\\s*(.+?)\\s*\\(file_id=(\\d+)[^)]*\\)");
     private static final Pattern DOC_REF =
             Pattern.compile("^\\[引用知识库\\]\\s*(.+?)\\s*\\(doc_id=(\\d+)\\)");
+    private static final Pattern SKILL_REF =
+            Pattern.compile("^\\[引用技能\\]\\s*(.+?)\\s*\\(skill_id=(\\d+)\\)");
+    private static final Pattern MCP_REF =
+            Pattern.compile("^\\[引用MCP工具\\]\\s*(.+?)\\s*\\(tool=(mcp__[a-zA-Z0-9_-]+)\\)");
 
     private final FileToolClient fileToolClient;
     private final RagRetrievalClient ragRetrievalClient;
+    private final AgentSkillService agentSkillService;
 
-    MessageRefResolver(FileToolClient fileToolClient, RagRetrievalClient ragRetrievalClient) {
+    MessageRefResolver(FileToolClient fileToolClient, RagRetrievalClient ragRetrievalClient,
+                       AgentSkillService agentSkillService) {
         this.fileToolClient = fileToolClient;
         this.ragRetrievalClient = ragRetrievalClient;
+        this.agentSkillService = agentSkillService;
     }
 
-    /** 一条待注入引用(file_id 或 doc_id)。 */
-    record Ref(String kind, long id, String name) {
+    /** 一条待注入引用(file/doc/skill id 或 mcp 工具全名)。 */
+    record Ref(String kind, long id, String name, String tool) {
+
+        Ref(String kind, long id, String name) {
+            this(kind, id, name, null);
+        }
     }
 
     /** 解析消息中的引用行;无引用返回空列表。 */
@@ -66,6 +79,16 @@ class MessageRefResolver {
             m = DOC_REF.matcher(line);
             if (m.find()) {
                 out.add(new Ref("doc", Long.parseLong(m.group(2)), m.group(1)));
+                continue;
+            }
+            m = SKILL_REF.matcher(line);
+            if (m.find()) {
+                out.add(new Ref("skill", Long.parseLong(m.group(2)), m.group(1)));
+                continue;
+            }
+            m = MCP_REF.matcher(line);
+            if (m.find()) {
+                out.add(new Ref("mcp", 0, m.group(1), m.group(2)));
             }
         }
         return out;
@@ -79,10 +102,11 @@ class MessageRefResolver {
         List<CitationDto> out = new ArrayList<>();
         for (Ref ref : refs) {
             try {
-                if ("file".equals(ref.kind())) {
-                    out.addAll(resolveFile(ref));
-                } else {
-                    out.addAll(resolveDoc(ref));
+                switch (ref.kind()) {
+                    case "file" -> out.addAll(resolveFile(ref));
+                    case "skill" -> out.addAll(resolveSkill(ref));
+                    case "mcp" -> out.addAll(resolveMcp(ref));
+                    default -> out.addAll(resolveDoc(ref));
                 }
             } catch (Exception e) {
                 log.warn("message ref resolve failed ({} id={}): {}", ref.kind(), ref.id(), e.getMessage());
@@ -134,5 +158,32 @@ class MessageRefResolver {
                     "(引用文档没有可注入的文本内容)"));
         }
         return out;
+    }
+
+    /**
+     * 技能引用:注入技能正文(instructions),模型按指令执行本任务。
+     * 技能目录本就注入系统提示,这里是"用户显式要求用这个技能"的强化信号。
+     */
+    private List<CitationDto> resolveSkill(Ref ref) {
+        AgentSkillService.SkillView skill = agentSkillService.get(ref.id());
+        if (skill == null || skill.instructions() == null || skill.instructions().isBlank()) {
+            return List.of(new CitationDto(ref.id(), ref.name(), "text", 0, 1.0,
+                    "(引用技能读取失败:技能不存在或没有指令正文)"));
+        }
+        String body = skill.instructions().length() <= SKILL_INJECT_CHARS
+                ? skill.instructions()
+                : skill.instructions().substring(0, SKILL_INJECT_CHARS) + "\n…[技能正文已截断]";
+        return List.of(new CitationDto(ref.id(), skill.name(), "text", 0, 1.0,
+                "【用户引用的技能指令】请遵循以下技能指令处理本请求:\n" + body));
+    }
+
+    /**
+     * MCP 工具引用:注入"优先调用该工具"的指令。
+     * 工具本体已在 toolsSpec 中挂载,这里只做优先级声明(不重复注入 schema)。
+     */
+    private List<CitationDto> resolveMcp(Ref ref) {
+        return List.of(new CitationDto(0L, ref.name(), "text", 0, 1.0,
+                "【用户指定的 MCP 工具】用户明确要求优先调用工具 " + ref.tool()
+                        + " 处理本请求;若该工具确实不适用,再考虑其他工具并说明原因。"));
     }
 }

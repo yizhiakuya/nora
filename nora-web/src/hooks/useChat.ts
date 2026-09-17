@@ -8,7 +8,7 @@ import { useChatSessions } from "./useChatSessions";
 import { useModelProviders, resolveDefaultProvider } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
 import { randomId } from "@/lib/utils";
-import { formatChatRefs, type ChatRef } from "@/lib/chatRefs";
+import { formatChatRefs, refKey, type ChatRef } from "@/lib/chatRefs";
 
 /**
  * Agent 全局设置(权限模式 / 默认模型 / 思考等级覆写):后端 app_setting
@@ -367,12 +367,12 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
     [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage, effectiveProviderId]
   );
 
-  /** 引用增删(去重:同 kind+id 只保留一条) */
+  /** 引用增删(去重:同引用只保留一条;mcp 以工具全名为键) */
   const addRef = useCallback((ref: ChatRef) => {
-    setRefs((prev) => (prev.some((r) => r.kind === ref.kind && r.id === ref.id) ? prev : [...prev, ref]));
+    setRefs((prev) => (prev.some((r) => refKey(r) === refKey(ref)) ? prev : [...prev, ref]));
   }, []);
-  const removeRef = useCallback((kind: ChatRef["kind"], id: number) => {
-    setRefs((prev) => prev.filter((r) => !(r.kind === kind && r.id === id)));
+  const removeRef = useCallback((key: string) => {
+    setRefs((prev) => prev.filter((r) => refKey(r) !== key));
   }, []);
 
   /** 拼引用后的实际发送内容:正文 + 引用块(尾部,持久化后历史仍可解析) */

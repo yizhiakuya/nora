@@ -146,7 +146,7 @@ public class ChatOrchestrationService {
         this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
         this.contextAssembler = new ChatContextAssembler(objectMapper, agentWorkspaceService,
                 agentSkillService, toolsSpecBuilder);
-        this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient);
+        this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient, agentSkillService);
     }
 
     public ChatOrchestrationService(LlmProperties llmProperties,

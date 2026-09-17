@@ -1,9 +1,10 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, AtSign } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
 import { ChatMessage } from "@/lib/api/chatApi";
-import { splitChatRefs } from "@/lib/chatRefs";
+import { splitChatRefs, refKey } from "@/lib/chatRefs";
+import { RefChip } from "./RefChip";
 import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
@@ -209,25 +210,14 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
             ) : (
               <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%]">
                 {(() => {
-                  // 引用行拆成 chips 展示(📎/📄 文件 · @ 知识库),正文保留原样换行
+                  // 引用行拆成 chips 展示(文件/知识库/技能/MCP 工具),正文保留原样换行
                   const { body, refs } = splitChatRefs(msg.content);
                   return (
                     <>
                       {refs.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mb-2">
                           {refs.map((ref) => (
-                            <span
-                              key={`${ref.kind}-${ref.id}`}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
-                                ref.kind === "file"
-                                  ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800"
-                                  : "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800"
-                              }`}
-                              title={ref.kind === "file" ? `文件中心引用 · file_id=${ref.id}` : `知识库文档引用 · doc_id=${ref.id}`}
-                            >
-                              {ref.kind === "file" ? <FileText className="w-3 h-3" /> : <AtSign className="w-3 h-3" />}
-                              {ref.name}
-                            </span>
+                            <RefChip key={refKey(ref)} chatRef={ref} />
                           ))}
                         </div>
                       )}
