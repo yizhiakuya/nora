@@ -4,6 +4,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -14,6 +17,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 纯机械平移,行为与拆分前逐行一致。
  */
 class ChatToolExecutor {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatToolExecutor.class);
 
     private final ObjectMapper objectMapper;
     private final SqlToolClient sqlToolClient;
@@ -29,6 +34,10 @@ class ChatToolExecutor {
     private final AgentSkillService agentSkillService;
     /** 画廊列表预取(可为 null:测试等场景未接)。 */
     private final GalleryPrefetcher galleryPrefetcher;
+    /** 批量媒体拉取(可为 null:测试等场景未接)。 */
+    private final MediaFetchService mediaFetchService;
+    /** 链路自动选择(局域网优先;可为 null)。 */
+    private final RelayMediaRouter relayMediaRouter;
 
     ChatToolExecutor(ObjectMapper objectMapper,
                      SqlToolClient sqlToolClient,
@@ -44,7 +53,7 @@ class ChatToolExecutor {
                      AgentSkillService agentSkillService) {
         this(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient, containerControlClient,
                 dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService, terminalService,
-                agentWorkspaceService, agentSkillService, null);
+                agentWorkspaceService, agentSkillService, null, null, null);
     }
 
     ChatToolExecutor(ObjectMapper objectMapper,
@@ -59,7 +68,9 @@ class ChatToolExecutor {
                      TerminalService terminalService,
                      AgentWorkspaceService agentWorkspaceService,
                      AgentSkillService agentSkillService,
-                     GalleryPrefetcher galleryPrefetcher) {
+                     GalleryPrefetcher galleryPrefetcher,
+                     MediaFetchService mediaFetchService,
+                     RelayMediaRouter relayMediaRouter) {
         this.objectMapper = objectMapper;
         this.sqlToolClient = sqlToolClient;
         this.serviceLogClient = serviceLogClient;
@@ -73,6 +84,8 @@ class ChatToolExecutor {
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
         this.galleryPrefetcher = galleryPrefetcher;
+        this.mediaFetchService = mediaFetchService;
+        this.relayMediaRouter = relayMediaRouter;
     }
 
     /** 技能定位:target 是数字 → 按 id,否则按名称(不区分大小写)。 */
@@ -152,6 +165,9 @@ class ChatToolExecutor {
         }
         if ("run_command".equals(name)) {
             return execRunCommand(name, args, parsed, liveOutput);
+        }
+        if ("fetch_media".equals(name)) {
+            return execFetchMedia(name, args, parsed, liveOutput);
         }
         // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
         // 输出同样走 bounded 截断与脱敏
@@ -781,6 +797,68 @@ class ChatToolExecutor {
     }
 
     /**
+     * fetch_media handler(2026-09-17):批量媒体拉取——从手机相册 MCP 拿清单,
+     * 并发下载到工作区文件夹,一次调用完成「整理相册」类任务。
+     *
+     * <p>设计动机(实测事故):此前 agent 只能对每条 URL 跑 run_command 逐个下载
+     * (407 个文件 = 400+ 轮工具调用),且因猜 API 路径触发远端 fail2ban 封 IP
+     * 导致整轮失败。批量拉取必须是一等工具,让 agent 不必自己拼命令。
+     */
+    ToolOutcome execFetchMedia(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        if (mediaFetchService == null) {
+            return new ToolOutcome("ERROR: 媒体拉取能力未启用(服务未配置)", null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            String serverName = a.path("server").asText("phone");
+            String from = a.path("from").asText(null);
+            String to = a.path("to").asText(null);
+            String album = a.path("album").asText(null);
+            String type = a.path("type").asText(null);
+            String folder = a.path("folder").asText(null);
+            String quality = a.path("quality").asText(null);
+            long start = System.currentTimeMillis();
+            // 进度回调接到 liveOutput:同 id step 原地刷新「已下载 n/N」
+            MediaFetchService.ProgressCallback progress = liveOutput == null ? null
+                    : (done, total, current) -> liveOutput.accept("正在下载 " + done + "/" + total
+                            + " —— " + Texts.abbreviate(current, 60));
+            MediaFetchService.FetchReport report = mediaFetchService.fetchFromPhone(
+                    serverName, from, to, album, type, folder, quality, progress);
+            long elapsed = System.currentTimeMillis() - start;
+            if (report.total() == 0 && report.failed() == 0 && report.errors().isEmpty()) {
+                // 手机端有可操作提示(如「相册不存在,可用相册:…」)时原样转给模型,
+                // 它才能自纠参数重试;没有提示才是真的范围内无媒体。
+                if (report.hint() != null && !report.hint().isBlank()) {
+                    return new ToolOutcome("没有拉到媒体。" + report.hint()
+                            + "\n(修正参数后重试;album 不传=全部相册)", "0 条媒体(参数有误)", 0, false);
+                }
+                return new ToolOutcome("(范围内没有可导出的媒体——确认时间范围/相册名是否正确;"
+                        + "可用 albums_list 查看相册名,photos_stats 看总数)", "0 条媒体", 0, false);
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("已拉取到 ").append(folder == null || folder.isBlank() ? "imports" : folder)
+                    .append(":成功 ").append(report.downloaded())
+                    .append(",跳过(已存在)").append(report.skipped())
+                    .append(",失败 ").append(report.failed())
+                    .append(",共 ").append(report.total())
+                    .append(",耗时 ").append(elapsed / 1000).append("s\n");
+            if (!report.errors().isEmpty()) {
+                sb.append("失败明细(前 ").append(Math.min(10, report.errors().size())).append(" 条):\n");
+                for (int i = 0; i < Math.min(10, report.errors().size()); i++) {
+                    sb.append("- ").append(report.errors().get(i)).append('\n');
+                }
+            }
+            return bounded(sb.toString(), "下载 " + report.downloaded() + "/" + report.total()
+                    + (report.failed() > 0 ? ",失败 " + report.failed() : ""));
+        } catch (IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage(), 300), null, null, false);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 媒体拉取失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /**
      * 守卫:只允许单条只读语句。拒绝时携带被拒内容、规则与正确示例。
      */
     static String guardSql(String sql) {
@@ -920,28 +998,49 @@ class ChatToolExecutor {
      * 带大小上限的流式下载:先看 Content-Length 快速拒绝,再边读边计数,
      * 超限立即中断(不再全量进内存后才判断——大视频会把堆打爆)。
      *
+     * <p>链路自动选择(2026-09-17 晚):目标属于中继域名时走
+     * {@link RelayMediaRouter} 重写——在家自动走内网 8902(快一个量级),
+     * 失败立即回退公网。此前 import 单文件下载没接路由器,「在家下载相册」
+     * 走的是公网绕行路径。
+     *
      * @param url      下载地址
      * @param maxBytes 允许的最大字节数
      * @return 文件字节
      * @throws IllegalArgumentException 超限或下载失败(消息面向用户可读)
      */
     private byte[] downloadBounded(String url, long maxBytes) throws Exception {
+        String effective = relayMediaRouter == null ? url : relayMediaRouter.preferLan(url);
+        try {
+            return downloadBoundedDirect(effective, url, maxBytes);
+        } catch (Exception e) {
+            if (!effective.equals(url) && relayMediaRouter != null) {
+                relayMediaRouter.reportLanFailure();
+                log.info("局域网下载失败,回退公网: {} ({})", url, e.getMessage());
+                return downloadBoundedDirect(url, url, maxBytes);
+            }
+            throw e;
+        }
+    }
+
+    /** 单次下载(不做链路选择);displayUrl 仅用于错误消息。 */
+    private byte[] downloadBoundedDirect(String effective, String displayUrl, long maxBytes) throws Exception {
         java.net.http.HttpClient.Builder cb = java.net.http.HttpClient.newBuilder()
+                .version(java.net.http.HttpClient.Version.HTTP_1_1) // 明文链路(局域网 8902)防 h2c 升级探测
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
-        java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder.addressFor(url);
+        java.net.InetSocketAddress proxyAddr = com.nora.common.http.ProxySettingsHolder.addressFor(effective);
         if (proxyAddr != null) {
             cb.proxy(java.net.ProxySelector.of(proxyAddr));
         }
         java.net.http.HttpResponse<java.io.InputStream> resp = cb.build().send(
                 java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(url))
+                        .uri(java.net.URI.create(effective))
                         .timeout(Duration.ofSeconds(120))
                         .header("User-Agent", "Nora-Agent/1.0")
                         .GET().build(),
                 java.net.http.HttpResponse.BodyHandlers.ofInputStream());
         if (resp.statusCode() >= 400) {
-            throw new IllegalArgumentException("下载失败 HTTP " + resp.statusCode() + "(" + Texts.abbreviate(url, 100) + ")");
+            throw new IllegalArgumentException("下载失败 HTTP " + resp.statusCode() + "(" + Texts.abbreviate(displayUrl, 100) + ")");
         }
         long declared = resp.headers().firstValueAsLong("Content-Length").orElse(-1);
         if (declared > maxBytes) {

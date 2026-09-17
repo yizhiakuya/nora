@@ -280,6 +280,13 @@ class ToolStepEmitter {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, p1),
                             description, null, action);
                 }
+                case "fetch_media" -> {
+                    // 展示目标文件夹(无则 imports);审批卡与折叠行都显示它
+                    String folder = node.path("folder").asText(null);
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null,
+                            folder == null || folder.isBlank() ? "imports" : folder),
+                            description, null, action);
+                }
                 case "manage_skill", "manage_mcp" -> {
                     // read/update/remove 用 target(名称或 id);create/register 用 name
                     String target = node.path("target").asText(null);
@@ -329,6 +336,7 @@ class ToolStepEmitter {
             case "manage_skill" -> "技能管理";
             case "manage_mcp" -> "MCP 服务器管理";
             case "run_command" -> "运行命令";
+            case "fetch_media" -> "拉取媒体文件";
             default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
         };
     }
@@ -348,7 +356,7 @@ class ToolStepEmitter {
             return input.target() == null ? "?" : input.target();
         }
         if ("manage_workspace".equals(name) || "manage_skill".equals(name) || "manage_mcp".equals(name)
-                || "run_command".equals(name)) {
+                || "run_command".equals(name) || "fetch_media".equals(name)) {
             return (input.target() == null ? "?" : input.target().toLowerCase())
                     + "#" + (input.limit() == null ? "" : input.limit());
         }

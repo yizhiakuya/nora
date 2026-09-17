@@ -16,17 +16,28 @@ class ChatToolsSpec {
     private final AgentSkillService agentSkillService;
     private final McpServerService mcpServerService;
     private final TerminalService terminalService;
+    private final MediaFetchService mediaFetchService;
 
     ChatToolsSpec(ObjectMapper objectMapper,
                   AgentWorkspaceService agentWorkspaceService,
                   AgentSkillService agentSkillService,
                   McpServerService mcpServerService,
                   TerminalService terminalService) {
+        this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService, null);
+    }
+
+    ChatToolsSpec(ObjectMapper objectMapper,
+                  AgentWorkspaceService agentWorkspaceService,
+                  AgentSkillService agentSkillService,
+                  McpServerService mcpServerService,
+                  TerminalService terminalService,
+                  MediaFetchService mediaFetchService) {
         this.objectMapper = objectMapper;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
         this.mcpServerService = mcpServerService;
         this.terminalService = terminalService;
+        this.mediaFetchService = mediaFetchService;
     }
 
     /** OpenAI tools 数组:受控 SQL + 服务日志读取。 */
@@ -320,6 +331,53 @@ class ChatToolsSpec {
         ArrayNode wsRequired = wsParams.putArray("required");
         wsRequired.add("action");
         tools.add(wsTool);
+        }
+
+        // 批量媒体拉取:把手机相册(或任意 MCP 媒体的)一批文件一次调用下载到
+        // 工作区文件夹。**「把相册整理出来/备份到本地」类任务必须用它**——
+        // 不要对成百上千个 URL 逐个跑 run_command 下载(实测:407 个文件要 400+
+        // 轮调用,且极易触发远端防护)。风险:区内落盘=LOW(与 import 同级)。
+        if (mediaFetchService != null && mcpServerService != null) {
+        ObjectNode fmTool = objectMapper.createObjectNode();
+        fmTool.put("type", "function");
+        ObjectNode fmFn = fmTool.putObject("function");
+        fmFn.put("name", "fetch_media");
+        fmFn.put("description", "批量拉取媒体文件到工作区(从已注册的媒体 MCP 服务器,如手机相册):"
+                + "自动调 photos_export/photos_search 拿清单,并发下载到指定文件夹,链路自动选优(在家走局域网)。"
+                + "**「把最近一个月的相册整理出来」「把这批照片存到工作区」这类批量任务必须用本工具一次完成**——"
+                + "不要用 run_command 逐个 URL 下载(几百个文件要几百轮,且远端防护可能封 IP)。"
+                + "文件落在工作区指定 folder 下(用户可在「文件」页的「Agent 工作区」里浏览);已存在的文件自动跳过,可安全重跑续传。"
+                + "示例:{\"server\": \"phone\", \"from\": \"2026-08-17\", \"to\": \"2026-09-17\", \"folder\": \"photos/2026-08\", \"quality\": \"high\"}");
+        ObjectNode fmParams = fmFn.putObject("parameters");
+        fmParams.put("type", "object");
+        fmParams.put("additionalProperties", false);
+        ObjectNode fmProps = fmParams.putObject("properties");
+        ObjectNode fmServerProp = fmProps.putObject("server");
+        fmServerProp.put("type", "string");
+        fmServerProp.put("description", "媒体 MCP 服务器名(默认 phone;以 manage_mcp list 的名称或 mcp__<名>__ 前缀为准)");
+        ObjectNode fmFromProp = fmProps.putObject("from");
+        fmFromProp.put("type", "string");
+        fmFromProp.put("description", "起始时间(ISO 8601,如 2026-08-17),含;不传=不限");
+        ObjectNode fmToProp = fmProps.putObject("to");
+        fmToProp.put("type", "string");
+        fmToProp.put("description", "结束时间(ISO 8601),含;不传=不限");
+        ObjectNode fmAlbumProp = fmProps.putObject("album");
+        fmAlbumProp.put("type", "string");
+        fmAlbumProp.put("description", "相册名(以 albums_list 返回的真实名称为准,如 Camera/Screenshots);不传=全部相册。"
+                + "**不要传「全部」「all」这类字面值**——会被当成不存在的相册名导致 0 条");
+        ObjectNode fmTypeProp = fmProps.putObject("type");
+        fmTypeProp.put("type", "string");
+        fmTypeProp.put("description", "photo / video / all(默认 all)");
+        ObjectNode fmFolderProp = fmProps.putObject("folder");
+        fmFolderProp.put("type", "string");
+        fmFolderProp.put("description", "工作区目标文件夹(相对路径,如 photos/2026-08);不传=imports/");
+        ObjectNode fmQualityProp = fmProps.putObject("quality");
+        fmQualityProp.put("type", "string");
+        fmQualityProp.put("description", "high=图片取原片(归档推荐);不传=手机按网络自动出图。视频始终原片");
+        ObjectNode fmDescProp = fmProps.putObject("description");
+        fmDescProp.put("type", "string");
+        fmDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
+        tools.add(fmTool);
         }
 
         // 技能管理:目录已在系统提示注入,read 拉全文遵循;create/update 让 agent

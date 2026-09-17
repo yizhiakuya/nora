@@ -394,6 +394,69 @@ public class AgentWorkspaceService {
     }
 
     /**
+     * 流式写入任意路径(批量媒体拉取用,2026-09-17)。
+     *
+     * <p>与 {@link #writeBinaryAny} 的区别:内容从 {@link java.io.InputStream}
+     * 边读边写盘(先写 {@code .part} 临时文件,成功后原子移动),全程不整读进
+     * 内存——几百 MB 的视频用它才不会把堆打爆。路径解析与系统目录防呆同
+     * writeBinaryAny(相对=工作区内,绝对=整机)。
+     *
+     * @param path     目标路径
+     * @param in       内容流(调用方负责关闭)
+     * @param maxBytes 单文件上限(超出即中断并清理 .part)
+     * @return 实际写入字节数
+     */
+    public long writeStreamAny(String path, java.io.InputStream in, long maxBytes) {
+        if (in == null) {
+            throw new IllegalArgumentException("内容流为空");
+        }
+        Path file = resolveAny(path).path();
+        guardSystemPath(file, "写入");
+        if (Files.isDirectory(file)) {
+            throw new IllegalArgumentException("目标是目录,不能写入: " + file);
+        }
+        Path part = file.resolveSibling(file.getFileName() + ".part-" + System.nanoTime());
+        try {
+            Files.createDirectories(file.getParent());
+            long total = 0;
+            try (java.io.OutputStream out = Files.newOutputStream(part)) {
+                byte[] buf = new byte[128 * 1024];
+                int n;
+                while ((n = in.read(buf)) >= 0) {
+                    total += n;
+                    if (total > maxBytes) {
+                        throw new IllegalArgumentException("文件超过 " + (maxBytes / 1024 / 1024)
+                                + "MB 上限,已中断下载");
+                    }
+                    out.write(buf, 0, n);
+                }
+            }
+            // 原子移动(同目录内);平台不支持时退化为普通替换移动
+            try {
+                Files.move(part, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException amns) {
+                Files.move(part, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            return total;
+        } catch (IOException e) {
+            deleteQuietly(part);
+            throw new IllegalArgumentException("写入失败: " + e.getMessage());
+        } catch (RuntimeException e) {
+            deleteQuietly(part);
+            throw e;
+        }
+    }
+
+    private static void deleteQuietly(Path p) {
+        try {
+            Files.deleteIfExists(p);
+        } catch (IOException ignored) {
+            // 清理失败不掩盖原始错误
+        }
+    }
+
+    /**
      * 读取工作区文件的原始字节(图片等二进制预览用)。
      *
      * <p>文本读取(read)会拒绝二进制;图片导入工作区后,「文件」页里的

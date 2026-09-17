@@ -117,7 +117,11 @@ public class ChatOrchestrationService {
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     com.nora.common.http.ProxyProperties proxyProperties,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
-                                    GalleryPrefetcher galleryPrefetcher) {
+                                    GalleryPrefetcher galleryPrefetcher,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    MediaFetchService mediaFetchService,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    RelayMediaRouter relayMediaRouter) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
@@ -135,13 +139,14 @@ public class ChatOrchestrationService {
         this.agentSkillService = agentSkillService;
         this.terminalService = terminalService;
         this.toolsSpecBuilder = new ChatToolsSpec(objectMapper, agentWorkspaceService, agentSkillService,
-                mcpServerService, terminalService);
+                mcpServerService, terminalService, mediaFetchService);
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         this.galleryPrefetcher = galleryPrefetcher;
         this.toolExecutor = new ChatToolExecutor(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient,
                 containerControlClient, dataSourceManageClient, serviceManageClient, fileToolClient,
-                mcpServerService, terminalService, agentWorkspaceService, agentSkillService, galleryPrefetcher);
+                mcpServerService, terminalService, agentWorkspaceService, agentSkillService, galleryPrefetcher,
+                mediaFetchService, relayMediaRouter);
         this.capabilityRegistry = new ModelCapabilityRegistry();
         this.stepEmitter = new ToolStepEmitter(objectMapper, approvalService, toolExecutor, capabilityRegistry);
         this.upstreamClient = new UpstreamLlmClient(objectMapper, capabilityRegistry);
@@ -157,7 +162,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null);
+                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null);
     }
 
     /** 测试入口:显式最大工具轮数,无 provider store。 */
@@ -168,7 +173,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null);
+                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null);
     }
 
     /**

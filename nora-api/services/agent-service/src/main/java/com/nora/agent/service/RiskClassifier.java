@@ -88,6 +88,14 @@ final class RiskClassifier {
             // 真正的防线是审批卡完整展示命令 + 用户档位选择。
             return Risk.HIGH;
         }
+        if ("fetch_media".equals(toolName)) {
+            // 批量媒体拉取:有出站请求 + 落盘,但目标在**工作区内**
+            // (与 manage_workspace import 同语义:区内落盘 LOW,不打断
+            // 「把相册整理进来」这类明确用户意图;区外路径=HIGH 跟随档位)。
+            // folder 字段走与 workspace 相同的区外判定。
+            String folder = extractStringField(argsJson, "folder");
+            return isOutsideWorkspace(folder) ? Risk.HIGH : Risk.LOW;
+        }
         if (toolName != null && toolName.startsWith("mcp__")) {
             // MCP 挂载工具:外部服务器能力未知,一律 HIGH——ASSIST 档询问、
             // FULL 档放行、无人值守通道按设计放行(见 CLAUDE.md 高风险工具节)
