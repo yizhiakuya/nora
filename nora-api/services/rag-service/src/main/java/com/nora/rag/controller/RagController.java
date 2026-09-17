@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -264,6 +265,27 @@ public class RagController {
 
     /** POST /api/rag/docs/delete body. */
     public record DeleteRequest(List<Long> ids) {
+    }
+
+    // ---------- 文件生命周期联动(2026-09-17) ----------
+
+    /**
+     * 文件删除/恢复/永久删除时,联动处理其知识库文档。
+     *
+     * <p>由 file-service 在文件生命周期事件上调用(内部端点):
+     * {@code mode=soft}(软删,文件进回收站)/ {@code restore}(恢复)/
+     * {@code purge}(永久删除)。幂等,按 source='file' + source_id 匹配。
+     */
+    @PostMapping("/docs/by-file/{fileId}")
+    public ApiResponse<Integer> byFile(@PathVariable long fileId,
+                                       @RequestParam("mode") String mode) {
+        int affected = switch (mode) {
+            case "soft" -> knowledgeDocService.softDeleteByFileId(fileId);
+            case "restore" -> knowledgeDocService.restoreByFileId(fileId);
+            case "purge" -> knowledgeDocService.purgeByFileId(fileId);
+            default -> throw new BusinessException(400, "mode 必须是 soft/restore/purge,收到: " + mode);
+        };
+        return ApiResponse.ok(affected);
     }
 
     /** Delete result; {@code deleted} counts rows actually removed. */

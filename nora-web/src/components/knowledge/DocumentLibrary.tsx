@@ -223,6 +223,17 @@ export function DocumentLibrary() {
                           {detailLoading === doc.id && (
                             <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
                           )}
+                          {/* 来源文件:跳转文件中心(预览原文件)——知识库与文件系统一体 */}
+                          {doc.source === "file" && doc.sourceId != null && (
+                            <a
+                              href={`/files?open=${doc.sourceId}`}
+                              className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline shrink-0"
+                              title="在文件中心查看原文件"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              原文件
+                            </a>
+                          )}
                         </div>
                       </td>
                       <td className="p-3 text-muted-foreground text-xs tabular-nums">{doc.chunks}</td>

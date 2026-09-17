@@ -75,6 +75,8 @@ export interface KnowledgeDoc {
   updatedAt: string;
   /** 清洗质量评分 0-100 */
   quality: number;
+  /** 来源文件 id(source='file' 时;可跳转文件中心预览)。 */
+  sourceId?: number | null;
 }
 
 /** 索引统计 */

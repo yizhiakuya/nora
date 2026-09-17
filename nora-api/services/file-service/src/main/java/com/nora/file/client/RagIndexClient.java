@@ -56,4 +56,31 @@ public class RagIndexClient {
     /** Request body for {@code POST /api/rag/index}. */
     record IndexRequest(Long fileId) {
     }
+
+    /**
+     * 文件生命周期联动(2026-09-17):通知 rag-service 软删/恢复/永久删除
+     * 该文件对应的知识库文档。fire-and-forget——rag 不可达不阻断文件操作
+     * (数据一致性可稍后人工修复,但用户操作必须成功)。
+     *
+     * @param fileId 文件 id
+     * @param mode   soft(文件删除)/ restore(回收站恢复)/ purge(永久删除)
+     */
+    @Async
+    public void notifyLifecycleAsync(long fileId, String mode) {
+        try {
+            RestClient.create(ragBaseUrl)
+                    .post()
+                    .uri("/api/rag/docs/by-file/{fileId}?mode={mode}", fileId, mode)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::isError, (req, res) -> {
+                        String body = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                        log.warn("rag-service rejected lifecycle {} for file {} (status {}): {}",
+                                mode, fileId, res.getStatusCode(), body);
+                    })
+                    .toBodilessEntity();
+            log.info("Notified rag-service: file {} lifecycle={}", fileId, mode);
+        } catch (Exception ex) {
+            log.error("Failed to notify rag-service lifecycle {} for file {}: {}", mode, fileId, ex.getMessage());
+        }
+    }
 }

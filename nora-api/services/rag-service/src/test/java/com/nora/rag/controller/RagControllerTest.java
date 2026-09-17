@@ -153,7 +153,7 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
 
     private static KnowledgeDocService.KnowledgeDocView docView(long id, String name) {
         return new KnowledgeDocService.KnowledgeDocView(
-                id, name, "file", 1, "indexed", "1 KB", "2026-09-10 10:00", 0);
+                id, name, "file", 1, "indexed", "1 KB", "2026-09-10 10:00", 0, null);
     }
 
     @Test
@@ -207,7 +207,7 @@ try { controller.search(new RagController.SearchBody("q", 8)); } catch (Exceptio
     void docsWrapsListInEnvelope() {
         List<KnowledgeDocService.KnowledgeDocView> docs = List.of(
                 new KnowledgeDocService.KnowledgeDocView(1, "a.md", "file", 3, "indexed",
-                        "1 KB", "2026-09-04 10:00", 80));
+                        "1 KB", "2026-09-04 10:00", 80, null));
         when(knowledgeDocService.listDocs()).thenReturn(docs);
 
         ApiResponse<List<KnowledgeDocService.KnowledgeDocView>> response = controller.docs();

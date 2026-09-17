@@ -70,12 +70,19 @@ public class FileController {
     /**
      * Deletes files by ids and removes the backing files from disk.
      *
+     * <p>联动(2026-09-17):同步通知 rag-service 软删对应知识库文档——
+     * 删除的文件不应继续被 AI 检索到。
+     *
      * @param ids comma-separated id list (required)
      * @return {@code ok(null)}
      */
     @DeleteMapping
     public ApiResponse<Void> delete(@RequestParam("ids") String ids) {
-        fileStorageService.delete(parseIds(ids));
+        List<Long> idList = parseIds(ids);
+        fileStorageService.delete(idList);
+        for (Long id : idList) {
+            ragIndexClient.notifyLifecycleAsync(id, "soft");
+        }
         return ApiResponse.ok();
     }
 
@@ -150,17 +157,22 @@ public class FileController {
         return ApiResponse.ok(fileStorageService.listTrash());
     }
 
-    /** 从回收站恢复文件(回到根目录)。 */
+    /** 从回收站恢复文件(回到根目录;联动恢复知识库文档)。 */
     @PostMapping("/trash/restore")
     public ApiResponse<Integer> restore(@RequestBody MoveRequest request) {
         if (request == null || request.ids() == null || request.ids().isEmpty()) {
             throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
         }
-        return ApiResponse.ok(fileStorageService.restore(request.ids()));
+        int restored = fileStorageService.restore(request.ids());
+        for (Long id : request.ids()) {
+            ragIndexClient.notifyLifecycleAsync(id, "restore");
+        }
+        return ApiResponse.ok(restored);
     }
 
     /**
      * 永久删除(回收站清空):数据库行 + 磁盘文件一并删除。不可恢复。
+     * 联动永久删除知识库文档与 chunk。
      */
     @DeleteMapping("/trash")
     public ApiResponse<Integer> purge(@RequestParam("ids") String ids) {
@@ -168,7 +180,11 @@ public class FileController {
         if (idList.isEmpty()) {
             throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
         }
-        return ApiResponse.ok(fileStorageService.purge(idList));
+        int purged = fileStorageService.purge(idList);
+        for (Long id : idList) {
+            ragIndexClient.notifyLifecycleAsync(id, "purge");
+        }
+        return ApiResponse.ok(purged);
     }
 
     /**

@@ -29,7 +29,7 @@ public class KnowledgeDocService {
     /** All knowledge docs, newest first, shaped for the KnowledgeDoc frontend type. */
     public List<KnowledgeDocView> listDocs() {
         return jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
+                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
                 (rs, rowNum) -> new KnowledgeDocView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -38,7 +38,8 @@ public class KnowledgeDocService {
                         rs.getString("status"),
                         rs.getString("size"),
                         format(rs.getTimestamp("updated_at")),
-                        rs.getInt("quality")
+                        rs.getInt("quality"),
+                        rs.getObject("source_id") == null ? null : rs.getLong("source_id")
                 )
         );
     }
@@ -46,7 +47,7 @@ public class KnowledgeDocService {
     /** Single doc by id (used by the index endpoint response). */
     public KnowledgeDocView getDoc(long id) {
         List<KnowledgeDocView> docs = jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
+                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new KnowledgeDocView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -55,7 +56,8 @@ public class KnowledgeDocService {
                         rs.getString("status"),
                         rs.getString("size"),
                         format(rs.getTimestamp("updated_at")),
-                        rs.getInt("quality")
+                        rs.getInt("quality"),
+                        rs.getObject("source_id") == null ? null : rs.getLong("source_id")
                 ),
                 id
         );
@@ -104,6 +106,72 @@ public class KnowledgeDocService {
                     distinct);
         }
         return updated;
+    }
+
+    // ---------- 文件生命周期联动(2026-09-17) ----------
+    //
+    // 文件中心删除文件后,其索引进 RAG 的文档不应继续可检索(用户会困惑
+    // 「我删了它 AI 怎么还知道」)。file-service 在删除/恢复/永久删除时
+    // 调用这里,按 source='file' + source_id=fileId 联动处理。
+
+    /**
+     * 文件删除 → 联动软删其知识库文档(按 fileId)。
+     *
+     * @return 软删的文档数(0 = 该文件没索引过)
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public int softDeleteByFileId(long fileId) {
+        List<Long> docIds = jdbcTemplate.queryForList(
+                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ? AND deleted_at IS NULL",
+                Long.class, fileId);
+        if (docIds.isEmpty()) {
+            return 0;
+        }
+        String in = docIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE id IN (" + in + ") AND deleted_at IS NULL");
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN (" + in + ") AND deleted_at IS NULL");
+        return updated;
+    }
+
+    /**
+     * 文件恢复(回收站) → 联动恢复其知识库文档。
+     *
+     * @return 恢复的文档数
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public int restoreByFileId(long fileId) {
+        List<Long> docIds = jdbcTemplate.queryForList(
+                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ? AND deleted_at IS NOT NULL",
+                Long.class, fileId);
+        if (docIds.isEmpty()) {
+            return 0;
+        }
+        String in = docIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET deleted_at = NULL WHERE id IN (" + in + ") AND deleted_at IS NOT NULL");
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET deleted_at = NULL WHERE doc_id IN (" + in + ") AND deleted_at IS NOT NULL");
+        return updated;
+    }
+
+    /**
+     * 文件永久删除 → 联动永久删除其知识库文档与 chunk(不可恢复)。
+     *
+     * @return 永久删除的文档数
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public int purgeByFileId(long fileId) {
+        List<Long> docIds = jdbcTemplate.queryForList(
+                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ?",
+                Long.class, fileId);
+        if (docIds.isEmpty()) {
+            return 0;
+        }
+        String in = docIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        jdbcTemplate.update("DELETE FROM schema_rag.knowledge_chunk WHERE doc_id IN (" + in + ")");
+        return jdbcTemplate.update("DELETE FROM schema_rag.knowledge_doc WHERE id IN (" + in + ")");
     }
 
     /**
@@ -215,7 +283,9 @@ public class KnowledgeDocService {
             String status,
             String size,
             String updatedAt,
-            int quality
+            int quality,
+            /** 来源文件 id(source='file' 时;前端可跳转文件中心)。 */
+            Long sourceId
     ) {
     }
 

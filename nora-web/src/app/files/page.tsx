@@ -69,6 +69,33 @@ export default function FilesPage() {
     filesApi.listFolders().then(setFolders).catch(() => { /* 文件夹不可用时留空 */ });
   }, [syncFile]);
 
+  // 深链:?open=<fileId>(知识库「原文件」跳转)→ 拉取该文件并打开预览
+  useEffect(() => {
+    if (!USE_BACKEND) return;
+    const openId = new URLSearchParams(window.location.search).get("open");
+    if (!openId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { filesApi: api } = await import("@/lib/services/filesApi");
+        const all = await api.listFiles();
+        const target = all.find((f) => String(f.id) === openId);
+        if (!target || cancelled) return;
+        // 文件在文件夹内时先导航到所在文件夹,让列表与预览上下文一致
+        if (target.folderId != null) {
+          const folderList = await api.listFolders();
+          const folder = folderList.find((fo) => fo.id === target.folderId);
+          if (folder) setCurrentFolder(folder);
+        }
+        addRecent(target.name, target.type);
+        void viewer.open(target);
+      } catch { /* 深链失败静默(正常列表仍可用) */ }
+    })();
+    return () => { cancelled = true; };
+    // 仅首挂载执行一次;viewer/addRecent 为稳定引用
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** 当前视图中的文件(根视图=无归属文件;文件夹内=该文件夹文件)。 */
   const inRootView = workspaceDir === null && !mediaCacheOpen && !trashOpen && currentFolder === null;
   const viewFiles = currentFolder === null
