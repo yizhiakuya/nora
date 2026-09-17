@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Images, Play } from "lucide-react";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
-import { mediaCacheUrl } from "@/lib/mediaCache";
+import { mediaCacheUrl, videoStreamVariant } from "@/lib/mediaCache";
 
 /**
  * 画廊卡片：手机相册 MCP 的 photos_showcase 工具输出的结构化展示。
@@ -72,13 +72,17 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
   // 手机离线也能看已缓存内容(直连时每次 ~3.2s 且离线不可用)
   // lightboxIndex=null 表示关闭
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const lightboxImages = data.items.map((item) => ({
-    src: mediaCacheUrl(item.fullUrl ?? item.url),
-    thumb: mediaCacheUrl(item.url),
-    caption: item.caption,
-    alt: item.filename ?? `照片 ${item.id}`,
-    kind: item.type === "video" ? ("video" as const) : ("image" as const),
-  }));
+  const lightboxImages = data.items.map((item) => {
+    const full = item.fullUrl ?? item.url;
+    return {
+      // 视频走压缩流端点(/video,手机端按网络档位转码);图片走原图(content)
+      src: mediaCacheUrl(item.type === "video" ? videoStreamVariant(full) : full),
+      thumb: mediaCacheUrl(item.url),
+      caption: item.caption,
+      alt: item.filename ?? `照片 ${item.id}`,
+      kind: item.type === "video" ? ("video" as const) : ("image" as const),
+    };
+  });
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden max-w-2xl animate-in fade-in slide-in-from-bottom-1">

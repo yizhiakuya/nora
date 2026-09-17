@@ -23,3 +23,15 @@ export function mediaCacheUrl(url: string): string {
 export function thumbVariant(url: string): string {
   return url.replace(/\/content(\?|$)/, "/thumb$1");
 }
+
+/**
+ * 视频压缩流变体(2026-09-17):相册视频原片 ~17Mbps 经隧道播放费流量又卡,
+ * 手机端 /photo/{id}/video 端点会把视频转码到网络档位码率(H.264,~1/5-1/13 体积,
+ * 浏览器直放,结果按档位缓存)。
+ *
+ * 把原片 /content URL 改写为 /video——历史消息里持久化的画廊 JSON 是旧 URL,
+ * 渲染层统一改写,不必等消息重建。非相册地址(无 /photo/{id}/content 形态)原样返回。
+ */
+export function videoStreamVariant(url: string): string {
+  return url.replace(/(\/photo\/\d+\/)content(\?|$)/, "$1video$2");
+}
