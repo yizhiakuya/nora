@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { Search, FolderPlus, CloudUpload, Bot, HardDrive, Trash2 } from "lucide-react";
+import { Search, FolderPlus, CloudUpload, Bot, HardDrive, Trash2, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
-import { FileTable } from "@/components/files/FileTable";
+import { FileTable, BatchActionBar } from "@/components/files/FileTable";
+import { FileGrid } from "@/components/files/FileGrid";
 import { UploadModal } from "@/components/ui/custom/UploadModal";
 import { useSelection } from "@/hooks/useSelection";
 import { useSimulatedUpload } from "@/hooks/useUpload";
@@ -40,6 +41,15 @@ export default function FilesPage() {
   /** 排序:名称/大小/时间 × 升降序(前端排序,列表数据量级小)。 */
   const [sortBy, setSortBy] = useState<"name" | "size" | "date">("date");
   const [sortAsc, setSortAsc] = useState(false);
+  /** 视图模式:列表(默认)/ 网格;偏好持久化(刷新保持)。 */
+  const [viewMode, setViewMode] = useState<"list" | "grid">(() => {
+    if (typeof window === "undefined") return "list";
+    return (localStorage.getItem("nora-files-view") as "list" | "grid") || "list";
+  });
+  const switchView = (mode: "list" | "grid") => {
+    setViewMode(mode);
+    try { localStorage.setItem("nora-files-view", mode); } catch { /* 隐私模式等忽略 */ }
+  };
   /** 新建/重命名文件夹弹窗状态。 */
   const [folderDialog, setFolderDialog] = useState<{ mode: "create" } | { mode: "rename"; folder: BackendFolder } | null>(null);
   const [folderNameInput, setFolderNameInput] = useState("");
@@ -278,6 +288,55 @@ export default function FilesPage() {
     toast.success(`「${file.name}」已加入知识库`);
   };
 
+  /** 共享的文件夹行数据(列表/网格两视图共用同一来源与动作)。 */
+  const folderRowsData = currentFolder === null ? [
+    ...(currentFolder === null && !mediaCacheOpen ? [
+      {
+        name: "Agent 工作区",
+        description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
+        icon: Bot,
+        onOpen: () => setWorkspaceDir(""),
+      },
+      {
+        name: "媒体缓存",
+        description: "相册等远程媒体的本地副本(查看秒开、手机离线可看)",
+        icon: HardDrive,
+        onOpen: () => setMediaCacheOpen(true),
+      },
+      {
+        name: "回收站",
+        description: "已删除的文件（可恢复或彻底删除）",
+        icon: Trash2,
+        onOpen: () => setTrashOpen(true),
+      },
+    ] : []),
+    ...folders.map((folder) => ({
+      name: folder.name,
+      description: `${folder.fileCount} 个文件 · ${humanSize(folder.totalBytes)}`,
+      icon: undefined,
+      onOpen: () => setCurrentFolder(folder),
+      onRename: USE_BACKEND ? () => {
+        setFolderNameInput(folder.name);
+        setFolderDialog({ mode: "rename", folder });
+      } : undefined,
+      onDelete: USE_BACKEND ? () => void handleDeleteFolder(folder) : undefined,
+      // 拖拽文件到此文件夹 = 移动(拖拽整理的自然交互)
+      onDropFiles: USE_BACKEND ? (ids: number[]) => {
+        void (async () => {
+          try {
+            const moved = await filesApi.moveFiles(ids, folder.id);
+            toast.success(`已移动 ${moved} 个文件到「${folder.name}」`);
+            selection.clearSelection();
+            await syncFromBackend();
+            refreshFolders();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "移动失败");
+          }
+        })();
+      } : undefined,
+    })),
+  ] : [];
+
   /** 面包屑:根 / 用户文件夹(动态段)。 */
   const breadcrumbTail = currentFolder
     ? [{ label: currentFolder.name, isCurrent: true }]
@@ -380,6 +439,25 @@ export default function FilesPage() {
               <div className="flex items-center justify-between mb-4 animate-in fade-in gap-3 flex-wrap">
                 <h2 className="text-sm font-bold text-foreground">{currentFolder ? currentFolder.name : "所有文件"}</h2>
                 <div className="flex items-center gap-3">
+                  {/* 视图切换:列表 / 网格 */}
+                  <div className="flex items-center rounded-lg border border-border overflow-hidden">
+                    <button
+                      type="button"
+                      title="列表视图"
+                      onClick={() => switchView("list")}
+                      className={`p-1.5 transition-colors cursor-pointer ${viewMode === "list" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      <List className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title="网格视图"
+                      onClick={() => switchView("grid")}
+                      className={`p-1.5 transition-colors cursor-pointer ${viewMode === "grid" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                   {/* 排序控件:名称/大小/时间,点击切换升降序 */}
                   <div className="flex items-center gap-1 text-xs">
                     {([
@@ -410,77 +488,62 @@ export default function FilesPage() {
                 </div>
               </div>
 
-              <FileTable
-                files={filteredFiles}
+              {/* 批量操作栏(两视图共用;网格视图此前缺失) */}
+              <BatchActionBar
                 selection={selection}
-                onDeleteSelected={handleDeleteSelected}
                 onDownloadSelected={handleDownloadSelected}
                 onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
-                onOpen={(f) => { addRecent(f.name, f.type); void viewer.open(f, filteredFiles); }}
-                onIndex={handleIndexFile}
-                onDownload={(f) => handleDownloadOne(f)}
-                onRename={USE_BACKEND ? handleRenameFile : undefined}
-                onMove={USE_BACKEND ? handleMoveOne : undefined}
-                onDelete={(f) => {
-                  if (USE_BACKEND) {
-                    filesApi.deleteFiles([f.id])
-                      .then(() => { toast.success("已删除"); void syncFromBackend(); refreshFolders(); })
-                      .catch((e: Error) => toast.error(`删除失败：${e.message}`));
-                    return;
-                  }
-                  deleteFiles([f.id]);
-                  toast.success("已删除");
-                }}
-                folderRows={currentFolder === null ? [
-                  ...(currentFolder === null && !mediaCacheOpen ? [
-                    {
-                      name: "Agent 工作区",
-                      description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
-                      icon: Bot,
-                      onOpen: () => setWorkspaceDir(""),
-                    },
-                    {
-                      name: "媒体缓存",
-                      description: "相册等远程媒体的本地副本(查看秒开、手机离线可看)",
-                      icon: HardDrive,
-                      onOpen: () => setMediaCacheOpen(true),
-                    },
-                    {
-                      name: "回收站",
-                      description: "已删除的文件（可恢复或彻底删除）",
-                      icon: Trash2,
-                      onOpen: () => setTrashOpen(true),
-                    },
-                  ] : []),
-                  ...folders.map((folder) => ({
-                    name: folder.name,
-                    description: `${folder.fileCount} 个文件 · ${humanSize(folder.totalBytes)} · 点击进入`,
-                    icon: undefined,
-                    onOpen: () => setCurrentFolder(folder),
-                    onRename: USE_BACKEND ? () => {
-                      setFolderNameInput(folder.name);
-                      setFolderDialog({ mode: "rename", folder });
-                    } : undefined,
-                    onDelete: USE_BACKEND ? () => void handleDeleteFolder(folder) : undefined,
-                    // 拖拽文件到此文件夹行 = 移动(拖拽整理的自然交互)
-                    onDropFiles: USE_BACKEND ? (ids: number[]) => {
-                      void (async () => {
-                        try {
-                          const moved = await filesApi.moveFiles(ids, folder.id);
-                          toast.success(`已移动 ${moved} 个文件到「${folder.name}」`);
-                          selection.clearSelection();
-                          await syncFromBackend();
-                          refreshFolders();
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "移动失败");
-                        }
-                      })();
-                    } : undefined,
-                  })),
-                ] : []}
+                onDeleteSelected={handleDeleteSelected}
               />
+
+              {viewMode === "list" ? (
+                <FileTable
+                  files={filteredFiles}
+                  selection={selection}
+                  onDeleteSelected={handleDeleteSelected}
+                  onDownloadSelected={handleDownloadSelected}
+                  onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
+                  onOpen={(f) => { addRecent(f.name, f.type); void viewer.open(f, filteredFiles); }}
+                  onIndex={handleIndexFile}
+                  onDownload={(f) => handleDownloadOne(f)}
+                  onRename={USE_BACKEND ? handleRenameFile : undefined}
+                  onMove={USE_BACKEND ? handleMoveOne : undefined}
+                  onDelete={(f) => {
+                    if (USE_BACKEND) {
+                      filesApi.deleteFiles([f.id])
+                        .then(() => { toast.success("已删除"); void syncFromBackend(); refreshFolders(); })
+                        .catch((e: Error) => toast.error(`删除失败：${e.message}`));
+                      return;
+                    }
+                    deleteFiles([f.id]);
+                    toast.success("已删除");
+                  }}
+                  folderRows={folderRowsData}
+                />
+              ) : (
+                <FileGrid
+                  files={filteredFiles}
+                  selection={selection}
+                  onOpen={(f) => { addRecent(f.name, f.type); void viewer.open(f, filteredFiles); }}
+                  onDownload={(f) => handleDownloadOne(f)}
+                  onRename={USE_BACKEND ? handleRenameFile : undefined}
+                  onMove={USE_BACKEND ? handleMoveOne : undefined}
+                  onDelete={(f) => {
+                    if (USE_BACKEND) {
+                      filesApi.deleteFiles([f.id])
+                        .then(() => { toast.success("已删除"); void syncFromBackend(); refreshFolders(); })
+                        .catch((e: Error) => toast.error(`删除失败：${e.message}`));
+                      return;
+                    }
+                    deleteFiles([f.id]);
+                    toast.success("已删除");
+                  }}
+                  folderRows={folderRowsData}
+                />
+              )}
             </>
           )}
+
         </div>
       </div>
 

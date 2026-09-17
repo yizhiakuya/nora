@@ -63,31 +63,6 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
   const folders: FolderRow[] = folderRows ?? (folderRow ? [folderRow] : []);
   return (
     <>
-      {/* Batch Action Bar */}
-      {selection.hasSelection && (
-        <div className="mb-4 p-2 sm:p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
-          <div className="text-xs sm:text-sm font-medium text-blue-800 dark:text-blue-300">
-            已选择 {selection.selectedIds.length} 个文件
-          </div>
-          <div className="flex items-center gap-2">
-            {onDownloadSelected && (
-              <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onDownloadSelected}>
-                <Download className="w-3.5 h-3.5 mr-1" /> 下载{selection.selectedIds.length > 1 ? "（zip）" : ""}
-              </Button>
-            )}
-            {onMoveSelected && (
-              <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onMoveSelected}>
-                <FolderInput className="w-3.5 h-3.5 mr-1" /> 移动到…
-              </Button>
-            )}
-            <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={onDeleteSelected}>
-              <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50" onClick={selection.clearSelection}>取消选择</Button>
-          </div>
-        </div>
-      )}
-
       <div className="bg-card border border-border rounded-xl overflow-hidden overflow-x-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
         <table className="w-full text-left border-collapse min-w-[560px] table-fixed">
           {/* 列宽:文件名列自适应占满;其余固定窄列右对齐(元数据不抢主视觉)。
@@ -303,6 +278,43 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
         </table>
       </div>
     </>
+  );
+}
+
+
+/**
+ * 批量操作栏(2026-09-17 提取):列表/网格两视图共用,由页面级渲染
+ * (此前在 FileTable 内部,网格视图缺失批量操作)。
+ */
+export function BatchActionBar({ selection, onDownloadSelected, onMoveSelected, onDeleteSelected }: {
+  selection: FileSelection;
+  onDownloadSelected?: () => void;
+  onMoveSelected?: () => void;
+  onDeleteSelected: () => void;
+}) {
+  if (!selection.hasSelection) return null;
+  return (
+    <div className="mb-4 p-2 sm:p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+      <div className="text-xs sm:text-sm font-medium text-blue-800 dark:text-blue-300">
+        已选择 {selection.selectedIds.length} 个文件
+      </div>
+      <div className="flex items-center gap-2">
+        {onDownloadSelected && (
+          <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onDownloadSelected}>
+            <Download className="w-3.5 h-3.5 mr-1" /> 下载{selection.selectedIds.length > 1 ? "（zip）" : ""}
+          </Button>
+        )}
+        {onMoveSelected && (
+          <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onMoveSelected}>
+            <FolderInput className="w-3.5 h-3.5 mr-1" /> 移动到…
+          </Button>
+        )}
+        <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={onDeleteSelected}>
+          <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
+        </Button>
+        <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50" onClick={selection.clearSelection}>取消选择</Button>
+      </div>
+    </div>
   );
 }
 

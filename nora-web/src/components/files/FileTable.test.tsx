@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import {describe, it, vi} from "vitest";
-import { FileTable } from "./FileTable";
+import { FileTable, BatchActionBar } from "./FileTable";
 import { FileItem } from "@/types";
 import { useSelection } from "@/hooks/useSelection";
 import { File as FileIcon } from "lucide-react";
@@ -20,7 +20,12 @@ interface TestHarnessProps {
 
 function FileTableHarness({ fileList = files, onOpen = () => {}, onDeleteSelected = () => {} }: TestHarnessProps) {
   const selection = useSelection(fileList, "id");
-  return <FileTable files={fileList} selection={selection} onDeleteSelected={onDeleteSelected} onOpen={onOpen} />;
+  return (
+    <>
+      <BatchActionBar selection={selection} onDeleteSelected={onDeleteSelected} />
+      <FileTable files={fileList} selection={selection} onDeleteSelected={onDeleteSelected} onOpen={onOpen} />
+    </>
+  );
 }
 
 describe("FileTable", () => {
