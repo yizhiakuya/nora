@@ -62,9 +62,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const files = useFiles((s) => s.files);
   const docs = useKnowledgeDocs((s) => s.docs);
   const mcpServers = useMcpServers((s) => s.servers);
-  const mcpToolsByServer = useMcpServers((s) => s.toolsByServer);
   const syncMcpServers = useMcpServers((s) => s.syncServers);
-  const loadMcpTools = useMcpServers((s) => s.loadTools);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** 📎 上传中(禁用按钮防重复) */
@@ -150,17 +148,10 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
     void syncMcpServers();
   }, [mentionOpen, mention?.trigger, syncMcpServers]);
 
-  useEffect(() => {
-    if (!mentionOpen || mention?.trigger !== "/" || !USE_BACKEND) return;
-    for (const s of mcpServers) {
-      if (s.enabled && s.toolCount > 0) void loadMcpTools(s.id);
-    }
-  }, [mentionOpen, mention?.trigger, mcpServers, loadMcpTools]);
-
   /**
    * 输入变化时探测光标前的触发符与查询串。
    * 三触发符各司其职(对齐 Claude Code/Codex 习惯):
-   *   @ = 文件中心文件; # = 知识库文档; / = 技能与 MCP 工具(斜杠命令语义)
+   *   @ = 文件中心文件; # = 知识库文档; / = 技能与 MCP 服务器(斜杠命令语义)
    * 触发符须位于行首/空白后;查询串遇空格即关闭(避免普通文本误触发)。
    */
   const detectMention = (value: string, caret: number) => {
@@ -203,17 +194,15 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
         push({ kind: "skill", id: s.id, name: s.name, hint: "技能" });
         if (items.length >= MENTION_MAX_ITEMS) return items;
       }
+      // MCP 以服务器为单位引用(总标题),不展开单个工具——工具名太多且随远端变化
       for (const server of mcpServers) {
-        if (!server.enabled) continue;
-        for (const tool of mcpToolsByServer[server.id] ?? []) {
-          const mounted = `mcp__${server.name}__${tool.name}`;
-          push({ kind: "mcp", id: server.id, name: tool.name, tool: mounted, hint: `MCP · ${server.name}` });
-          if (items.length >= MENTION_MAX_ITEMS) return items;
-        }
+        if (!server.enabled || server.toolCount <= 0) continue;
+        push({ kind: "mcp", id: server.id, name: server.name, hint: `MCP · ${server.toolCount} 个工具` });
+        if (items.length >= MENTION_MAX_ITEMS) return items;
       }
     }
     return items;
-  }, [mention, docs, skills, files, mcpServers, mcpToolsByServer]);
+  }, [mention, docs, skills, files, mcpServers]);
 
   // 查询变化时重置选中位
   useEffect(() => {
@@ -284,7 +273,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
               </div>
               <ul className="max-h-64 overflow-y-auto custom-scroll">
                 {mentionItems.map((item, i) => (
-                  <li key={`${item.kind}-${item.tool ?? item.id}`}>
+                  <li key={refKey(item)}>
                     <button
                       type="button"
                       onMouseDown={(e) => { e.preventDefault(); selectMention(item); }}

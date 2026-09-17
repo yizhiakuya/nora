@@ -149,25 +149,28 @@ export function McpManager({ listVersion }: { listVersion: number }) {
                   <div className="text-[11px] text-red-500/80 break-words line-clamp-2">{s.statusDetail}</div>
                 )}
 
-                <div className="flex items-center justify-between pt-1 border-t border-border/60">
-                  <button
-                    type="button"
-                    onClick={() => setToolsFor(s)}
-                    title="查看工具列表与详情"
-                    className="text-[11px] text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer inline-flex items-center gap-1"
-                  >
-                    {s.transport === "STDIO" ? "本地进程 (STDIO)" : s.transport === "SSE" ? "SSE" : "Streamable HTTP"}
-                    <span className="inline-flex items-center gap-0.5 underline decoration-dotted underline-offset-2">
-                      <Wrench className="w-3 h-3" />{s.toolCount} 个工具
-                    </span>
-                  </button>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground" disabled={busy} onClick={() => void handleRefresh(s)}>
-                      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} 测试连接
-                    </Button>
-                    <Button variant="ghost" size="icon" className="w-7 h-7 text-muted-foreground hover:text-destructive" title="删除" disabled={busy} onClick={() => handleDelete(s)}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                <div className="pt-2 border-t border-border/60 space-y-1.5">
+                  {/* 第一行:传输方式 + 工具数(点击看详情);第二行:操作按钮。窄卡片下不挤压 */}
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setToolsFor(s)}
+                      title="查看工具列表与详情"
+                      className="text-[11px] text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer inline-flex items-center gap-1.5 min-w-0 whitespace-nowrap"
+                    >
+                      <span className="truncate">{s.transport === "STDIO" ? "本地进程 (STDIO)" : s.transport === "SSE" ? "SSE" : "Streamable HTTP"}</span>
+                      <span className="inline-flex items-center gap-0.5 underline decoration-dotted underline-offset-2 shrink-0 tabular-nums">
+                        <Wrench className="w-3 h-3" />{s.toolCount} 个工具
+                      </span>
+                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground whitespace-nowrap" disabled={busy} onClick={() => void handleRefresh(s)}>
+                        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} 测试连接
+                      </Button>
+                      <Button variant="ghost" size="icon" className="w-7 h-7 text-muted-foreground hover:text-destructive" title="删除" disabled={busy} onClick={() => handleDelete(s)}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

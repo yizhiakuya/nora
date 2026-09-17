@@ -39,7 +39,7 @@ export function RefChip({ chatRef, onRemove }: { chatRef: ChatRef; onRemove?: (k
       className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[10px] font-medium border ${meta.cls}`}
       title={
         chatRef.kind === "mcp"
-          ? `MCP 工具引用 · ${chatRef.tool ?? ""}`
+          ? `MCP 服务器引用 · ${chatRef.name}(其工具优先使用)`
           : `${meta.label}引用 · ${chatRef.kind}_id=${chatRef.id}`
       }
     >

@@ -42,7 +42,7 @@ class MessageRefResolver {
     private static final Pattern SKILL_REF =
             Pattern.compile("^\\[引用技能\\]\\s*(.+?)\\s*\\(skill_id=(\\d+)\\)");
     private static final Pattern MCP_REF =
-            Pattern.compile("^\\[引用MCP工具\\]\\s*(.+?)\\s*\\(tool=(mcp__[a-zA-Z0-9_-]+)\\)");
+            Pattern.compile("^\\[引用MCP服务器\\]\\s*(.+?)\\s*\\(server_id=(\\d+)\\)");
 
     private final FileToolClient fileToolClient;
     private final RagRetrievalClient ragRetrievalClient;
@@ -55,12 +55,8 @@ class MessageRefResolver {
         this.agentSkillService = agentSkillService;
     }
 
-    /** 一条待注入引用(file/doc/skill id 或 mcp 工具全名)。 */
-    record Ref(String kind, long id, String name, String tool) {
-
-        Ref(String kind, long id, String name) {
-            this(kind, id, name, null);
-        }
+    /** 一条待注入引用(file/doc/skill/mcp 的实体 id)。 */
+    record Ref(String kind, long id, String name) {
     }
 
     /** 解析消息中的引用行;无引用返回空列表。 */
@@ -88,7 +84,7 @@ class MessageRefResolver {
             }
             m = MCP_REF.matcher(line);
             if (m.find()) {
-                out.add(new Ref("mcp", 0, m.group(1), m.group(2)));
+                out.add(new Ref("mcp", Long.parseLong(m.group(2)), m.group(1)));
             }
         }
         return out;
@@ -178,12 +174,12 @@ class MessageRefResolver {
     }
 
     /**
-     * MCP 工具引用:注入"优先调用该工具"的指令。
-     * 工具本体已在 toolsSpec 中挂载,这里只做优先级声明(不重复注入 schema)。
+     * MCP 服务器引用:注入"优先使用该服务器工具"的指令。
+     * 工具本体已在 toolsSpec 中挂载(mcp__server__*),这里只做优先级声明(不重复注入 schema)。
      */
     private List<CitationDto> resolveMcp(Ref ref) {
-        return List.of(new CitationDto(0L, ref.name(), "text", 0, 1.0,
-                "【用户指定的 MCP 工具】用户明确要求优先调用工具 " + ref.tool()
-                        + " 处理本请求;若该工具确实不适用,再考虑其他工具并说明原因。"));
+        return List.of(new CitationDto(ref.id(), ref.name(), "text", 0, 1.0,
+                "【用户指定的 MCP 服务器】用户要求优先使用「" + ref.name()
+                        + "」提供的工具(mcp__" + ref.name() + "__*)处理本请求;若这些工具确实不适用,再考虑其他工具并说明原因。"));
     }
 }

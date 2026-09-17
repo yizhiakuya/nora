@@ -1,6 +1,6 @@
 /**
- * 对话消息的引用条目(2026-09-17;2026-09-17 晚扩展技能/MCP 工具):
- * 附件/文件/知识库文档/技能/MCP 工具随消息发送。
+ * 对话消息的引用条目(2026-09-17;2026-09-17 晚扩展技能/MCP 服务器):
+ * 附件/文件/知识库文档/技能/MCP 服务器随消息发送。
  *
  * 设计:引用以固定格式的行追加在消息正文末尾——零后端契约改动,
  * 引用信息随 content 一起持久化(历史加载后仍可解析),agent 直接可读,
@@ -9,22 +9,20 @@
  */
 
 export interface ChatRef {
-  /** file=文件中心文件;doc=知识库文档;skill=指令型技能;mcp=MCP 挂载工具 */
+  /** file=文件中心文件;doc=知识库文档;skill=指令型技能;mcp=MCP 服务器 */
   kind: "file" | "doc" | "skill" | "mcp";
-  /** file/doc/skill:实体 id;mcp:serverId(仅展示用) */
+  /** 实体 id(mcp 为 serverId) */
   id: number;
-  /** 展示名(file/doc/skill 名称;mcp 为工具名) */
+  /** 展示名(mcp 为服务器名) */
   name: string;
   /** 文件大小(仅 file;展示用) */
   size?: string;
-  /** mcp:挂载工具全名(mcp__server__tool;后端按它定位) */
-  tool?: string;
 }
 
 const FILE_REF_RE = /^\[引用文件\]\s*(.+?)\s*\(file_id=(\d+)(?:,\s*([^)]+))?\)/;
 const DOC_REF_RE = /^\[引用知识库\]\s*(.+?)\s*\(doc_id=(\d+)\)/;
 const SKILL_REF_RE = /^\[引用技能\]\s*(.+?)\s*\(skill_id=(\d+)\)/;
-const MCP_REF_RE = /^\[引用MCP工具\]\s*(.+?)\s*\(tool=(mcp__[a-zA-Z0-9_-]+)\)/;
+const MCP_REF_RE = /^\[引用MCP服务器\]\s*(.+?)\s*\(server_id=(\d+)\)/;
 
 /**
  * 把待发送引用序列化为消息尾部的引用块(每行一条)。
@@ -43,7 +41,7 @@ export function formatChatRefs(refs: ChatRef[]): string {
         case "skill":
           return `[引用技能] ${r.name} (skill_id=${r.id}) —— 该技能指令已注入,请遵循其指令执行本任务`;
         case "mcp":
-          return `[引用MCP工具] ${r.name} (tool=${r.tool ?? ""}) —— 用户指定优先调用该工具处理本请求`;
+          return `[引用MCP服务器] ${r.name} (server_id=${r.id}) —— 用户要求优先使用该服务器提供的工具(mcp__${r.name}__*)处理本请求`;
       }
     })
     .join("\n");
@@ -72,7 +70,7 @@ export function splitChatRefs(content: string): { body: string; refs: ChatRef[] 
     }
     m = MCP_REF_RE.exec(line);
     if (m) {
-      refs.push({ kind: "mcp", id: 0, name: m[1], tool: m[2] });
+      refs.push({ kind: "mcp", id: Number(m[2]), name: m[1] });
       continue;
     }
     bodyLines.push(raw);
@@ -81,7 +79,7 @@ export function splitChatRefs(content: string): { body: string; refs: ChatRef[] 
   return { body: bodyLines.join("\n").replace(/\n+$/, ""), refs };
 }
 
-/** 引用的唯一键(去重/移除/React key 共用;mcp 以工具全名为准)。 */
+/** 引用的唯一键(去重/移除/React key 共用)。 */
 export function refKey(ref: ChatRef): string {
-  return ref.kind === "mcp" ? `mcp:${ref.tool ?? ref.name}` : `${ref.kind}:${ref.id}`;
+  return `${ref.kind}:${ref.id}`;
 }
