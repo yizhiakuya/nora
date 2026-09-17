@@ -56,9 +56,13 @@ public class MediaCacheController {
     private static final Logger log = LoggerFactory.getLogger(MediaCacheController.class);
 
     private final MediaCacheService mediaCache;
+    /** 保存到文件中心(缓存条目 → file-service 上传)。 */
+    private final com.nora.agent.service.FileToolClient fileToolClient;
 
-    public MediaCacheController(MediaCacheService mediaCache) {
+    public MediaCacheController(MediaCacheService mediaCache,
+                                com.nora.agent.service.FileToolClient fileToolClient) {
         this.mediaCache = mediaCache;
+        this.fileToolClient = fileToolClient;
     }
 
     /**
@@ -220,6 +224,72 @@ public class MediaCacheController {
     @DeleteMapping("/cached")
     public ApiResponse<Integer> clearCached() {
         return ApiResponse.ok(mediaCache.clearCached());
+    }
+
+    /**
+     * 把缓存条目**保存到文件中心**(2026-09-17):媒体缓存是自动派生层,
+     * 用户觉得某张照片/视频值得留存时,一键转为正式知识资产——之后可
+     * 索引入知识库、被对话 @ 引用、被 agent read_file 读取。
+     *
+     * <p>服务端直传:agent-service 从缓存读字节 → 转发 file-service 上传
+     * (浏览器不参与,大视频也不用先下载再上传)。文件名按媒体 id + 类型推断。
+     */
+    @PostMapping("/cached/{key}/save")
+    public ApiResponse<SaveResult> saveToFiles(@PathVariable("key") String key,
+                                               @RequestBody(required = false) SaveRequest request) {
+        Optional<MediaCacheService.CacheEntry> hit = mediaCache.lookupByKey(key);
+        if (hit.isEmpty()) {
+            throw BusinessException.validation("MEDIA_CACHE_NOT_FOUND", "缓存条目不存在或已被删除",
+                "刷新列表后重试");
+        }
+        MediaCacheService.CacheEntry entry = hit.get();
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(entry.file());
+        } catch (IOException e) {
+            throw BusinessException.dependency("MEDIA_CACHE_READ_FAILED", "读取缓存失败: " + e.getMessage(),
+                "刷新后重试;文件可能已被 LRU 淘汰");
+        }
+        String name = request != null && request.filename() != null && !request.filename().isBlank()
+                ? request.filename().trim()
+                : inferFilename(entry);
+        String result = fileToolClient.upload(name, bytes);
+        if (result.startsWith("ERROR")) {
+            throw BusinessException.dependency("MEDIA_SAVE_FAILED", result,
+                "检查 file-service 是否在线后重试");
+        }
+        return ApiResponse.ok(new SaveResult(name, bytes.length, result));
+    }
+
+    /** POST /api/media/cached/{key}/save body(可选自定义文件名)。 */
+    public record SaveRequest(String filename) {
+    }
+
+    /** POST /api/media/cached/{key}/save response。 */
+    public record SaveResult(String name, long size, String detail) {
+    }
+
+    /** 从缓存条目的 URL 推断文件名(如 photo/8678/video → 相册-8678-播放流.mp4)。 */
+    private static String inferFilename(MediaCacheService.CacheEntry entry) {
+        String url = entry.url() == null ? "" : entry.url();
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("/photo/(\\d+)/(content|thumb|video|sheet)").matcher(url);
+        String ext = switch (entry.contentType() == null ? "" : entry.contentType()) {
+            case "video/mp4" -> ".mp4";
+            case "image/jpeg" -> ".jpg";
+            case "image/png" -> ".png";
+            default -> entry.contentType() != null && entry.contentType().startsWith("video/") ? ".mp4" : ".bin";
+        };
+        if (m.find()) {
+            String kindText = switch (m.group(2)) {
+                case "video" -> "播放流";
+                case "thumb" -> "缩略图";
+                case "sheet" -> "拼图";
+                default -> "原片";
+            };
+            return "相册-" + m.group(1) + "-" + kindText + ext;
+        }
+        return "相册媒体-" + entry.file().getFileName().toString().substring(0, 8) + ext;
     }
 
     /** tee 响应:客户端流与磁盘缓存同时写(客户端断开仍完成缓存)。 */

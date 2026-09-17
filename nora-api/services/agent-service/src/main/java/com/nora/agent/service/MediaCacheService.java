@@ -106,7 +106,8 @@ public class MediaCacheService {
     }
 
     /** 缓存条目(已完成下载)。 */
-    public record CacheEntry(Path file, String contentType, long size, String quality, String phoneKind) {
+    public record CacheEntry(Path file, String contentType, long size, String quality, String phoneKind,
+                             String url) {
     }
 
     /** 文件中心「媒体缓存」文件夹用的条目视图。 */
@@ -143,7 +144,7 @@ public class MediaCacheService {
         }
         try {
             Meta meta = readMeta(key);
-            return Optional.of(new CacheEntry(bin, meta.contentType(), Files.size(bin), meta.quality(), meta.phoneKind()));
+            return Optional.of(new CacheEntry(bin, meta.contentType(), Files.size(bin), meta.quality(), meta.phoneKind(), meta.url()));
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -277,7 +278,7 @@ public class MediaCacheService {
             Files.move(part, target, StandardCopyOption.REPLACE_EXISTING);
             writeMeta(key, u.contentType(), url, u.quality(), u.phoneKind());
             evictIfNeeded();
-            return new CacheEntry(target, u.contentType(), total, u.quality(), u.phoneKind());
+            return new CacheEntry(target, u.contentType(), total, u.quality(), u.phoneKind(), url);
         } catch (IOException e) {
             log.warn("media cache persist failed ({}): {}", url, e.getMessage());
             return null;
@@ -428,6 +429,24 @@ public class MediaCacheService {
             return removed;
         } catch (IOException e) {
             return false;
+        }
+    }
+
+    /** 按缓存键查条目(「保存到文件中心」用:key 已在列表中,免再算 URL 哈希)。 */
+    public Optional<CacheEntry> lookupByKey(String key) {
+        if (key == null || !key.matches("[0-9a-f]{8,64}")) {
+            return Optional.empty();
+        }
+        Path bin = cacheDir.resolve(key + ".bin");
+        if (!Files.isRegularFile(bin)) {
+            return Optional.empty();
+        }
+        try {
+            Meta meta = readMeta(key);
+            return Optional.of(new CacheEntry(bin, meta.contentType(), Files.size(bin),
+                    meta.quality(), meta.phoneKind(), meta.url()));
+        } catch (Exception e) {
+            return Optional.empty();
         }
     }
 

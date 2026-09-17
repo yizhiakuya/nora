@@ -1,12 +1,18 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye, ChevronRight } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye, ChevronRight, Pencil, FolderInput } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/ui/custom/States";
 import { SelectionResult } from "@/hooks/useSelection";
 import { FileItem } from "@/types";
-import { toast } from "sonner";
 
 type FileSelection = SelectionResult<number>;
 
@@ -16,6 +22,10 @@ export interface FolderRow {
   description?: string;
   icon?: LucideIcon;
   onOpen: () => void;
+  /** 重命名(仅用户文件夹;系统文件夹不传) */
+  onRename?: () => void;
+  /** 删除(仅用户文件夹;系统文件夹不传) */
+  onDelete?: () => void;
 }
 
 interface FileTableProps {
@@ -29,9 +39,19 @@ interface FileTableProps {
   folderRow?: FolderRow;
   /** 置顶文件夹行(多行版本;与 folderRow 二选一,优先本字段) */
   folderRows?: FolderRow[];
+  /** 批量下载选中文件 */
+  onDownloadSelected?: () => void;
+  /** 批量移动选中文件 */
+  onMoveSelected?: () => void;
+  /** 单个文件操作 */
+  onDownload?: (file: FileItem) => void;
+  onRename?: (file: FileItem) => void;
+  onMove?: (file: FileItem) => void;
+  onDelete?: (file: FileItem) => void;
 }
 
-export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex, folderRow, folderRows }: FileTableProps) {
+export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex, folderRow, folderRows,
+                            onDownloadSelected, onMoveSelected, onDownload, onRename, onMove, onDelete }: FileTableProps) {
   // 统一为列表:folderRows 优先,兼容既有单行调用
   const folders: FolderRow[] = folderRows ?? (folderRow ? [folderRow] : []);
   return (
@@ -43,9 +63,16 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
             已选择 {selection.selectedIds.length} 个文件
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={() => toast.success("开始打包下载...")}>
-              <Download className="w-3.5 h-3.5 mr-1" /> 下载
-            </Button>
+            {onDownloadSelected && (
+              <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onDownloadSelected}>
+                <Download className="w-3.5 h-3.5 mr-1" /> 下载{selection.selectedIds.length > 1 ? "（zip）" : ""}
+              </Button>
+            )}
+            {onMoveSelected && (
+              <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onMoveSelected}>
+                <FolderInput className="w-3.5 h-3.5 mr-1" /> 移动到…
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={onDeleteSelected}>
               <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
             </Button>
@@ -96,8 +123,23 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                 <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">文件夹</td>
                 <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">—</td>
                 <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">—</td>
-                <td className="p-3 text-right pr-4">
-                  <ChevronRight className="w-4 h-4 text-muted-foreground inline-block" />
+                <td className="p-3 text-right pr-4" onClick={(e) => e.stopPropagation()}>
+                  {(folder.onRename || folder.onDelete) ? (
+                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {folder.onRename && (
+                        <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" title="重命名" onClick={folder.onRename}>
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {folder.onDelete && (
+                        <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40" title="删除文件夹（文件回到根目录）" onClick={folder.onDelete}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-muted-foreground inline-block" />
+                  )}
                 </td>
               </tr>
             ))}
@@ -158,12 +200,43 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                       <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" title="预览" onClick={() => onOpen(file)}>
                         <Eye className="w-4 h-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" onClick={() => toast.success(`已开始下载 ${file.name}`)}>
-                        <Download className="w-4 h-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted/80">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </Button>
+                      {onDownload && (
+                        <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" title="下载" onClick={() => onDownload(file)}>
+                          <Download className="w-4 h-4" />
+                        </Button>
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted/80" title="更多操作">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          {onDownload && (
+                            <DropdownMenuItem onClick={() => onDownload(file)}>
+                              <Download className="w-3.5 h-3.5 mr-2" /> 下载
+                            </DropdownMenuItem>
+                          )}
+                          {onRename && (
+                            <DropdownMenuItem onClick={() => onRename(file)}>
+                              <Pencil className="w-3.5 h-3.5 mr-2" /> 重命名
+                            </DropdownMenuItem>
+                          )}
+                          {onMove && (
+                            <DropdownMenuItem onClick={() => onMove(file)}>
+                              <FolderInput className="w-3.5 h-3.5 mr-2" /> 移动到…
+                            </DropdownMenuItem>
+                          )}
+                          {onDelete && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600 dark:text-red-400" onClick={() => onDelete(file)}>
+                                <Trash2 className="w-3.5 h-3.5 mr-2" /> 删除
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </td>
                 </tr>

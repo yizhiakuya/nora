@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { HardDrive, Play, Trash2 } from "lucide-react";
+import { HardDrive, Play, Trash2, BookmarkPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
 import {
@@ -67,6 +67,21 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
       void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "删除失败");
+    }
+  };
+
+  /**
+   * 保存到文件中心:缓存是自动派生层,这里一键转为正式知识资产——
+   * 保存后可在文件中心索引入知识库、被对话 @ 引用、被 AI read_file 读取。
+   */
+  const handleSaveToFiles = async (item: CachedMediaItem) => {
+    try {
+      const res = await mediaCacheApi.saveToFiles(item.key);
+      toast.success(`已保存到文件中心:「${res.name}」`, {
+        description: "可在「文件中心」根目录查看，并加入知识库",
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
     }
   };
 
@@ -156,18 +171,31 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
                       {item.quality === "low" ? " · 省流量档" : ""}
                     </span>
                   </span>
-                  {/* 删除按钮:悬停显示 */}
-                  <button
-                    type="button"
-                    title="删除此缓存"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleDelete(item);
-                    }}
-                    className="absolute top-1 right-1 p-1 rounded bg-black/50 text-white/80 hover:text-white hover:bg-red-600/80 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  {/* 操作按钮:悬停显示(保存到文件中心 / 删除) */}
+                  <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      title="保存到文件中心（转为正式文件,可索引/引用）"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleSaveToFiles(item);
+                      }}
+                      className="p-1 rounded bg-black/50 text-white/80 hover:text-white hover:bg-blue-600/80 cursor-pointer"
+                    >
+                      <BookmarkPlus className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      title="删除此缓存"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleDelete(item);
+                      }}
+                      className="p-1 rounded bg-black/50 text-white/80 hover:text-white hover:bg-red-600/80 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

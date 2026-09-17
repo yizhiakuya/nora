@@ -45,6 +45,16 @@ export const mediaCacheApi = {
     if (!USE_BACKEND) return 0;
     return requestJson<number>("/media/cached", { method: "DELETE" });
   },
+  /**
+   * 把缓存条目保存到文件中心(转为正式知识资产:可索引/可引用/可被 AI 读取)。
+   * 服务端直传,浏览器不参与大文件搬运。
+   */
+  async saveToFiles(key: string, filename?: string): Promise<{ name: string; size: number; detail: string }> {
+    return requestJson<{ name: string; size: number; detail: string }>(
+      `/media/cached/${encodeURIComponent(key)}/save`,
+      { method: "POST", body: JSON.stringify(filename ? { filename } : {}) }
+    );
+  },
   /** 缓存条目的预览 URL(经 /api/media/cache 代理,命中即磁盘直出)。 */
   previewUrl(url: string): string {
     return `/api/media/cache?url=${encodeURIComponent(url)}`;

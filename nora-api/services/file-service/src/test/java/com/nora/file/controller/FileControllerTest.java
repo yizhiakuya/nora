@@ -38,7 +38,7 @@ class FileControllerTest {
     }
 
     private FileItem item(long id, boolean indexed) {
-        return new FileItem(id, "doc-" + id + ".txt", "text/plain", 12L, indexed, Instant.parse("2026-09-04T10:00:00Z"));
+        return new FileItem(id, "doc-" + id + ".txt", "text/plain", 12L, indexed, Instant.parse("2026-09-04T10:00:00Z"), null);
     }
 
     @Test
@@ -46,9 +46,9 @@ class FileControllerTest {
         MockMultipartFile upload = new MockMultipartFile(
                 "file", "note.txt", "text/plain", "hello".getBytes());
         FileItem stored = item(1L, false);
-        when(fileStorageService.store(any())).thenReturn(stored);
+        when(fileStorageService.store(any(), any())).thenReturn(stored);
 
-        FileItem result = controller.upload(upload).data();
+        FileItem result = controller.upload(upload, null).data();
 
         // (assertion removed)
         result.name();
@@ -58,9 +58,9 @@ class FileControllerTest {
     @Test
     void listWithoutIdsReturnsAll() {
         List<FileItem> all = List.of(item(1L, true), item(2L, false));
-        when(fileStorageService.list(anyList())).thenReturn(all);
+        when(fileStorageService.list(anyList(), any())).thenReturn(all);
 
-        List<FileItem> result = controller.list(null).data();
+        List<FileItem> result = controller.list(null, null).data();
 
         result.size();
 
@@ -68,9 +68,9 @@ class FileControllerTest {
 
     @Test
     void listWithIdsParsesCommaSeparatedValues() {
-        when(fileStorageService.list(anyList())).thenReturn(List.of(item(2L, false)));
+        when(fileStorageService.list(anyList(), any())).thenReturn(List.of(item(2L, false)));
 
-        List<FileItem> result = controller.list("1, 2").data();
+        List<FileItem> result = controller.list("1, 2", null).data();
 
         result.size();
 
@@ -78,7 +78,7 @@ class FileControllerTest {
 
     @Test
     void listWithMalformedIdThrows() {
-        try { controller.list("abc"); } catch (Exception ignored) { }
+        try { controller.list("abc", null); } catch (Exception ignored) { }
 
     }
 

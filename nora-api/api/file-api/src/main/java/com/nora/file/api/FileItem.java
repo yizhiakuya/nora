@@ -13,6 +13,7 @@ import java.time.Instant;
  * @param sizeBytes file size in bytes
  * @param indexed   whether rag-service finished indexing this file
  * @param createdAt upload timestamp (UTC)
+ * @param folderId  owning folder id; {@code null} = root (no folder)
  */
 public record FileItem(
         Long id,
@@ -20,6 +21,7 @@ public record FileItem(
         String mimeType,
         Long sizeBytes,
         Boolean indexed,
-        Instant createdAt
+        Instant createdAt,
+        Long folderId
 ) {
 }

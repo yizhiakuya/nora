@@ -10,6 +10,16 @@ interface BackendFileItem {
   sizeBytes: number | null;
   indexed: boolean;
   createdAt: string;
+  /** 所属文件夹;null = 根目录 */
+  folderId?: number | null;
+}
+
+/** 后端文件夹行。 */
+export interface BackendFolder {
+  id: number;
+  name: string;
+  fileCount: number;
+  createdAt: string | null;
 }
 
 function humanSize(bytes: number | null): string {
@@ -51,6 +61,7 @@ function toFileItem(f: BackendFileItem): FileItem {
     icon: meta.icon,
     color: meta.color,
     indexed: f.indexed,
+    folderId: f.folderId ?? null,
   };
 }
 
@@ -127,13 +138,16 @@ import { defaultTimeoutSignal } from "@/lib/api/client";
 export const filesApi = {
   async listFiles(): Promise<FileItem[]> {
     if (!USE_BACKEND) return [];
+    // 拉全量(含 folderId),文件夹过滤在前端做——store 是唯一数据源,
+    // 避免每个文件夹切换都发一次请求
     const items = await requestJson<BackendFileItem[]>("/files");
     return items.map(toFileItem);
   },
 
-  async uploadFile(file: globalThis.File): Promise<FileItem> {
+  async uploadFile(file: globalThis.File, folderId?: number | null): Promise<FileItem> {
     const form = new FormData();
     form.append("file", file);
+    if (folderId != null) form.append("folderId", String(folderId));
     const item = await requestRaw<BackendFileItem>("/files/upload", { method: "POST", body: form });
     return toFileItem(item);
   },
@@ -150,6 +164,54 @@ export const filesApi = {
   async fetchPreview(id: number, name: string): Promise<FilePreview> {
     const p = await requestJson<BackendFilePreview>(`/files/${id}/preview`);
     return toPreview(p, id, name);
+  },
+
+  /** 重命名文件。 */
+  async renameFile(id: number, name: string): Promise<FileItem> {
+    const item = await requestJson<BackendFileItem>(`/files/${id}/name`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    });
+    return toFileItem(item);
+  },
+
+  /** 批量移动文件到文件夹(null = 根目录)。 */
+  async moveFiles(ids: number[], folderId: number | null): Promise<number> {
+    return requestJson<number>("/files/move", {
+      method: "PUT",
+      body: JSON.stringify({ ids, folderId }),
+    });
+  },
+
+  // ---------- 文件夹 ----------
+
+  async listFolders(): Promise<BackendFolder[]> {
+    if (!USE_BACKEND) return [];
+    return requestJson<BackendFolder[]>("/files/folders");
+  },
+
+  async createFolder(name: string): Promise<BackendFolder> {
+    return requestJson<BackendFolder>("/files/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  async renameFolder(id: number, name: string): Promise<BackendFolder> {
+    return requestJson<BackendFolder>(`/files/folders/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  /** 删除文件夹(文件回到根目录);返回移回的文件数。 */
+  async deleteFolder(id: number): Promise<number> {
+    return requestJson<number>(`/files/folders/${id}`, { method: "DELETE" });
+  },
+
+  /** 批量下载 URL(浏览器直接打开触发下载;单文件出原文件,多文件打 zip)。 */
+  downloadUrl(ids: number[]): string {
+    return `/api/files/download?ids=${ids.join(",")}`;
   },
 };
 

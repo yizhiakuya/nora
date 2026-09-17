@@ -20,6 +20,8 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
   /** 拖拽上传时的真实文件(后端模式上传它;点击上传无文件保持 null) */
   const fileRef = useRef<globalThis.File | null>(null);
   const fileNameRef = useRef<string | null>(null);
+  /** 上传目标文件夹(文件页进入某文件夹时设置;null = 根目录)。 */
+  const folderRef = useRef<number | null>(null);
 
   const open = useCallback(() => {
     setIsOpen(true);
@@ -27,6 +29,11 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setIsDragging(false);
     fileRef.current = null;
     fileNameRef.current = null;
+  }, []);
+
+  /** 设置后续上传的目标文件夹(进入文件夹后调用;退出文件夹时传 null)。 */
+  const setTargetFolder = useCallback((folderId: number | null) => {
+    folderRef.current = folderId;
   }, []);
 
   const close = useCallback(() => {
@@ -40,7 +47,7 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setStatus('uploading');
 
     const uploadPromise = USE_BACKEND && fileRef.current
-      ? filesApi.uploadFile(fileRef.current)
+      ? filesApi.uploadFile(fileRef.current, folderRef.current)
           .then((item) => {
             fileNameRef.current = item.name;
             return item;
@@ -100,6 +107,7 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     open,
     close,
     startUpload,
+    setTargetFolder,
     handleDragOver,
     handleDragLeave,
     handleDrop

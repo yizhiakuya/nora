@@ -4,6 +4,15 @@
 
 gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(8085) / automation
 
+## file-service(文件中心=统一文件系统入口,2026-09-17)
+
+- **架构原则**:所有文件相关能力(存储/缓存/组织/流转)都归这里或经这里——根 CLAUDE.md「核心架构原则」;新文件能力先想"它在这个体系里是什么"(文件夹/流转通道),不要另建存储
+- **表**:`file_item`(含 `folder_id`;软删除 deleted_at)+ `file_folder`(单层文件夹;删除文件夹时文件回根,不级联删文件);migration V5
+- **端点**:`GET/POST /api/files`(list 支持 ids/folderId)、`POST /upload`(可选 folderId)、`DELETE ?ids=`(软删)、`GET /{id}/preview|raw`(raw 支持 Range)、`POST /{id}/index`(RAG 索引,回调 `/{id}/indexed`)、`PUT /{id}/name`(重命名)、`PUT /move`(批量移动, folderId null=根)、`GET /download?ids=`(**zip 打包流式下载**,中文名 RFC 5987)、`GET/POST /folders`、`PUT/DELETE /folders/{id}`
+- **前端**:文件页=统一文件系统视图——「Agent 工作区」「媒体缓存」与用户文件夹并列显示(FileTable folderRows);用户文件夹可进入(面包屑)、重命名、删除;文件行操作:预览/下载/重命名/移动到…/删除(菜单);批量:下载(zip)/移动/删除;上传目标跟随当前文件夹
+- **媒体缓存 → 文件中心流转**:`POST /api/media/cached/{key}/save`(agent-service 侧,服务端直传 file-service)把派生缓存转为正式资产——用户可见的"保存到文件中心"按钮在媒体缓存页
+- **跨服务约定**:其他服务读文件元数据走 `FileService.getById`(Dubbo)或 REST;`FileItem` record 带 `folderId`,构造点增删参数要同步 api/file-api 测试与 file-service 测试
+
 ## agent-service 关键链路
 
 - **对话入口** `AgentController POST /api/chat/sessions/{id}/messages`,body `{content, model, reasoningLevel, permissionMode}`;SSE 事件:`step`/`delta`/`reasoning_delta`/`sources`/`approval_required`/`done`/`error`

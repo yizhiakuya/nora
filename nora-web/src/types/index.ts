@@ -30,6 +30,8 @@ export interface FileItem {
   color: string;
   /** AI 是否已索引入知识库 */
   indexed: boolean;
+  /** 所属文件夹 id;null/undefined = 根目录 */
+  folderId?: number | null;
 }
 
 export interface FolderItem {

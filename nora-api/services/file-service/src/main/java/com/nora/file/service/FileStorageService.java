@@ -59,6 +59,17 @@ public class FileStorageService {
      * @return the persisted file item
      */
     public FileItem store(MultipartFile file) {
+        return store(file, null);
+    }
+
+    /**
+     * Stores the uploaded file into an optional folder.
+     *
+     * @param file     multipart upload
+     * @param folderId target folder ({@code null} = root)
+     * @return the persisted file item
+     */
+    public FileItem store(MultipartFile file, Long folderId) {
         String originalName = file.getOriginalFilename();
         final String name = (originalName == null || originalName.isBlank()) ? "unnamed" : originalName;
         byte[] content;
@@ -68,6 +79,9 @@ public class FileStorageService {
             throw new BusinessException(400, "Could not read uploaded file: " + ex.getMessage(), ex);
         }
         String mimeType = textExtractionService.detectMimeType(content, name);
+        if (folderId != null) {
+            requireFolder(folderId);
+        }
 
         long id;
         Path target;
@@ -80,9 +94,10 @@ public class FileStorageService {
         }
         try {
             KeyHolder keyHolder = new GeneratedKeyHolder();
+            Long targetFolder = folderId;
             jdbcTemplate.update(con -> {
                 PreparedStatement ps = con.prepareStatement(
-                        "INSERT INTO file_item (name, file_path, mime_type, size_bytes, indexed) VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO file_item (name, file_path, mime_type, size_bytes, indexed, folder_id) VALUES (?, ?, ?, ?, ?, ?)",
                         new String[] {"id"});
                 ps.setString(1, name);
                 ps.setString(2, target.toString());
@@ -93,6 +108,11 @@ public class FileStorageService {
                     ps.setNull(4, Types.BIGINT);
                 }
                 ps.setBoolean(5, false);
+                if (targetFolder == null) {
+                    ps.setNull(6, Types.BIGINT);
+                } else {
+                    ps.setLong(6, targetFolder);
+                }
                 return ps;
             }, keyHolder);
             id = keyHolder.getKey().longValue();
@@ -109,20 +129,170 @@ public class FileStorageService {
     }
 
     /**
-     * Lists file items, optionally filtered by ids.
+     * Lists file items, optionally filtered by ids and/or folder.
      *
-     * @param ids optional id filter; empty or {@code null} returns all files
+     * @param ids      optional id filter; empty or {@code null} returns all files
+     * @param folderId folder filter; {@code null} = no filter (all folders)
      * @return matching file items ordered by id
      */
-    public List<FileItem> list(List<Long> ids) {
+    public List<FileItem> list(List<Long> ids, Long folderId) {
         if (ids == null || ids.isEmpty()) {
-            return jdbcTemplate.query("SELECT * FROM file_item WHERE deleted_at IS NULL ORDER BY id", this::mapRow);
+            if (folderId == null) {
+                return jdbcTemplate.query("SELECT * FROM file_item WHERE deleted_at IS NULL ORDER BY id", this::mapRow);
+            }
+            return jdbcTemplate.query(
+                    "SELECT * FROM file_item WHERE deleted_at IS NULL AND folder_id = ? ORDER BY id",
+                    this::mapRow, folderId);
         }
         String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
         return jdbcTemplate.query(
                 "SELECT * FROM file_item WHERE id IN (" + placeholders + ") AND deleted_at IS NULL ORDER BY id",
                 this::mapRow,
                 ids.toArray());
+    }
+
+    /** Lists files (compat overload: no folder filter). */
+    public List<FileItem> list(List<Long> ids) {
+        return list(ids, null);
+    }
+
+    // ---------- 文件夹(2026-09-17:文件中心真实目录组织) ----------
+
+    /** 文件夹行(含文件数,列表页展示用)。 */
+    public record FolderRow(Long id, String name, int fileCount, Instant createdAt) {
+    }
+
+    /** 列出全部文件夹(含各自存活文件数),按名称排序。 */
+    public List<FolderRow> listFolders() {
+        return jdbcTemplate.query(
+                """
+                SELECT f.id, f.name, f.created_at,
+                       (SELECT count(*) FROM file_item i
+                         WHERE i.folder_id = f.id AND i.deleted_at IS NULL) AS file_count
+                  FROM file_folder f
+                 ORDER BY f.name
+                """,
+                (rs, i) -> new FolderRow(
+                        rs.getLong("id"),
+                        rs.getString("name"),
+                        rs.getInt("file_count"),
+                        rs.getTimestamp("created_at") == null ? null : rs.getTimestamp("created_at").toInstant()));
+    }
+
+    /** 创建文件夹(名称重复时报 409 语义错误)。 */
+    public FolderRow createFolder(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            throw new BusinessException(400, "文件夹名不能为空");
+        }
+        if (trimmed.length() > 120) {
+            throw new BusinessException(400, "文件夹名过长(最多 120 字)");
+        }
+        if (folderNameExists(trimmed, null)) {
+            throw new BusinessException(409, "已存在同名文件夹:「" + trimmed + "」");
+        }
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                    "INSERT INTO file_folder (name) VALUES (?)", new String[] {"id"});
+            ps.setString(1, trimmed);
+            return ps;
+        }, keyHolder);
+        long id = keyHolder.getKey().longValue();
+        return new FolderRow(id, trimmed, 0, Instant.now());
+    }
+
+    /** 重命名文件夹。 */
+    public FolderRow renameFolder(Long id, String name) {
+        requireFolder(id);
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            throw new BusinessException(400, "文件夹名不能为空");
+        }
+        if (folderNameExists(trimmed, id)) {
+            throw new BusinessException(409, "已存在同名文件夹:「" + trimmed + "」");
+        }
+        jdbcTemplate.update("UPDATE file_folder SET name = ? WHERE id = ?", trimmed, id);
+        int count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM file_item WHERE folder_id = ? AND deleted_at IS NULL", Integer.class, id);
+        return new FolderRow(id, trimmed, count, null);
+    }
+
+    /**
+     * 删除文件夹:其中的文件回到根目录(folder_id 置 NULL),不删除文件本身。
+     * 返回移回根目录的文件数。
+     */
+    public int deleteFolder(Long id) {
+        requireFolder(id);
+        int moved = jdbcTemplate.update(
+                "UPDATE file_item SET folder_id = NULL WHERE folder_id = ? AND deleted_at IS NULL", id);
+        jdbcTemplate.update("DELETE FROM file_folder WHERE id = ?", id);
+        return moved;
+    }
+
+    /** 重命名文件。 */
+    public FileItem renameFile(Long id, String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            throw new BusinessException(400, "文件名不能为空");
+        }
+        if (trimmed.length() > 255) {
+            throw new BusinessException(400, "文件名过长(最多 255 字)");
+        }
+        getById(id);
+        jdbcTemplate.update("UPDATE file_item SET name = ? WHERE id = ? AND deleted_at IS NULL", trimmed, id);
+        return getById(id);
+    }
+
+    /**
+     * 移动文件到文件夹(null = 根目录);支持批量。
+     *
+     * @return 实际移动的文件数
+     */
+    public int moveFiles(List<Long> ids, Long folderId) {
+        if (ids == null || ids.isEmpty()) {
+            throw new BusinessException(400, "ids parameter is required");
+        }
+        if (folderId != null) {
+            requireFolder(folderId);
+        }
+        String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
+        List<Object> args = new ArrayList<>();
+        if (folderId == null) {
+            args.add(null);
+        } else {
+            args.add(folderId);
+        }
+        args.addAll(ids);
+        return jdbcTemplate.update(
+                "UPDATE file_item SET folder_id = ? WHERE id IN (" + placeholders + ") AND deleted_at IS NULL",
+                args.toArray());
+    }
+
+    /** 按 id 读取文件原始字节(批量下载打包用)。 */
+    public byte[] rawBytes(Long id) {
+        Path path = resolveFile(id);
+        try {
+            return Files.readAllBytes(path);
+        } catch (IOException e) {
+            throw new BusinessException(500, "读取文件失败: " + e.getMessage(), e);
+        }
+    }
+
+    private boolean folderNameExists(String name, Long excludeId) {
+        Integer count = excludeId == null
+                ? jdbcTemplate.queryForObject("SELECT count(*) FROM file_folder WHERE name = ?", Integer.class, name)
+                : jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM file_folder WHERE name = ? AND id <> ?", Integer.class, name, excludeId);
+        return count != null && count > 0;
+    }
+
+    private void requireFolder(Long id) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM file_folder WHERE id = ?", Integer.class, id);
+        if (count == null || count == 0) {
+            throw new BusinessException(404, "文件夹不存在: " + id);
+        }
     }
 
     /**
@@ -267,7 +437,8 @@ public class FileStorageService {
                 rs.getString("mime_type"),
                 rs.getObject("size_bytes") == null ? null : rs.getLong("size_bytes"),
                 rs.getBoolean("indexed"),
-                createdAt == null ? null : createdAt.toInstant());
+                createdAt == null ? null : createdAt.toInstant(),
+                rs.getObject("folder_id") == null ? null : rs.getLong("folder_id"));
     }
 
     /** Builds a collision-free storage path: {@code <storage-dir>/<id-less uuid>_<name>}. */

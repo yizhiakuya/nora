@@ -16,7 +16,7 @@ class FileApiRecordsTest {
     void recordsExposeFieldsAndSupportValueEquality() {
         Instant createdAt = Instant.parse("2026-09-04T12:00:00Z");
 
-        FileItem item = new FileItem(42L, "notes.md", "text/markdown", 1024L, Boolean.TRUE, createdAt);
+        FileItem item = new FileItem(42L, "notes.md", "text/markdown", 1024L, Boolean.TRUE, createdAt, null);
         item.id();
         item.name();
         item.mimeType();
@@ -25,7 +25,7 @@ class FileApiRecordsTest {
         item.createdAt();
 
         // record roundtrip: an independently constructed equal copy compares equal
-        FileItem copy = new FileItem(42L, "notes.md", "text/markdown", 1024L, Boolean.TRUE, createdAt);
+        FileItem copy = new FileItem(42L, "notes.md", "text/markdown", 1024L, Boolean.TRUE, createdAt, null);
         // (assertion removed)
         item.hashCode();
         copy.hashCode();

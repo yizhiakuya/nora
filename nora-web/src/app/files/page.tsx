@@ -5,7 +5,7 @@ import { Header } from "@/components/layout/Header";
 import { Search, FolderPlus, CloudUpload, Bot, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FolderGrid } from "@/components/files/FolderGrid";
+import { Modal } from "@/components/ui/custom/Modal";
 import { FileTable } from "@/components/files/FileTable";
 import { UploadModal } from "@/components/ui/custom/UploadModal";
 import { useSelection } from "@/hooks/useSelection";
@@ -20,7 +20,7 @@ import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
-import { filesApi } from "@/lib/services/filesApi";
+import { filesApi, type BackendFolder } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
 export default function FilesPage() {
@@ -30,11 +30,22 @@ export default function FilesPage() {
   const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
   /** 媒体缓存文件夹视图(与工作区互斥)。 */
   const [mediaCacheOpen, setMediaCacheOpen] = useState(false);
+  /** 当前进入的用户文件夹(null = 根视图)。 */
+  const [currentFolder, setCurrentFolder] = useState<BackendFolder | null>(null);
+  /** 用户文件夹列表(后端;mock 模式为空)。 */
+  const [folders, setFolders] = useState<BackendFolder[]>([]);
+  /** 新建/重命名文件夹弹窗状态。 */
+  const [folderDialog, setFolderDialog] = useState<{ mode: "create" } | { mode: "rename"; folder: BackendFolder } | null>(null);
+  const [folderNameInput, setFolderNameInput] = useState("");
+  /** 移动文件弹窗(选中文件 → 选择目标文件夹)。 */
+  const [moveOpen, setMoveOpen] = useState(false);
+
   const files = useFiles((s) => s.files);
   const addFile = useFiles((s) => s.addFile);
   const deleteFiles = useFiles((s) => s.deleteFiles);
   const markIndexed = useFiles((s) => s.markIndexed);
   const syncFile = useFiles((s) => s.syncFile);
+  const syncFromBackend = useFiles((s) => s.syncFromBackend);
 
   const upload = useSimulatedUpload();
   const viewer = useFileViewer();
@@ -43,28 +54,135 @@ export default function FilesPage() {
   const addNotification = useNotifications((s) => s.addNotification);
   const addRecent = useRecentFiles((s) => s.addRecent);
 
-  // 后端模式:进入页面拉一次真实文件列表
+  // 后端模式:进入页面拉一次真实文件列表 + 文件夹列表
   useEffect(() => {
     if (!USE_BACKEND) return;
     filesApi.listFiles()
       .then((items) => items.forEach((item) => syncFile(item)))
       .catch(() => { /* 后端不可用时沿用本地缓存 */ });
+    filesApi.listFolders().then(setFolders).catch(() => { /* 文件夹不可用时留空 */ });
   }, [syncFile]);
 
-  const filteredFiles = files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  /** 当前视图中的文件(根视图=无归属文件;文件夹内=该文件夹文件)。 */
+  const inRootView = workspaceDir === null && !mediaCacheOpen && currentFolder === null;
+  const viewFiles = currentFolder === null
+    ? files.filter((f) => f.folderId == null)
+    : files.filter((f) => f.folderId === currentFolder.id);
+  const filteredFiles = viewFiles.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const selection = useSelection(filteredFiles, "id");
+
+  /** 上传目标文件夹(进入文件夹后上传到该文件夹)。 */
+  useEffect(() => {
+    upload.setTargetFolder(currentFolder?.id ?? null);
+  }, [currentFolder, upload]);
+
+  const refreshFolders = () => {
+    if (!USE_BACKEND) return;
+    filesApi.listFolders().then(setFolders).catch(() => { /* 忽略瞬时失败 */ });
+  };
 
   const handleDeleteSelected = () => {
     const count = selection.selectedIds.length;
     if (USE_BACKEND) {
       filesApi.deleteFiles(selection.selectedIds)
-        .then(() => toast.success(`已删除 ${count} 个文件`))
+        .then(() => {
+          toast.success(`已删除 ${count} 个文件`);
+          void syncFromBackend();
+          refreshFolders();
+        })
         .catch((e: Error) => toast.error(`删除失败：${e.message}`));
-    } else {
-      toast.success(`已删除 ${count} 个文件`);
+      selection.clearSelection();
+      return;
     }
     deleteFiles(selection.selectedIds);
     selection.clearSelection();
+  };
+
+  /** 批量下载(服务端打包:单文件出原文件,多文件出 zip)。 */
+  const handleDownloadSelected = () => {
+    if (selection.selectedIds.length === 0) return;
+    window.open(filesApi.downloadUrl(selection.selectedIds), "_blank");
+  };
+
+  /** 下载单个文件。 */
+  const handleDownloadOne = (file: FileItem) => {
+    window.open(filesApi.downloadUrl([file.id]), "_blank");
+  };
+
+  /** 重命名单个文件。 */
+  const handleRenameFile = async (file: FileItem) => {
+    const next = window.prompt("重命名文件", file.name);
+    if (next == null || next.trim() === "" || next === file.name) return;
+    try {
+      const updated = await filesApi.renameFile(file.id, next.trim());
+      syncFile(updated);
+      toast.success("已重命名");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "重命名失败");
+    }
+  };
+
+  /** 移动单个文件(打开移动弹窗并预选它)。 */
+  const [moveTargetIds, setMoveTargetIds] = useState<number[]>([]);
+  const handleMoveOne = (file: FileItem) => {
+    setMoveTargetIds([file.id]);
+    setMoveOpen(true);
+  };
+
+  const handleMoveSelected = () => {
+    if (selection.selectedIds.length === 0) return;
+    setMoveTargetIds([...selection.selectedIds]);
+    setMoveOpen(true);
+  };
+
+  /** 执行移动。 */
+  const doMove = async (folderId: number | null) => {
+    try {
+      const moved = await filesApi.moveFiles(moveTargetIds, folderId);
+      toast.success(`已移动 ${moved} 个文件${folderId == null ? "到根目录" : ""}`);
+      setMoveOpen(false);
+      selection.clearSelection();
+      await syncFromBackend();
+      refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "移动失败");
+    }
+  };
+
+  /** 提交新建/重命名文件夹。 */
+  const submitFolderDialog = async () => {
+    if (!folderDialog) return;
+    const name = folderNameInput.trim();
+    if (!name) {
+      toast.error("文件夹名不能为空");
+      return;
+    }
+    try {
+      if (folderDialog.mode === "create") {
+        await filesApi.createFolder(name);
+        toast.success(`已创建文件夹「${name}」`);
+      } else {
+        await filesApi.renameFolder(folderDialog.folder.id, name);
+        toast.success("已重命名");
+      }
+      setFolderDialog(null);
+      setFolderNameInput("");
+      refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "操作失败");
+    }
+  };
+
+  /** 删除文件夹(文件回根目录)。 */
+  const handleDeleteFolder = async (folder: BackendFolder) => {
+    if (!window.confirm(`确认删除文件夹「${folder.name}」？\n其中的 ${folder.fileCount} 个文件会回到根目录（不删除文件）。`)) return;
+    try {
+      const moved = await filesApi.deleteFolder(folder.id);
+      toast.success(`已删除文件夹${moved > 0 ? `，${moved} 个文件已回到根目录` : ""}`);
+      refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "删除失败");
+    }
   };
 
   const handleUploadComplete = (fileName?: string, uploadedFile?: FileItem) => {
@@ -72,6 +190,7 @@ export default function FilesPage() {
       syncFile(uploadedFile);
       addRecent(uploadedFile.name, uploadedFile.type);
       addNotification("上传完成", `「${uploadedFile.name}」已保存到文件中心，可在列表中查看。`);
+      refreshFolders();
       return;
     }
     const defaultName = `上传文档_${Date.now().toString().slice(-4)}.pdf`;
@@ -106,18 +225,24 @@ export default function FilesPage() {
     toast.success(`「${file.name}」已加入知识库`);
   };
 
+  /** 面包屑:根 / 用户文件夹(动态段)。 */
+  const breadcrumbTail = currentFolder
+    ? [{ label: currentFolder.name, isCurrent: true }]
+    : [];
+
   return (
     <>
       <Header
         breadcrumbs={[
           { label: "工作台", isCurrent: false },
-          { label: "文件中心", isCurrent: workspaceDir === null && !mediaCacheOpen },
+          { label: "文件中心", isCurrent: inRootView },
           ...(workspaceDir !== null
             ? [{ label: "Agent 工作区", isCurrent: true }]
             : []),
           ...(mediaCacheOpen
             ? [{ label: "媒体缓存", isCurrent: true }]
             : []),
+          ...breadcrumbTail,
         ]}
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -133,11 +258,23 @@ export default function FilesPage() {
               />
             </div>
             <div className="w-px h-5 bg-gray-200 dark:bg-gray-800 mx-1 shrink-0 hidden sm:block"></div>
-            <Button variant="outline" size="sm" className="h-8 text-xs bg-card text-foreground hover:bg-muted shrink-0 hidden md:flex">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs bg-card text-foreground hover:bg-muted shrink-0 hidden md:flex"
+              onClick={() => {
+                if (!USE_BACKEND) {
+                  toast.info("文件夹需要连接后端服务");
+                  return;
+                }
+                setFolderNameInput("");
+                setFolderDialog({ mode: "create" });
+              }}
+            >
               <FolderPlus className="w-3.5 h-3.5 mr-1.5" /> 新建文件夹
             </Button>
             <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 shrink-0" onClick={upload.open}>
-              <CloudUpload className="w-3.5 h-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">上传文件</span>
+              <CloudUpload className="w-3.5 h-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">{currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"}</span>
             </Button>
             </>
             )}
@@ -149,46 +286,151 @@ export default function FilesPage() {
         <div className="max-w-6xl mx-auto pb-24">
           {mediaCacheOpen ? (
             <MediaCacheBrowser onExit={() => setMediaCacheOpen(false)} />
-          ) : workspaceDir === null ? (
+          ) : workspaceDir !== null ? (
+            <WorkspaceBrowser
+              dir={workspaceDir}
+              onNavigate={setWorkspaceDir}
+              onExit={() => setWorkspaceDir(null)}
+            />
+          ) : (
             <>
+              {/* 面包屑(文件夹内可点击返回根) */}
+              {currentFolder && (
+                <div className="flex items-center gap-1.5 mb-4 text-xs animate-in fade-in">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => setCurrentFolder(null)}
+                  >
+                    文件中心
+                  </button>
+                  <span className="text-muted-foreground/50">/</span>
+                  <span className="text-foreground font-medium">{currentFolder.name}</span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between mb-4 animate-in fade-in">
-                <h2 className="text-sm font-bold text-foreground">所有文件</h2>
-                <div className="text-xs text-muted-foreground">共 {files.length} 个文件</div>
+                <h2 className="text-sm font-bold text-foreground">{currentFolder ? currentFolder.name : "所有文件"}</h2>
+                <div className="text-xs text-muted-foreground">
+                  共 {viewFiles.length} 个文件{!currentFolder && folders.length > 0 ? ` · ${folders.length} 个文件夹` : ""}
+                </div>
               </div>
 
               <FileTable
                 files={filteredFiles}
                 selection={selection}
                 onDeleteSelected={handleDeleteSelected}
+                onDownloadSelected={handleDownloadSelected}
+                onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
                 onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
                 onIndex={handleIndexFile}
-                folderRows={[
-                  {
-                    name: "Agent 工作区",
-                    description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
-                    icon: Bot,
-                    onOpen: () => setWorkspaceDir(""),
-                  },
-                  {
-                    name: "媒体缓存",
-                    description: "相册等远程媒体的本地副本(查看秒开、手机离线可看)",
-                    icon: HardDrive,
-                    onOpen: () => setMediaCacheOpen(true),
-                  },
-                ]}
+                onDownload={(f) => handleDownloadOne(f)}
+                onRename={USE_BACKEND ? handleRenameFile : undefined}
+                onMove={USE_BACKEND ? handleMoveOne : undefined}
+                onDelete={(f) => {
+                  if (USE_BACKEND) {
+                    filesApi.deleteFiles([f.id])
+                      .then(() => { toast.success("已删除"); void syncFromBackend(); refreshFolders(); })
+                      .catch((e: Error) => toast.error(`删除失败：${e.message}`));
+                    return;
+                  }
+                  deleteFiles([f.id]);
+                  toast.success("已删除");
+                }}
+                folderRows={currentFolder === null ? [
+                  ...(currentFolder === null && !mediaCacheOpen ? [
+                    {
+                      name: "Agent 工作区",
+                      description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
+                      icon: Bot,
+                      onOpen: () => setWorkspaceDir(""),
+                    },
+                    {
+                      name: "媒体缓存",
+                      description: "相册等远程媒体的本地副本(查看秒开、手机离线可看)",
+                      icon: HardDrive,
+                      onOpen: () => setMediaCacheOpen(true),
+                    },
+                  ] : []),
+                  ...folders.map((folder) => ({
+                    name: folder.name,
+                    description: `${folder.fileCount} 个文件 · 点击进入`,
+                    icon: undefined,
+                    onOpen: () => setCurrentFolder(folder),
+                    onRename: USE_BACKEND ? () => {
+                      setFolderNameInput(folder.name);
+                      setFolderDialog({ mode: "rename", folder });
+                    } : undefined,
+                    onDelete: USE_BACKEND ? () => void handleDeleteFolder(folder) : undefined,
+                  })),
+                ] : []}
               />
             </>
-          ) : (
-            <WorkspaceBrowser
-              dir={workspaceDir}
-              onNavigate={setWorkspaceDir}
-              onExit={() => setWorkspaceDir(null)}
-            />
           )}
         </div>
       </div>
 
-      <UploadModal upload={upload} title="上传到文件中心" onUploadComplete={handleUploadComplete} />
+      {/* 新建/重命名文件夹弹窗 */}
+      <Modal
+        isOpen={folderDialog != null}
+        onClose={() => setFolderDialog(null)}
+        title={folderDialog?.mode === "rename" ? "重命名文件夹" : "新建文件夹"}
+        width="w-[92%] sm:w-[420px]"
+        footer={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setFolderDialog(null)}>取消</Button>
+            <Button size="sm" onClick={submitFolderDialog}>
+              {folderDialog?.mode === "rename" ? "保存" : "创建"}
+            </Button>
+          </>
+        }
+      >
+        <Input
+          autoFocus
+          placeholder="文件夹名称"
+          value={folderNameInput}
+          onChange={(e) => setFolderNameInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submitFolderDialog();
+          }}
+        />
+      </Modal>
+
+      {/* 移动文件弹窗 */}
+      <Modal
+        isOpen={moveOpen}
+        onClose={() => setMoveOpen(false)}
+        title={`移动 ${moveTargetIds.length} 个文件到…`}
+        width="w-[92%] sm:w-[460px]"
+      >
+        <div className="space-y-1.5">
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors text-sm"
+            onClick={() => void doMove(null)}
+          >
+            📁 根目录（不放入文件夹）
+          </button>
+          {folders.map((folder) => (
+            <button
+              key={folder.id}
+              type="button"
+              className="w-full text-left px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors text-sm"
+              onClick={() => void doMove(folder.id)}
+            >
+              📁 {folder.name}
+              <span className="ml-2 text-xs text-muted-foreground">{folder.fileCount} 个文件</span>
+            </button>
+          ))}
+          {folders.length === 0 && (
+            <div className="text-xs text-muted-foreground py-3 text-center">
+              还没有文件夹——先在工具栏「新建文件夹」创建
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <UploadModal upload={upload} title={currentFolder ? `上传到「${currentFolder.name}」` : "上传到文件中心"} onUploadComplete={handleUploadComplete} />
       <FileViewerModal file={viewer.activeFile} preview={viewer.preview} status={viewer.status} onClose={viewer.close} />
     </>
   );
