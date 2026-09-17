@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, BookOpen, Plus, Eye, ChevronRight, Pencil, FolderInput } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, Plus, Eye, ChevronRight, Pencil, FolderInput } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -89,10 +89,20 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
       )}
 
       <div className="bg-card border border-border rounded-xl overflow-hidden overflow-x-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <table className="w-full text-left border-collapse min-w-[600px]">
+        <table className="w-full text-left border-collapse min-w-[560px] table-fixed">
+          {/* 列宽:文件名列自适应占满;其余固定窄列右对齐(元数据不抢主视觉)。
+              响应式:colgroup 的 col 必须与 th 的 hidden 断点同步,否则隐藏列仍占宽 */}
+          <colgroup>
+            <col className="w-10" />
+            <col />
+            <col className="w-[76px] hidden lg:table-column" />
+            <col className="w-[84px]" />
+            <col className="w-[128px] hidden xl:table-column" />
+            <col className="w-[104px]" />
+          </colgroup>
           <thead>
-            <tr className="bg-muted border-b border-border text-xs text-muted-foreground font-medium select-none">
-              <th className="p-3 pl-4 w-10">
+            <tr className="bg-muted/60 border-b border-border text-xs text-muted-foreground font-medium select-none">
+              <th className="p-3 pl-4">
                 <input
                   type="checkbox"
                   className="w-4 h-4 rounded border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400 focus:ring-blue-500 cursor-pointer"
@@ -100,18 +110,18 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                   onChange={selection.toggleSelectAll}
                 />
               </th>
-              <th className="p-3">文件名</th>
-              <th className="p-3">类型</th>
-              <th className="p-3">大小</th>
-              <th className="p-3">修改时间</th>
-              <th className="p-3 text-right pr-4">操作</th>
+              <th className="p-3 font-medium">文件名</th>
+              <th className="p-3 font-medium hidden lg:table-cell">类型</th>
+              <th className="p-3 font-medium text-right tabular-nums">大小</th>
+              <th className="p-3 font-medium text-right tabular-nums hidden xl:table-cell">修改时间</th>
+              <th className="p-3 font-medium text-right pr-4">操作</th>
             </tr>
           </thead>
           <tbody className="text-sm">
             {folders.map((folder) => (
               <tr
                 key={folder.name}
-                className="border-b border-border transition-colors group cursor-pointer hover:bg-muted"
+                className="border-b border-border last:border-0 transition-colors group cursor-pointer hover:bg-muted/60"
                 onClick={folder.onOpen}
                 title={folder.description}
                 // 拖拽文件到文件夹行 = 移动(有 onDropFiles 时才响应)
@@ -133,21 +143,21 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                   } catch { /* 忽略坏数据 */ }
                 } : undefined}
               >
-                <td className="p-3 pl-4 w-10" />
-                <td className="p-3 max-w-[200px]">
-                  <div className="flex items-center gap-3">
+                <td className="p-3 pl-4" />
+                <td className="p-3 overflow-hidden">
+                  <div className="flex items-center gap-3 min-w-0">
                     {folder.icon
                       ? <folder.icon className="w-5 h-5 shrink-0 text-blue-500 dark:text-blue-400" />
                       : <FolderIcon />}
                     <span className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
                       {folder.name}
                     </span>
-                    <span className="text-[10px] text-muted-foreground/70 truncate hidden md:inline ml-1">{folder.description}</span>
+                    <span className="text-[11px] text-muted-foreground/70 truncate hidden lg:inline shrink-0">{folder.description}</span>
                   </div>
                 </td>
-                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">文件夹</td>
-                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">—</td>
-                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">—</td>
+                <td className="p-3 text-muted-foreground text-xs whitespace-nowrap hidden lg:table-cell">文件夹</td>
+                <td className="p-3 text-muted-foreground text-xs text-right tabular-nums whitespace-nowrap">—</td>
+                <td className="p-3 text-muted-foreground text-xs text-right tabular-nums whitespace-nowrap hidden xl:table-cell">—</td>
                 <td className="p-3 text-right pr-4" onClick={(e) => e.stopPropagation()}>
                   {(folder.onRename || folder.onDelete) ? (
                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -180,7 +190,7 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
               return (
                 <tr
                   key={file.id}
-                  className={`border-b border-border transition-colors group cursor-pointer ${isSelected ? "bg-blue-50/50 dark:bg-blue-950/30" : "hover:bg-muted"}`}
+                  className={`border-b border-border last:border-0 transition-colors group cursor-pointer ${isSelected ? "bg-blue-50/60 dark:bg-blue-950/30" : "hover:bg-muted/60"}`}
                   onClick={() => selection.toggleSelect(file.id)}
                   // 可拖拽:拖到文件夹行 = 移动(数据用自定义 MIME 传递)
                   draggable
@@ -190,7 +200,7 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                     e.dataTransfer.effectAllowed = "move";
                   }}
                 >
-                  <td className="p-3 pl-4 w-10" onClick={(e) => e.stopPropagation()}>
+                  <td className="p-3 pl-4" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       className="w-4 h-4 rounded border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400 focus:ring-blue-500 cursor-pointer"
@@ -198,47 +208,52 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                       onChange={() => selection.toggleSelect(file.id)}
                     />
                   </td>
-                  <td className="p-3 max-w-[200px]">
-                    <div className="flex items-center gap-3">
+                  <td className="p-3 overflow-hidden">
+                    <div className="flex items-center gap-3 min-w-0">
                       {/* 图片文件显示真实缩略图(小圆角),其他类型用类型图标 */}
                       {isImageFile(file.name) ? (
                         <img
                           src={`/api/files/${file.id}/raw`}
                           alt=""
                           loading="lazy"
-                          className="w-8 h-8 rounded object-cover border border-border shrink-0 bg-muted"
+                          className="w-8 h-8 rounded-md object-cover border border-border shrink-0 bg-muted"
                         />
                       ) : (
                         <Icon className={`${file.color} w-5 h-5 shrink-0`} />
                       )}
-                      <span
-                        className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate cursor-pointer hover:underline underline-offset-2"
-                        title="点击预览"
+                      <button
+                        type="button"
+                        className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate cursor-pointer text-left min-w-0"
+                        title={file.name}
                         onClick={(e) => { e.stopPropagation(); onOpen(file); }}
                       >
                         {file.name}
-                      </span>
+                      </button>
+                      {/* 索引状态:小圆点(悬停显示全文案;比徽章更省横向空间) */}
                       {file.indexed ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border border-green-100 dark:border-green-900 font-medium ml-2 select-none shrink-0" title="已索引入知识库，AI 可检索此文件内容">
-                          <BookOpen className="w-2.5 h-2.5" /> 已索引
-                        </span>
-                      ) : onIndex && (
+                        <span
+                          className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"
+                          title="已索引入知识库，AI 可检索此文件内容"
+                        />
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap hidden lg:table-cell">{file.type}</td>
+                  <td className="p-3 text-muted-foreground text-xs text-right tabular-nums whitespace-nowrap">{file.size}</td>
+                  <td className="p-3 text-muted-foreground text-xs text-right tabular-nums whitespace-nowrap hidden xl:table-cell">{file.date}</td>
+                  <td className="p-3 text-right pr-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* 未索引:悬停时提供「加入知识库」快捷动作 */}
+                      {!file.indexed && onIndex && (
                         <button
                           type="button"
                           title="解析文件内容并索引入知识库，AI 即可检索"
                           onClick={(e) => { e.stopPropagation(); onIndex(file); }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ml-2 select-none shrink-0 cursor-pointer border border-dashed border-blue-300 dark:border-blue-700 text-blue-500 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                          className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium select-none cursor-pointer text-blue-500 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors whitespace-nowrap"
                         >
-                          <Plus className="w-2.5 h-2.5" /> 加入知识库
+                          <Plus className="w-3 h-3" /> 入知识库
                         </button>
                       )}
-                    </div>
-                  </td>
-                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{file.type}</td>
-                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{file.size}</td>
-                  <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{file.date}</td>
-                  <td className="p-3 text-right pr-4" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" title="预览" onClick={() => onOpen(file)}>
                         <Eye className="w-4 h-4" />
                       </Button>
