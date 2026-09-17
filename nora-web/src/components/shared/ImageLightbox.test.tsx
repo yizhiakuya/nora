@@ -32,11 +32,11 @@ describe("ImageLightbox", () => {
     const { rerender } = render(
       <ImageLightbox images={images} index={0} onClose={() => {}} onIndexChange={() => {}} />,
     );
-    fireEvent.click(screen.getByLabelText("下一张"));
-    fireEvent.click(screen.getByLabelText("上一张"));
+    fireEvent.click(screen.getByLabelText("下一个"));
+    fireEvent.click(screen.getByLabelText("上一个"));
     rerender(<ImageLightbox images={[images[0]]} index={0} onClose={() => {}} onIndexChange={() => {}} />);
     // 单张:无切换按钮
-    screen.queryByLabelText("下一张");
+    screen.queryByLabelText("下一个");
   });
 
   it("键盘 Esc 关闭、方向键切换", () => {

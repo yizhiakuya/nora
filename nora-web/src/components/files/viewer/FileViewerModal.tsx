@@ -8,6 +8,7 @@ import { PdfPreview } from "./preview/PdfPreview";
 import { WordPreview } from "./preview/WordPreview";
 import { ExcelPreview } from "./preview/ExcelPreview";
 import { ImagePreview } from "./preview/ImagePreview";
+import { VideoPreview, AudioPreview } from "./preview/VideoPreview";
 import { TextPreview } from "./preview/TextPreview";
 import { Unsupported } from "./preview/Unsupported";
 import { PreviewSkeleton } from "./preview/PreviewSkeleton";
@@ -32,6 +33,8 @@ export function FileViewerModal({ file, preview, status, onClose }: FileViewerMo
       case "word": return <WordPreview preview={preview} />;
       case "excel": return <ExcelPreview preview={preview} />;
       case "image": return <ImagePreview preview={preview} />;
+      case "video": return <VideoPreview preview={preview} />;
+      case "audio": return <AudioPreview preview={preview} />;
       case "text": return <TextPreview preview={preview} />;
       default: return <Unsupported fileName={file.name} />;
     }

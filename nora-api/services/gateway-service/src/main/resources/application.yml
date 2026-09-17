@@ -36,6 +36,14 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/workspace/**
+        - id: media
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/media/**
+        - id: frontend-log
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/log/**
         - id: file
           uri: lb://file-service
           predicates:

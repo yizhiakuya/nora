@@ -81,23 +81,55 @@ public class FileController {
     }
 
     /**
-     * 返回文件原始字节(图片/PDF 等二进制预览用;前端 &lt;img src&gt; 直接引用)。
-     * Content-Type 用文件真实 mime,浏览器按图片渲染。
+     * 返回文件原始字节(图片/视频/PDF 等二进制预览用;前端 &lt;img&gt;/&lt;video&gt; 直接引用)。
      *
-     * @param id file id
-     * @return raw bytes with the stored mime type
+     * <p>2026-09-17 起改为**流式 + HTTP Range 支持**:
+     * 视频播放器拖进度条需要 Range 请求;此前 readAllBytes 全量进内存,
+     * 几百 MB 的视频会 OOM 且无法 seek。单区间 Range 返回 206 +
+     * Content-Range(多区间合并为整体返回,视频 seek 只发单区间)。
+     *
+     * @param id    file id
+     * @param range 可选 Range 头(形如 {@code bytes=0-1023})
+     * @return streaming resource (200) or partial region (206)
      */
     @GetMapping("/{id}/raw")
-    public org.springframework.http.ResponseEntity<byte[]> raw(@PathVariable Long id) {
+    public org.springframework.http.ResponseEntity<?> raw(
+            @PathVariable Long id,
+            @org.springframework.web.bind.annotation.RequestHeader(value = "Range", required = false) String range) {
         com.nora.file.api.FileItem item = fileStorageService.getById(id);
-        byte[] body = fileStorageService.raw(id);
+        java.nio.file.Path path = fileStorageService.resolveFile(id);
         String mime = item.mimeType() == null || item.mimeType().isBlank()
                 ? org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE
                 : item.mimeType();
+        org.springframework.core.io.FileSystemResource resource =
+                new org.springframework.core.io.FileSystemResource(path);
+
+        if (range != null && range.startsWith("bytes=") && !range.contains(",")) {
+            try {
+                org.springframework.http.HttpRange r =
+                        org.springframework.http.HttpRange.parseRanges(range).get(0);
+                long length = resource.contentLength();
+                long start = r.getRangeStart(length);
+                long end = Math.min(r.getRangeEnd(length), length - 1);
+                if (start <= end) {
+                    long regionLength = end - start + 1;
+                    return org.springframework.http.ResponseEntity
+                            .status(org.springframework.http.HttpStatus.PARTIAL_CONTENT)
+                            .header("Content-Type", mime)
+                            .header("Accept-Ranges", "bytes")
+                            .header("Content-Range", "bytes " + start + "-" + end + "/" + length)
+                            .header("Cache-Control", "private, max-age=300")
+                            .body(new org.springframework.core.io.support.ResourceRegion(resource, start, regionLength));
+                }
+            } catch (Exception ignored) {
+                // 坏 Range 头(解析失败/越界):退化为整体返回,浏览器自行处理
+            }
+        }
         return org.springframework.http.ResponseEntity.ok()
                 .header("Content-Type", mime)
+                .header("Accept-Ranges", "bytes")
                 .header("Cache-Control", "private, max-age=300")
-                .body(body);
+                .body(resource);
     }
 
     /**

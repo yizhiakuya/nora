@@ -2,22 +2,25 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-react";
 
 /**
- * 图片灯箱：聊天里的照片点击后页内放大查看，不再跳外部标签页。
+ * 媒体灯箱：聊天里的照片/视频点击后页内放大查看，不再跳外部标签页。
  *
- * 交互（对齐常见图片预览）：
+ * 交互（对齐常见媒体预览）：
  * - 点击遮罩 / 右上角 × / Esc 关闭；
- * - 多张时左右箭头 / ← → 键切换（单张时隐藏）；
- * - 顶栏给"新窗口打开"与"下载"两个显式出口（需要时才离开页内）。
+ * - 多张时左右箭头 / ← → 键切换（单张时隐藏；视频播放中左右键由播放器接管）；
+ * - 顶栏给"新窗口打开"与"下载"两个显式出口（需要时才离开页内）；
+ * - `kind: "video"` 的条目用原生 <video> 播放（相册视频走 content 端点直出）。
  */
 
 export interface LightboxImage {
-  /** 大图（原图）地址 */
+  /** 大图/视频（原图/原片）地址 */
   src: string;
   /** 列表缩略图（先用它做即时占位，大图加载完再替换，避免白屏） */
   thumb?: string;
   /** 说明文字（agent 填写的 caption 等） */
   caption?: string;
   alt?: string;
+  /** 媒体类型;缺省 image。video 时用 <video controls> 渲染 */
+  kind?: "image" | "video";
 }
 
 export function ImageLightbox({
@@ -34,6 +37,7 @@ export function ImageLightbox({
   const [loaded, setLoaded] = useState(false);
   const current = images[index];
   const hasMultiple = images.length > 1;
+  const isVideo = current?.kind === "video";
 
   /**
    * 预加载相邻大图（左右各一张）：手机相册的原图要走中继隧道，
@@ -41,7 +45,7 @@ export function ImageLightbox({
    * 提前把邻居塞进浏览器缓存，切换时几乎瞬时。
    *
    * 用 <link rel=preload> 而非 new Image()：前者不占额外解码内存，
-   * 加载完可由 <img> 直接命中缓存。
+   * 加载完可由 <img> 直接命中缓存。视频邻居不预载（体积大，按需流式）。
    */
   useEffect(() => {
     if (!hasMultiple) return;
@@ -49,7 +53,7 @@ export function ImageLightbox({
     for (const delta of [1, -1]) {
       const neighbor = images[(index + delta + images.length) % images.length];
       const href = neighbor?.src;
-      if (!href || href === current?.src) continue;
+      if (!href || href === current?.src || neighbor?.kind === "video") continue;
       const link = document.createElement("link");
       link.rel = "preload";
       link.as = "image";
@@ -70,23 +74,23 @@ export function ImageLightbox({
     [hasMultiple, images.length, index, onIndexChange],
   );
 
-  // 键盘：Esc 关闭、← → 切换
+  // 键盘：Esc 关闭、← → 切换(视频当前项时左右键留给播放器做进度调节)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
-      } else if (e.key === "ArrowLeft") {
+      } else if (e.key === "ArrowLeft" && !isVideo) {
         e.preventDefault();
         go(-1);
-      } else if (e.key === "ArrowRight") {
+      } else if (e.key === "ArrowRight" && !isVideo) {
         e.preventDefault();
         go(1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, onClose]);
+  }, [go, onClose, isVideo]);
 
   // 打开期间锁定页面滚动
   useEffect(() => {
@@ -149,47 +153,67 @@ export function ImageLightbox({
         </div>
       </div>
 
-      {/* 图片区：点击遮罩关闭、点击图片本身不关闭 */}
+      {/* 媒体区：点击遮罩关闭、点击媒体本身不关闭 */}
       <div className="flex-1 min-h-0 flex items-center justify-center px-4 pb-6 relative">
         {hasMultiple && (
           <button
             type="button"
-            aria-label="上一张"
+            aria-label="上一个"
             onClick={(e) => {
               e.stopPropagation();
               go(-1);
             }}
-            className="absolute left-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors cursor-pointer"
+            className="absolute left-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors cursor-pointer z-10"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
         )}
-        <img
-          key={current.src}
-          src={current.src}
-          alt={current.alt ?? current.caption ?? "图片"}
-          onLoad={() => setLoaded(true)}
-          onClick={(e) => e.stopPropagation()}
-          className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-        />
-        {/* 大图未加载完时，先用缩略图铺底（避免白屏等待） */}
-        {!loaded && current.thumb && current.thumb !== current.src && (
-          <img
-            src={current.thumb}
-            alt=""
-            aria-hidden
-            className="absolute max-w-full max-h-full object-contain rounded-lg shadow-2xl blur-sm"
-          />
+        {isVideo ? (
+          // 视频:原生播放器(播放/暂停/进度/音量/全屏);点击视频本身不关灯箱
+          <video
+            key={current.src}
+            src={current.src}
+            poster={current.thumb}
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+            onClick={(e) => e.stopPropagation()}
+            onLoadedMetadata={() => setLoaded(true)}
+            className="max-w-full max-h-full rounded-lg shadow-2xl bg-black"
+          >
+            您的浏览器不支持视频播放。
+          </video>
+        ) : (
+          <>
+            <img
+              key={current.src}
+              src={current.src}
+              alt={current.alt ?? current.caption ?? "图片"}
+              onLoad={() => setLoaded(true)}
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            />
+            {/* 大图未加载完时，先用缩略图铺底（避免白屏等待） */}
+            {!loaded && current.thumb && current.thumb !== current.src && (
+              <img
+                src={current.thumb}
+                alt=""
+                aria-hidden
+                className="absolute max-w-full max-h-full object-contain rounded-lg shadow-2xl blur-sm"
+              />
+            )}
+          </>
         )}
         {hasMultiple && (
           <button
             type="button"
-            aria-label="下一张"
+            aria-label="下一个"
             onClick={(e) => {
               e.stopPropagation();
               go(1);
             }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors cursor-pointer"
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors cursor-pointer z-10"
           >
             <ChevronRight className="w-5 h-5" />
           </button>

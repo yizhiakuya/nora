@@ -84,11 +84,18 @@ function toPreview(p: BackendFilePreview, id: number, name: string): FilePreview
   if (p.textContent) {
     return { kind: "text", text: p.textContent };
   }
-  // 后端 Tika 提取不到文本(图片/空文件)时按扩展名给预览 kind
+  // 后端 Tika 提取不到文本(图片/视频/空文件)时按扩展名给预览 kind
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
     // 图片:文本提取为空,给 raw 端点 URL 让 <img> 直接渲染原始字节
     return { kind: "image", imageUrl: `/api/files/${id}/raw` };
+  }
+  if (["mp4", "webm", "mov", "m4v", "ogv", "mkv"].includes(ext)) {
+    // 视频:raw 端点直出字节,<video> 流式播放(依赖服务端 Range 支持)
+    return { kind: "video", mediaUrl: `/api/files/${id}/raw` };
+  }
+  if (["mp3", "wav", "ogg", "m4a", "flac", "aac"].includes(ext)) {
+    return { kind: "audio", mediaUrl: `/api/files/${id}/raw` };
   }
   return { kind: "unknown" as FilePreviewKind };
 }

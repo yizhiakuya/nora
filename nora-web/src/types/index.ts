@@ -37,7 +37,7 @@ export interface FolderItem {
   count: number;
 }
 
-export type FilePreviewKind = "pdf" | "word" | "excel" | "image" | "text" | "unknown";
+export type FilePreviewKind = "pdf" | "word" | "excel" | "image" | "video" | "audio" | "text" | "unknown";
 
 export interface FilePreview {
   kind: FilePreviewKind;
@@ -45,6 +45,8 @@ export interface FilePreview {
   text?: string;
   table?: { columns: string[]; rows: string[][] };
   imageUrl?: string;
+  /** 视频/音频原始字节 URL(经 /api/files/{id}/raw,<video>/<audio> 直接播放) */
+  mediaUrl?: string;
 }
 
 // ==========================================

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
 import { GalleryBlock, parseGalleryFence } from "./GalleryBlock";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
+import { mediaCacheUrl, thumbVariant } from "@/lib/mediaCache";
 
 /**
  * 工具步骤行(2026-09-17 从 AgentThoughtBlock 拆出):单行 chip(名称 +
@@ -57,12 +58,9 @@ function extractResultImages(content: string | null | undefined): { alt: string;
 }
 
 /**
- * 手机相册的 /content 原图有 /thumb 缩略图变体：网格用缩略图（快），
- * 灯箱用原图（清晰）。非相册地址原样返回。
+ * 手机相册的 /content 原图有 /thumb 缩略图变体:网格用缩略图(快),
+ * 灯箱用原图(清晰)。缩略图变体与缓存 URL 工具见 @/lib/mediaCache。
  */
-function thumbVariant(url: string): string {
-  return url.replace(/\/content(\?|$)/, "/thumb$1");
-}
 
 /** 工具步骤：单行 chip,可展开参数与结果详情。 */
 export function ToolRow({ step }: { step: ChatStep }) {
@@ -147,7 +145,7 @@ export function ToolRow({ step }: { step: ChatStep }) {
               className="group/img block rounded-lg border border-border overflow-hidden bg-muted/40 cursor-zoom-in"
             >
               <img
-                src={thumbVariant(img.url)}
+                src={mediaCacheUrl(thumbVariant(img.url))}
                 alt={img.alt}
                 loading="lazy"
                 className="h-24 w-auto max-w-[240px] object-cover transition-opacity group-hover/img:opacity-90"
@@ -162,8 +160,8 @@ export function ToolRow({ step }: { step: ChatStep }) {
       {lightboxIndex !== null && (
         <ImageLightbox
           images={resultImages.map((img) => ({
-            src: img.url,
-            thumb: thumbVariant(img.url),
+            src: mediaCacheUrl(img.url),
+            thumb: mediaCacheUrl(thumbVariant(img.url)),
             alt: img.alt,
           }))}
           index={lightboxIndex}

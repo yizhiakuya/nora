@@ -213,6 +213,25 @@ public class FileStorageService {
         }
     }
 
+    /**
+     * 解析文件在磁盘上的路径(视频/大文件流式读取用;2026-09-17)。
+     *
+     * <p>与 {@link #raw(Long)} 的区别:不把字节读进内存——Controller 用
+     * {@code FileSystemResource} 流式返回,支持 HTTP Range(视频拖进度条必需)。
+     *
+     * @param id file id
+     * @return 磁盘路径
+     * @throws BusinessException 404 when the id is unknown or the file is missing on disk
+     */
+    public Path resolveFile(Long id) {
+        FileItem item = getById(id);
+        String filePath = filePathOf(id);
+        if (filePath == null || !Files.exists(Path.of(filePath))) {
+            throw new BusinessException(FILE_NOT_FOUND_CODE, "File content not found: " + item.name());
+        }
+        return Path.of(filePath);
+    }
+
     private static String humanReadableSize(Long bytes) {
         if (bytes == null || bytes < 0) {
             return "—";

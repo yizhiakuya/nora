@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Images, Play } from "lucide-react";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
+import { mediaCacheUrl } from "@/lib/mediaCache";
 
 /**
  * 画廊卡片：手机相册 MCP 的 photos_showcase 工具输出的结构化展示。
@@ -66,14 +67,17 @@ function formatTakenAt(takenAt?: string): string | null {
 
 export function GalleryBlock({ data }: { data: GalleryData }) {
   const count = data.count ?? data.items.length;
-  // 点击缩略图 → 页内灯箱放大（不再跳外部标签页）；
+  // 点击缩略图 → 页内灯箱放大（不再跳外部标签页）；视频条目走 <video> 播放
+  // 媒体 URL 经后端磁盘缓存代理(/api/media/cache):一次拉取跨会话复用,
+  // 手机离线也能看已缓存内容(直连时每次 ~3.2s 且离线不可用)
   // lightboxIndex=null 表示关闭
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxImages = data.items.map((item) => ({
-    src: item.fullUrl ?? item.url,
-    thumb: item.url,
+    src: mediaCacheUrl(item.fullUrl ?? item.url),
+    thumb: mediaCacheUrl(item.url),
     caption: item.caption,
     alt: item.filename ?? `照片 ${item.id}`,
+    kind: item.type === "video" ? ("video" as const) : ("image" as const),
   }));
 
   return (
@@ -81,9 +85,9 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/70">
         <Images className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400 shrink-0" />
         <span className="text-xs font-medium text-foreground truncate">{data.title}</span>
-        <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{count} 张</span>
+        <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{count} 项</span>
         <span className="ml-auto text-[10px] text-muted-foreground/60 shrink-0 hidden sm:inline">
-          点击放大
+          点击查看
         </span>
       </div>
       <div className="grid grid-cols-3 gap-1.5 p-2 max-h-96 overflow-auto custom-scroll">
@@ -99,7 +103,7 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
               className="group/img relative block w-full rounded-md overflow-hidden border border-border/60 bg-muted/40 cursor-zoom-in text-left"
             >
               <img
-                src={item.url}
+                src={mediaCacheUrl(item.url)}
                 alt={item.caption ?? item.filename ?? `照片 ${item.id}`}
                 loading="lazy"
                 className="aspect-square w-full object-cover transition-transform duration-200 group-hover/img:scale-[1.03]"
