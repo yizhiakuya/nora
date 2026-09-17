@@ -1,10 +1,14 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
 import { useModelProviders, resolveDefaultProvider, REASONING_LEVELS } from "@/hooks/useModelProviders";
 import { PERMISSION_MODE_META, type PermissionMode } from "@/lib/api/chatApi";
+import type { ChatRef } from "@/lib/chatRefs";
+import { ReferencePicker } from "./ReferencePicker";
+import { filesApi } from "@/lib/services/filesApi";
+import { useFiles } from "@/hooks/useFiles";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,9 +34,13 @@ interface ChatInputAreaProps {
   /** 权限模式:请求批准 / 帮我批准 / 完全访问权限 */
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
+  /** 待发送引用(📎附件/📄文件/@知识库) */
+  refs?: ChatRef[];
+  onAddRef?: (ref: ChatRef) => void;
+  onRemoveRef?: (kind: ChatRef["kind"], id: number) => void;
 }
 
-export function ChatInputArea({ input, setInput, isSending, onSend, onStop, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange }: ChatInputAreaProps) {
+export function ChatInputArea({ input, setInput, isSending, onSend, onStop, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange, refs = [], onAddRef, onRemoveRef }: ChatInputAreaProps) {
   const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
@@ -41,6 +49,11 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const defaultProviderId = useModelProviders((s) => s.defaultProviderId);
   const setDefaultModel = useModelProviders((s) => s.setDefaultModel);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 📎 上传中(禁用按钮防重复) */
+  const [uploading, setUploading] = useState(false);
+  /** 引用选择器:file=📄 文件中心 / doc=@ 知识库;null=关闭 */
+  const [picker, setPicker] = useState<"file" | "doc" | null>(null);
   const contextPercent = Math.min(100, Math.round((contextTokens / contextLimit) * 100));
 
   // 当前生效渠道:显式 id 优先、失效时按模型名回落(与后端同一顺序)。
@@ -54,6 +67,25 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const handleToggle = (id: number, name: string, enabled: boolean) => {
     toggleSkill(id);
     toast.success(`能力「${name}」已${enabled ? "停用" : "启用"}，AI ${enabled ? "不再" : "现在"}可以使用它`);
+  };
+
+  /**
+   * 📎 附件:选本地文件 → 上传文件中心 → 作为 file 引用加入待发送区。
+   * 上传成功后同步文件中心列表(引用要能被 read_file 工具读到,必须服务端可见)。
+   */
+  const handlePickLocalFile = async (file: globalThis.File) => {
+    if (uploading) return;
+    setUploading(true);
+    try {
+      const item = await filesApi.uploadFile(file);
+      useFiles.getState().syncFile(item);
+      onAddRef?.({ kind: "file", id: item.id, name: item.name, size: item.size });
+      toast.success(`「${item.name}」已上传并引用,发送后 AI 可读取`);
+    } catch (e) {
+      toast.error(`上传失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   // 监听 input 变化，动态调整 textarea 高度
@@ -90,6 +122,33 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
           </div>
 
           <div className="border border-border rounded-2xl bg-card shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all flex flex-col overflow-hidden relative group">
+              {/* 待发送引用 chips(📎附件/📄文件/@知识库):发送时随消息序列化 */}
+              {refs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+                  {refs.map((ref) => (
+                    <span
+                      key={`${ref.kind}-${ref.id}`}
+                      className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[10px] font-medium border ${
+                        ref.kind === "file"
+                          ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800"
+                          : "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800"
+                      }`}
+                      title={ref.kind === "file" ? `文件中心引用 · file_id=${ref.id}` : `知识库文档引用 · doc_id=${ref.id}`}
+                    >
+                      {ref.kind === "file" ? <FileText className="w-3 h-3" /> : <AtSign className="w-3 h-3" />}
+                      <span className="max-w-[160px] truncate">{ref.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveRef?.(ref.kind, ref.id)}
+                        className="ml-0.5 w-3.5 h-3.5 rounded-full inline-flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+                        title="移除引用"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 rows={1}
@@ -111,9 +170,44 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
 
               <div className="flex justify-between items-end p-2.5 pt-1">
                   <div className="flex shrink-0 gap-0.5">
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><Paperclip className="w-4 h-4" /></Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><FileText className="w-4 h-4" /></Button>
-                      <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"><AtSign className="w-4 h-4" /></Button>
+                      {/* 📎 附件:选本地文件上传到文件中心并引用 */}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = ""; // 允许连续选同一文件
+                          if (f) void handlePickLocalFile(f);
+                        }}
+                      />
+                      <Button
+                        variant="ghost" size="icon"
+                        className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                        title="上传附件(存入文件中心并引用,AI 可读取)"
+                      >
+                        {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                      </Button>
+                      {/* 📄 引用文件中心的文件 */}
+                      <Button
+                        variant="ghost" size="icon"
+                        className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
+                        onClick={() => setPicker("file")}
+                        title="引用文件中心的文件(AI 用 read_file 读取)"
+                      >
+                        <FileText className="w-4 h-4" />
+                      </Button>
+                      {/* @ 引用知识库文档 */}
+                      <Button
+                        variant="ghost" size="icon"
+                        className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
+                        onClick={() => setPicker("doc")}
+                        title="引用知识库文档(回答优先参考)"
+                      >
+                        <AtSign className="w-4 h-4" />
+                      </Button>
                   </div>
 
                   <div className="flex min-w-0 flex-1 justify-end gap-1.5 items-center">
@@ -264,7 +358,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                             : "bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white"
                         }`}
                         onClick={isSending ? onStop : onSend}
-                        disabled={!isSending && !input.trim()}
+                        disabled={!isSending && !input.trim() && refs.length === 0}
                         title={isSending ? "停止生成" : "发送"}
                       >
                           {isSending ? <Square className="w-3 h-3 fill-current" /> : <Send className="w-3.5 h-3.5 ml-0.5" />}
@@ -272,6 +366,16 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                   </div>
               </div>
           </div>
+      </div>
+
+      {/* 引用选择器:📄 文件中心 / @ 知识库(外层容器 pointer-events-none,须显式恢复) */}
+      <div className="pointer-events-auto">
+        <ReferencePicker
+          kind={picker ?? "file"}
+          isOpen={picker !== null}
+          onClose={() => setPicker(null)}
+          onPick={(ref) => onAddRef?.(ref)}
+        />
       </div>
   </div>
   );

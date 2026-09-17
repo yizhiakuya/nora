@@ -61,4 +61,52 @@ public class RagRetrievalClient {
     /** ApiResponse envelope as returned by rag-service. */
     record Envelope<T>(int code, T data, String message) {
     }
+
+    /**
+     * 拉取一篇知识库文档的 chunks(对话框 @ 引用注入用)。
+     * GET /api/rag/docs/{id};失败/不存在返回 null(调用方降级)。
+     */
+    public DocChunks docChunks(long docId) {
+        try {
+            Envelope<DocDetailPayload> envelope = restClient.get()
+                    .uri("/api/rag/docs/{id}", docId)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null
+                    || envelope.data().chunks() == null) {
+                log.warn("rag-service doc detail returned no usable payload for doc {} (envelope={})",
+                        docId, envelope == null ? "null" : envelope.code());
+                return null;
+            }
+            DocDetailPayload d = envelope.data();
+            String name = d.doc() != null && d.doc().name() != null ? d.doc().name() : ("doc-" + docId);
+            List<DocChunk> chunks = d.chunks().stream()
+                    .filter(c -> c.content() != null && !c.content().isBlank())
+                    .map(c -> new DocChunk(c.chunkIndex(), c.content()))
+                    .toList();
+            return new DocChunks(name, chunks);
+        } catch (Exception e) {
+            log.warn("rag-service doc detail failed for doc {}: {}", docId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 一篇文档的名称与 chunk 正文(仅注入所需字段)。 */
+    public record DocChunks(String docName, List<DocChunk> chunks) {
+    }
+
+    public record DocChunk(int chunkIndex, String content) {
+    }
+
+    /** GET /api/rag/docs/{id} 响应(仅取注入所需字段;其余字段忽略)。 */
+    record DocDetailPayload(DocInfo doc, List<ChunkPayload> chunks) {
+    }
+
+    record DocInfo(String name) {
+    }
+
+    record ChunkPayload(int chunkIndex, String content) {
+    }
 }

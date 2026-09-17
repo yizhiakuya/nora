@@ -1,8 +1,9 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, AtSign } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
 import { ChatMessage } from "@/lib/api/chatApi";
+import { splitChatRefs } from "@/lib/chatRefs";
 import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
@@ -77,6 +78,12 @@ function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["source
           <div className="space-y-2 mt-2 max-h-80 overflow-auto">
             {sources.map((s, i) => {
               const Icon = SOURCE_ICON[s.source] ?? FileText;
+              // 用户引用(📎/📄/@)注入的是整篇内容(可达 8K/12K 字符),UI 只展示摘要;
+              // 模型侧收到的是完整注入内容(后端 systemPromptWith 拼装)
+              const isRef = s.snippet.startsWith("【用户引用");
+              const snippet = isRef && s.snippet.length > 600
+                ? s.snippet.slice(0, 600) + `…(共 ${s.snippet.length} 字符,已注入完整内容)`
+                : s.snippet;
               return (
                 <div key={i} className="bg-card border border-border rounded-xl p-3 relative overflow-hidden">
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-purple-500" style={{ opacity: s.score }} />
@@ -84,13 +91,13 @@ function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["source
                     <div className="flex items-center gap-1.5 min-w-0">
                       <Icon className="w-3 h-3 text-purple-500 dark:text-purple-400 shrink-0" />
                       <span className="text-xs font-medium text-foreground truncate">{s.docName}</span>
-                      <span className="text-[9px] text-muted-foreground shrink-0">chunk #{s.chunkIndex}</span>
+                      <span className="text-[9px] text-muted-foreground shrink-0">{isRef ? "用户引用" : `chunk #${s.chunkIndex}`}</span>
                     </div>
                     <span className={`text-[9px] font-bold ${s.score < LOW_SCORE_THRESHOLD ? "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/40" : "text-purple-600 bg-purple-50 dark:text-purple-400 dark:bg-purple-950/40"} px-1.5 py-0.5 rounded-full tabular-nums shrink-0`}>
                       {(s.score * 100).toFixed(0)}%
                     </span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">{s.snippet}</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{snippet}</p>
                 </div>
               );
             })}
@@ -200,8 +207,34 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
                 </div>
               </div>
             ) : (
-              <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%] whitespace-pre-wrap">
-                {msg.content}
+              <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%]">
+                {(() => {
+                  // 引用行拆成 chips 展示(📎/📄 文件 · @ 知识库),正文保留原样换行
+                  const { body, refs } = splitChatRefs(msg.content);
+                  return (
+                    <>
+                      {refs.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {refs.map((ref) => (
+                            <span
+                              key={`${ref.kind}-${ref.id}`}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                                ref.kind === "file"
+                                  ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800"
+                                  : "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800"
+                              }`}
+                              title={ref.kind === "file" ? `文件中心引用 · file_id=${ref.id}` : `知识库文档引用 · doc_id=${ref.id}`}
+                            >
+                              {ref.kind === "file" ? <FileText className="w-3 h-3" /> : <AtSign className="w-3 h-3" />}
+                              {ref.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {body && <span className="whitespace-pre-wrap">{body}</span>}
+                    </>
+                  );
+                })()}
               </div>
             )}
             <div className="flex flex-col items-center gap-1">

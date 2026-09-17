@@ -8,6 +8,7 @@ import { useChatSessions } from "./useChatSessions";
 import { useModelProviders, resolveDefaultProvider } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
 import { randomId } from "@/lib/utils";
+import { formatChatRefs, type ChatRef } from "@/lib/chatRefs";
 
 /**
  * Agent 全局设置(权限模式 / 默认模型 / 思考等级覆写):后端 app_setting
@@ -67,6 +68,8 @@ const formatTime = () =>
 export function useChat({ initialMessages = [], initialInput = "", responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState(initialInput);
+  /** 待发送引用(附件/文件/知识库文档;2026-09-17):发送时序列化进消息尾部 */
+  const [refs, setRefs] = useState<ChatRef[]>([]);
   const [isSending, setIsSending] = useState(false);
   const model = useModelProviders((s) => s.defaultModel);
   // 生效渠道:与后端 activeProvider(providerId, model) 同一回落顺序(显式 id → 按名)。
@@ -364,10 +367,27 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
     [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage, effectiveProviderId]
   );
 
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isSending) return;
+  /** 引用增删(去重:同 kind+id 只保留一条) */
+  const addRef = useCallback((ref: ChatRef) => {
+    setRefs((prev) => (prev.some((r) => r.kind === ref.kind && r.id === ref.id) ? prev : [...prev, ref]));
+  }, []);
+  const removeRef = useCallback((kind: ChatRef["kind"], id: number) => {
+    setRefs((prev) => prev.filter((r) => !(r.kind === kind && r.id === id)));
+  }, []);
 
-    const content = input.trim();
+  /** 拼引用后的实际发送内容:正文 + 引用块(尾部,持久化后历史仍可解析) */
+  const composeWithRefs = useCallback(
+    (content: string, pending: ChatRef[]) => {
+      const block = formatChatRefs(pending);
+      return block ? `${content}\n\n${block}` : content;
+    },
+    []
+  );
+
+  const sendMessage = useCallback(async () => {
+    if ((!input.trim() && refs.length === 0) || isSending) return;
+
+    const content = composeWithRefs(input.trim(), refs);
     const userMsg: ChatMessage = {
       id: randomId(),
       role: "user",
@@ -389,8 +409,9 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
       },
     ]);
     setInput("");
+    setRefs([]);
     await runTurn(content, assistantMsgId);
-  }, [input, isSending, runTurn]);
+  }, [input, refs, isSending, runTurn, composeWithRefs]);
 
   /**
    * 重试失败的轮次:用原用户消息发起新一轮,失败的助手消息就地清空复用
@@ -486,6 +507,10 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
     messages,
     input,
     setInput,
+    /** 待发送引用(📎附件/📄文件/@知识库) */
+    refs,
+    addRef,
+    removeRef,
     isSending,
     sendMessage,
     scrollRef,

@@ -93,6 +93,8 @@ public class ChatOrchestrationService {
     private final ModelResolver modelResolver;
     /** 上下文装配器(从本类拆出,2026-09-17 复杂度审计 Step 4)。 */
     private final ChatContextAssembler contextAssembler;
+    /** 消息引用解析与注入(📎/📄/@ 按钮;2026-09-17)。 */
+    private final MessageRefResolver messageRefResolver;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -144,6 +146,7 @@ public class ChatOrchestrationService {
         this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
         this.contextAssembler = new ChatContextAssembler(objectMapper, agentWorkspaceService,
                 agentSkillService, toolsSpecBuilder);
+        this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient);
     }
 
     public ChatOrchestrationService(LlmProperties llmProperties,
@@ -267,12 +270,26 @@ public class ChatOrchestrationService {
         // Step 1: knowledge retrieval (best-effort, before the LLM call)
         long retrievalStart = System.currentTimeMillis();
         List<CitationDto> citations = ragRetrievalClient.search(userMessage, 6);
+        // 消息引用(📎/📄/@ 按钮)注入:真实内容排在语义检索命中之前——
+        // 「用户明确引用的内容」优先级高于「检索到的相关片段」,且不受
+        // 检索分数下限影响(引用是确定性输入,不是相似度猜测)。
+        List<MessageRefResolver.Ref> messageRefs = MessageRefResolver.parse(userMessage);
+        List<CitationDto> refCitations = messageRefs.isEmpty()
+                ? List.of() : messageRefResolver.resolve(messageRefs);
+        if (!refCitations.isEmpty()) {
+            List<CitationDto> merged = new java.util.ArrayList<>(refCitations);
+            merged.addAll(citations);
+            citations = merged;
+        }
         long retrievalMs = System.currentTimeMillis() - retrievalStart;
 
         if (!citations.isEmpty()) {
+            String summary = refCitations.isEmpty()
+                    ? "召回 " + citations.size() + " 个相关片段（" + citations.get(0).docName() + " 等）"
+                    : "引用 " + messageRefs.size() + " 项 + 召回 "
+                            + (citations.size() - refCitations.size()) + " 个相关片段";
             eventConsumer.step(new ChatStepDto(
-                    "s-rag", "tool", "检索知识库",
-                    "召回 " + citations.size() + " 个相关片段（" + citations.get(0).docName() + " 等）",
+                    "s-rag", "tool", "检索知识库", summary,
                     retrievalMs, "completed", null, null, null, 0));
             eventConsumer.sources(citations);
         }
