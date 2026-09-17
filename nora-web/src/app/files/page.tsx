@@ -88,7 +88,11 @@ export default function FilesPage() {
           if (folder) setCurrentFolder(folder);
         }
         addRecent(target.name, target.type);
-        void viewer.open(target);
+        // 列表上下文:目标所在视图(文件夹内/根),让弹窗内 ←/→ 可连续浏览
+        const viewList = target.folderId != null
+          ? all.filter((f) => f.folderId === target.folderId)
+          : all.filter((f) => f.folderId == null);
+        void viewer.open(target, viewList);
       } catch { /* 深链失败静默(正常列表仍可用) */ }
     })();
     return () => { cancelled = true; };
@@ -412,7 +416,7 @@ export default function FilesPage() {
                 onDeleteSelected={handleDeleteSelected}
                 onDownloadSelected={handleDownloadSelected}
                 onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
-                onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
+                onOpen={(f) => { addRecent(f.name, f.type); void viewer.open(f, filteredFiles); }}
                 onIndex={handleIndexFile}
                 onDownload={(f) => handleDownloadOne(f)}
                 onRename={USE_BACKEND ? handleRenameFile : undefined}
@@ -553,7 +557,16 @@ export default function FilesPage() {
           }
         }}
       />
-      <FileViewerModal file={viewer.activeFile} preview={viewer.preview} status={viewer.status} onClose={viewer.close} />
+      <FileViewerModal
+        file={viewer.activeFile}
+        preview={viewer.preview}
+        status={viewer.status}
+        onClose={viewer.close}
+        onNavigate={viewer.navigate}
+        hasPrev={viewer.hasPrev}
+        hasNext={viewer.hasNext}
+        position={viewer.position}
+      />
     </>
   );
 }

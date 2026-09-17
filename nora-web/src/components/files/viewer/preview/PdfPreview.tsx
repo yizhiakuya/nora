@@ -21,20 +21,20 @@ export function PdfPreview({ preview }: { preview: FilePreview }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-end gap-2 text-xs">
         {preview.pages != null && preview.pages > 1 && (
-          <span className="text-muted-foreground mr-auto">约 {preview.pages} 页 · 内置查看器可翻页/缩放/搜索</span>
+          <span className="text-white/50 mr-auto">约 {preview.pages} 页 · 内置查看器可翻页/缩放/搜索</span>
         )}
         <a
           href={src}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/15 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
         >
           <ExternalLink className="w-3.5 h-3.5" /> 新窗口打开
         </a>
         <a
           href={src}
           download
-          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/15 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
         >
           <Download className="w-3.5 h-3.5" /> 下载
         </a>
@@ -43,7 +43,7 @@ export function PdfPreview({ preview }: { preview: FilePreview }) {
       <iframe
         src={src}
         title="PDF 预览"
-        className="w-full rounded-lg border border-border bg-muted/30"
+        className="w-full rounded-xl border border-white/10 bg-white"
         style={{ height: "62vh" }}
       />
     </div>

@@ -10,29 +10,29 @@ import { FilePreview } from "@/types";
 export function ExcelPreview({ preview }: { preview: FilePreview }) {
   const { columns, rows } = preview.table ?? { columns: [], rows: [] };
   if (columns.length === 0) {
-    return <div className="py-16 text-center text-xs text-muted-foreground">（表格内容为空或无法解析）</div>;
+    return <div className="py-16 text-center text-xs text-white/50">（表格内容为空或无法解析）</div>;
   }
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[10px] text-muted-foreground px-1">
+      <div className="text-[10px] text-white/50 px-1">
         {rows.length} 行 × {columns.length} 列{rows.length >= 500 ? "（仅显示前 500 行,完整内容请下载）" : ""}
       </div>
-      <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden overflow-x-auto">
+      <div className="bg-white/5 backdrop-blur rounded-xl border border-white/10 overflow-hidden overflow-x-auto">
         <table className="w-full text-left border-collapse min-w-[520px]">
           <thead>
-            <tr className="bg-muted border-b border-border text-xs text-muted-foreground font-medium sticky top-0">
-              <th className="p-3 pl-4 w-10 text-muted-foreground/60 bg-muted">#</th>
+            <tr className="bg-white/10 border-b border-white/10 text-xs text-white/70 font-medium sticky top-0">
+              <th className="p-3 pl-4 w-10 text-white/40 bg-white/10">#</th>
               {columns.map((col, i) => (
-                <th key={`${col}-${i}`} className="p-3 whitespace-nowrap bg-muted">{col}</th>
+                <th key={`${col}-${i}`} className="p-3 whitespace-nowrap bg-white/10">{col}</th>
               ))}
             </tr>
           </thead>
           <tbody className="text-sm">
             {rows.map((row, ri) => (
-              <tr key={ri} className="border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50/60 dark:hover:bg-gray-800/60 transition-colors">
-                <td className="p-3 pl-4 text-muted-foreground/60 text-xs tabular-nums">{ri + 1}</td>
+              <tr key={ri} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                <td className="p-3 pl-4 text-white/40 text-xs tabular-nums">{ri + 1}</td>
                 {columns.map((_, ci) => (
-                  <td key={ci} className={`p-3 whitespace-nowrap ${ci === 0 ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                  <td key={ci} className={`p-3 whitespace-nowrap ${ci === 0 ? "font-medium text-white/90" : "text-white/60"}`}>
                     {row[ci] ?? ""}
                   </td>
                 ))}

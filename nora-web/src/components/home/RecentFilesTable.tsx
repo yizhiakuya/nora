@@ -26,18 +26,22 @@ export function RecentFilesTable() {
   const stale = online === false;
 
   const openRecent = (name: string, type: string) => {
-    const { Icon, color } = iconFor(name);
-    const file: FileItem = {
-      id: name.length * 7 + name.charCodeAt(0),
-      name,
-      type,
-      size: "1.5 MB",
-      date: "刚刚",
-      icon: Icon,
-      color,
-      indexed: false,
-    };
-    void viewer.open(file);
+    // 列表内打开:支持弹窗内 ←/→ 切换(最近使用之间的连续浏览)
+    const list: FileItem[] = recent.map((r) => {
+      const { Icon, color } = iconFor(r.name);
+      return {
+        id: r.name.length * 7 + r.name.charCodeAt(0),
+        name: r.name,
+        type: r.type,
+        size: "—",
+        date: r.time,
+        icon: Icon,
+        color,
+        indexed: false,
+      };
+    });
+    const target = list.find((f) => f.name === name) ?? list[0];
+    if (target) void viewer.open(target, list);
   };
 
   return (
@@ -105,7 +109,16 @@ export function RecentFilesTable() {
         </table>
       </div>
 
-      <FileViewerModal file={viewer.activeFile} preview={viewer.preview} status={viewer.status} onClose={viewer.close} />
+      <FileViewerModal
+        file={viewer.activeFile}
+        preview={viewer.preview}
+        status={viewer.status}
+        onClose={viewer.close}
+        onNavigate={viewer.navigate}
+        hasPrev={viewer.hasPrev}
+        hasNext={viewer.hasNext}
+        position={viewer.position}
+      />
     </div>
   );
 }
