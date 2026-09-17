@@ -8,6 +8,17 @@
 > ModelResolver(84) / ModelCapabilityRegistry(107) / Texts(43) + 3 个共享类型文件
 > （ResolvedLlm / StreamTurnResult / WireMessage）。每步均通过 122 测试 + 真实
 > E2E（打包重启 + SSE 工具链路冒烟）。本方案文档保留作为「为什么这样拆」的决策记录。
+>
+> **延伸补拆（2026-09-17 同日，执行中发现的两处遗漏）**：
+> - `ToolStepEmitter`（603 行）：emitToolStep 全生命周期 + 审批构建 + args 脱敏/重放
+>   从 facade 抽出 → facade **946 行（累计 -77%）**；
+> - `ChatToolExecutor.executeTool` 562 行巨石 → 71 行分发器 + 11 个 `exec*` handler
+>   （机械比对逐行一致）；`execManageMcp` 再拆 list/register/目标操作三段
+>   （单方法最大 ~50 行）。
+>
+> **评估后保留**（拆分风险大于收益，不再动）：`useChat.ts`（React hook 闭包状态
+> 深度耦合）、`agentApi.ts` 的 SSE 解析函数（流式状态机整体性）、`TerminalService.run`
+> （连贯的单流程）、`AgentWorkspaceService.ensureSeed`（主体是种子文件字符串字面量）。
 
 ## 一、现状诊断
 
