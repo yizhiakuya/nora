@@ -1,42 +1,51 @@
-import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ExternalLink, Download } from "lucide-react";
 import { FilePreview } from "@/types";
 
+/**
+ * PDF 预览(2026-09-17 重写):用浏览器内置 PDF 查看器(iframe 直连 raw 字节)。
+ *
+ * 为什么不是自绘页面:此前渲染的是灰色占位块(模拟版式),用户看 PDF 要的是
+ * **真实内容与版式**——浏览器内置查看器免费提供翻页/缩放/搜索/打印,且
+ * 零依赖。依赖服务端 raw 端点的 Content-Type(pdf 由 Tika 检测)与
+ * 浏览器原生支持(Chrome/Edge/Firefox 均内置)。
+ *
+ * 局限:移动端浏览器部分不内置 PDF 查看器——顶部保留「新窗口打开」与
+ * 「下载」两个出口兜底。
+ */
 export function PdfPreview({ preview }: { preview: FilePreview }) {
-  const [page, setPage] = useState(1);
-  const pages = preview.pages ?? 1;
-
+  const src = preview.mediaUrl;
+  if (!src) {
+    return <div className="py-16 text-center text-xs text-muted-foreground">（PDF 地址缺失）</div>;
+  }
   return (
-    <div className="flex flex-col items-center">
-      <div className="relative w-full max-w-[560px] bg-card border border-border rounded-lg shadow-sm p-8 min-h-[420px]">
-        <div className="border-b-2 border-blue-100 dark:border-blue-900 pb-3 mb-6">
-          <div className="h-4 w-1/3 bg-blue-100 dark:bg-blue-900/50 rounded-full"></div>
-        </div>
-        <div className="space-y-3">
-          {Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className="h-2.5 bg-muted rounded-full" style={{ width: `${88 - ((i * 13) % 36)}%` }}></div>
-          ))}
-        </div>
-        <div className="mt-8 flex items-end justify-between">
-          <div className="w-1/3 h-20 bg-blue-50 dark:bg-blue-950/40 rounded-lg border border-blue-100 dark:border-blue-900"></div>
-          <div className="w-1/2 space-y-2">
-            <div className="h-2.5 w-full bg-muted rounded-full"></div>
-            <div className="h-2.5 w-4/5 bg-muted rounded-full"></div>
-            <div className="h-2.5 w-3/5 bg-muted rounded-full"></div>
-          </div>
-        </div>
-        <div className="absolute bottom-3 right-4 text-[9px] text-muted-foreground/60">第 {page} 页 · 共 {pages} 页</div>
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-end gap-2 text-xs">
+        {preview.pages != null && preview.pages > 1 && (
+          <span className="text-muted-foreground mr-auto">约 {preview.pages} 页 · 内置查看器可翻页/缩放/搜索</span>
+        )}
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        >
+          <ExternalLink className="w-3.5 h-3.5" /> 新窗口打开
+        </a>
+        <a
+          href={src}
+          download
+          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" /> 下载
+        </a>
       </div>
-      <div className="flex items-center gap-3 mt-4">
-        <Button variant="outline" size="sm" className="h-7 text-xs bg-card" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-          <ChevronLeft className="w-3.5 h-3.5" /> 上一页
-        </Button>
-        <span className="text-xs text-muted-foreground">{page} / {pages}</span>
-        <Button variant="outline" size="sm" className="h-7 text-xs bg-card" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-          下一页 <ChevronRight className="w-3.5 h-3.5" />
-        </Button>
-      </div>
+      {/* 浏览器内置 PDF 查看器:翻页/缩放/目录/打印全有 */}
+      <iframe
+        src={src}
+        title="PDF 预览"
+        className="w-full rounded-lg border border-border bg-muted/30"
+        style={{ height: "62vh" }}
+      />
     </div>
   );
 }

@@ -93,24 +93,103 @@ interface BackendFilePreview {
   size: string;
 }
 
+/**
+ * 后端预览 → 前端 FilePreview。
+ *
+ * 2026-09-17 重排判定顺序:**先按扩展名决定渲染形态,再决定数据来源**。
+ * 此前「有文本就走 text」导致 PDF 走了纯文本渲染(用户要看版式,不是
+ * 提取出的乱行);现在 PDF 用浏览器内置查看器(raw 字节),Excel/Word
+ * 用提取文本做结构化渲染,图片/音视频用 raw 流。
+ */
 function toPreview(p: BackendFilePreview, id: number, name: string): FilePreview {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const rawUrl = `/api/files/${id}/raw`;
+
+  // PDF:浏览器内置查看器(iframe 直连 raw;保留版式/翻页/缩放/打印)
+  if (ext === "pdf") {
+    return { kind: "pdf", mediaUrl: rawUrl, pages: estimatePdfPages(p.textContent) };
+  }
+  // 图片 / 音视频:raw 字节流
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)) {
+    return { kind: "image", imageUrl: rawUrl };
+  }
+  if (["mp4", "webm", "mov", "m4v", "ogv", "mkv"].includes(ext)) {
+    return { kind: "video", mediaUrl: rawUrl };
+  }
+  if (["mp3", "wav", "ogg", "m4a", "flac", "aac"].includes(ext)) {
+    return { kind: "audio", mediaUrl: rawUrl };
+  }
+  // 表格:提取文本解析成二维表(csv 逗号 / tsv 制表符 / Excel 制表符或对齐空格)
+  if (["xlsx", "xls", "csv", "tsv"].includes(ext)) {
+    const table = parseDelimitedTable(p.textContent ?? "", ext);
+    if (table.rows.length > 0) {
+      return { kind: "excel", table };
+    }
+    // 解析不出结构(空表/异常格式):降级纯文本
+    return p.textContent ? { kind: "text", text: p.textContent } : { kind: "unknown" as FilePreviewKind };
+  }
+  // Word:提取文本(标题/段落)
+  if (["docx", "doc"].includes(ext)) {
+    return { kind: "word", text: p.textContent ?? "" };
+  }
+  // 其余:有文本按文本预览,无文本不支持
   if (p.textContent) {
     return { kind: "text", text: p.textContent };
   }
-  // 后端 Tika 提取不到文本(图片/视频/空文件)时按扩展名给预览 kind
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-    // 图片:文本提取为空,给 raw 端点 URL 让 <img> 直接渲染原始字节
-    return { kind: "image", imageUrl: `/api/files/${id}/raw` };
-  }
-  if (["mp4", "webm", "mov", "m4v", "ogv", "mkv"].includes(ext)) {
-    // 视频:raw 端点直出字节,<video> 流式播放(依赖服务端 Range 支持)
-    return { kind: "video", mediaUrl: `/api/files/${id}/raw` };
-  }
-  if (["mp3", "wav", "ogg", "m4a", "flac", "aac"].includes(ext)) {
-    return { kind: "audio", mediaUrl: `/api/files/${id}/raw` };
-  }
   return { kind: "unknown" as FilePreviewKind };
+}
+
+/** 从 PDF 提取文本粗略估计页数(Tika 的分页符或字数估算;仅展示用)。 */
+function estimatePdfPages(text: string | null): number {
+  if (!text) return 1;
+  const formFeeds = (text.match(/\f/g) ?? []).length;
+  if (formFeeds > 0) return formFeeds + 1;
+  // 每页约 1800 字(中英混排粗估)
+  return Math.max(1, Math.round(text.length / 1800));
+}
+
+/**
+ * 解析分隔符文本为二维表。
+ *
+ * 按文件类型选分隔符:csv 用逗号(支持双引号包裹字段),tsv/Excel 优先
+ * 制表符(Tika 对 xlsx 输出制表符分隔行),退化为连续 2+ 空格对齐分列。
+ * 首行作表头;单列(无分隔结构)不当作表格。
+ */
+function parseDelimitedTable(text: string, ext: string): { columns: string[]; rows: string[][] } {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return { columns: [], rows: [] };
+  const splitLine = (line: string): string[] => {
+    if (ext === "csv") {
+      // CSV:按逗号分列,处理双引号包裹(含逗号的字段)
+      const out: string[] = [];
+      let cur = "";
+      let inQuote = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuote) {
+          if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+          else if (ch === '"') inQuote = false;
+          else cur += ch;
+        } else if (ch === '"') {
+          inQuote = true;
+        } else if (ch === ",") {
+          out.push(cur.trim());
+          cur = "";
+        } else {
+          cur += ch;
+        }
+      }
+      out.push(cur.trim());
+      return out;
+    }
+    if (line.includes("\t")) return line.split("\t").map((c) => c.trim());
+    return line.split(/\s{2,}/).map((c) => c.trim());
+  };
+  const columns = splitLine(lines[0]);
+  // 单列(没有分隔结构):不当作表格
+  if (columns.length < 2) return { columns: [], rows: [] };
+  const rows = lines.slice(1).map(splitLine).slice(0, 500); // 上限 500 行,超出提示下载
+  return { columns, rows };
 }
 
 async function requestRaw<T>(path: string, init?: RequestInit): Promise<T> {
