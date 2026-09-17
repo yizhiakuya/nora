@@ -17,6 +17,7 @@ import com.nora.agent.dto.CitationDto;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
 import com.nora.agent.service.PermissionMode;
+import com.nora.agent.service.TurnCancellation;
 import com.nora.agent.service.TurnStreamRegistry;
 import com.nora.common.logging.TraceContext;
 
@@ -34,6 +35,8 @@ class ChatTurnRunner {
     private final ChatStoreService chatStoreService;
     private final TurnStreamRegistry turnStreams;
     private final ObjectMapper objectMapper;
+    /** 轮次取消信号(可空:老构造器不接);轮次收尾/开始时清标志。 */
+    private final TurnCancellation turnCancellation;
 
     /**
      * 会话标题生成专用线程池。
@@ -48,14 +51,27 @@ class ChatTurnRunner {
                    ChatStoreService chatStoreService,
                    TurnStreamRegistry turnStreams,
                    ObjectMapper objectMapper) {
+        this(orchestrationService, chatStoreService, turnStreams, objectMapper, null);
+    }
+
+    ChatTurnRunner(ChatOrchestrationService orchestrationService,
+                   ChatStoreService chatStoreService,
+                   TurnStreamRegistry turnStreams,
+                   ObjectMapper objectMapper,
+                   TurnCancellation turnCancellation) {
         this.orchestrationService = orchestrationService;
         this.chatStoreService = chatStoreService;
         this.turnStreams = turnStreams;
         this.objectMapper = objectMapper;
+        this.turnCancellation = turnCancellation;
     }
 
     void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
                          PermissionMode permissionMode, Long providerId, SseEmitter emitter) {
+        // 每轮开始:清陈旧取消标志(上一轮遗留的信号作废,避免新轮被误杀)
+        if (turnCancellation != null) {
+            turnCancellation.begin(sessionId);
+        }
         // 每轮注册 live turn:事件进有界缓冲,SSE 断开(刷新/切页)后可重连回放;
         // 编排线程不受断开影响,收尾照常落库
         TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content);
@@ -72,6 +88,11 @@ class ChatTurnRunner {
             }
 
             List<ChatStepDto> steps = new java.util.ArrayList<>();
+            // 在途步骤的原位替换表:同一 id 的 running 增量更新(进度 tick/实时输出)
+            // 覆盖旧快照而不是追加——追加式会让 chat_message.steps JSON 随 tick
+            // 线性膨胀(10 分钟下载 ≈ 850 条重复步骤);终态仍追加,由 load 时
+            // mergeSteps 折叠(既有「running 先行、终态覆盖」语义不变)。
+            java.util.Map<String, Integer> stepAt = new java.util.HashMap<>();
             List<CitationDto> citations = new java.util.ArrayList<>();
             java.util.Map<Integer, StringBuilder> reasoningBuffers = new java.util.LinkedHashMap<>();
             // 推理步骤的落位与计时:首次 reasoning_delta 就把步骤按真实时间顺序占位进
@@ -103,9 +124,27 @@ class ChatTurnRunner {
                         @Override
                         public void step(ChatStepDto step) {
                             lastEventMs[0] = System.currentTimeMillis();
-                            steps.add(step);
-                            try { chatStoreService.saveStep(sessionId, stepIndex[0]++, step); }
-                            catch (Exception e) { log.warn("failed to persist agent step: {}", e.getMessage()); }
+                            // 同 id 增量更新(进度 tick/实时输出)原位替换:列表与
+                            // 落库 JSON 只保留该步骤最新快照,不随 tick 线性膨胀。
+                            // 首次出现与终态各落库一次(running 先行、终态覆盖的
+                            // 既有 load 合并语义不变)。
+                            Integer at = step.id() == null ? null : stepAt.get(step.id());
+                            boolean terminal = !"running".equals(step.status()) && !"pending".equals(step.status());
+                            boolean persist;
+                            if (at != null && at < steps.size()) {
+                                steps.set(at, step);
+                                persist = terminal;
+                            } else {
+                                steps.add(step);
+                                if (step.id() != null) {
+                                    stepAt.put(step.id(), steps.size() - 1);
+                                }
+                                persist = true;
+                            }
+                            if (persist) {
+                                try { chatStoreService.saveStep(sessionId, stepIndex[0]++, step); }
+                                catch (Exception e) { log.warn("failed to persist agent step: {}", e.getMessage()); }
+                            }
                             send(emitter, "step", step);
                             turnStreams.publish(liveTurn, "step", toJson(step));
                         }
@@ -256,6 +295,11 @@ class ChatTurnRunner {
             emitter.complete();
         } finally {
             turnStreams.finish(sessionId, liveTurn);
+            // 轮次收尾:清除取消标志(不可吞的会话级信号,见 TurnCancellation)。
+            // 用户取消后标志留着会污染下一轮——下一轮 begin 也会清,这里提前清更干净
+            if (turnCancellation != null) {
+                turnCancellation.clear(sessionId);
+            }
         }
     }
 

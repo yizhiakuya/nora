@@ -94,6 +94,8 @@ public class ChatOrchestrationService {
     private final MessageRefResolver messageRefResolver;
     /** 画廊列表预取(可为 null:测试场景)。 */
     private final GalleryPrefetcher galleryPrefetcher;
+    /** 轮次取消信号(可为 null:测试场景);工具循环用它做不可吞的取消检查。 */
+    private final TurnCancellation turnCancellation;
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -121,7 +123,9 @@ public class ChatOrchestrationService {
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     MediaFetchService mediaFetchService,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
-                                    RelayMediaRouter relayMediaRouter) {
+                                    RelayMediaRouter relayMediaRouter,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    TurnCancellation turnCancellation) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
@@ -148,7 +152,9 @@ public class ChatOrchestrationService {
                 mcpServerService, terminalService, agentWorkspaceService, agentSkillService, galleryPrefetcher,
                 mediaFetchService, relayMediaRouter);
         this.capabilityRegistry = new ModelCapabilityRegistry();
-        this.stepEmitter = new ToolStepEmitter(objectMapper, approvalService, toolExecutor, capabilityRegistry);
+        this.stepEmitter = new ToolStepEmitter(objectMapper, approvalService, toolExecutor,
+                capabilityRegistry, turnCancellation);
+        this.turnCancellation = turnCancellation;
         this.upstreamClient = new UpstreamLlmClient(objectMapper, capabilityRegistry);
         this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
         this.contextAssembler = new ChatContextAssembler(objectMapper, agentWorkspaceService,
@@ -162,7 +168,7 @@ public class ChatOrchestrationService {
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null, null);
     }
 
     /** 测试入口:显式最大工具轮数,无 provider store。 */
@@ -173,7 +179,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null, null);
     }
 
     /**
@@ -332,8 +338,11 @@ public class ChatOrchestrationService {
         Map<String, Integer> callFingerprints = new HashMap<>();
         try {
             for (int round = 0; round < maxToolRounds; round++) {
-                if (Thread.currentThread().isInterrupted()) {
-                    // 工具执行/审批等待期间被取消:不再发起新的上游请求,按取消收场
+                if (isTurnCancelled(sessionId)) {
+                    // 工具执行/审批等待期间被取消:不再发起新的上游请求,按取消收场。
+                    // 取消信号 = 线程中断 OR TurnCancellation 会话标志——后者不可被
+                    // 下游(JDBC/SSE)消费,是「停止生成」的可靠判据(实测修复:此前
+                    // 中断标志被消费后,取消轮继续跑了 4 个工具轮)。
                     log.info("tool loop interrupted (user cancel) before round {}, abort turn", round + 1);
                     return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
                 }
@@ -429,7 +438,7 @@ public class ChatOrchestrationService {
                     }
                 }
                 if (result.failed()) {
-                    if (Thread.currentThread().isInterrupted()) {
+                    if (isTurnCancelled(sessionId)) {
                         // 流中取消(已转发部分内容):不发 s-error step,直接按取消收场
                         log.info("tool round interrupted (user cancel) with partial content, abort turn");
                         return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
@@ -462,14 +471,14 @@ public class ChatOrchestrationService {
         } catch (Exception e) {
             // 取消穿透工具循环(审批等待 join 被中断抛 CompletionException(InterruptedException)
             // 且消费掉标志;或流内异常带中断 cause):不回落强制回答,直接按取消收场
-            if (Texts.isInterruption(e) || Thread.currentThread().isInterrupted()) {
+            if (Texts.isInterruption(e) || isTurnCancelled(sessionId)) {
                 Thread.currentThread().interrupt();
                 log.info("tool loop interrupted (user cancel), abort turn");
                 return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
             }
             log.warn("tool loop failed, falling back to plain answer", e);
         }
-        if (Thread.currentThread().isInterrupted()) {
+        if (isTurnCancelled(sessionId)) {
             // s-error break / 轮次自然耗尽后取消:同样不发最终回答请求
             log.info("turn interrupted (user cancel) before final answer, abort turn");
             return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
@@ -487,7 +496,7 @@ public class ChatOrchestrationService {
                 reasoningRound, eventConsumer, ttftMs, turnStartMs, providerId);
         // 瞬时上游错误(空内容失败)自动重试一次;超限先硬压缩再重试。
         // 线程被中断(用户取消)绝不重试——那会让取消多烧一整轮上游 token
-        if (finalResult.failed() && finalResult.content().isBlank() && !Thread.currentThread().isInterrupted()) {
+        if (finalResult.failed() && finalResult.content().isBlank() && !isTurnCancelled(sessionId)) {
             if (ChatContextAssembler.isContextOverflow(finalResult.errorMessage())) {
                 contextAssembler.compactForRound(messages, budget, true, answerOverhead);
                 lastPromptEstimate[0] = messages.stream().mapToInt(ChatContextAssembler::messageTokens).sum()
@@ -529,7 +538,7 @@ public class ChatOrchestrationService {
                 return CompletableFuture.completedFuture(new ChatTurn(answerText, citations, totalUsage, budget.window(), lastPromptEstimate[0], ttftMs[0] < 0 ? null : ttftMs[0]));
             }
         }
-        if (Thread.currentThread().isInterrupted()) {
+        if (isTurnCancelled(sessionId)) {
             // 取消:不再用最后一次工具结果兜底(那会把取消轮标成正常完成、
             // 落库完整内容,与前端「停止生成」的半截气泡错位)
             log.info("turn interrupted (user cancel) at final fallback, abort turn");
@@ -548,6 +557,20 @@ public class ChatOrchestrationService {
                 null, null, null, null));
         return CompletableFuture.failedFuture(
                 new IllegalStateException(finalResult.errorMessage() != null ? finalResult.errorMessage() : "LLM stream failed"));
+    }
+
+    /**
+     * 本轮是否已被用户取消:线程中断 OR 会话级取消标志。
+     *
+     * <p>为什么不能只看线程中断(2026-09-17 实测 bug):用户在 fetch_media
+     * 大批量下载中途点「停止生成」,中断标志在下载返回后的步骤落库/SSE
+     * 链路上被下游(JDBC/连接池)意外消费——工具循环下一轮再查已为 false,
+     * 整轮在用户已停止后继续跑了 4 个工具轮。TurnCancellation 的标志
+     * 只由本服务读写,不可被消费,是可靠判据。
+     */
+    private boolean isTurnCancelled(String sessionId) {
+        return Thread.currentThread().isInterrupted()
+                || (turnCancellation != null && sessionId != null && turnCancellation.isCancelled(sessionId));
     }
 
 

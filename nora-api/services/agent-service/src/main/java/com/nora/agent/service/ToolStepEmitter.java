@@ -32,13 +32,22 @@ class ToolStepEmitter {
     private final ApprovalService approvalService;
     private final ChatToolExecutor toolExecutor;
     private final ModelCapabilityRegistry capabilityRegistry;
+    /** 轮次取消信号(可空=测试构造器不接);批量工具用它做不可吞的取消检查。 */
+    private final TurnCancellation turnCancellation;
 
     ToolStepEmitter(ObjectMapper objectMapper, ApprovalService approvalService,
                     ChatToolExecutor toolExecutor, ModelCapabilityRegistry capabilityRegistry) {
+        this(objectMapper, approvalService, toolExecutor, capabilityRegistry, null);
+    }
+
+    ToolStepEmitter(ObjectMapper objectMapper, ApprovalService approvalService,
+                    ChatToolExecutor toolExecutor, ModelCapabilityRegistry capabilityRegistry,
+                    TurnCancellation turnCancellation) {
         this.objectMapper = objectMapper;
         this.approvalService = approvalService;
         this.toolExecutor = toolExecutor;
         this.capabilityRegistry = capabilityRegistry;
+        this.turnCancellation = turnCancellation;
     }
 
     /**
@@ -158,12 +167,38 @@ class ToolStepEmitter {
             }
         }
 
-        ChatToolExecutor.ToolOutcome outcome = toolExecutor.executeTool(name, args, parsed, liveOutput -> {
-            // 实时输出流(run_command):同 id step 原地替换,前端自然刷新
-            // (与 reasoning_delta 同款机制);detail 放预览、status 保持 running
-            eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
-                    liveOutput, null, "running", name, input, null, roundIndex));
-        });
+        ChatToolExecutor.ToolOutcome outcome = toolExecutor.executeTool(name, args, parsed,
+                new ChatToolExecutor.LiveOutput() {
+                    /** 文本通道最近一行(run_command 实时输出):原地刷新 detail。 */
+                    @Override
+                    public void text(String chunk) {
+                        // 实时输出流(run_command)/进度文本(fetch_media):同 id step
+                        // 原地替换,前端自然刷新(与 reasoning_delta 同款机制)
+                        eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+                                chunk, null, "running", name, input, null, roundIndex));
+                    }
+
+                    /** 结构化进度通道(fetch_media):detail 给一行文本兜底,
+                     *  progress 供前端渲染进度条/速率/ETA(旧前端忽略未知字段)。 */
+                    @Override
+                    public void progress(ChatStepDto.StepProgress progress) {
+                        eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+                                renderProgressLine(progress), null, "running",
+                                name, input, null, roundIndex, null, progress));
+                    }
+
+                    /**
+                     * 取消信号(2026-09-17 修复):线程中断 OR TurnCancellation 标志。
+                     * 只用中断标志不可靠——实测它在下载返回后的 JDBC/SSE 链路上
+                     * 被下游消费,导致「停止生成」杀不掉下载;会话级标志不可吞。
+                     */
+                    @Override
+                    public boolean cancelled() {
+                        return Thread.currentThread().isInterrupted()
+                                || (turnCancellation != null && sessionId != null
+                                    && turnCancellation.isCancelled(sessionId));
+                    }
+                });
         boolean failure = outcome.content().startsWith("ERROR:");
         String status = failure ? "failed" : "completed";
         ChatStepDto.StepResult result = new ChatStepDto.StepResult(
@@ -185,6 +220,35 @@ class ToolStepEmitter {
                 : (result.error() != null ? Texts.abbreviate(result.error(), 160) : null);
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 summaryLine, System.currentTimeMillis() - toolStart, status, name, input, result, roundIndex));
+    }
+
+    /** 结构化进度的人类可读一行(步骤 detail;旧前端按文本展示)。 */
+    private static String renderProgressLine(ChatStepDto.StepProgress p) {
+        if ("listing".equals(p.phase())) {
+            return "正在获取清单…已取到 " + (p.done() == null ? 0 : p.done()) + " 条";
+        }
+        StringBuilder sb = new StringBuilder("下载中 ")
+                .append(p.done() == null ? 0 : p.done()).append('/')
+                .append(p.total() == null ? "?" : p.total());
+        if (p.active() != null && p.active() > 1) {
+            sb.append("(并行 ").append(p.active()).append(')');
+        }
+        if (p.bytesDone() != null) {
+            sb.append(" · ").append(FileToolClient.formatSize(p.bytesDone()));
+            if (p.bytesTotal() != null && p.bytesTotal() > 0) {
+                sb.append('/').append(FileToolClient.formatSize(p.bytesTotal()));
+            }
+        }
+        if (p.bytesPerSec() != null && p.bytesPerSec() > 0) {
+            sb.append(" · ").append(FileToolClient.formatSize(p.bytesPerSec())).append("/s");
+        }
+        if (p.etaSeconds() != null) {
+            sb.append(" · 约剩 ").append(ChatToolExecutor.formatEta(p.etaSeconds()));
+        }
+        if (p.currentFile() != null) {
+            sb.append(" · ").append(Texts.abbreviate(p.currentFile(), 40));
+        }
+        return sb.toString();
     }
 
     /** 追加回填给模型的工具结果消息(RespondToModel 风格:错误是内容,不是异常)。 */

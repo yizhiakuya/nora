@@ -379,7 +379,7 @@ class ChatOrchestrationServiceTest {
         return new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                null, null, null, null, null, null, mcp, null, null, null, 5, null, null, null, null);
+                null, null, null, null, null, null, mcp, null, null, null, 5, null, null, null, null, null);
     }
 
     /** 对一次工具调用执行 parseArgs(ToolStepEmitter)+ executeTool(ChatToolExecutor)。 */
@@ -391,10 +391,10 @@ class ChatOrchestrationServiceTest {
         Object parsed = parse.invoke(emitter, tool, args);
         ChatToolExecutor executor = toolExecutorOf(svc);
         var exec = ChatToolExecutor.class.getDeclaredMethod("executeTool",
-                String.class, String.class, parsed.getClass(), java.util.function.Consumer.class);
+                String.class, String.class, parsed.getClass(), ChatToolExecutor.LiveOutput.class);
         exec.setAccessible(true);
         return (ChatToolExecutor.ToolOutcome) exec.invoke(executor, tool, args, parsed,
-                (java.util.function.Consumer<String>) s -> { });
+                (ChatToolExecutor.LiveOutput) s -> { });
     }
 
     /** 从 facade 取私有 toolExecutor 字段(2026-09-17 拆分后 executeTool 在新类)。 */
@@ -672,7 +672,7 @@ class ChatOrchestrationServiceTest {
             ChatOrchestrationService svc = new ChatOrchestrationService(
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                    null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null);
+                    null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
             when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
                     org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
 
@@ -711,7 +711,7 @@ class ChatOrchestrationServiceTest {
         ChatOrchestrationService svc = new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                null, null, null, null, null, null, null, null, skills, null, 5, null, null, null, null);
+                null, null, null, null, null, null, null, null, skills, null, 5, null, null, null, null, null);
         when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
 
@@ -742,7 +742,7 @@ class ChatOrchestrationServiceTest {
             ChatOrchestrationService svc = new ChatOrchestrationService(
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                    null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null);
+                    null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
             when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
                     org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
 
@@ -801,7 +801,7 @@ class ChatOrchestrationServiceTest {
             ChatOrchestrationService svc = new ChatOrchestrationService(
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
-                    null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null);
+                    null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
 
             // 上一轮已落库的助手消息:content=回答正文;steps 携带注入正文(与系统提示同源)
             List<ChatStepDto> persisted = List.of(new ChatStepDto("s-context-memory", "context",

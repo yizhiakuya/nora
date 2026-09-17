@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.agent.dto.ChatStepDto;
 
 /**
  * 工具执行器(从 ChatOrchestrationService 拆出,2026-09-17 复杂度审计 Step 2):
@@ -126,13 +127,40 @@ class ChatToolExecutor {
     private static final int FAILURE_TAIL_CHARS = 3_000;
 
     /**
+     * 工具执行期间的实时输出(双通道):
+     * <ul>
+     *   <li>{@link #text} —— 文本流(run_command 的实时 stdout);</li>
+     *   <li>{@link #progress} —— 结构化进度(fetch_media 的批量下载:
+     *       完成数/字节/速率/ETA),前端渲染进度条,不再只给一行文本。</li>
+     * </ul>
+     * 两个通道都由 ToolStepEmitter 接到「同 id 步骤原地刷新」上——
+     * 前端按 id 合并,进度更新即视觉上的原地刷新。
+     */
+    interface LiveOutput {
+        void text(String chunk);
+
+        default void progress(ChatStepDto.StepProgress progress) {
+        }
+
+        /**
+         * 用户是否已请求停止本会话轮次(轮询式取消信号)。
+         * 默认实现查线程中断标志;ToolStepEmitter 的实现额外查
+         * {@link TurnCancellation}(不可被下游消费的标志,2026-09-17 修复
+         * 「停止生成杀不掉批量下载」)。
+         */
+        default boolean cancelled() {
+            return Thread.currentThread().isInterrupted();
+        }
+    }
+
+    /**
      * 分发一次工具调用。守卫拒绝返回三段式错误
      * (拒绝了什么 + 哪条规则 + 正确示例),让模型下一轮自我纠正。
      *
      * <p>2026-09-17:各工具分支拆为独立 handler(见下方 exec* 方法),此处只做分发。
      */
     ToolOutcome executeTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                                    java.util.function.Consumer<String> liveOutput) {
+                                    LiveOutput liveOutput) {
         if ("execute_sql".equals(name)) {
             return execExecuteSql(name, args, parsed, liveOutput);
         }
@@ -207,7 +235,7 @@ class ChatToolExecutor {
 
     /** execute_sql handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execExecuteSql(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
         String guard = guardSql(sql);
         if (guard != null) {
@@ -219,7 +247,7 @@ class ChatToolExecutor {
 
     /** read_service_logs handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execReadServiceLogs(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String service = parsed.input().service() != null ? parsed.input().service() : "";
         int limit = parsed.input().limit() != null ? Math.min(parsed.input().limit(), 100) : 50;
         String guard = guardService(service);
@@ -231,7 +259,7 @@ class ChatToolExecutor {
 
     /** execute_write_sql handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execExecuteWriteSql(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
         String guard = RiskClassifier.validateWriteSql(sql);
         if (guard != null) {
@@ -247,7 +275,7 @@ class ChatToolExecutor {
 
     /** manage_container handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageContainer(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String service = parsed.input().service() == null ? "" : parsed.input().service();
         String guard = RiskClassifier.validateContainerAction(parsed.containerAction());
         if (guard != null) {
@@ -270,7 +298,7 @@ class ChatToolExecutor {
 
     /** manage_datasource handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageDatasource(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
         String guard = RiskClassifier.validateDatasourceAction(action);
         if (guard != null) {
@@ -328,7 +356,7 @@ class ChatToolExecutor {
 
     /** manage_service handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageService(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
         String guard = RiskClassifier.validateServiceAction(action);
         if (guard != null) {
@@ -382,7 +410,7 @@ class ChatToolExecutor {
 
     /** read_file handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execReadFile(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         String action = parsed.datasourceAction() == null ? "list" : parsed.datasourceAction().trim().toLowerCase();
         // import: 把远程 URL 下载并存成工作台文件(用户可见可管理)
         if ("import".equals(action)) {
@@ -426,7 +454,7 @@ class ChatToolExecutor {
 
     /** manage_workspace handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageWorkspace(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         if (agentWorkspaceService == null) {
             return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
         }
@@ -523,7 +551,7 @@ class ChatToolExecutor {
 
     /** manage_skill handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageSkill(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         if (agentSkillService == null) {
             return new ToolOutcome("ERROR: 技能能力未启用(服务未配置)", null, null, false);
         }
@@ -607,7 +635,7 @@ class ChatToolExecutor {
 
     /** manage_mcp handler(2026-09-17 从 executeTool 拆出;内部再拆 list/register/目标操作三段)。 */
     ToolOutcome execManageMcp(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         if (mcpServerService == null) {
             return new ToolOutcome("ERROR: MCP 管理能力未启用(服务未配置)", null, null, false);
         }
@@ -760,7 +788,7 @@ class ChatToolExecutor {
 
     /** run_command handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execRunCommand(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         if (terminalService == null) {
             return new ToolOutcome("ERROR: 终端能力未启用(服务未配置)", null, null, false);
         }
@@ -770,7 +798,8 @@ class ChatToolExecutor {
             String cwdArg = a.path("cwd").asText(null);
             Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
             String shell = a.path("shell").asText(null);
-            TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell, liveOutput);
+            TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell,
+                    liveOutput == null ? null : liveOutput::text);
             // 非零退出码按失败处理(红色步骤 + ERROR 前缀回填模型):
             // 与 Claude Code 同语义——"命令跑了但失败了"不是成功结果;
             // 仍走 bounded():失败预算 10K、成功 30K,且做脱敏
@@ -805,7 +834,7 @@ class ChatToolExecutor {
      * 导致整轮失败。批量拉取必须是一等工具,让 agent 不必自己拼命令。
      */
     ToolOutcome execFetchMedia(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            java.util.function.Consumer<String> liveOutput) {
+                            LiveOutput liveOutput) {
         if (mediaFetchService == null) {
             return new ToolOutcome("ERROR: 媒体拉取能力未启用(服务未配置)", null, null, false);
         }
@@ -819,13 +848,23 @@ class ChatToolExecutor {
             String folder = a.path("folder").asText(null);
             String quality = a.path("quality").asText(null);
             long start = System.currentTimeMillis();
-            // 进度回调接到 liveOutput:同 id step 原地刷新「已下载 n/N」
+            // 进度回调只发结构化 progress 通道(同 id step 原地刷新:完成数/字节/
+            // 速率/ETA → 前端进度卡片)。**不要再调 text()**:那会发第二条同 id 事件
+            // 把 progress 字段覆盖掉——前端只拿到文本行,进度卡永远不出现(实测 bug)。
+            // detail 的文本行由 ToolStepEmitter 的 progress 分支统一渲染。
             MediaFetchService.ProgressCallback progress = liveOutput == null ? null
-                    : (done, total, current) -> liveOutput.accept("正在下载 " + done + "/" + total
-                            + " —— " + Texts.abbreviate(current, 60));
+                    : fp -> liveOutput.progress(toStepProgress(fp));
             MediaFetchService.FetchReport report = mediaFetchService.fetchFromPhone(
-                    serverName, from, to, album, type, folder, quality, progress);
+                    serverName, from, to, album, type, folder, quality, progress,
+                    liveOutput == null ? null : liveOutput::cancelled);
             long elapsed = System.currentTimeMillis() - start;
+            if (report.cancelled()) {
+                // 用户「停止生成」:下载器已停,如实回报(模型下一轮会被编排层的
+                // 中断检查拦住,不会继续;此消息仅落库留痕)
+                return new ToolOutcome("已取消:用户停止了本次生成。已下载 "
+                        + report.downloaded() + " 个(共 " + report.total() + " 个),未完成部分可稍后重跑续传。",
+                        "用户已取消", report.downloaded(), false);
+            }
             if (report.total() == 0 && report.failed() == 0 && report.errors().isEmpty()) {
                 // 手机端有可操作提示(如「相册不存在,可用相册:…」)时原样转给模型,
                 // 它才能自纠参数重试;没有提示才是真的范围内无媒体。
@@ -856,6 +895,49 @@ class ChatToolExecutor {
         } catch (Exception e) {
             return new ToolOutcome("ERROR: 媒体拉取失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
         }
+    }
+
+    /** MediaFetch 进度 → 步骤事件的结构化 progress(前端进度卡片直接消费)。 */
+    private static ChatStepDto.StepProgress toStepProgress(MediaFetchService.FetchProgress fp) {
+        return new ChatStepDto.StepProgress(fp.phase(), fp.done(), fp.total(), fp.currentIndex(),
+                fp.currentFile(), fp.active(), fp.bytesDone(), fp.bytesTotal(), fp.bytesPerSec(),
+                fp.etaSeconds());
+    }
+
+    /** 进度的人类可读一行(步骤 detail;也是旧前端的降级展示)。 */
+    private static String renderProgressLine(MediaFetchService.FetchProgress fp) {
+        if ("listing".equals(fp.phase())) {
+            return "正在获取清单…已取到 " + fp.done() + " 条";
+        }
+        StringBuilder sb = new StringBuilder("下载中 ").append(fp.done()).append('/').append(fp.total());
+        if (fp.active() > 1) {
+            sb.append("(并行 ").append(fp.active()).append(')');
+        }
+        sb.append(" · ").append(FileToolClient.formatSize(fp.bytesDone()));
+        if (fp.bytesTotal() > 0) {
+            sb.append('/').append(FileToolClient.formatSize(fp.bytesTotal()));
+        }
+        if (fp.bytesPerSec() != null && fp.bytesPerSec() > 0) {
+            sb.append(" · ").append(FileToolClient.formatSize(fp.bytesPerSec())).append("/s");
+        }
+        if (fp.etaSeconds() != null) {
+            sb.append(" · 约剩 ").append(formatEta(fp.etaSeconds()));
+        }
+        if (fp.currentFile() != null) {
+            sb.append(" · ").append(Texts.abbreviate(fp.currentFile(), 40));
+        }
+        return sb.toString();
+    }
+
+    /** ETA 人类可读:90s → "1分30秒";3600s → "1小时"。 */
+    static String formatEta(long seconds) {
+        if (seconds < 60) {
+            return seconds + " 秒";
+        }
+        if (seconds < 3600) {
+            return (seconds / 60) + " 分" + (seconds % 60 > 0 ? (seconds % 60) + " 秒" : "");
+        }
+        return (seconds / 3600) + " 小时" + (seconds % 3600 / 60 > 0 ? (seconds % 3600 / 60) + " 分" : "");
     }
 
     /**

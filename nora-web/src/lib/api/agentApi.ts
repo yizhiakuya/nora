@@ -45,6 +45,8 @@ interface StepPayload {
   input?: StepInputPayload;
   result?: StepResultPayload;
   context?: StepContextPayload;
+  /** 批量任务实时进度(fetch_media;后端 ChatStepDto.StepProgress) */
+  progress?: ChatStep["progress"];
   roundIndex?: number;
 }
 
@@ -107,6 +109,7 @@ export function normalizeStep(step: StepPayload, index: number): ChatStep {
     input: step.input ? displayInput : undefined,
     result: step.result,
     context: step.context,
+    progress: step.progress,
     roundIndex: step.roundIndex,
   };
 }

@@ -29,18 +29,59 @@ public record ChatStepDto(
         StepInput input,
         StepResult result,
         Integer roundIndex,
-        ContextInfo context
+        ContextInfo context,
+        StepProgress progress
 ) {
 
     /** 遗留调用点的便捷构造(无结构化工具载荷)。 */
     public ChatStepDto(String id, String type, String title, String detail, Long duration, String status) {
-        this(id, type, title, detail, duration, status, null, null, null, null, null);
+        this(id, type, title, detail, duration, status, null, null, null, null, null, null);
     }
 
-    /** 工具步骤的便捷构造(无 context 载荷)。 */
+    /** 工具步骤的便捷构造(无 context/progress 载荷)。 */
     public ChatStepDto(String id, String type, String title, String detail, Long duration, String status,
                        String toolName, StepInput input, StepResult result, Integer roundIndex) {
-        this(id, type, title, detail, duration, status, toolName, input, result, roundIndex, null);
+        this(id, type, title, detail, duration, status, toolName, input, result, roundIndex, null, null);
+    }
+
+    /** 带 context 的构造(进度为空)。 */
+    public ChatStepDto(String id, String type, String title, String detail, Long duration, String status,
+                       String toolName, StepInput input, StepResult result, Integer roundIndex,
+                       ContextInfo context) {
+        this(id, type, title, detail, duration, status, toolName, input, result, roundIndex, context, null);
+    }
+
+    /**
+     * 批量任务的实时进度(2026-09-17,fetch_media 等):随 running 步骤原地刷新。
+     *
+     * <p>为什么放进步骤事件而不是独立事件类型:步骤按 id 原地替换已是全链路
+     * 既有语义(SSE 直发 / TurnStreamRegistry 重连回放 / 前端按 id 合并),
+     * 进度搭这班车即天然获得"断线重连看到最新进度"——无需新协议。
+     *
+     * @param phase        阶段:{@code listing}(获取清单)/ {@code downloading}
+     * @param done         已完成文件数(含跳过/失败)
+     * @param total        总文件数
+     * @param currentIndex 当前正在下载的文件序号(1-based;并发时=最近开始的那个)
+     * @param currentFile  当前正在下载的文件名
+     * @param active       并行下载中的文件数
+     * @param bytesDone    已传输字节(完成文件全量 + 在途文件已读部分)
+     * @param bytesTotal   清单声明的总字节(sizeBytes 求和;含未知大小时偏小)
+     * @param bytesPerSec  当前速率(6s 滑窗;样本不足时为 null)
+     * @param etaSeconds   预计剩余秒数(字节速率优先,退化按文件均速;null=未知)
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record StepProgress(
+            String phase,
+            Integer done,
+            Integer total,
+            Integer currentIndex,
+            String currentFile,
+            Integer active,
+            Long bytesDone,
+            Long bytesTotal,
+            Long bytesPerSec,
+            Long etaSeconds
+    ) {
     }
 
     /**

@@ -31,6 +31,7 @@ import com.nora.agent.service.ApprovalService;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
 import com.nora.agent.service.PermissionMode;
+import com.nora.agent.service.TurnCancellation;
 import com.nora.agent.service.TurnStreamRegistry;
 import com.nora.common.logging.TraceContext;
 import com.nora.common.response.ApiResponse;
@@ -56,6 +57,8 @@ public class AgentController {
     private final ApprovalService approvalService;
     private final ObjectMapper objectMapper;
     private final TurnStreamRegistry turnStreams;
+    /** 轮次取消信号(可空:老测试构造器不接);「停止生成」的可靠判据。 */
+    private final TurnCancellation turnCancellation;
     /** 轮次执行引擎(从本类拆出,2026-09-17)。 */
     private final ChatTurnRunner turnRunner;
     private final ExecutorService chatExecutor = Executors.newCachedThreadPool();
@@ -67,7 +70,15 @@ public class AgentController {
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
                            ObjectMapper objectMapper) {
-        this(orchestrationService, chatStoreService, null, objectMapper, new TurnStreamRegistry());
+        this(orchestrationService, chatStoreService, null, objectMapper, new TurnStreamRegistry(), null);
+    }
+
+    public AgentController(ChatOrchestrationService orchestrationService,
+                           ChatStoreService chatStoreService,
+                           ApprovalService approvalService,
+                           ObjectMapper objectMapper,
+                           TurnStreamRegistry turnStreams) {
+        this(orchestrationService, chatStoreService, approvalService, objectMapper, turnStreams, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -75,13 +86,17 @@ public class AgentController {
                            ChatStoreService chatStoreService,
                            ApprovalService approvalService,
                            ObjectMapper objectMapper,
-                           TurnStreamRegistry turnStreams) {
+                           TurnStreamRegistry turnStreams,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false)
+                           TurnCancellation turnCancellation) {
         this.orchestrationService = orchestrationService;
         this.chatStoreService = chatStoreService;
         this.approvalService = approvalService;
         this.objectMapper = objectMapper;
         this.turnStreams = turnStreams;
-        this.turnRunner = new ChatTurnRunner(orchestrationService, chatStoreService, turnStreams, objectMapper);
+        this.turnCancellation = turnCancellation;
+        this.turnRunner = new ChatTurnRunner(orchestrationService, chatStoreService, turnStreams, objectMapper,
+                turnCancellation);
     }
 
     @GetMapping("/health")
@@ -205,16 +220,27 @@ public class AgentController {
     /**
      * 取消某会话进行中的轮次:中断编排线程使上游 LLM HTTP 读中止(不再白烧
      * token),并清掉挂起的审批。无进行中轮次时幂等返回 ok(false)。
+     *
+     * <p>取消信号双轨(2026-09-17 修复):{@code future.cancel(true)} 只对
+     * 「上游阻塞读」类取消有效;大批量工具(fetch_media)里线程中断标志会被
+     * 下游(JDBC/SSE)意外消费——所以同时置 {@link TurnCancellation} 会话
+     * 标志,编排循环与批量下载器轮询它,保证「停止生成」一定生效。
+     * 二次点击(句柄已 remove)也置标志:即使 future 已不在表里,标志仍
+     * 能拦住还在跑的工具。
      */
     @PostMapping("/sessions/{sessionId}/cancel")
     public ApiResponse<Boolean> cancelTurn(@PathVariable String sessionId) {
+        if (turnCancellation != null) {
+            turnCancellation.request(sessionId);
+        }
         var future = activeTurns.remove(sessionId);
         boolean cancelled = future != null;
         if (cancelled) {
             future.cancel(true);
         }
         approvalService.clearPending(sessionId);
-        return ApiResponse.ok(cancelled);
+        // 有在途轮次或标志已置,都算"取消已受理"(前端据 ok(true) 收敛 UI)
+        return ApiResponse.ok(cancelled || turnCancellation != null);
     }
 
     /**

@@ -19,6 +19,33 @@ export interface ChatStepResult {
   error?: string;
 }
 
+/**
+ * 批量任务的实时进度(fetch_media 等,随 running 步骤原地刷新)。
+ * 后端 ChatStepDto.StepProgress 同构。
+ */
+export interface ChatStepProgress {
+  /** 阶段:listing(获取清单)/ downloading */
+  phase?: "listing" | "downloading" | string;
+  /** 已完成文件数(含跳过/失败) */
+  done?: number;
+  /** 总文件数;0=清单阶段未知 */
+  total?: number;
+  /** 当前文件序号(1-based;并发时=最近开始的那个) */
+  currentIndex?: number;
+  /** 当前正在下载的文件名 */
+  currentFile?: string;
+  /** 并行下载中的文件数 */
+  active?: number;
+  /** 已传输字节(完成文件全量 + 在途文件已读部分) */
+  bytesDone?: number;
+  /** 清单声明的总字节 */
+  bytesTotal?: number;
+  /** 当前速率(字节/秒;样本不足时为 null) */
+  bytesPerSec?: number | null;
+  /** 预计剩余秒数(null=未知) */
+  etaSeconds?: number | null;
+}
+
 /** 注入文件清单条目(注入上下文步骤,instructions 形态) */
 export interface ContextFile {
   path: string;
@@ -68,6 +95,8 @@ export interface ChatStep {
   result?: ChatStepResult;
   /** 注入上下文元数据(context 类型步骤才有) */
   context?: ChatStepContext;
+  /** 批量任务的实时进度(fetch_media 等;随 running 步骤原地刷新) */
+  progress?: ChatStepProgress;
   /** ReAct 轮次;0 表示 RAG 检索/上下文注入,1+ 表示模型工具轮 */
   roundIndex?: number;
 }
