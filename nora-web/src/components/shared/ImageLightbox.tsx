@@ -205,13 +205,20 @@ export function ImageLightbox({
         )}
         {isVideo ? (
           // 视频:原生播放器(播放/暂停/进度/音量/全屏);点击视频本身不关灯箱
+          // 默认静音:自动播放的视频突然出声很唐突(也可能被浏览器自动播放策略
+          // 拦截);需要声音时点播放器音量图标自行打开。
+          // 注:React 的 muted 属性不可靠(不渲染 DOM attribute),用 ref 直接设。
           <video
             key={current.src}
+            ref={(el) => {
+              if (el) el.muted = true;
+            }}
             src={current.src}
             poster={current.thumb}
             controls
             autoPlay
             playsInline
+            muted
             preload="metadata"
             onClick={(e) => e.stopPropagation()}
             onLoadedMetadata={() => setLoaded(true)}
