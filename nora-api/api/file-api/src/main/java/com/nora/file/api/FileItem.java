@@ -3,17 +3,17 @@ package com.nora.file.api;
 import java.time.Instant;
 
 /**
- * A file managed by file-service. Mirrors the {@code file_item} table
- * (schema_file). Owned by file-service; other services obtain it via
- * {@link FileService#getById(Long)} instead of cross-schema reads.
+ * file-service 管理的文件。对应 {@code file_item} 表(schema_file)。
+ * 归 file-service 所有;其他服务经 {@link FileService#getById(Long)} 获取,
+ * 而不是跨 schema 读表。
  *
- * @param id        primary key
- * @param name      original file name supplied at upload
- * @param mimeType  detected/declared MIME type, e.g. {@code text/markdown}
- * @param sizeBytes file size in bytes
- * @param indexed   whether rag-service finished indexing this file
- * @param createdAt upload timestamp (UTC)
- * @param folderId  owning folder id; {@code null} = root (no folder)
+ * @param id        主键
+ * @param name      上传时提供的原始文件名
+ * @param mimeType  检测/声明的 MIME 类型,如 {@code text/markdown}
+ * @param sizeBytes 文件字节数
+ * @param indexed   rag-service 是否已完成索引
+ * @param createdAt 上传时间戳(UTC)
+ * @param folderId  所属文件夹 id;{@code null} = 根目录(无文件夹)
  */
 public record FileItem(
         Long id,

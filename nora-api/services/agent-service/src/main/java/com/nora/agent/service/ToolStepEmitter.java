@@ -1,16 +1,17 @@
 package com.nora.agent.service;
 
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.Map;
 
 /**
  * 工具步骤发射器(2026-09-17 从 ChatOrchestrationService 拆出,拆分方案收尾):
@@ -22,7 +23,7 @@ class ToolStepEmitter {
 
     private static final Logger log = LoggerFactory.getLogger(ToolStepEmitter.class);
 
-    /** Repeats of the same (tool, args) fingerprint before the loop breaker trips. */
+    /** 循环熔断触发前,相同(工具, 参数)指纹的允许重复次数。 */
     private static final int LOOP_WARN_THRESHOLD = 2;
     private static final int LOOP_BLOCK_THRESHOLD = 3;
 
@@ -41,14 +42,13 @@ class ToolStepEmitter {
     }
 
     /**
-     * Executes one tool call and emits its structured step pair
-     * (running → terminal). Terminal status is {@code declined} when a
-     * guardrail refuses the input (rule refusal, not an execution error),
-     * {@code failed} when execution throws, {@code completed} otherwise.
+     * 执行一次工具调用并发出结构化步骤对(running → 终态)。终态状态:
+     * 守卫拒绝输入时为 {@code declined}(规则拒绝,非执行错误),
+     * 执行抛异常时为 {@code failed},其余为 {@code completed}。
      * ASK 档每次都请求批准;ASSIST 档仅高风险(RiskClassifier)请求批准;
      * FULL 档不询问。等待批准期间 step 保持 running,批准事件由 SSE 下发。
      */
-    /** Legacy test/helper entry: no session means approval is bypassed. */
+    /** 遗留的测试/辅助入口:无会话即绕过审批。 */
     void emitToolStep(String toolStepId, String name, String args,
                               Map<String, Integer> fingerprints,
                               List<WireMessage> messages, String callId,
@@ -69,7 +69,7 @@ class ToolStepEmitter {
                 permissionMode, sessionId, null, eventConsumer);
     }
 
-    /** Overload carrying the resolved LLM so image attachments can honour its vision capability. */
+    /** 携带已解析 LLM 的重载,让图片附件能遵循其视觉能力。 */
     void emitToolStep(String toolStepId, String name, String args,
                               Map<String, Integer> fingerprints,
                               List<WireMessage> messages, String callId,
@@ -84,9 +84,8 @@ class ToolStepEmitter {
         // 模型看到自己真实的调用记录,而不是"纯文本声称跑过命令"(实测:缺失工具链
         // 结构时弱模型会续写编造工具结果)。脱敏与日志同口径,不存凭据明文。
         ChatStepDto.StepInput input = withRawArgs(parsed.input(), args);
-        // Claude Code pattern: the model fills the display title via the
-        // description arg (imperative, no subjective words); fall back to
-        // the tool name when it omits one
+        // Claude Code 模式:模型经 description 参数填展示标题(祈使句、无主观词);
+        // 省略时回退工具名
         String title = parsed.description() != null && !parsed.description().isBlank()
                 ? parsed.description() : defaultTitle(name);
         long toolStart = System.currentTimeMillis();
@@ -95,7 +94,7 @@ class ToolStepEmitter {
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
 
-        // loop breaker: same (tool, normalized args) repeated too often.
+        // 循环熔断:相同(工具, 归一化参数)重复过多次。
         // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
         // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill/
         // manage_mcp/run_command 同理(主体在 content/path/instructions/url/command 字段)。
@@ -188,21 +187,20 @@ class ToolStepEmitter {
                 summaryLine, System.currentTimeMillis() - toolStart, status, name, input, result, roundIndex));
     }
 
-    /** Appends the tool result message fed back to the model (RespondToModel style: errors are content, not exceptions). */
+    /** 追加回填给模型的工具结果消息(RespondToModel 风格:错误是内容,不是异常)。 */
     private void backfillToolMessage(List<WireMessage> messages, String callId, String content) {
         backfillToolMessage(messages, callId, content, java.util.List.of(), null);
     }
 
     /**
-     * Tool-result backfill with optional image attachments.
+     * 带可选图片附件的工具结果回填。
      *
-     * <p>When {@code images} is non-empty and the active model can see images, the
-     * tool message carries a multimodal content array (text + image_url parts) —
-     * verified end-to-end against the relay for both chat/completions and
-     * responses protocols. Otherwise the images are dropped with an explicit note
-     * so a text-only model never silently pretends to have seen them.
+     * <p>{@code images} 非空且当前模型能识图时,工具消息携带多模态内容数组
+     * (text + image_url 部件)——chat/completions 与 responses 两种协议均已
+     * 对中继端到端验证。否则图片被丢弃并附明确说明,纯文本模型绝不静默
+     * 假装看过。
      *
-     * @param visionOverride TRUE/FALSE = forced by settings; null = runtime adaptive
+     * @param visionOverride TRUE/FALSE = 设置强制;null = 运行时自适应
      */
     private void backfillToolMessage(List<WireMessage> messages, String callId, String content,
                                      java.util.List<McpServerService.McpToolResult.ImageBlock> images,
@@ -233,18 +231,18 @@ class ToolStepEmitter {
         messages.add(new WireMessage(toolMsg));
     }
 
-    /** Parsed tool call: typed input plus the model-written display title. */
+    /** 解析后的工具调用:带类型入参 + 模型写的展示标题。 */
     record ParsedArgs(ChatStepDto.StepInput input, String description, String containerAction,
                       /** manage_datasource / manage_service 的 action 子命令 */
                       String datasourceAction) {
 
-        /** Back-compat constructor for call sites without the manage action. */
+        /** 兼容构造:无 manage action 的调用点。 */
         ParsedArgs(ChatStepDto.StepInput input, String description, String containerAction) {
             this(input, description, containerAction, null);
         }
     }
 
-    /** Parses tool arguments into the typed input shown by the frontend + the display title. */
+    /** 把工具参数解析为前端展示的带类型入参 + 展示标题。 */
     private ParsedArgs parseArgs(String toolName, String argsJson) {
         try {
             JsonNode node = objectMapper.readTree(argsJson);
@@ -317,7 +315,7 @@ class ToolStepEmitter {
         }
     }
 
-    /** Human title when the model omits the description arg. */
+    /** 模型省略 description 参数时的人类可读标题。 */
     private String defaultTitle(String name) {
         return switch (name) {
             case "execute_sql" -> "查询数据库";
@@ -335,7 +333,7 @@ class ToolStepEmitter {
         };
     }
 
-    /** Stable string for loop detection: the meaningful part of the args. */
+    /** 循环检测用的稳定字符串:参数中有意义的部分。 */
     private String normalizeArgs(String name, ChatStepDto.StepInput input) {
         if ("execute_sql".equals(name) || "execute_write_sql".equals(name)) {
             return (input.sql() == null ? "" : input.sql().trim().toLowerCase())
@@ -536,7 +534,7 @@ class ToolStepEmitter {
         }
     }
 
-    /** Line count is exposed for collapsed UI previews ("21 lines of output"). */
+    /** 暴露行数供 UI 折叠预览("21 lines of output")。 */
     private static Integer countLines(String content) {
         if (content == null) return null;
         return content.split("\n", -1).length;

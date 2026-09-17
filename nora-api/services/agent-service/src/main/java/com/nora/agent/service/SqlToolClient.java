@@ -1,9 +1,5 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -11,15 +7,18 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 /**
- * Executes guarded read-only SQL against datasource-service
- * ({@code POST /api/datasources/{id}/query}).
+ * 对 datasource-service 执行受控只读 SQL
+ * ({@code POST /api/datasources/{id}/query})。
  *
- * <p>ACI principle (architecture-v2.md section 4.8.3): the result returned
- * to the LLM is bounded and typed — max rows are already enforced by the
- * provider (200), and the rendering here adds a header line with column
- * names and marks NULL cells, so the model can interpret the payload
- * without seeing raw JSON.
+ * <p>ACI 原则(architecture-v2.md 4.8.3 节):返回给 LLM 的结果有界且带类型
+ * ——行数上限由提供方强制(200),这里的渲染补一行列名表头并标记 NULL 单元格,
+ * 模型无需看原始 JSON 就能解读。
  */
 @Service
 public class SqlToolClient {
@@ -35,22 +34,21 @@ public class SqlToolClient {
     }
 
     /**
-     * Runs a read-only statement on the first configured connection.
+     * 在第一个配置的连接上执行只读语句。
      *
-     * @param sql SELECT / SHOW / EXPLAIN statement
-     * @return LLM-friendly rendering: header + aligned rows, or an error line
+     * @param sql SELECT / SHOW / EXPLAIN 语句
+     * @return 面向 LLM 的渲染:表头 + 对齐的行,或一行错误
      */
     public String executeSql(String sql) {
         return executeSqlDetailed(sql).content();
     }
 
     /**
-     * Like {@link #executeSql(String)} but also reports the provider-side row
-     * cap so the orchestrator can mark the step {@code truncated} — a silent
-     * cap makes the model present partial rows as the full answer.
+     * 同 {@link #executeSql(String)},但额外报告提供方行数上限,让编排层把
+     * 步骤标为 {@code truncated}——静默截断会让模型把部分行当成完整答案。
      *
-     * @param sql          SELECT / SHOW / EXPLAIN statement
-     * @param datasourceId explicit connection (id or name); null = first configured
+     * @param sql          SELECT / SHOW / EXPLAIN 语句
+     * @param datasourceId 显式连接(id 或名称);null = 第一个配置的连接
      */
     public SqlOutcome executeSqlDetailed(String sql, String datasourceId) {
         try {
@@ -84,19 +82,17 @@ public class SqlToolClient {
         }
     }
 
-    /** Back-compat: first configured connection. */
+    /** 兼容:第一个配置的连接。 */
     public SqlOutcome executeSqlDetailed(String sql) {
         return executeSqlDetailed(sql, null);
     }
 
     /**
-     * Resolves the {@code datasource} arg to a connection id: numeric → id,
-     * else case-insensitive match against the connection display name OR the
-     * database name (models habitually pass the db name); anything else
-     * falls back to the first connection rather than failing — the arg only
-     * disambiguates, a wrong guess must not block the query.
+     * 把 {@code datasource} 参数解析为连接 id:数字 → id,否则对连接显示名
+     * 或库名做不区分大小写匹配(模型习惯传库名);其余情况回退第一个连接
+     * 而不是报错——该参数只用于消歧,猜错不该阻塞查询。
      *
-     * @return connection id, or null when no connection is configured at all
+     * @return 连接 id;完全没配连接时为 null
      */
     public Long resolveConnectionId(String datasourceId) {
         try {
@@ -145,17 +141,17 @@ public class SqlToolClient {
         }
     }
 
-    /** Rendered SQL result plus UI-facing metadata. */
+    /** 渲染后的 SQL 结果 + 面向 UI 的元数据。 */
     public record SqlOutcome(String content, String summary, boolean truncated) {
     }
 
     /**
-     * Enriches common DB errors with the correct alternative syntax so the
-     * model can self-correct on the next round (harness: errors teach).
+     * 为常见 DB 错误补充正确的替代语法,让模型下一轮自我纠正
+     * (harness 原则:错误即教学)。
      */
     private String hint(String message) {
         if (message != null && message.contains("unrecognized configuration parameter")) {
-            // MySQL SHOW TABLES / USE db etc. don't exist on PostgreSQL
+            // MySQL 的 SHOW TABLES / USE db 等在 PostgreSQL 上不存在
             return message + "（提示:目标数据库是 PostgreSQL,不支持 MySQL 的 SHOW 语法。"
                     + "查表用 SELECT tablename FROM pg_tables WHERE schemaname = 'public';"
                     + "查库用 SELECT datname FROM pg_database;查列用 SELECT column_name, data_type "
@@ -168,7 +164,7 @@ public class SqlToolClient {
         return message;
     }
 
-    /** Renders columns+rows as a compact TSV the LLM can read at a glance. */
+    /** 把列+行渲染为紧凑 TSV,LLM 一眼可读。 */
     private String render(QueryBody result) {
         StringBuilder sb = new StringBuilder();
         sb.append(String.join("\t", result.columns())).append('\n');
@@ -181,11 +177,11 @@ public class SqlToolClient {
         return sb.toString();
     }
 
-    /** POST query body. */
+    /** POST query 请求体。 */
     record QueryRequest(String sql) {
     }
 
-    /** Query result payload (the data of the ApiResponse envelope). */
+    /** 查询结果载荷(ApiResponse 信封的 data)。 */
     record QueryBody(
             java.util.List<String> columns,
             java.util.List<java.util.List<String>> rows,
@@ -194,11 +190,11 @@ public class SqlToolClient {
             Boolean truncated) {
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 
-    /** ObjectNode helper for list endpoint. */
+    /** list 端点的 ObjectNode 辅助。 */
     record ObjectEnvelope(ObjectNode data) {
     }
 }

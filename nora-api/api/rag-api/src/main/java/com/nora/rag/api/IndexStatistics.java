@@ -3,12 +3,12 @@ package com.nora.rag.api;
 import java.time.Instant;
 
 /**
- * Index snapshot returned by {@link RagService#getIndexStats()}.
+ * {@link RagService#getIndexStats()} 返回的索引快照。
  *
- * @param docCount       number of indexed documents
- * @param chunkCount     number of embedded chunks
- * @param embeddingModel identifier of the embedding model backing the index
- * @param indexedAt      last time the index was updated
+ * @param docCount       已索引文档数
+ * @param chunkCount     已嵌入块数
+ * @param embeddingModel 支撑索引的嵌入模型标识
+ * @param indexedAt      索引最后更新时间
  */
 public record IndexStatistics(
         long docCount,

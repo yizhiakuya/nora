@@ -1,28 +1,27 @@
 package com.nora.rag.service;
 
-import org.springframework.stereotype.Service;
-
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.stereotype.Service;
+
 /**
- * Character-approximate chunking (~2000 chars per chunk, 200 chars overlap),
- * friendly to mixed Chinese/English text: no tokenizer dependency, splits on
- * whitespace where possible so chunks do not shear English words apart.
+ * 按字符近似分块(每块约 2000 字符,重叠 200 字符),对中英混排友好:
+ * 无分词器依赖,尽量在空白处切分,不把英文单词拦腰剪断。
  */
 @Service
 public class ChunkingService {
 
-    /** Target characters per chunk. */
+    /** 每块目标字符数。 */
     static final int CHUNK_SIZE = 2000;
-    /** Characters shared between adjacent chunks. */
+    /** 相邻块共享的字符数。 */
     static final int OVERLAP = 200;
 
     /**
-     * Splits text into overlapping chunks.
+     * 把文本切成带重叠的块。
      *
-     * @param text raw document text
-     * @return chunks in document order; empty list for blank input
+     * @param text 原始文档文本
+     * @return 按文档序的块;空白输入为空列表
      */
     public List<String> chunk(String text) {
         List<String> chunks = new ArrayList<>();
@@ -37,8 +36,7 @@ public class ChunkingService {
 
         while (start < length) {
             int end = Math.min(start + CHUNK_SIZE, length);
-            // For non-final chunks, back off to the last whitespace so English
-            // words are not sheared in half; keep at least half a chunk.
+            // 非末块回退到最后一个空白处,不让英文单词被剪半;至少保留半块。
             if (end < length) {
                 int spaceBoundary = lastWhitespace(normalized, end);
                 if (spaceBoundary > start + CHUNK_SIZE / 2) {

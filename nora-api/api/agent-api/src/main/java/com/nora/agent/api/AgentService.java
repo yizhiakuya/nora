@@ -3,19 +3,18 @@ package com.nora.agent.api;
 import java.util.List;
 
 /**
- * Dubbo contract for agent-service (per architecture-v2.md section 5.1).
+ * agent-service 的 Dubbo 契约(architecture-v2.md 5.1 节)。
  *
- * <p>Provider: services/agent-service (LangChain4j ReAct loop, SSE streaming).
- * This Phase 1 placeholder only exposes model listing; chat itself is
- * consumed REST-wise through the gateway ({@code /api/chat/**}), so no
- * streaming methods appear here yet.</p>
+ * <p>提供方:services/agent-service(LangChain4j ReAct 循环、SSE 流式)。
+ * 这个 Phase 1 占位只暴露模型列表;对话本身经网关({@code /api/chat/**})
+ * 以 REST 消费,所以这里暂无流式方法。</p>
  */
 public interface AgentService {
 
     /**
-     * Lists the chat models currently configured in agent-service.
+     * 列出 agent-service 当前配置的对话模型。
      *
-     * @return available models with protocol family and model name
+     * @return 可用模型(含协议族与模型名)
      */
     List<ModelInfo> listModels();
 }

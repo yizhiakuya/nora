@@ -1,15 +1,5 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.agent.dto.ApprovalRequestDto;
-import com.nora.common.redis.NoraRedis;
-import com.nora.common.redis.RedisProperties;
-import io.lettuce.core.pubsub.RedisPubSubAdapter;
-import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -18,20 +8,30 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.agent.dto.ApprovalRequestDto;
+import com.nora.common.redis.NoraRedis;
+import com.nora.common.redis.RedisProperties;
+
+import io.lettuce.core.pubsub.RedisPubSubAdapter;
+import jakarta.annotation.PostConstruct;
+
 /**
- * Server-side approval state for high-risk tool calls (spec:
+ * 高风险工具调用的服务端审批状态(spec:
  * docs/agent-implementation-spec.md 高风险审批协议).
  *
- * <p>The model's textual "yes" never counts — approval is a one-shot token
- * created here and clicked in the UI. Pending approvals expire after
- * {@value #TIMEOUT_SECONDS}s so a paused turn cannot hang forever; expiry
- * resolves the future as declined.
+ * <p>模型在文本里说"同意"从不作数——审批是这里创建、由用户在 UI 点击的
+ * 一次性 token。挂起的审批在 {@value #TIMEOUT_SECONDS}s 后过期,被暂停的
+ * 轮次不会永久挂起;过期按拒绝结算。
  *
- * <p><b>Redis mirror (optional):</b> tickets are also written to Redis so
- * (a) a pending list survives an agent-service restart within the timeout
- * window, and (b) a resolve landing on any instance completes the future
- * blocked in {@code await()} via a pub/sub notification. Redis disabled or
- * unreachable degrades to the original in-process behaviour.
+ * <p><b>Redis 镜像(可选):</b>票据同时写入 Redis,使 (a) 挂起列表在
+ * agent-service 重启后(超时窗口内)仍可见,(b) 落到任一实例的 resolve 经
+ * pub/sub 通知完成阻塞在 {@code await()} 的 future。Redis 禁用或不可达时
+ * 降级为原有进程内行为。
  */
 @Service
 public class ApprovalService {
@@ -40,13 +40,13 @@ public class ApprovalService {
 
     static final int TIMEOUT_SECONDS = 120;
 
-    /** Redis ticket hash: sessionId / stepId / payload(json). */
+    /** Redis 票据哈希:sessionId / stepId / payload(json)。 */
     static final String TICKET_PREFIX = "nora:approval:ticket:";
-    /** Per-session token set for cross-instance pendingFor. */
+    /** 每会话 token 集合,供跨实例 pendingFor 查询。 */
     static final String SESSION_SET_PREFIX = "nora:approval:session:";
-    /** Cross-instance resolution channel. */
+    /** 跨实例 resolve 广播频道。 */
     static final String RESOLVED_CHANNEL = "nora:approval:resolved";
-    /** Ticket TTL: slightly longer than the in-process wait so a late click still resolves. */
+    /** 票据 TTL:略长于进程内等待,让迟到的点击仍能完成 resolve。 */
     static final long REDIS_TTL_SECONDS = TIMEOUT_SECONDS + 30;
 
     record PendingRequest(String approvalToken, String sessionId, String stepId,
@@ -64,14 +64,14 @@ public class ApprovalService {
         this.redis = redis;
     }
 
-    /** Back-compat constructor (tests): Redis disabled, pure in-process behaviour. */
+    /** 兼容构造(测试):Redis 禁用,纯进程内行为。 */
     public ApprovalService(ObjectMapper objectMapper) {
         this(objectMapper, new NoraRedis(RedisProperties.disabled()));
     }
 
     /**
-     * Subscribes to the cross-instance resolution channel: a resolve handled
-     * elsewhere completes the local future, releasing the blocked turn.
+     * 订阅跨实例 resolve 频道:其他实例处理的 resolve 会完成本地 future,
+     * 释放被阻塞的轮次。
      */
     @PostConstruct
     void subscribeResolutions() {
@@ -102,7 +102,7 @@ public class ApprovalService {
         });
     }
 
-    /** A newly registered request, including the one-shot token for the UI. */
+    /** 新注册的审批请求,含给 UI 的一次性 token。 */
     public ApprovalRequestDto register(String sessionId, String stepId, ApprovalRequestDto request) {
         String token = UUID.randomUUID().toString();
         ApprovalRequestDto ticket = new ApprovalRequestDto(token, request.stepId(), request.actionType(),
@@ -118,7 +118,7 @@ public class ApprovalService {
         return ticket;
     }
 
-    /** Mirrors the ticket into Redis (TTL-bounded) for restart/cross-instance visibility. */
+    /** 把票据镜像到 Redis(有 TTL),供重启/跨实例可见。 */
     private void mirrorToRedis(String token, String sessionId, String stepId, ApprovalRequestDto ticket) {
         redis.call(commands -> {
             String key = TICKET_PREFIX + token;
@@ -134,7 +134,7 @@ public class ApprovalService {
         });
     }
 
-    /** Removes the Redis ticket + session-set entry after resolution. */
+    /** resolve 后清除 Redis 票据与会话集合条目。 */
     private void clearRedisTicket(String token, String sessionId) {
         redis.call(commands -> {
             commands.del(TICKET_PREFIX + token);
@@ -143,7 +143,7 @@ public class ApprovalService {
         });
     }
 
-    /** Waits for a ticket previously registered and returns approved/declined/timeout. */
+    /** 等待先前注册的票据,返回 approved/declined/timeout。 */
     public boolean await(String approvalToken) {
         PendingRequest request = pending.get(approvalToken);
         if (request == null) return false;
@@ -155,25 +155,23 @@ public class ApprovalService {
     }
 
     /**
-     * Registers a pending approval and waits for its resolution.
-     * Kept for service-level callers; HTTP flows should call register + await
-     * so they can emit the ticket before blocking.
+     * 注册挂起审批并等待其结算。供服务层调用方使用;HTTP 流程应分两步
+     * (register + await),以便在阻塞前先把 token 发出去。
      */
     public CompletableFuture<Boolean> awaitApproval(String sessionId, String stepId, ApprovalRequestDto payload) {
         ApprovalRequestDto ticket = register(sessionId, stepId, payload);
         return CompletableFuture.supplyAsync(() -> await(ticket.approvalToken()));
     }
 
-    /** Resolves a ticket only when the path session matches its bound session. */
+    /** 仅当路径 session 与票据绑定的 session 一致时才结算。 */
     public boolean resolve(String sessionId, String approvalToken, boolean approved) {
         PendingRequest request = pending.get(approvalToken);
         if (request != null) {
             if (!request.sessionId().equals(sessionId)) {
                 return false;
             }
-            // Complete before the callback removes the entry; this closes the
-            // register → SSE event → user click race where await() could observe
-            // a removed token and incorrectly turn an approval into a decline.
+            // 在回调移除条目前先 complete:闭合「register → SSE 事件 → 用户点击」
+            // 的竞态——await() 可能观察到已被移除的 token 而把批准误判为拒绝。
             return request.future().complete(approved);
         }
         // 本地没有(另一实例注册的票/本实例刚重启):查 Redis 票据,存在则广播解决
@@ -181,9 +179,9 @@ public class ApprovalService {
     }
 
     /**
-     * Cross-instance resolve: validates the ticket in Redis (session match),
-     * deletes it, and publishes on {@value #RESOLVED_CHANNEL} so whichever
-     * instance is blocked in {@code await()} completes its local future.
+     * 跨实例 resolve:在 Redis 校验票据(session 匹配)→ 删除 → 在
+     * {@value #RESOLVED_CHANNEL} 发布,让阻塞在 {@code await()} 的那个实例
+     * 完成本地 future。
      */
     private boolean resolveRemote(String sessionId, String approvalToken, boolean approved) {
         Boolean exists = redis.call(commands -> {
@@ -204,7 +202,7 @@ public class ApprovalService {
         return true;
     }
 
-    /** Pending approvals of one session (polling fallback when SSE is reconnected). */
+    /** 某会话的挂起审批(SSE 重连时的轮询兜底)。 */
     public List<ApprovalRequestDto> pendingFor(String sessionId) {
         List<ApprovalRequestDto> local = pending.values().stream()
                 .filter(p -> p.sessionId().equals(sessionId))
@@ -258,7 +256,7 @@ public class ApprovalService {
         });
     }
 
-    /** Serializes the payload for the SSE approval_required event. */
+    /** 为 SSE approval_required 事件序列化 payload。 */
     public String toJson(ApprovalRequestDto payload) {
         try {
             return objectMapper.writeValueAsString(payload);

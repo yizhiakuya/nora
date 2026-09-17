@@ -1,7 +1,17 @@
 package com.nora.agent.controller;
 
+import java.io.IOException;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
 import com.nora.agent.service.ChatOrchestrationService;
@@ -9,16 +19,6 @@ import com.nora.agent.service.ChatStoreService;
 import com.nora.agent.service.PermissionMode;
 import com.nora.agent.service.TurnStreamRegistry;
 import com.nora.common.logging.TraceContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.io.IOException;
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * 一轮对话的执行引擎(2026-09-17 从 AgentController 拆出,复杂度审计建议 #2):
@@ -192,7 +192,7 @@ class ChatTurnRunner {
                                         .name("error")
                                         .data(errorJson, MediaType.APPLICATION_JSON));
                             } catch (IOException ignored) {
-                                // client gone
+                                // 客户端已离开
                             }
                         }
                         try {
@@ -230,10 +230,9 @@ class ChatTurnRunner {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());
                         }
-                        // done carries turn metrics (harness pattern: server stamps timing so
-                        // the client never recomputes); usage is the provider's real token
-                        // accounting summed across tool rounds (null when relay omits it);
-                        // contextWindow/promptTokens feed the frontend context meter.
+                        // done 携带轮次指标(harness 模式:服务端打时间戳,客户端绝不重算);
+                        // usage 是 provider 真实 token 统计,跨工具轮累加(中继省略时为 null);
+                        // contextWindow/promptTokens 供前端上下文计量表。
                         // 取消轮也发终态(stopped=true):接续流(切页返回/断线重连的
                         // 客户端)必须收到终态才能收敛 UI——此前取消路径不发任何终态,
                         // 接续方永远卡在「正在思考」(实测 bug:取消后 UI 无法复位)。
@@ -333,18 +332,17 @@ class ChatTurnRunner {
         }
     }
 
-    /** SSE delta payload. */
+    /** SSE delta 载荷。 */
     public record DeltaPayload(String content) {
     }
 
-    /** SSE reasoning delta payload; roundIndex is null for the final answer round. */
+    /** SSE reasoning delta 载荷;最终回答轮 roundIndex 为 null。 */
     public record ReasoningDeltaPayload(Integer roundIndex, String content) {
     }
 
     /**
-     * SSE done payload with turn metrics. {@code usage} stays null until the
-     * model gateway returns token accounting; the frontend falls back to its
-     * local estimate while it is null.
+     * 带轮次指标的 SSE done 载荷。{@code usage} 在模型网关返回 token 统计前保持
+     * null;为 null 时前端落回本地估算。
      */
     public record DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
                               Long contextWindow, Integer promptTokens, Long ttftMs,
@@ -358,7 +356,7 @@ class ChatTurnRunner {
             this(messageId, durationMs, usage, answerChars, contextWindow, promptTokens, ttftMs, null);
         }
 
-        /** Token accounting from the provider (harness: usage is a first-class done field). */
+        /** provider 的 token 统计(harness:usage 是 done 的一等字段)。 */
         public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {
         }
     }

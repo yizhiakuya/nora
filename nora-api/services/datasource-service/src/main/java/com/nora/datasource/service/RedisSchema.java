@@ -1,48 +1,49 @@
 package com.nora.datasource.service;
 
-import com.nora.datasource.api.Column;
-import com.nora.datasource.api.DbTable;
-import com.nora.datasource.api.SchemaSnapshot;
-import io.lettuce.core.KeyScanCursor;
-import io.lettuce.core.Limit;
-import io.lettuce.core.Range;
-import io.lettuce.core.ScoredValue;
-import io.lettuce.core.ScanArgs;
-import io.lettuce.core.ScanCursor;
-import io.lettuce.core.api.sync.RedisCommands;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import com.nora.datasource.api.Column;
+import com.nora.datasource.api.DbTable;
+import com.nora.datasource.api.SchemaSnapshot;
+
+import io.lettuce.core.KeyScanCursor;
+import io.lettuce.core.Limit;
+import io.lettuce.core.Range;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
+import io.lettuce.core.ScoredValue;
+import io.lettuce.core.api.sync.RedisCommands;
+
 /**
- * Renders a Redis key space into the generic {@link SchemaSnapshot} shape so the
- * existing Schema browser UI can display it without a Redis-specific view:
+ * 把 Redis 键空间渲染为通用 {@link SchemaSnapshot} 形态,让既有 Schema
+ * 浏览器 UI 无需 Redis 专用视图即可展示:
  *
  * <ul>
- *   <li>each key becomes a "table" (grouped under its logical db, e.g. {@code DB0});</li>
- *   <li>the key's content becomes "columns": string→value, hash→fields, list→elements,
- *       set→members, zset→member+score, stream→first entries.</li>
+ *   <li>每个键成为一个"表"(按逻辑 db 分组,如 {@code DB0});</li>
+ *   <li>键内容成为"列":string→value、hash→fields、list→elements、
+ *       set→members、zset→member+score、stream→前几条。</li>
  * </ul>
  *
- * <p>Bounded: at most {@link #MAX_KEYS} keys and {@link #MAX_ELEMENTS} entries per key,
- * keeping payloads browser- and LLM-friendly.
+ * <p>有界:最多 {@link #MAX_KEYS} 个键、每键 {@link #MAX_ELEMENTS} 条目,
+ * 载荷保持浏览器/LLM 友好。
  */
 public final class RedisSchema {
 
     static final int MAX_KEYS = 200;
     static final int MAX_ELEMENTS = 50;
-    /** Value preview length per element (bytes of display text). */
+    /** 每元素的值预览长度(展示文本字节数)。 */
     private static final int PREVIEW = 120;
 
     private RedisSchema() {
     }
 
     /**
-     * Builds the key-space snapshot for one connection.
+     * 为一个连接构建键空间快照。
      *
-     * @param commands sync commands from the caller's connection
-     * @param dbIndex  logical database index (for the group label)
+     * @param commands 调用方连接上的同步命令接口
+     * @param dbIndex  逻辑数据库序号(用于分组标签)
      */
     public static SchemaSnapshot snapshot(RedisCommands<String, String> commands, int dbIndex) {
         String group = "DB" + dbIndex;
@@ -135,7 +136,7 @@ public final class RedisSchema {
         return oneLine.length() <= PREVIEW ? oneLine : oneLine.substring(0, PREVIEW) + "…";
     }
 
-    /** Runs a read and falls back to a default instead of failing the whole snapshot. */
+    /** 执行读取,失败时回退默认值而不是让整个快照失败。 */
     private static <T> T safe(java.util.function.Supplier<T> supplier, T fallback) {
         try {
             T value = supplier.get();

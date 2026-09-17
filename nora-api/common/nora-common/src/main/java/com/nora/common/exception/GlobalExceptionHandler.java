@@ -1,12 +1,13 @@
 package com.nora.common.exception;
 
-import com.nora.common.response.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import com.nora.common.response.ApiResponse;
 
 /**
  * Catch-all REST exception handling for all Nora services (异常处理系统 2026-09-12).
@@ -26,7 +27,7 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    /** Fallback code for unexpected errors. */
+    /** 意外错误的兜底状态码。 */
     public static final int INTERNAL_ERROR_CODE = 500;
 
     /** 业务异常:信封携带完整分类信息;日志级别按分类。 */

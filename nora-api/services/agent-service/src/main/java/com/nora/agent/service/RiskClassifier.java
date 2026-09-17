@@ -308,7 +308,7 @@ final class RiskClassifier {
         return null;
     }
 
-    /** Back-compat overload (remote transports only). */
+    /** 兼容重载(仅远程传输)。 */
     static String validateMcpRegister(String name, String url, String transport) {
         return validateMcpRegister(name, url, transport, null, null);
     }

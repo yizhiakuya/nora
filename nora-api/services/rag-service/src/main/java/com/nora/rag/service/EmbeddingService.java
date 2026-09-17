@@ -1,16 +1,5 @@
 package com.nora.rag.service;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.common.redis.NoraRedis;
-import com.nora.rag.config.EmbeddingProperties;
-import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -18,27 +7,38 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.nora.common.exception.BusinessException;
+import com.nora.common.redis.NoraRedis;
+import com.nora.rag.config.EmbeddingProperties;
+
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
+
 /**
- * Embedding facade over the LangChain4j OpenAI-compatible client, pointed at
- * Jina AI via {@code nora.embedding.base-url}.
+ * LangChain4j OpenAI 兼容客户端上的嵌入门面,经
+ * {@code nora.embedding.base-url} 指向 Jina AI。
  *
- * <p>The underlying {@link EmbeddingModel} is created lazily per call site so
- * the application starts and serves non-embedding endpoints (docs list, stats)
- * even when no API key is configured.
+ * <p>底层 {@link EmbeddingModel} 按调用点懒创建,让应用在没配 API key 时
+ * 也能启动并服务非嵌入端点(文档列表、统计)。
  *
- * <p><b>Redis cache (optional):</b> identical texts (re-indexing, repeated
- * search queries) hit a content-addressed cache instead of paying another
- * provider round-trip. Cache misses and Redis outages fall through to the
- * provider; the cache never changes results, only latency and cost.
+ * <p><b>Redis 缓存(可选):</b>相同文本(重建索引、重复搜索查询)命中
+ * 内容寻址缓存,不再付一次 provider 往返。缓存未命中与 Redis 故障都落回
+ * provider;缓存从不改变结果,只改变延迟与成本。
  */
 @Service
 public class EmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingService.class);
 
-    /** Content-addressed cache key prefix; the hash covers model+dimensions+text. */
+    /** 内容寻址缓存键前缀;哈希覆盖 model+dimensions+text。 */
     static final String CACHE_PREFIX = "nora:embed:";
-    /** TTL: embeddings are deterministic per model version, 7 days is safe headroom. */
+    /** TTL:嵌入对每个模型版本是确定性的,7 天是安全的余量。 */
     static final long CACHE_TTL_SECONDS = 7 * 24 * 3600;
 
     private final EmbeddingProperties properties;
@@ -63,9 +63,9 @@ public class EmbeddingService {
     }
 
     /**
-     * Embeds a single text.
+     * 嵌入单条文本。
      *
-     * @throws BusinessException "embedding not configured" when no API key is set
+     * @throws BusinessException 未配置 API key 时 "embedding not configured"
      */
     public float[] embed(String text) {
         if (!properties.configured()) {
@@ -82,9 +82,9 @@ public class EmbeddingService {
     }
 
     /**
-     * Embeds a batch of texts in one provider call.
+     * 一次 provider 调用嵌入一批文本。
      *
-     * @throws BusinessException "embedding not configured" when no API key is set
+     * @throws BusinessException 未配置 API key 时 "embedding not configured"
      */
     public List<float[]> embedAll(List<String> texts) {
         if (!properties.configured()) {
@@ -115,7 +115,7 @@ public class EmbeddingService {
         return out;
     }
 
-    /** Reads one vector from the Redis cache; empty when disabled, unreachable or missing. */
+    /** 从 Redis 缓存读一个向量;禁用/不可达/缺失时为空。 */
     private Optional<float[]> cacheGet(String text) {
         if (redis == null) {
             return Optional.empty();
@@ -126,7 +126,7 @@ public class EmbeddingService {
         });
     }
 
-    /** Writes one vector to the Redis cache (best-effort, TTL-bounded). */
+    /** 把一个向量写入 Redis 缓存(尽力而为,有 TTL)。 */
     private void cachePut(String text, float[] vector) {
         if (redis == null) {
             return;
@@ -137,7 +137,7 @@ public class EmbeddingService {
         });
     }
 
-    /** SHA-256 over model + dimensions + text: model swaps never serve stale vectors. */
+    /** 对 model + dimensions + text 做 SHA-256:换模型绝不命中旧向量。 */
     private String cacheKey(String text) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

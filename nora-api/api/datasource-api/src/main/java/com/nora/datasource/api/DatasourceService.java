@@ -1,48 +1,45 @@
 package com.nora.datasource.api;
 
 /**
- * Dubbo contract for datasource-service (per architecture-v2.md section 5.1).
+ * datasource-service 的 Dubbo 契约(architecture-v2.md 5.1 节)。
  *
- * <p>Provider: services/datasource-service (JDBC connection management, schema
- * browsing, read-only SQL execution — {@code ConnectionPoolManager} and
- * {@code SqlGuard}). Consumers: agent-service ({@code NoraTools#executeSql}
- * ReAct tool) and automation-service (via the {@code sql.executed} event flow).
+ * <p>提供方:services/datasource-service(JDBC 连接管理、schema 浏览、只读 SQL
+ * 执行——{@code ConnectionPoolManager} 与 {@code SqlGuard})。消费方:
+ * agent-service({@code NoraTools#executeSql} ReAct 工具)与 automation-service
+ * (经 {@code sql.executed} 事件流)。
  *
- * <p>Implementations are registered to Nacos via Dubbo and injected on the
- * consumer side with {@code @DubboReference}.
+ * <p>实现经 Dubbo 注册到 Nacos,消费方以 {@code @DubboReference} 注入。
  */
 public interface DatasourceService {
 
     /**
-     * Opens (or borrows from the pool) a connection by id and verifies it is alive,
-     * measuring round-trip latency. Backs the {@code db_connection} test action
-     * (architecture-v2.md section 7.2).
+     * 按 id 打开(或从池借用)连接并验证存活,测量往返延迟。支撑
+     * {@code db_connection} 测试动作(architecture-v2.md 7.2 节)。
      *
-     * @param connectionId id of the connection record to test
-     * @return status with ok flag, human-readable message and measured latency
+     * @param connectionId 要测试的连接记录 id
+     * @return 带 ok 标志、人类可读消息与实测延迟的状态
      */
     ConnectionStatus test(Long connectionId);
 
     /**
-     * Returns the table/column structure of the connected database.
+     * 返回所连数据库的表/列结构。
      *
-     * @param connectionId id of the connection to introspect
-     * @return snapshot of all tables and their columns
+     * @param connectionId 要内省的连接 id
+     * @return 全部表及其列的
+     * 快照
      */
     SchemaSnapshot schema(Long connectionId);
 
     /**
-     * Executes a single read-only (SELECT/SHOW/EXPLAIN) statement against the
-     * connection. The provider-side {@code SqlGuard} rejects any mutating
-     * statement before execution; SQL must not be trusted from the caller.
+     * 对连接执行单条只读(SELECT/SHOW/EXPLAIN)语句。提供方 {@code SqlGuard}
+     * 在执行前拒绝任何变更语句;不得信任调用方的 SQL。
      *
-     * <p>Per the ACI design (architecture-v2.md section 4.8.3) the result is
-     * truncated by the provider to a bounded row count with column types
-     * attached, so the payload stays LLM-friendly.
+     * <p>按 ACI 设计(architecture-v2.md 4.8.3 节),提供方把结果截到有界行数并
+     * 附带列类型,载荷保持 LLM 友好。
      *
-     * @param connectionId id of the connection to query on
-     * @param sql          read-only SQL statement
-     * @return result set as string rows plus column names and timing
+     * @param connectionId 要查询的连接 id
+     * @param sql          只读 SQL 语句
+     * @return 字符串行结果集 + 列名与耗时
      */
     QueryResult executeReadOnly(Long connectionId, String sql);
 }

@@ -1,8 +1,8 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.McpServerService;
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
+import java.util.List;
+import java.util.Map;
+
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -12,14 +12,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.Map;
+import com.nora.agent.service.McpServerService;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 
 /**
- * MCP server registry admin API ({@code /api/mcp/servers}) for the settings
- * center: register remote tool servers, test connectivity (refresh pulls
- * tools/list into the cache), enable/disable, delete. Responses use the
- * ApiResponse envelope; header values are masked in every view.
+ * 设置中心的 MCP 服务器注册管理 API({@code /api/mcp/servers}):
+ * 注册远程工具服务器、测试连通(refresh 拉 tools/list 进缓存)、
+ * 启用/停用、删除。响应用 ApiResponse 信封;所有视图中头值均已脱敏。
  */
 @RestController
 @RequestMapping("/api/mcp/servers")
@@ -31,13 +31,13 @@ public class McpServerController {
         this.mcpServerService = mcpServerService;
     }
 
-    /** Lists all registered servers (headers masked). */
+    /** 列出全部注册服务器(headers 脱敏)。 */
     @GetMapping
     public ApiResponse<List<McpServerService.ServerView>> list() {
         return ApiResponse.ok(mcpServerService.list());
     }
 
-    /** Registers a server. No connection is attempted here — refresh does that. */
+    /** 注册服务器。此处不尝试连接——由 refresh 完成。 */
     @PostMapping
     public ApiResponse<McpServerService.ServerView> create(@RequestBody CreateRequest request) {
         if (request.name() == null || request.name().isBlank()) {
@@ -61,7 +61,7 @@ public class McpServerController {
         }
     }
 
-    /** Deletes a server (its pooled MCP client is closed). */
+    /** 删除服务器(其池化 MCP 客户端被关闭)。 */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable long id) {
         if (!mcpServerService.delete(id)) {
@@ -70,7 +70,7 @@ public class McpServerController {
         return ApiResponse.ok();
     }
 
-    /** Enables/disables a server; disabled servers' tools are not mounted. */
+    /** 启用/停用服务器;停用服务器的工具不挂载。 */
     @PutMapping("/{id}/enabled")
     public ApiResponse<Void> setEnabled(@PathVariable long id, @RequestBody EnabledRequest request) {
         if (request.enabled() == null) {
@@ -83,8 +83,8 @@ public class McpServerController {
     }
 
     /**
-     * Connects (initialize) and pulls tools/list, snapshotting the tool list
-     * into tools_cache — the connectivity test and the mount source in one.
+     * 连接(initialize)并拉 tools/list,把工具清单快照进 tools_cache
+     * ——连通性测试与挂载数据源二合一。
      */
     @PostMapping("/{id}/refresh")
     public ApiResponse<RefreshResult> refresh(@PathVariable long id) {
@@ -93,15 +93,14 @@ public class McpServerController {
             return ApiResponse.ok(new RefreshResult("connected", null,
                     tools.stream().map(t -> new ToolInfo(t.name(), t.description())).toList()));
         } catch (IllegalStateException e) {
-            // refresh already recorded status=error + detail; surface as 502-style business error
+            // refresh 已记录 status=error + detail;以 502 语义的业务错误上抛
             throw new BusinessException(502, e.getMessage());
         }
     }
 
     /**
-     * Reads one server's cached tool snapshot (name/description/inputSchema)
-     * for the admin UI's tool list & detail view — never triggers a remote
-     * call; the cache is filled by refresh/test-connection.
+     * 读取某服务器的工具缓存快照(name/description/inputSchema),供管理 UI
+     * 的工具列表与详情——绝不触发远端调用;缓存由 refresh/连通测试填充。
      */
     @GetMapping("/{id}/tools")
     public ApiResponse<ToolDetailResult> tools(@PathVariable long id) {

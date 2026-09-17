@@ -1,6 +1,5 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -8,9 +7,11 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 /**
- * Executes high-risk container operations via env-service
- * ({@code POST /api/environment/services/{id}/start|stop|restart}).
+ * 经 env-service({@code POST /api/environment/services/{id}/start|stop|restart})
+ * 执行高风险容器操作。
  * Only called after user approval in ASSIST mode (spec 高风险审批协议).
  */
 @Service
@@ -25,8 +26,8 @@ public class ContainerControlClient {
     }
 
     /**
-     * @param action start / stop / restart
-     * @return LLM-friendly result line, "ERROR: ..." on failure
+     * @param action 动作:start / stop / restart
+     * @return 面向 LLM 的结果行,失败时 "ERROR: ..."
      */
     public String control(String container, String action) {
         String normalized = action == null ? "" : action.trim().toLowerCase();
@@ -51,7 +52,7 @@ public class ContainerControlClient {
         }
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 }

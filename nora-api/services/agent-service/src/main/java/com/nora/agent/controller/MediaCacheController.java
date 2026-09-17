@@ -1,8 +1,14 @@
 package com.nora.agent.controller;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
-import com.nora.agent.service.MediaCacheService;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpRange;
@@ -20,14 +26,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.RandomAccessFile;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.Optional;
+import com.nora.agent.service.MediaCacheService;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 远程媒体缓存端点(2026-09-17):前端把相册等远程媒体 URL 换成
@@ -173,11 +174,11 @@ public class MediaCacheController {
         return ApiResponse.ok(new WarmResult(hit.isPresent(), allowed));
     }
 
-    /** POST /api/media/warm body。 */
+    /** POST /api/media/warm 请求体。 */
     public record WarmRequest(String url) {
     }
 
-    /** POST /api/media/warm response。 */
+    /** POST /api/media/warm 响应。 */
     public record WarmResult(boolean cached, boolean allowed) {
     }
 
@@ -191,7 +192,7 @@ public class MediaCacheController {
         return ApiResponse.ok(new StatusView(raw, mediaCache.originalPrefetchAllowed()));
     }
 
-    /** GET /api/media/status response。 */
+    /** GET /api/media/status 响应。 */
     public record StatusView(String router, boolean prefetchAllowed) {
     }
 
@@ -208,7 +209,7 @@ public class MediaCacheController {
         return ApiResponse.ok(new CachedListView(items, items.size(), totalBytes, mediaCache.cacheDirPath()));
     }
 
-    /** GET /api/media/cached response。 */
+    /** GET /api/media/cached 响应。 */
     public record CachedListView(List<MediaCacheService.CachedItem> items, int count,
                                  long totalBytes, String dir) {
     }
@@ -278,7 +279,7 @@ public class MediaCacheController {
     public record SaveRequest(String filename) {
     }
 
-    /** POST /api/media/cached/{key}/save response。 */
+    /** POST /api/media/cached/{key}/save 响应。 */
     public record SaveResult(String name, long size, String detail) {
     }
 

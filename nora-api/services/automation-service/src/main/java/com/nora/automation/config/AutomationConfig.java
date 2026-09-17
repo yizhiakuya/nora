@@ -5,23 +5,23 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 
 import com.nora.automation.service.AutomationService;
+import com.nora.common.http.EnvelopeErrorHandler;
 
 /**
- * Bean wiring for automation-service: the RestClient for datasource-service
- * calls and the scheduler that fires due daily/weekly rules.
+ * automation-service 的 Bean 装配:调用 datasource-service 的 RestClient
+ * 与触发到点 daily/weekly 规则的调度器。
  */
 @Configuration
 public class AutomationConfig {
 
     /**
-     * HTTP client for datasource-service calls (SQL action executor).
+     * 调用 datasource-service(SQL 动作执行器)的 HTTP 客户端。
      *
-     * @param baseUrl datasource-service origin from {@code nora.datasource.base-url}
-     * @return RestClient bound to the datasource-service base URL
+     * @param baseUrl 来自 {@code nora.datasource.base-url} 的 datasource-service 源
+     * @return 绑定 datasource-service base URL 的 RestClient
      */
     @Bean
     public RestClient datasourceServiceRestClient(
@@ -48,7 +48,7 @@ public class AutomationConfig {
                 .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create()).build();
     }
 
-    /** Fires due rules every minute. */
+    /** 每分钟触发到点规则。 */
     @Component
     static class ScheduledRuleRunner {
 

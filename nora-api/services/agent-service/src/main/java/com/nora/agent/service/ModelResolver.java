@@ -1,8 +1,8 @@
 package com.nora.agent.service;
 
-import com.nora.agent.config.LlmProperties;
-
 import java.util.List;
+
+import com.nora.agent.config.LlmProperties;
 
 /**
  * 模型/渠道解析器(2026-09-17 从 ChatOrchestrationService 拆出,复杂度审计 Step 3):

@@ -1,6 +1,8 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -8,13 +10,12 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Manages env-service managed sources (FILE/DOCKER/PROC registry) for the
- * agent's {@code manage_service} tool: register / enable / disable / remove /
- * list via {@code POST /api/environment/managed} etc.
+ * 管理 env-service 纳管源(FILE/DOCKER/PROC 注册表),供 agent 的
+ * {@code manage_service} 工具:register / enable / disable / remove / list,
+ * 经 {@code POST /api/environment/managed} 等端点。
  *
  * <p>register 对 PROC 源意味着"系统将跟踪一条宿主机命令",注册本身经 CRITICAL
  * 审批;本 client 只转发,校验在 orchestrator(RiskClassifier)与 env-service 双层。
@@ -31,15 +32,15 @@ public class ServiceManageClient {
     }
 
     /**
-     * Registers a managed source.
+     * 注册纳管源。
      *
-     * @param kind          FILE / DOCKER / PROC
-     * @param name          unique registry name
-     * @param fileLogPath   FILE kind only
-     * @param containerName DOCKER kind only
-     * @param command       PROC kind only (startup command)
-     * @param workDir       PROC kind only, optional
-     * @return LLM-friendly rendering with the created id
+     * @param kind           类型:FILE / DOCKER / PROC
+     * @param name           注册表内唯一名称
+     * @param fileLogPath    仅 FILE 类型
+     * @param containerName  仅 DOCKER 类型
+     * @param command        仅 PROC 类型(启动命令)
+     * @param workDir        仅 PROC 类型,可选
+     * @return 带创建 id 的面向 LLM 渲染
      */
     public String register(String kind, String name, String fileLogPath,
                            String containerName, String command, String workDir) {
@@ -71,7 +72,7 @@ public class ServiceManageClient {
         }
     }
 
-    /** Pauses (enabled=false) or resumes (enabled=true) a managed source. */
+    /** 暂停(enabled=false)或恢复(enabled=true)纳管源。 */
     public String setEnabled(long id, boolean enabled) {
         try {
             Envelope<JsonNode> envelope = restClient.post()
@@ -93,7 +94,7 @@ public class ServiceManageClient {
         }
     }
 
-    /** Removes a managed source (does not touch the container/file itself). */
+    /** 移除纳管源(不触碰容器/文件本身)。 */
     public String remove(long id) {
         try {
             Envelope<JsonNode> envelope = restClient.delete()
@@ -112,9 +113,9 @@ public class ServiceManageClient {
     }
 
     /**
-     * Lists managed sources including paused ones.
+     * 列出纳管源(含已暂停的)。
      *
-     * @return "id | kind | name | detail | enabled" lines
+     * @return "id | kind | name | detail | enabled" 行
      */
     public String list() {
         try {
@@ -151,7 +152,7 @@ public class ServiceManageClient {
         }
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 }

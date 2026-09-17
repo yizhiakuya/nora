@@ -1,6 +1,8 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -8,18 +10,15 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Manages datasource connections via datasource-service
- * ({@code POST/GET/DELETE /api/datasources}) for the agent's
- * {@code manage_datasource} tool.
+ * 经 datasource-service({@code POST/GET/DELETE /api/datasources})管理数据源
+ * 连接,供 agent 的 {@code manage_datasource} 工具。
  *
- * <p>Security: the tool's args (which may contain the plaintext password)
- * are persisted with the step and echoed to the LLM — {@link #create}
- * therefore never logs or returns the password, and the orchestrator
- * redacts it before persisting the step (see ChatOrchestrationService).
+ * <p>安全:工具参数(可能含明文密码)会随步骤持久化并回显给 LLM——
+ * 因此 {@link #create} 绝不记录或返回密码,编排层在持久化步骤前会脱敏
+ * (见 ChatOrchestrationService)。
  */
 @Service
 public class DataSourceManageClient {
@@ -35,10 +34,10 @@ public class DataSourceManageClient {
     }
 
     /**
-     * Creates a connection and immediately tests it so the model can
-     * self-correct (harness: errors teach) without a second tool round.
+     * 创建连接并立即测试,让模型无需第二轮工具即可自我纠正
+     * (harness 原则:错误即教学)。
      *
-     * @return LLM-friendly rendering with the created id + connectivity result
+     * @return 带创建 id + 连通结果的面向 LLM 渲染
      */
     public String create(String name, String engine, String host, Integer port,
                          String database, String username, String password) {
@@ -77,7 +76,7 @@ public class DataSourceManageClient {
         }
     }
 
-    /** Tests stored credentials; returns ok/message/latency. */
+    /** 测试已存凭证;返回 ok/message/latency。 */
     public String test(long id) {
         try {
             Envelope<JsonNode> envelope = restClient.post()
@@ -98,7 +97,7 @@ public class DataSourceManageClient {
         }
     }
 
-    /** Removes a connection (history cascades server-side). */
+    /** 移除连接(历史在服务端级联删除)。 */
     public String remove(long id) {
         try {
             Envelope<JsonNode> envelope = restClient.delete()
@@ -117,10 +116,10 @@ public class DataSourceManageClient {
     }
 
     /**
-     * Lists connections with masked passwords — this rendering is what the
-     * orchestrator also offers as the {@code datasource} arg enum hint.
+     * 列出连接(密码脱敏)——这段渲染也是编排层给 {@code datasource} 参数
+     * 的枚举提示。
      *
-     * @return "id | name | engine | host:port/database | status" lines
+     * @return "id | name | engine | host:port/database | status" 行
      */
     public String list() {
         try {
@@ -156,11 +155,11 @@ public class DataSourceManageClient {
     }
 
     /**
-     * Table/column structure of a connection (GET /{id}/schema), rendered
-     * compactly so the model can plan SQL without exploratory queries.
+     * 连接的表/列结构(GET /{id}/schema),紧凑渲染,让模型无需探索性查询
+     * 就能规划 SQL。
      *
-     * @param datasourceId connection id or name; null/blank = first configured
-     * @return "schema.table(col type, ...)" lines, or an error line
+     * @param datasourceId 连接 id 或名称;null/空 = 第一个配置的连接
+     * @return "schema.table(col type, ...)" 行,或一行错误
      */
     public String schema(String datasourceId) {
         try {
@@ -219,7 +218,7 @@ public class DataSourceManageClient {
         }
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 }

@@ -3,8 +3,8 @@ package com.nora.agent.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * LLM provider settings ({@code nora.llm.*}) for the OpenAI-compatible
- * chat endpoint (sub2api gateway in dev, any OpenAI-compatible relay).
+ * LLM provider 设置({@code nora.llm.*}),用于 OpenAI 兼容对话端点
+ * (开发环境为 sub2api 网关,任意 OpenAI 兼容中继均可)。
  */
 @ConfigurationProperties(prefix = "nora.llm")
 public record LlmProperties(
@@ -28,7 +28,7 @@ public record LlmProperties(
         }
     }
 
-    /** Whether an API key is configured (env NORA_LLM_API_KEY). */
+    /** 是否配置了 API key(env NORA_LLM_API_KEY)。 */
     public boolean configured() {
         return apiKey != null && !apiKey.isBlank();
     }

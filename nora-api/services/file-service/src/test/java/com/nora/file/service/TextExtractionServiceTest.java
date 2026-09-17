@@ -27,21 +27,21 @@ class TextExtractionServiceTest {
 
         String mime = service.detectMimeType(content, "note.txt");
 
-        // (assertion removed)
+        // (断言已移除)
     }
 
     @Test
     void emptyInputYieldsEmptyText() {
         String text = service.extract(new ByteArrayInputStream(new byte[0]), "empty.txt");
 
-        // (assertion removed)
+        // (断言已移除)
         text.isEmpty();
     }
 
     @Test
     void corruptedBinaryYieldsEmptyTextGracefully() {
-        // Random bytes that resemble no parsable document format; Tika's
-        // unknown/encrypted-handling path must degrade to empty text, not throw.
+        // 不像任何可解析文档格式的随机字节;Tika 的未知/加密处理路径
+        // 必须降级为空文本,而不是抛异常。
         byte[] garbage = new byte[256];
         for (int i = 0; i < garbage.length; i++) {
             garbage[i] = (byte) (i * 31 + 7);
@@ -49,16 +49,16 @@ class TextExtractionServiceTest {
 
         String text = service.extract(new ByteArrayInputStream(garbage), "corrupted.bin");
 
-        // (assertion removed)
+        // (断言已移除)
     }
 
     @Test
     void nullStreamContentHandled() {
-        // an empty stream must still return a non-null result
+        // 空流仍须返回非 null 结果
         InputStream empty = InputStream.nullInputStream();
 
         String text = service.extract(empty, "null-source.txt");
 
-        // (assertion removed)
+        // (断言已移除)
     }
 }

@@ -29,7 +29,7 @@ class ChatToolsSpec {
         this.terminalService = terminalService;
     }
 
-    /** OpenAI tools array: guarded SQL + service log reading. */
+    /** OpenAI tools 数组:受控 SQL + 服务日志读取。 */
     ArrayNode build() {
         ArrayNode tools = objectMapper.createArrayNode();
 

@@ -3,23 +3,21 @@ package com.nora.security;
 import java.io.IOException;
 import java.util.List;
 
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-import io.jsonwebtoken.JwtException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.filter.OncePerRequestFilter;
-
 /**
- * Servlet filter that authenticates requests carrying a Bearer JWT.
+ * 对携带 Bearer JWT 的请求做认证的 Servlet 过滤器。
  *
- * <p>On a valid token the subject becomes the request's authenticated
- * principal (no authorities). On a missing or invalid token the filter
- * simply continues the chain anonymously — rejection is left to the
- * downstream security configuration.
+ * <p>token 有效时 subject 成为请求的已认证主体(无权限项)。token 缺失或
+ * 无效时过滤器只以匿名身份继续链路——拒绝交给下游安全配置决定。
  */
 public class JwtAuthFilter extends OncePerRequestFilter {
 
@@ -45,13 +43,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }
             } catch (JwtException | IllegalArgumentException ignored) {
-                // Missing or invalid token: continue anonymously.
+                // token 缺失或无效:以匿名身份继续。
             }
         }
         filterChain.doFilter(request, response);
     }
 
-    /** Returns the raw token after the "Bearer " prefix, or null if absent/malformed. */
+    /** 返回 "Bearer " 前缀后的原始 token;缺失/畸形时 null。 */
     private String extractBearerToken(HttpServletRequest request) {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith(BEARER_PREFIX) && header.length() > BEARER_PREFIX.length()) {

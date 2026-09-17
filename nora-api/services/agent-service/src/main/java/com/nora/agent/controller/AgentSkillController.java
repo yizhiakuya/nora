@@ -1,8 +1,7 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.AgentSkillService;
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
+import java.util.List;
+
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -12,7 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
+import com.nora.agent.service.AgentSkillService;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 技能管理 API({@code /api/skills}):设置中心技能页(替代原纯前端 mock)

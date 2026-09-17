@@ -2,7 +2,6 @@ package com.nora.file.client;
 
 import java.nio.charset.StandardCharsets;
 
-import com.nora.file.api.FileItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,9 +10,11 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import com.nora.file.api.FileItem;
+
 /**
- * Fire-and-forget REST client that asks rag-service to index a file.
- * Failures are logged and swallowed so they never affect the caller.
+ * 请求 rag-service 索引文件的发后即忘 REST 客户端。失败只记日志并吞掉,
+ * 绝不影响调用方。
  */
 @Component
 public class RagIndexClient {
@@ -27,10 +28,10 @@ public class RagIndexClient {
     }
 
     /**
-     * Asynchronously POSTs {@code {fileId}} to {@code {ragBaseUrl}/api/rag/index}.
-     * Runs on the Spring async executor; any error is only logged.
+     * 异步 POST {@code {fileId}} 到 {@code {ragBaseUrl}/api/rag/index}。
+     * 跑在 Spring 异步执行器上;任何错误只记日志。
      *
-     * @param file the file to index
+     * @param file 要索引的文件
      */
     @Async
     public void triggerIndexAsync(FileItem file) {
@@ -48,12 +49,12 @@ public class RagIndexClient {
                     .toBodilessEntity();
             log.info("Triggered rag-service indexing for file {}", file.id());
         } catch (Exception ex) {
-            // fire-and-forget: rag-service being down must never break the caller
+            // 发后即忘:rag-service 挂了绝不能弄断调用方
             log.error("Failed to trigger rag-service indexing for file {}: {}", file.id(), ex.getMessage());
         }
     }
 
-    /** Request body for {@code POST /api/rag/index}. */
+    /** {@code POST /api/rag/index} 的请求体。 */
     record IndexRequest(Long fileId) {
     }
 

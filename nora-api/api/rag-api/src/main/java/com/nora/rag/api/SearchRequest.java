@@ -1,10 +1,10 @@
 package com.nora.rag.api;
 
 /**
- * Search parameters for {@link RagService#search(SearchRequest)}.
+ * {@link RagService#search(SearchRequest)} 的检索参数。
  *
- * @param query natural-language query text
- * @param topK  maximum number of results to return
+ * @param query 自然语言查询文本
+ * @param topK  最大返回结果数
  */
 public record SearchRequest(
         String query,

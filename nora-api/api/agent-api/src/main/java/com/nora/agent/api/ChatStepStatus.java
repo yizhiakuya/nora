@@ -1,19 +1,19 @@
 package com.nora.agent.api;
 
 /**
- * Lifecycle status of a single chat step (SSE streaming states).
+ * 单个对话步骤的生命周期状态(SSE 流式状态)。
  */
 public enum ChatStepStatus {
 
-    /** Step queued, not started yet. */
+    /** 步骤已排队,尚未开始。 */
     PENDING,
 
-    /** Step currently executing. */
+    /** 步骤正在执行。 */
     RUNNING,
 
-    /** Step finished successfully. */
+    /** 步骤成功完成。 */
     COMPLETED,
 
-    /** Step failed (error detail in {@link ChatStepEvent#detail()}). */
+    /** 步骤失败(错误细节在 {@link ChatStepEvent#detail()})。 */
     FAILED
 }

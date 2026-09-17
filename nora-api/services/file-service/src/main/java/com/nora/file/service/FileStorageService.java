@@ -13,11 +13,7 @@ import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.file.api.FileItem;
-import com.nora.file.api.FilePreview;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,16 +23,20 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.nora.common.exception.BusinessException;
+import com.nora.file.api.FileItem;
+import com.nora.file.api.FilePreview;
+
 /**
- * Stores uploaded files on the local filesystem and persists the metadata
- * rows ({@code schema_file.file_item}) via {@link JdbcTemplate}.
+ * 把上传文件存到本地文件系统,并经由 {@link JdbcTemplate} 持久化元数据行
+ * ({@code schema_file.file_item})。
  */
 @Service
 public class FileStorageService {
 
     private static final Logger log = LoggerFactory.getLogger(FileStorageService.class);
 
-    /** Business code used when a file id is unknown. */
+    /** 文件 id 未知时使用的业务码。 */
     public static final int FILE_NOT_FOUND_CODE = 404;
 
     private final Path storageDir;
@@ -52,22 +52,21 @@ public class FileStorageService {
     }
 
     /**
-     * Stores the uploaded file on disk and inserts the corresponding
-     * {@code file_item} row.
+     * 把上传文件写盘并插入对应的 {@code file_item} 行。
      *
-     * @param file multipart upload
-     * @return the persisted file item
+     * @param file multipart 上传
+     * @return 落库的文件条目
      */
     public FileItem store(MultipartFile file) {
         return store(file, null);
     }
 
     /**
-     * Stores the uploaded file into an optional folder.
+     * 把上传文件存入指定文件夹(可选)。
      *
-     * @param file     multipart upload
-     * @param folderId target folder ({@code null} = root)
-     * @return the persisted file item
+     * @param file     multipart 上传
+     * @param folderId 目标文件夹({@code null} = 根目录)
+     * @return 落库的文件条目
      */
     public FileItem store(MultipartFile file, Long folderId) {
         String originalName = file.getOriginalFilename();
@@ -117,7 +116,7 @@ public class FileStorageService {
             }, keyHolder);
             id = keyHolder.getKey().longValue();
         } catch (RuntimeException ex) {
-            // DB insert failed: do not leave the already-written file orphaned on disk
+            // DB 插入失败:不把已写盘的文件留成孤儿
             try {
                 Files.deleteIfExists(target);
             } catch (IOException ioEx) {
@@ -129,11 +128,11 @@ public class FileStorageService {
     }
 
     /**
-     * Lists file items, optionally filtered by ids and/or folder.
+     * 列出文件条目,可按 ids 与/或文件夹过滤。
      *
-     * @param ids      optional id filter; empty or {@code null} returns all files
-     * @param folderId folder filter; {@code null} = no filter (all folders)
-     * @return matching file items ordered by id
+     * @param ids      可选 id 过滤;空或 {@code null} 返回全部文件
+     * @param folderId 文件夹过滤;{@code null} = 不过滤(全部文件夹)
+     * @return 匹配的文件条目,按 id 排序
      */
     public List<FileItem> list(List<Long> ids, Long folderId) {
         if (ids == null || ids.isEmpty()) {
@@ -151,7 +150,7 @@ public class FileStorageService {
                 ids.toArray());
     }
 
-    /** Lists files (compat overload: no folder filter). */
+    /** 列出文件(兼容重载:无文件夹过滤)。 */
     public List<FileItem> list(List<Long> ids) {
         return list(ids, null);
     }
@@ -299,12 +298,11 @@ public class FileStorageService {
     }
 
     /**
-     * Soft-deletes file items by ids; the backing files stay on disk
-     * (data is never physically destroyed; queries filter deleted rows out).
-     * Unknown ids are skipped silently.
+     * 按 ids 软删文件条目;磁盘文件保留
+     * (数据绝不物理销毁;查询过滤已删行)。未知 id 静默跳过。
      *
-     * @param ids ids to delete; must not be empty
-     * @return number of soft-deleted rows
+     * @param ids 要删除的 id;不得为空
+     * @return 软删的行数
      */
     public int delete(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
@@ -392,7 +390,7 @@ public class FileStorageService {
         return purged;
     }
 
-    /** Reads only the {@code file_path} column for the given id. */
+    /** 只读取给定 id 的 {@code file_path} 列。 */
     private String filePathOf(Long id) {
         List<String> paths = new ArrayList<>();
         jdbcTemplate.query(
@@ -403,11 +401,11 @@ public class FileStorageService {
     }
 
     /**
-     * Fetches a single file item by id.
+     * 按 id 取单个文件条目。
      *
-     * @param id file id
-     * @return the file item
-     * @throws BusinessException 404 when the id is unknown
+     * @param id 文件 id
+     * @return 文件条目
+     * @throws BusinessException id 未知时 404
      */
     public FileItem getById(Long id) {
         List<FileItem> items = jdbcTemplate.query(
@@ -419,11 +417,11 @@ public class FileStorageService {
     }
 
     /**
-     * Extracts a plain-text preview for the stored file (Apache Tika).
+     * 提取存储文件的纯文本预览(Apache Tika)。
      *
-     * @param id file id
-     * @return preview with {@code type=text} and the extracted content
-     * @throws BusinessException 404 when the id is unknown
+     * @param id 文件 id
+     * @return {@code type=text} 的预览与提取内容
+     * @throws BusinessException id 未知时 404
      */
     public FilePreview preview(Long id) {
         FileItem item = getById(id);
@@ -445,9 +443,9 @@ public class FileStorageService {
      * <p>预览端点走 Tika 只能给文本,图片拿不到内容;文件中心里点开图片
      * 需要原始字节,这里按 id 定位磁盘文件读回。
      *
-     * @param id file id
+     * @param id 文件 id
      * @return 文件字节
-     * @throws BusinessException 404 when the id is unknown or the file is missing on disk
+     * @throws BusinessException id 未知或磁盘文件缺失时 404
      */
     public byte[] raw(Long id) {
         FileItem item = getById(id);
@@ -468,9 +466,9 @@ public class FileStorageService {
      * <p>与 {@link #raw(Long)} 的区别:不把字节读进内存——Controller 用
      * {@code FileSystemResource} 流式返回,支持 HTTP Range(视频拖进度条必需)。
      *
-     * @param id file id
+     * @param id 文件 id
      * @return 磁盘路径
-     * @throws BusinessException 404 when the id is unknown or the file is missing on disk
+     * @throws BusinessException id 未知或磁盘文件缺失时 404
      */
     public Path resolveFile(Long id) {
         FileItem item = getById(id);
@@ -496,11 +494,11 @@ public class FileStorageService {
     }
 
     /**
-     * Marks a file as indexed (callback from rag-service).
+     * 把文件标记为已索引(rag-service 的回调)。
      *
-     * @param id file id
-     * @return the updated file item
-     * @throws BusinessException 404 when the id is unknown
+     * @param id 文件 id
+     * @return 更新后的文件条目
+     * @throws BusinessException id 未知时 404
      */
     public FileItem markIndexed(Long id) {
         getById(id);
@@ -520,7 +518,7 @@ public class FileStorageService {
                 rs.getObject("folder_id") == null ? null : rs.getLong("folder_id"));
     }
 
-    /** Builds a collision-free storage path: {@code <storage-dir>/<id-less uuid>_<name>}. */
+    /** 构造无碰撞的存储路径:{@code <storage-dir>/<无 id 的 uuid>_<name>}。 */
     private Path uniqueTarget(String name) {
         String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "_");
         String unique = java.util.UUID.randomUUID() + "_" + sanitized;

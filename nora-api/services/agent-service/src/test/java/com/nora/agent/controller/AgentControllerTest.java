@@ -1,8 +1,9 @@
 package com.nora.agent.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.agent.service.ChatOrchestrationService;
-import com.nora.agent.service.ChatStoreService;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,16 +11,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.agent.service.ChatOrchestrationService;
+import com.nora.agent.service.ChatStoreService;
 
 /**
- * Plain unit test: instantiates the controller directly, no Spring context, no Nacos.
+ * 纯单元测试:直接实例化控制器,无 Spring 上下文、无 Nacos。
  */
 @ExtendWith(MockitoExtension.class)
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
@@ -60,8 +57,8 @@ class AgentControllerTest {
 
     @Test
     void sendMessageReturnsEmitterWithoutAwaitingTheTurn() {
-        // The chat turn runs on the controller's executor; the HTTP thread
-        // must get the emitter back immediately, not block on the LLM.
+        // 对话轮在控制器的执行器上跑;HTTP 线程必须立即拿回 emitter,
+        // 不能阻塞在 LLM 上。
         SseEmitter emitter = controller.sendMessage("s1",
                 new AgentController.MessageRequest("hello", "test-model", null));
 

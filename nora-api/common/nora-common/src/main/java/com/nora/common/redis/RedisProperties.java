@@ -3,12 +3,11 @@ package com.nora.common.redis;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Shared Redis settings for Nora services ({@code nora.redis.*}).
+ * Nora 服务的共享 Redis 设置({@code nora.redis.*})。
  *
- * <p>Redis is a platform component (architecture-v2.md section 1): embedding
- * caches, approval tickets and other cross-instance state live here. When
- * disabled or unreachable the services fall back to their in-process
- * behaviour — Redis must never be a hard dependency for boot.
+ * <p>Redis 是平台组件(architecture-v2.md 第 1 节):嵌入缓存、审批票据等
+ * 跨实例状态住在这里。禁用或不可达时服务落回进程内行为——
+ * Redis 绝不可成为启动的硬依赖。
  */
 @ConfigurationProperties(prefix = "nora.redis")
 public record RedisProperties(boolean enabled, String host, int port, String password, int database, long timeoutMs) {
@@ -28,7 +27,7 @@ public record RedisProperties(boolean enabled, String host, int port, String pas
         }
     }
 
-    /** Disabled default (yml omits the block entirely). */
+    /** 默认禁用(yml 可整块省略)。 */
     public static RedisProperties disabled() {
         return new RedisProperties(false, "localhost", 6379, null, 0, 2000);
     }

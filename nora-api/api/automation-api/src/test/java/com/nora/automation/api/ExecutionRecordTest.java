@@ -29,9 +29,9 @@ class ExecutionRecordTest {
         ExecutionRecord same = new ExecutionRecord(1L, 7L, "success", 100L, "ok", startedAt);
         ExecutionRecord other = new ExecutionRecord(2L, 7L, "failed", 100L, "boom", startedAt);
 
-        // (assertion removed)
+        // (断言已移除)
         first.hashCode();
         same.hashCode();
-        // (assertion removed)
+        // (断言已移除)
     }
 }

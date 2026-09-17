@@ -1,9 +1,12 @@
 package com.nora.env.controller;
 
-import com.nora.common.response.ApiResponse;
-import com.nora.env.service.DockerClientService;
-import com.nora.env.service.ManagedSourceService;
-import com.nora.env.service.ProcessSupervisorService;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -14,16 +17,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import com.nora.common.http.EnvelopeErrorHandler;
+import com.nora.common.response.ApiResponse;
+import com.nora.env.service.DockerClientService;
+import com.nora.env.service.ManagedSourceService;
+import com.nora.env.service.ProcessSupervisorService;
 
 /**
  * 环境控制台端点:纳管清单 CRUD、服务/日志源列表、容器启停、日志 tail 与
@@ -210,7 +211,7 @@ public class ServiceController {
 
     // ---------- 容器操作(DOCKER 源) ----------
 
-    /** Starts a container (by container name) or a managed process (by name). */
+    /** 启动容器(按容器名)或纳管进程(按名称)。 */
     @PostMapping("/services/{name}/start")
     public ApiResponse<StatusView> start(@PathVariable String name) {
         ManagedSourceService.SourceView s = managedList().stream()
@@ -228,7 +229,7 @@ public class ServiceController {
         return ApiResponse.ok(new StatusView(result.startsWith("ERROR") ? "error" : "running", result));
     }
 
-    /** Stops a container or a managed process. */
+    /** 停止容器或纳管进程。 */
     @PostMapping("/services/{name}/stop")
     public ApiResponse<StatusView> stop(@PathVariable String name) {
         ManagedSourceService.SourceView s = managedList().stream()
@@ -246,7 +247,7 @@ public class ServiceController {
         return ApiResponse.ok(new StatusView(result.startsWith("ERROR") ? "error" : "stopped", result));
     }
 
-    /** Restarts a container or a managed process. */
+    /** 重启容器或纳管进程。 */
     @PostMapping("/services/{name}/restart")
     public ApiResponse<StatusView> restart(@PathVariable String name) {
         ManagedSourceService.SourceView s = managedList().stream()
@@ -441,7 +442,7 @@ public class ServiceController {
         return String.format("%.0fKiB", bytes / 1024.0);
     }
 
-    /** Action result payload. */
+    /** 动作结果载荷。 */
     public record StatusView(String status, String detail) {
     }
 }

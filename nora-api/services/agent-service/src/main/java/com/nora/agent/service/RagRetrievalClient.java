@@ -1,6 +1,7 @@
 package com.nora.agent.service;
 
-import com.nora.agent.dto.CitationDto;
+import java.util.List;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -8,12 +9,11 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.List;
+import com.nora.agent.dto.CitationDto;
 
 /**
- * Retrieves knowledge chunks from rag-service ({@code POST /api/rag/search}).
- * Retrieval is best-effort: an unreachable rag-service yields an empty list
- * so the chat keeps working without RAG context.
+ * 从 rag-service({@code POST /api/rag/search})检索知识块。
+ * 检索是尽力而为:rag-service 不可达时返回空列表,对话无 RAG 上下文仍可继续。
  */
 @Service
 public class RagRetrievalClient {
@@ -27,11 +27,11 @@ public class RagRetrievalClient {
     }
 
     /**
-     * Searches the knowledge base for chunks relevant to the query.
+     * 在知识库中检索与查询相关的块。
      *
-     * @param query natural-language query
-     * @param topK  maximum number of chunks
-     * @return scored citations, best first; empty when rag-service is unavailable
+     * @param query 自然语言查询
+     * @param topK  最大块数
+     * @return 带分引用,最优在前;rag-service 不可用时为空
      */
     public List<CitationDto> search(String query, int topK) {
         try {
@@ -54,11 +54,11 @@ public class RagRetrievalClient {
         }
     }
 
-    /** POST /api/rag/search body. */
+    /** POST /api/rag/search 请求体。 */
     record SearchBody(String query, Integer topK) {
     }
 
-    /** ApiResponse envelope as returned by rag-service. */
+    /** rag-service 返回的 ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 

@@ -116,8 +116,29 @@
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>3.3.4</version>
                 </plugin>
+
             </plugins>
         </pluginManagement>
+        <plugins>
+            <!-- 后端风格检查(保守规则:只做无争议的规范化,不重排代码布局——
+                 大仓库全量重排会产生巨量 diff 且掩盖真实改动)。
+                 `mvn spotless:check` 校验 / `mvn spotless:apply` 自动修复。 -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>2.43.0</version>
+                <configuration>
+                    <java>
+                        <removeUnusedImports/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                        <importOrder>
+                            <order>java,javax,org,com,</order>
+                        </importOrder>
+                    </java>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
 
     <profiles>

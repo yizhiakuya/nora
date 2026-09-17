@@ -4,10 +4,9 @@ import java.io.Serializable;
 import java.util.List;
 
 /**
- * Full schema of a connected database, returned by
- * {@link DatasourceService#schema(Long)}.
+ * 所连数据库的完整 schema,由 {@link DatasourceService#schema(Long)} 返回。
  *
- * @param tables all tables of the connection in driver order; never {@code null}, may be empty
+ * @param tables 连接的全部表(按驱动顺序);绝不 {@code null},可为空
  */
 public record SchemaSnapshot(
         List<DbTable> tables) implements Serializable {

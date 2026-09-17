@@ -1,15 +1,15 @@
 package com.nora.agent.config;
 
-import com.nora.common.http.ProxyProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 
+import com.nora.common.http.EnvelopeErrorHandler;
+import com.nora.common.http.ProxyProperties;
+
 /**
- * Bean wiring for agent-service: provider settings and the RestClient
- * used to call rag-service.
+ * agent-service 的 Bean 装配:provider 设置与调用 rag-service 的 RestClient。
  */
 @Configuration
 @EnableConfigurationProperties({
@@ -22,10 +22,10 @@ import org.springframework.web.client.RestClient;
 public class AgentConfig {
 
     /**
-     * HTTP client for rag-service calls (knowledge retrieval).
+     * 调用 rag-service(知识检索)的 HTTP 客户端。
      *
-     * @param ragServiceProperties rag-service settings
-     * @return RestClient bound to rag-service base URL
+     * @param ragServiceProperties rag-service 设置
+     * @return 绑定 rag-service base URL 的 RestClient
      */
     @Bean
     public RestClient ragServiceRestClient(RagServiceProperties ragServiceProperties) {
@@ -36,10 +36,10 @@ public class AgentConfig {
     }
 
     /**
-     * HTTP client for datasource-service calls (guarded SQL execution).
+     * 调用 datasource-service(受控 SQL 执行)的 HTTP 客户端。
      *
-     * @param properties datasource-service settings
-     * @return RestClient bound to datasource-service base URL
+     * @param properties datasource-service 设置
+     * @return 绑定 datasource-service base URL 的 RestClient
      */
     @Bean
     public RestClient datasourceServiceRestClient(DatasourceServiceProperties properties) {
@@ -50,10 +50,10 @@ public class AgentConfig {
     }
 
     /**
-     * HTTP client for env-service calls (service logs).
+     * 调用 env-service(服务日志)的 HTTP 客户端。
      *
-     * @param properties env-service settings
-     * @return RestClient bound to env-service base URL
+     * @param properties env-service 设置
+     * @return 绑定 env-service base URL 的 RestClient
      */
     @Bean
     public RestClient envServiceRestClient(EnvServiceProperties properties) {
@@ -64,10 +64,10 @@ public class AgentConfig {
     }
 
     /**
-     * HTTP client for file-service calls (workbench file listing/preview).
+     * 调用 file-service(工作台文件列表/预览)的 HTTP 客户端。
      *
-     * @param properties file-service settings
-     * @return RestClient bound to file-service base URL
+     * @param properties file-service 设置
+     * @return 绑定 file-service base URL 的 RestClient
      */
     @Bean
     public RestClient fileServiceRestClient(FileServiceProperties properties) {

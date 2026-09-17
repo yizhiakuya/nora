@@ -1,42 +1,39 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.spec.McpSchema;
-import jakarta.annotation.PreDestroy;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
+import jakarta.annotation.PreDestroy;
 
 /**
- * MCP (Model Context Protocol) server registry + client lifecycle for the
- * agent's dynamic tool mounting.
+ * MCP(Model Context Protocol)服务器注册表 + 客户端生命周期,
+ * 供 agent 动态挂载工具。
  *
- * <p>Design:
+ * <p>设计:
  * <ul>
- *   <li>Transports: STREAMABLE (HTTP) and SSE over JDK HttpClient; STDIO
- *       spawns a local child process (npx/node/docker ...) — stdin/stdout
- *       JSON-RPC. The command is preflight-resolved at register time (missing
- *       runtime → actionable error instead of a dead registration).</li>
- *   <li>Clients are connected lazily and pooled by server id; {@link #refresh}
- *       re-runs initialize + tools/list and snapshots the tool list into
- *       {@code tools_cache} (the orchestrator reads the cache, never blocks
- *       on a remote call during prompt assembly).</li>
- *   <li>Tool naming: {@code mcp__<server>__<tool>} — collision-free across
- *       servers and unambiguous to route back.</li>
- *   <li>Secrets: HTTP headers / stdio env values are stored in the DB, masked
- *       on read, raw only used when connecting.</li>
- *   <li>stdio process lifecycle: the child process tree is killed on
- *       evict/disable/delete/shutdown (Windows: taskkill /T; the npx.cmd →
- *       node grandchild would otherwise be orphaned).</li>
+ *   <li>传输:STREAMABLE(HTTP)与 SSE 走 JDK HttpClient;STDIO 起本地子进程
+ *       (npx/node/docker ...)经 stdin/stdout 跑 JSON-RPC。命令在注册时预检
+ *       解析(运行时缺失 → 可操作的报错,而不是一个死注册)。</li>
+ *   <li>客户端懒连接并按 server id 池化;{@link #refresh} 重跑
+ *       initialize + tools/list 并把工具清单快照进 {@code tools_cache}
+ *       (编排层读缓存,组装提示词时绝不阻塞在远端调用上)。</li>
+ *   <li>工具命名:{@code mcp__<server>__<tool>} —— 跨服务器无碰撞、路由可逆。</li>
+ *   <li>机密:HTTP 头 / stdio env 值存库、读取时脱敏,原文仅在连接时使用。</li>
+ *   <li>stdio 进程生命周期:子进程树在 evict/disable/delete/关闭时被杀
+ *       (Windows: taskkill /T;否则 npx.cmd → node 的孙进程会孤儿化)。</li>
  * </ul>
  */
 @Service
@@ -56,9 +53,9 @@ public class McpServerService {
         this.clientPool = new McpClientPool(objectMapper, relayRouter);
     }
 
-    // ---------- registry CRUD ----------
+    // ---------- 注册表 CRUD ----------
 
-    /** Lists servers (secrets masked, no tools cache payload; soft-deleted excluded). */
+    /** 列出服务器(机密脱敏、不含工具缓存载荷;排除软删)。 */
     public List<ServerView> list() {
         return jdbcTemplate.query(
                 "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache FROM mcp_server WHERE deleted_at IS NULL ORDER BY id",
@@ -66,7 +63,7 @@ public class McpServerService {
     }
 
     /**
-     * Registers a server; returns the view with masked secrets.
+     * 注册服务器;返回机密脱敏后的视图。
      *
      * @param command  STDIO 时:可执行命令(npx / node / docker ...);其余传输为 null
      * @param args     STDIO 时:argv 数组(如 ["-y", "@scope/server"]);可为空
@@ -115,7 +112,7 @@ public class McpServerService {
         return getByName(name.trim());
     }
 
-    /** Soft-deletes a server (name freed) and closes its pooled client (stdio: kills the process tree). */
+    /** 软删服务器(释放名称)并关闭池化客户端(stdio:杀进程树)。 */
     public boolean delete(long id) {
         clientPool.evictClient(id);
         return jdbcTemplate.update(
@@ -123,9 +120,8 @@ public class McpServerService {
     }
 
     /**
-     * Updates an existing remote server's url/headers in place (OAuth token
-     * refresh path): the pooled client is evicted so the next connect uses
-     * the new credentials. Returns the refreshed view, or null when unknown.
+     * 原地更新既有远程服务器的 url/headers(OAuth token 刷新路径):
+     * 池化客户端被驱逐,下次连接用新凭证。返回刷新后的视图,未知时 null。
      */
     public ServerView updateRemoteCredentials(long id, String url, Map<String, String> headers) {
         clientPool.evictClient(id);
@@ -137,7 +133,7 @@ public class McpServerService {
         return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ? AND deleted_at IS NULL", id) : null;
     }
 
-    /** Enables/disables a server; disabling also drops the pooled client. */
+    /** 启用/停用服务器;停用同时丢弃池化客户端。 */
     public boolean setEnabled(long id, boolean enabled) {
         if (!enabled) {
             clientPool.evictClient(id);
@@ -148,9 +144,9 @@ public class McpServerService {
     }
 
     /**
-     * Resolves a server by numeric id or exact name (masked view).
-     * Used by the agent's {@code manage_mcp} tool for enable/disable/
-     * refresh/remove targets; null when not found.
+     * 按数字 id 或精确名称解析服务器(脱敏视图)。供 agent 的
+     * {@code manage_mcp} 工具定位 enable/disable/refresh/remove 目标;
+     * 未找到时 null。
      */
     public ServerView findByNameOrId(String target) {
         if (target == null || target.isBlank()) {
@@ -166,7 +162,7 @@ public class McpServerService {
         return getByName(t);
     }
 
-    /** Fetches one raw row (secrets raw — internal use only; soft-deleted excluded). */
+    /** 取一条原始行(机密未脱敏——仅内部使用;排除软删)。 */
     public RawServer rawById(long id) {
         List<RawServer> rows = jdbcTemplate.query(
                 "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
@@ -175,19 +171,18 @@ public class McpServerService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Lists enabled servers' raw rows (internal: connection setup; soft-deleted excluded). */
+    /** 列出启用服务器的原始行(内部:连接建立用;排除软删)。 */
     public List<RawServer> rawEnabled() {
         return jdbcTemplate.query(
                 "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY id",
                 (rs, i) -> rawOf(rs));
     }
 
-    // ---------- connect + tools ----------
+    // ---------- 连接 + 工具 ----------
 
     /**
-     * Connects (or reuses) the client for a server, runs initialize +
-     * tools/list, snapshots tools into {@code tools_cache} and updates
-     * status. Returns the tool list.
+     * 连接(或复用)服务器客户端,跑 initialize + tools/list,把工具快照进
+     * {@code tools_cache} 并更新状态。返回工具清单。
      */
     public List<ToolEntry> refresh(long id) {
         RawServer server = rawById(id);
@@ -230,18 +225,17 @@ public class McpServerService {
     }
 
     /**
-     * Calls a tool on a server. The client is (re)connected on demand.
+     * 调用服务器上的工具。客户端按需(重)连接。
      *
-     * @return LLM-friendly rendering of the tool result content
+     * @return 工具结果内容的面向 LLM 渲染
      */
     public String callTool(long serverId, String toolName, String argsJson) {
         return callToolRich(serverId, toolName, argsJson).text();
     }
 
     /**
-     * Rich variant of {@link #callTool}: keeps image content blocks intact so the
-     * orchestrator can feed them to vision-capable models as multimodal parts.
-     * Text rendering stays the same as before (images leave a size placeholder).
+     * {@link #callTool} 的富变体:保留 image 内容块,让编排层以多模态部件
+     * 喂给支持视觉的模型。文本渲染与旧行为一致(图片留一行尺寸占位)。
      */
     public McpToolResult callToolRich(long serverId, String toolName, String argsJson) {
         RawServer server = rawById(serverId);
@@ -295,16 +289,15 @@ public class McpServerService {
 
 
 
-    /** Closes all pooled clients + kills all stdio processes on service shutdown. */
+    /** 服务关闭时关闭全部池化客户端 + 杀全部 stdio 进程。 */
     @PreDestroy
     public void shutdown() {
         clientPool.shutdown();
     }
 
     /**
-     * Aggregated tool list for the orchestrator's toolsSpec: enabled servers
-     * with a non-empty tools_cache, one entry per cached tool, namespaced
-     * {@code mcp__<server>__<tool>}.
+     * 供编排层 toolsSpec 的聚合工具清单:启用的服务器且 tools_cache 非空,
+     * 每个缓存工具一条,命名空间 {@code mcp__<server>__<tool>}。
      */
     public List<MountedTool> mountedTools() {
         List<MountedTool> out = new ArrayList<>();
@@ -331,12 +324,11 @@ public class McpServerService {
     }
 
     /**
-     * Reads the cached tool snapshot of one server (for the admin UI's tool
-     * list / detail view). Never triggers a remote call — the cache is
-     * refreshed by {@link #refresh}; empty list when never connected.
+     * 读取某服务器的工具缓存快照(供管理 UI 的工具列表/详情)。
+     * 绝不触发远端调用——缓存由 {@link #refresh} 刷新;从未连接过时为空列表。
      *
-     * @return tool entries (name/description/inputSchema), or null when the
-     *         server id is unknown (soft-deleted included).
+     * @return 工具条目(name/description/inputSchema);服务器 id 未知时
+     *         null(含软删)。
      */
     public List<ToolEntry> cachedTools(long id) {
         List<String> rows = jdbcTemplate.query(
@@ -364,7 +356,7 @@ public class McpServerService {
         return out;
     }
 
-    /** Resolves a mounted (namespaced) tool name to its server row. */
+    /** 把挂载(带命名空间)的工具名解析到其服务器行。 */
     public RawServer serverForMountedTool(String mountedName) {
         if (mountedName == null || !mountedName.startsWith("mcp__")) {
             return null;
@@ -386,20 +378,20 @@ public class McpServerService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Strips the {@code mcp__<server>__} prefix, returning the raw tool name. */
+    /** 剥掉 {@code mcp__<server>__} 前缀,返回原始工具名。 */
     public static String rawToolName(String mountedName) {
         int first = mountedName.indexOf("__");
         int second = mountedName.indexOf("__", first + 2);
         return second < 0 ? mountedName : mountedName.substring(second + 2);
     }
 
-    // ---------- command resolution (stdio) ----------
+    // ---------- 命令解析(stdio) ----------
 
 
 
 
 
-    // ---------- internals ----------
+    // ---------- 内部实现 ----------
 
 
 
@@ -407,11 +399,10 @@ public class McpServerService {
 
 
     /**
-     * Renders content blocks into text **and** preserves image blocks.
+     * 把内容块渲染为文本**并**保留图片块。
      *
-     * <p>Text blocks pass through as-is. Image blocks are appended as a short
-     * placeholder line (so a text-only model still knows something visual came
-     * back) while the raw base64 is carried alongside for vision-capable models.
+     * <p>文本块原样透传。图片块追加一行短占位(纯文本模型也知道回来了视觉内容),
+     * 同时把原始 base64 一并携带,供支持视觉的模型使用。
      * Unknown block types degrade to the previous "(非文本内容块: x)" line.
      */
     private McpToolResult renderResultRich(McpSchema.CallToolResult result) {
@@ -459,7 +450,7 @@ public class McpServerService {
         }
     }
 
-    /** Mask secret values (headers / env), keeping only the first few chars. */
+    /** 脱敏机密值(headers / env),只留前几个字符。 */
     private String maskValues(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
@@ -499,12 +490,12 @@ public class McpServerService {
         return queryOne(VIEW_SELECT + " WHERE name = ? AND deleted_at IS NULL", name);
     }
 
-    /** Exact-name lookup (public: register duplicate check in the agent tool). */
+    /** 精确名称查找(公开:agent 工具注册时的重名检查)。 */
     public ServerView findByName(String name) {
         return name == null || name.isBlank() ? null : getByName(name.trim());
     }
 
-    /** Shared single-row lookup returning the masked view. */
+    /** 共享的单行查找,返回脱敏视图。 */
     private ServerView queryOne(String sql, Object arg) {
         List<ServerView> rows = jdbcTemplate.query(sql, (rs, i) -> viewOf(rs), arg);
         return rows.isEmpty() ? null : rows.get(0);
@@ -539,9 +530,9 @@ public class McpServerService {
                 rs.getBoolean("enabled"));
     }
 
-    // ---------- records ----------
+    // ---------- 记录类型 ----------
 
-    /** MCP server row as consumed by the frontend/settings center. */
+    /** 前端/设置中心消费的 MCP 服务器行。 */
     public record ServerView(
             long id,
             String name,
@@ -557,7 +548,7 @@ public class McpServerService {
             int toolCount) {
     }
 
-    /** Raw row for connection setup (secrets unmasked; never leaves the service). */
+    /** 连接建立用的原始行(机密未脱敏;绝不离开本服务)。 */
     public record RawServer(
             long id,
             String name,
@@ -570,11 +561,11 @@ public class McpServerService {
             boolean enabled) {
     }
 
-    /** One tool snapshot in the cache. */
+    /** 缓存中的一个工具快照。 */
     public record ToolEntry(String name, String description, JsonNode inputSchema) {
     }
 
-    /** A tool mounted into the orchestrator's toolsSpec. */
+    /** 挂载进编排层 toolsSpec 的一个工具。 */
     public record MountedTool(
             long serverId,
             String serverName,

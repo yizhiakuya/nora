@@ -1,11 +1,11 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 工具执行器(从 ChatOrchestrationService 拆出,2026-09-17 复杂度审计 Step 2):
@@ -103,25 +103,18 @@ class ChatToolExecutor {
     }
 
     /**
-     * Tool output budget per harness research: success keeps a large inline
-     * budget, failure gets a head+tail excerpt (failures are diagnosable from
-     * the ends alone and never need a persistence pointer).
+     * 工具输出预算遵循 harness 调研:成功保留大的内联预算,失败给头+尾摘录
+     * (失败只看两端即可诊断,不需要持久化指针)。
      */
     static final int MAX_SUCCESS_CHARS = 30_000;
     static final int MAX_FAILURE_CHARS = 10_000;
-    /** How much of the head/tail a failure excerpt keeps. */
+    /** 失败摘录保留的头/尾字符数。 */
     private static final int FAILURE_HEAD_CHARS = 6_000;
     private static final int FAILURE_TAIL_CHARS = 3_000;
 
     /**
-     * Dispatches a tool call. Guardrail rejections return a three-part error
-     * (what was refused + which rule + a correct example) so the model can
-     * self-correct on the next round.
-     */
-    /**
-     * Dispatches a tool call. Guardrail rejections return a three-part error
-     * (what was refused + which rule + a correct example) so the model can
-     * self-correct on the next round.
+     * 分发一次工具调用。守卫拒绝返回三段式错误
+     * (拒绝了什么 + 哪条规则 + 正确示例),让模型下一轮自我纠正。
      *
      * <p>2026-09-17:各工具分支拆为独立 handler(见下方 exec* 方法),此处只做分发。
      */
@@ -788,8 +781,7 @@ class ChatToolExecutor {
     }
 
     /**
-     * Guardrail: one read-only statement only. Rejections carry what was
-     * refused, which rule, and a correct example.
+     * 守卫:只允许单条只读语句。拒绝时携带被拒内容、规则与正确示例。
      */
     static String guardSql(String sql) {
         if (sql == null || sql.isBlank()) {
@@ -812,7 +804,7 @@ class ChatToolExecutor {
         return null;
     }
 
-    /** Guardrail for the service log tool: service must come from the registry. */
+    /** 服务日志工具的守卫:服务名必须来自注册表。 */
     static String guardService(String service) {
         if (service == null || service.isBlank()) {
             return "拒绝执行：缺少 service 参数。该工具需要容器名，可用值如：nora-postgres、nora-redis、nora-nacos";
@@ -821,9 +813,9 @@ class ChatToolExecutor {
     }
 
     /**
-     * Bounds a raw tool result to the inline budget. Success keeps up to
-     * {@value MAX_SUCCESS_CHARS} chars; anything larger is cut with a
-     * truncation marker. Failures (ERROR:) get a head+tail excerpt instead.
+     * 把原始工具结果限制到内联预算。成功最多保留
+     * {@value MAX_SUCCESS_CHARS} 字符,超出以截断标记收尾;
+     * 失败(ERROR:)则给头+尾摘录。
      */
     ToolOutcome bounded(String result, String summary) {
         if (result == null) {
@@ -845,7 +837,7 @@ class ChatToolExecutor {
         return new ToolOutcome(cut, summary, null, true);
     }
 
-    /** Derives a one-line row summary from a TSV render ("(3 rows, 12ms)" footer). */
+    /** 从 TSV 渲染推导一行行数摘要("(3 rows, 12ms)" 页脚)。 */
     private String summarizeRows(String tsv) {
         int idx = tsv.lastIndexOf("(");
         if (idx >= 0 && tsv.endsWith(")")) {
@@ -855,9 +847,8 @@ class ChatToolExecutor {
     }
 
     /**
-     * Resolves a managed source name (or numeric id) to its env-service id.
-     * Names are matched case-insensitively against the full registry
-     * (including paused sources, which /services omits).
+     * 把纳管源名称(或数字 id)解析为 env-service id。名称对整个注册表做
+     * 不区分大小写匹配(含已暂停的源——/services 会省略它们)。
      */
     private Long resolveManagedSourceId(String target) {
         String listing = serviceManageClient.list();
@@ -1036,7 +1027,7 @@ class ChatToolExecutor {
         return "import-" + System.currentTimeMillis() + ".bin";
     }
 
-    /** One executed tool call: bounded content plus UI-facing metadata. */
+    /** 一次执行的工具调用:有界内容 + 面向 UI 的元数据。 */
     record ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
                         /** 图片附件(MCP 工具返回的 image 块);空 = 纯文本 */
                         java.util.List<McpServerService.McpToolResult.ImageBlock> images) {

@@ -3,7 +3,7 @@ package com.nora.agent.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-/** Wire-format message wrapper (JsonNode so tool messages mix in). */
+/** 线上格式消息包装(用 JsonNode 以混入 tool 消息)。 */
     record WireMessage(ObjectNode node) {
 
         static WireMessage system(ObjectMapper mapper, String content) {

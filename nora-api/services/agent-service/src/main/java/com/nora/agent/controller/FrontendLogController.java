@@ -1,6 +1,7 @@
 package com.nora.agent.controller;
 
-import com.nora.common.response.ApiResponse;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -8,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 前端日志接收端点:浏览器全局错误/unhandledrejection/关键动作日志上报到此,
@@ -24,7 +25,7 @@ public class FrontendLogController {
 
     private static final int MAX_PAYLOAD_CHARS = 8000;
 
-    /** POST /api/log/frontend — body: {level, event, message, stack, url, traceId, sessionId, extra} */
+    /** POST /api/log/frontend —— body: {level, event, message, stack, url, traceId, sessionId, extra} */
     @PostMapping("/frontend")
     public ApiResponse<Void> frontend(@RequestBody Map<String, Object> payload) {
         String level = String.valueOf(payload.getOrDefault("level", "error"));

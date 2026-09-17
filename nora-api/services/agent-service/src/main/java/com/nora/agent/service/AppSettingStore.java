@@ -1,6 +1,9 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -8,18 +11,15 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Runtime-mutable app settings persisted in the {@code app_setting} KV table.
+ * 运行时可变的应用设置,持久化在 {@code app_setting} KV 表。
  *
- * <p>Pattern: static config (env/yml) provides boot defaults; anything saved
- * through this store overrides it for subsequent reads — without a restart.
- * Consumers register an {@link #onLoad(String, Function)} applier that
- * converts the stored JSON into a runtime change (e.g. swapping the outbound
- * proxy). Appliers run on startup (after rows are loaded) and on every save.
+ * <p>模式:静态配置(env/yml)提供启动默认值;经本 store 保存的值覆盖它,
+ * 后续读取立即生效——无需重启。消费方注册 {@link #onLoad(String, Function)}
+ * 应用器,把存储的 JSON 转成运行时变更(如换出站代理)。应用器在启动时
+ * (行加载完成后)与每次保存时执行。
  */
 @Service
 public class AppSettingStore implements ApplicationRunner {
@@ -35,13 +35,13 @@ public class AppSettingStore implements ApplicationRunner {
         this.objectMapper = objectMapper;
     }
 
-    /** Registers how a saved setting is applied to runtime. Returns this for chaining. */
+    /** 注册某设置如何应用到运行时。返回 this 便于链式调用。 */
     public AppSettingStore onLoad(String key, Function<Map<String, Object>, Void> applier) {
         appliers.put(key, applier);
         return this;
     }
 
-    /** Boot: load persisted overrides and apply them before traffic is served. */
+    /** 启动:加载持久化覆盖值并在对外服务前应用。 */
     @Override
     public void run(ApplicationArguments args) {
         try {
@@ -58,13 +58,13 @@ public class AppSettingStore implements ApplicationRunner {
                         rows.stream().map(r -> r.get("key")).toList());
             }
         } catch (Exception e) {
-            // table missing (migration not yet run) or DB down: boot with static defaults
+            // 表不存在(迁移未跑)或 DB 不可用:用静态默认值启动
             log.warn("AppSettingStore: could not load persisted settings, using static defaults ({})",
                     e.getMessage());
         }
     }
 
-    /** Saves the payload and applies it to runtime immediately. */
+    /** 保存载荷并立即应用到运行时。 */
     public void save(String key, Map<String, Object> payload) {
         try {
             String json = objectMapper.writeValueAsString(payload);
@@ -79,8 +79,8 @@ public class AppSettingStore implements ApplicationRunner {
     }
 
     /**
-     * Reads one setting's payload straight from the table (no cache).
-     * Returns null when the key has no row; callers decide the defaults.
+     * 直接从表读取某设置的载荷(无缓存)。
+     * 键无行时返回 null;默认值由调用方决定。
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> raw(String key) {

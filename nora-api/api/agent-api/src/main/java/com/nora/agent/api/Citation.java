@@ -1,17 +1,16 @@
 package com.nora.agent.api;
 
 /**
- * A retrieval citation attached to an agent answer.
+ * 附在 agent 回答上的检索引用。
  *
- * <p>Produced by the RAG tool during the ReAct loop (architecture-v2.md
- * section 4.6): the agent cites which document chunk grounded its reply,
- * so the frontend can render provenance next to the message.</p>
+ * <p>由 RAG 工具在 ReAct 循环中产出(architecture-v2.md 4.6 节):
+ * agent 标注回答基于哪个文档块,前端可在消息旁渲染出处。</p>
  *
- * @param docName    human-readable document name (e.g. {@code arch-notes.md})
- * @param source     storage location or URI of the document
- * @param chunkIndex 0-based index of the cited chunk within the document
- * @param score      retrieval similarity score in [0, 1]
- * @param snippet    short excerpt of the cited chunk
+ * @param docName    人类可读文档名(如 {@code arch-notes.md})
+ * @param source     文档的存储位置或 URI
+ * @param chunkIndex 被引块在文档内的 0 起下标
+ * @param score      检索相似度分 [0, 1]
+ * @param snippet    被引块的短摘录
  */
 public record Citation(
         String docName,

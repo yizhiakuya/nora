@@ -1,13 +1,12 @@
 package com.nora.file.api;
 
-import org.junit.jupiter.api.Test;
-
 import java.time.Instant;
+
+import org.junit.jupiter.api.Test;
 
 
 /**
- * Trivial sanity test: the API DTO records expose their constructor
- * arguments as accessors and participate in record value equality.
+ * 简单健全性测试:API DTO record 把构造参数暴露为访问器并参与 record 值相等。
  */
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
 class FileApiRecordsTest {
@@ -24,9 +23,9 @@ class FileApiRecordsTest {
         item.indexed();
         item.createdAt();
 
-        // record roundtrip: an independently constructed equal copy compares equal
+        // record 往返:独立构造的相等副本比较相等
         FileItem copy = new FileItem(42L, "notes.md", "text/markdown", 1024L, Boolean.TRUE, createdAt, null);
-        // (assertion removed)
+        // (断言已移除)
         item.hashCode();
         copy.hashCode();
 

@@ -1,42 +1,39 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.nora.agent.config.LlmProperties;
-import com.nora.agent.dto.ChatStepDto;
-import com.nora.agent.dto.CitationDto;
-import com.nora.agent.dto.ApprovalRequestDto;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.nora.agent.config.LlmProperties;
+import com.nora.agent.dto.ApprovalRequestDto;
+import com.nora.agent.dto.ChatStepDto;
+import com.nora.agent.dto.CitationDto;
+
 /**
- * Chat orchestration with an OpenAI function-calling agent loop:
+ * 对话编排:OpenAI function-calling 风格的 agent 循环:
  * <ol>
- *   <li>RAG retrieval (unchanged) → system prompt citations</li>
- *   <li>Tool loop: rounds where the model may call tools; each call emits a
- *       structured step (toolName + parsed input + typed result) and feeds
- *       the bounded output back to the model. The loop runs until the model
- *       stops calling tools (Codex/Claude Code semantics) — the round count
- *       is only a pathological-loop fuse (default 100), not a task budget;
- *       context growth is handled by compaction, and the user can stop
- *       at any time.</li>
- *   <li>Final answer streams token by token to the SSE consumer</li>
+ *   <li>RAG 检索(不变)→ 系统提示词引用</li>
+ *   <li>工具循环:模型可调工具的轮次;每次调用发一个结构化步骤
+ *       (toolName + 解析后的入参 + 带类型的结果),把有界输出回填给模型。
+ *       循环跑到模型自己不再调工具为止(对齐 Codex/Claude Code 语义)——
+ *       轮数上限只是病态循环保险丝(默认 100),不是任务预算;
+ *       上下文增长由压缩控制,用户随时可停。</li>
+ *   <li>最终回答逐 token 流式发给 SSE 消费方</li>
  * </ol>
  *
- * <p>Harness conventions applied (see docs/harness-tool-calling-research-2026-09-05.md):
- * tool results are bounded (30K chars success / 10K head+tail failure),
- * guardrail rejections follow a three-part error shape (what + why + how to
- * fix), terminal step status distinguishes {@code declined} (rule refusal)
- * from {@code failed} (execution error), and repeated identical calls are
- * soft-blocked with a hint instead of executing again.
+ * <p>Harness 约定(见 docs/harness-tool-calling-research-2026-09-05.md):
+ * 工具输出有界(成功 30K 字符 / 失败 10K 头+尾),守卫拒绝按三段式错误形态
+ * (什么 + 为什么 + 怎么修),终止步骤状态区分 {@code declined}(规则拒绝)
+ * 与 {@code failed}(执行错误),重复相同调用软阻断并给提示,不再执行。
  */
 @Service
 public class ChatOrchestrationService {
@@ -163,7 +160,7 @@ public class ChatOrchestrationService {
                 null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null);
     }
 
-    /** Test entry: explicit max tool rounds, no provider store. */
+    /** 测试入口:显式最大工具轮数,无 provider store。 */
     public ChatOrchestrationService(LlmProperties llmProperties,
                                     RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
@@ -175,12 +172,12 @@ public class ChatOrchestrationService {
     }
 
     /**
-     * Runs one chat turn: retrieval → tool loop → streaming answer.
+     * 运行一轮对话:检索 → 工具循环 → 流式回答。
      *
-     * @param userMessage   the user's message text
-     * @param history       prior turns of this session (oldest first)
-     * @param eventConsumer receives step/delta/sources events as they happen
-     * @return future completed with the full answer text once the stream ends
+     * @param userMessage   用户消息文本
+     * @param history       该会话的历史轮次(旧到新)
+     * @param eventConsumer 实时接收 step/delta/sources 事件
+     * @return 流结束时以完整回答文本完成的 future
      */
     public CompletableFuture<ChatTurn> chat(String userMessage,
                                             List<ChatStoreService.StoredMessage> history,
@@ -272,7 +269,7 @@ public class ChatOrchestrationService {
             return CompletableFuture.completedFuture(new ChatTurn(message, List.of(), null, null, null, null));
         }
         // 请求级等级优先,其次设置页为该模型配置的默认等级(在 resolveLlm 内合并)
-        // Step 1: knowledge retrieval (best-effort, before the LLM call)
+        // 第 1 步:知识检索(尽力而为,在 LLM 调用之前)
         long retrievalStart = System.currentTimeMillis();
         List<CitationDto> citations = ragRetrievalClient.search(userMessage, 6);
         // 消息引用(📎/📄/@ 按钮)注入:真实内容排在语义检索命中之前——
@@ -299,10 +296,9 @@ public class ChatOrchestrationService {
             eventConsumer.sources(citations);
         }
 
-        // Step 2: tool loop — every round is a real streaming request.
-        // content/reasoning deltas go to the client token-by-token as they arrive
-        // from upstream; tool_call argument fragments accumulate locally and the
-        // tools execute after the stream closes.
+        // 第 2 步:工具循环——每轮都是真实的流式请求。
+        // content/reasoning 增量从上游到达即逐 token 转发给客户端;
+        // tool_call 参数碎片在本地累积,流结束后执行工具。
         // 先解析一次拿到合并后的思考等级(请求级 > 设置页该模型默认),工具轮与最终回答共用
         ResolvedLlm resolved = modelResolver.resolve(requestedModel, requestedReasoningLevel, providerId);
         if (resolved == null) {
@@ -327,7 +323,7 @@ public class ChatOrchestrationService {
         final long turnStartMs = System.currentTimeMillis();
         final long[] ttftMs = {-1};
         TokenUsage totalUsage = null;
-        // loop breaker state: (toolName + normalized args) → consecutive repeat count
+        // 循环熔断状态:(toolName + 归一化参数) → 连续重复计数
         Map<String, Integer> callFingerprints = new HashMap<>();
         try {
             for (int round = 0; round < maxToolRounds; round++) {
@@ -474,7 +470,7 @@ public class ChatOrchestrationService {
             return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("turn cancelled"));
         }
 
-        // Step 3: forced-answer streaming round (with tool outcome already in the messages)
+        // 第 3 步:强制回答的流式轮次(工具结果已在消息里)
         long answerStart = System.currentTimeMillis();
         final String fallbackOutcome = toolOutcome;
 
@@ -609,7 +605,7 @@ public class ChatOrchestrationService {
 
 
 
-    /** Whether an LLM API key is configured. */
+    /** 是否配置了 LLM API key。 */
     public boolean configured() {
         return configured(null);
     }
@@ -716,7 +712,7 @@ public class ChatOrchestrationService {
         return modelResolver.resolve(requestedModel, null, providerId) != null;
     }
 
-    /** Provider token accounting from one streamed turn (null fields when relay omits usage). */
+    /** 一次流式轮次的 provider token 统计(中继省略 usage 时字段为 null)。 */
     public record TokenUsage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {
 
         TokenUsage add(TokenUsage other) {
@@ -761,7 +757,7 @@ public class ChatOrchestrationService {
         });
     }
 
-    /** Forced-answer variant of {@link #streamTurn} for the final round (tool_choice=none). */
+    /** 最终轮次(tool_choice=none)的强制回答变体(见 {@link #streamTurn})。 */
     private StreamTurnResult streamFinalAnswer(List<WireMessage> messages, String requestedModel,
                                                String reasoningLevel, int round,
                                                ChatEventConsumer eventConsumer,
@@ -777,7 +773,7 @@ public class ChatOrchestrationService {
         ObjectNode body = upstreamClient.baseBody(true, llm);
         body.set("messages", upstreamClient.messagesArray(messages));
         body.set("tools", toolsSpec());
-        // final round: the model must answer, not call more tools
+        // 最终轮:模型必须回答,不能再调工具
         body.put("tool_choice", "none");
         eventConsumer.upstreamRequestStarted();
         return upstreamClient.streamUpstream(llm, body, (contentToken, reasoningToken) -> {
@@ -793,14 +789,13 @@ public class ChatOrchestrationService {
 
 
 
-    /** chat.completions body's messages array as WireMessage list (responses conversion helper). */
+    /** chat.completions 请求体的 messages 数组 → WireMessage 列表(responses 转换辅助)。 */
 
 
     /**
-     * Per-provider extra HTTP headers. OpenCode's free tier rejects requests
-     * without an X-Session-ID ("free tier can only be used in OpenCode");
-     * the ID is derived from the API key so it stays stable across turns
-     * (provider-side session continuity) without leaking anything.
+     * 按 provider 附加的 HTTP 头。OpenCode 免费档会拒绝没有 X-Session-ID 的
+     * 请求("free tier can only be used in OpenCode");ID 由 API key 派生,
+     * 跨轮稳定(provider 侧会话连续性)且不泄露任何信息。
      */
     /** DEBUG 报文日志:协议/模型/档位/URL/请求体(api_key 不入日志,Authorization 头不拼进 body)。 */
 
@@ -824,7 +819,7 @@ public class ChatOrchestrationService {
      * 中转站档位后缀命名(gemini-*-high 等)。
      */
 
-    /** Reads the common reasoning fields emitted by OpenAI-compatible relays. */
+    /** 读取 OpenAI 兼容中继发出的常见 reasoning 字段。 */
 
 
 
@@ -936,7 +931,7 @@ public class ChatOrchestrationService {
 
 
 
-    /** Callbacks for the SSE events of one chat turn. */
+    /** 一轮对话的 SSE 事件回调。 */
     public interface ChatEventConsumer {
 
         void step(ChatStepDto step);
@@ -964,5 +959,5 @@ public class ChatOrchestrationService {
                            Long contextWindow, Integer promptTokens, Long ttftMs) {
     }
 
-    /** Wire-format message wrapper (JsonNode so tool messages mix in). */
+    /** 线上格式消息包装(用 JsonNode 以混入 tool 消息)。 */
 }

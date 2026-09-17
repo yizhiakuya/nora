@@ -3,7 +3,7 @@ package com.nora.agent.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Downstream env-service settings ({@code nora.env.*}).
+ * 下游 env-service 设置({@code nora.env.*})。
  */
 @ConfigurationProperties(prefix = "nora.env")
 public record EnvServiceProperties(String baseUrl) {

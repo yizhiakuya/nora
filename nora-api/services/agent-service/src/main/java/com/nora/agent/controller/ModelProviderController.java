@@ -1,8 +1,8 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.ModelProviderService;
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -15,13 +15,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.List;
+import com.nora.agent.service.ModelProviderService;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 
 /**
- * Model provider CRUD + connectivity test ({@code /api/models/providers}),
- * per the initiation doc REST contract. All responses use the ApiResponse envelope.
+ * 模型 provider CRUD + 连通测试({@code /api/models/providers}),按立项文档
+ * REST 契约。全部响应使用 ApiResponse 信封。
  */
 @RestController
 @RequestMapping("/api/models/providers")
@@ -35,17 +35,17 @@ public class ModelProviderController {
                                    org.springframework.beans.factory.ObjectProvider<com.nora.common.http.ProxyProperties> proxyProperties) {
         this.providerService = providerService;
         this.proxyProperties = proxyProperties.getIfAvailable();
-        // no baseUrl: each provider has its own endpoint
+        // 无 baseUrl:每个 provider 有自己的端点
         this.testClient = RestClient.builder().build();
     }
 
-    /** Lists all providers (keys masked). */
+    /** 列出全部 provider(key 脱敏)。 */
     @GetMapping
     public ApiResponse<List<ModelProviderService.ProviderView>> list() {
         return ApiResponse.ok(providerService.list());
     }
 
-    /** Creates a provider. */
+    /** 创建 provider。 */
     @PostMapping
     public ApiResponse<ModelProviderService.ProviderView> create(@RequestBody CreateRequest request) {
         if (request.name() == null || request.name().isBlank()) {
@@ -57,7 +57,7 @@ public class ModelProviderController {
                 request.apiKey(), request.models(), request.modelSettings()));
     }
 
-    /** Updates name/enabled/models/protocol/endpoint/apiKey; null fields keep their stored values. */
+    /** 更新 name/enabled/models/protocol/endpoint/apiKey;null 字段保持已存值。 */
     @PutMapping("/{id}")
     public ApiResponse<ModelProviderService.ProviderView> update(@PathVariable long id,
                                                                  @RequestBody UpdateRequest request) {
@@ -70,7 +70,7 @@ public class ModelProviderController {
         return ApiResponse.ok(updated);
     }
 
-    /** Deletes a provider. */
+    /** 删除 provider。 */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable long id) {
         if (!providerService.delete(id)) {
@@ -80,9 +80,8 @@ public class ModelProviderController {
     }
 
     /**
-     * Connectivity test: GETs {@code {endpoint}/models} with the stored key
-     * (OpenAI-compatible /v1/models). Marks the provider ok/fail and — when
-     * the upstream returns a model list — replaces the stored models so the
+     * 连通测试:用已存 key GET {@code {endpoint}/models}(OpenAI 兼容 /v1/models)。
+     * 标记 provider ok/fail,且上游返回模型列表时替换已存模型,让
      * UI's 模型列表 always reflects what the relay actually serves.
      */
     @PostMapping("/{id}/test")
@@ -134,7 +133,7 @@ public class ModelProviderController {
         }
     }
 
-    /** Extracts model ids from an OpenAI-compatible /v1/models response. */
+    /** 从 OpenAI 兼容的 /v1/models 响应提取模型 id。 */
     private static List<String> parseModelIds(String body) {
         if (body == null || body.isBlank()) {
             return List.of();
@@ -158,19 +157,19 @@ public class ModelProviderController {
         }
     }
 
-    /** POST body for provider creation. */
+    /** provider 创建的 POST 请求体。 */
     public record CreateRequest(
             String name, String protocol, String endpoint, String apiKey, List<String> models,
             ModelProviderService.ModelSettings modelSettings) {
     }
 
-    /** PUT body for provider updates (partial; null/blank apiKey keeps stored key). */
+    /** provider 更新的 PUT 请求体(部分;null/空白 apiKey 保持已存 key)。 */
     public record UpdateRequest(String name, String protocol, String endpoint, String apiKey,
                                 Boolean enabled, List<String> models,
                                 ModelProviderService.ModelSettings modelSettings) {
     }
 
-    /** POST /test response. models = upstream-discovered ids (for the picker UI). */
+    /** POST /test 响应。models = 上游发现的 id(供选择器 UI)。 */
     public record TestResult(String status, String error, Integer modelCount, List<String> models) {
     }
 }

@@ -6,7 +6,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * Scans {@code com.nora} so the shared nora-common advice applies.
+ * 扫描 {@code com.nora},让共享的 nora-common advice 生效。
  * EnableScheduling:PROC 源进程守护的 10s 调和扫描。
  */
 @SpringBootApplication

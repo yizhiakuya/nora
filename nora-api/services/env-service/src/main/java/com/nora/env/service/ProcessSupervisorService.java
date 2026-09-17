@@ -1,14 +1,5 @@
 package com.nora.env.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-import jakarta.annotation.PreDestroy;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,11 +9,20 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import jakarta.annotation.PreDestroy;
 
 /**
  * PROC 纳管源的进程守护(supervisor):spawn 平台拉起的本地程序
@@ -361,7 +361,7 @@ public class ProcessSupervisorService {
                 row.lastExitCode(), row.desiredState(), uptime, memBytes);
     }
 
-    // ---------- internals ----------
+    // ---------- 内部实现 ----------
 
     /** 引号感知的命令拆分:双引号内的空格不分段,引号本身不进参数。 */
     private static List<String> tokenize(String command) {

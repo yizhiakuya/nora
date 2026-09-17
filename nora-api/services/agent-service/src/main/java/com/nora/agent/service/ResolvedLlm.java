@@ -2,7 +2,7 @@ package com.nora.agent.service;
 
 /**
  * 已解析的执行端点与模型配置(2026-09-17 从 ChatOrchestrationService 拆出)。
- * Package-visible for tests; never returned outside the service.
+ * 包内可见供测试;绝不返回服务之外。
  */
 record ResolvedLlm(String baseUrl, String apiKey, String model, String protocol,
                    /** 生效思考等级(已合并请求级与设置页默认);null = auto */

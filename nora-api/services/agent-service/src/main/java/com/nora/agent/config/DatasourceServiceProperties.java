@@ -3,7 +3,7 @@ package com.nora.agent.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Downstream datasource-service settings ({@code nora.datasource.*}).
+ * 下游 datasource-service 设置({@code nora.datasource.*})。
  */
 @ConfigurationProperties(prefix = "nora.datasource")
 public record DatasourceServiceProperties(String baseUrl) {

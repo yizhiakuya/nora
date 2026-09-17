@@ -1,6 +1,5 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -8,10 +7,11 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 /**
- * Executes approved write SQL via datasource-service
- * ({@code POST /api/datasources/{id}/execute}). The enforcing guard lives
- * server-side (WriteGuard); this client just relays the result.
+ * 经 datasource-service({@code POST /api/datasources/{id}/execute})执行已批准
+ * 的写 SQL。强制守卫在服务端(WriteGuard);本客户端只转发结果。
  */
 @Service
 public class WriteSqlClient {
@@ -28,16 +28,16 @@ public class WriteSqlClient {
     }
 
     /**
-     * @return LLM-friendly rendering ("rows_affected: N ...") or "ERROR: ..."
+     * @return 面向 LLM 的渲染("rows_affected: N ...")或 "ERROR: ..."
      */
     public String executeWrite(String sql) {
         return executeWrite(sql, null);
     }
 
     /**
-     * @param sql          single write statement
-     * @param datasourceId explicit connection (id or name); null = first configured
-     * @return LLM-friendly rendering ("rows_affected: N ...") or "ERROR: ..."
+     * @param sql          单条写语句
+     * @param datasourceId 显式连接(id 或名称);null = 第一个配置的连接
+     * @return 面向 LLM 的渲染("rows_affected: N ...")或 "ERROR: ..."
      */
     public String executeWrite(String sql, String datasourceId) {
         try {
@@ -66,11 +66,11 @@ public class WriteSqlClient {
         }
     }
 
-    /** POST body. */
+    /** POST 请求体。 */
     record WriteRequest(String sql) {
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 }

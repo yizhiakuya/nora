@@ -1,30 +1,5 @@
 package com.nora.agent.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.agent.dto.ChatStepDto;
-import com.nora.agent.dto.CitationDto;
-import com.nora.agent.dto.ApprovalRequestDto;
-import com.nora.agent.service.ApprovalService;
-import com.nora.agent.service.ChatOrchestrationService;
-import com.nora.agent.service.ChatStoreService;
-import com.nora.agent.service.PermissionMode;
-import com.nora.agent.service.TurnStreamRegistry;
-import com.nora.common.logging.TraceContext;
-import com.nora.common.response.ApiResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,13 +8,39 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.agent.dto.ApprovalRequestDto;
+import com.nora.agent.dto.ChatStepDto;
+import com.nora.agent.dto.CitationDto;
+import com.nora.agent.service.ApprovalService;
+import com.nora.agent.service.ChatOrchestrationService;
+import com.nora.agent.service.ChatStoreService;
+import com.nora.agent.service.PermissionMode;
+import com.nora.agent.service.TurnStreamRegistry;
+import com.nora.common.logging.TraceContext;
+import com.nora.common.response.ApiResponse;
+
 /**
- * Chat endpoints: SSE streaming (step/delta/sources/done) plus session
- * history, matching the frontend agentApi.ts contract.
+ * 对话端点:SSE 流式(step/delta/sources/done)+ 会话历史,
+ * 与前端 agentApi.ts 契约一致。
+ *
+ * <p>断线重连子系统(live 探测 / SSE 续传)拆至 {@link TurnStreamController}
+ * (2026-09-17):本类只管「发起对话 + 会话管理 + 审批」。
  */
 @RestController
 @RequestMapping("/api/chat")
@@ -47,7 +48,7 @@ public class AgentController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
 
-    /** SSE heartbeat interval; keeps proxies from closing an idle stream. */
+    /** SSE 心跳间隔;防止代理关闭空闲流。 */
     private static final long SSE_TIMEOUT_MS = 180_000;
 
     private final ChatOrchestrationService orchestrationService;
@@ -89,14 +90,14 @@ public class AgentController {
     }
 
     /**
-     * Sends one user message and streams the agent answer as SSE events:
-     * {@code step}, {@code delta}, {@code sources}, {@code done},
-     * plus {@code approval_required} when a high-risk tool call needs
-     * the user's decision (three-mode permission: ask/assist/full).
+     * 发送一条用户消息,以 SSE 事件流式返回 agent 回答:
+     * {@code step}、{@code delta}、{@code sources}、{@code done},
+     * 高风险工具调用需要用户决策时加 {@code approval_required}
+     * (三档权限:ask/assist/full)。
      *
-     * @param sessionId chat session id
+     * @param sessionId 会话 id
      * @param request   {@code {content, model, reasoningLevel, permissionMode}}
-     * @return SSE stream
+     * @return SSE 流
      */
     @PostMapping(value = "/sessions/{sessionId}/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter sendMessage(@PathVariable String sessionId,
@@ -217,9 +218,8 @@ public class AgentController {
     }
 
     /**
-     * Approves or declines a pending high-risk operation. The one-shot token
-     * comes from the approval_required SSE event; unknown/consumed tokens 404
-     * (never a silent success).
+     * 批准或拒绝挂起的高风险操作。一次性 token 来自 approval_required SSE 事件;
+     * 未知/已消费 token 返回 404(绝不静默成功)。
      */
     @PostMapping("/approvals/{approvalToken}")
     public ApiResponse<Boolean> resolveApproval(@PathVariable String approvalToken,
@@ -233,122 +233,25 @@ public class AgentController {
         return ApiResponse.ok(approved);
     }
 
-    /** Pending approvals of one session (reconnect fallback). */
+    /** 某会话的挂起审批(重连兜底)。 */
     @GetMapping("/sessions/{sessionId}/approvals")
     public ApiResponse<List<ApprovalRequestDto>> pendingApprovals(@PathVariable String sessionId) {
         return ApiResponse.ok(approvalService.pendingFor(sessionId));
     }
 
-    /**
-     * Live-turn probe for reconnects: does the session have an in-flight turn,
-     * and what did it already emit? The client diffs this against its local
-     * message tail to rebuild the streaming UI (isTyping, steps, partial
-     * answer) without waiting for the turn to finish.
-     */
-    @GetMapping("/sessions/{sessionId}/turn/live")
-    public ApiResponse<LiveTurnView> liveTurn(@PathVariable String sessionId) {
-        var turn = turnStreams.get(sessionId);
-        if (turn == null) {
-            return ApiResponse.ok(new LiveTurnView(false, null, null, 0, null, null, 0));
-        }
-        var buffer = turn.snapshotAfter(0);
-        return ApiResponse.ok(new LiveTurnView(
-                !turn.isFinished(),
-                turn.content,
-                turn.startedAtMs,
-                buffer.size(),
-                buffer.isEmpty() ? null : buffer.get(buffer.size() - 1),
-                turn.turnId,
-                turn.lastSeq()));
-    }
-    /**
-     * SSE attach to a live turn: replays the buffered events first, then
-     * follows in real time until {@code done}/{@code error}.
-     *
-     * <p>Reconnect/resume protocol: every event carries {@code id:<seq>} (the
-     * per-turn monotonic sequence). A reconnecting EventSource sends
-     * {@code Last-Event-ID: <turnId>:<lastSeq>}; events after that seq are
-     * replayed, so a dropped connection resumes exactly where it stopped with
-     * no gaps and no duplicates.
-     *
-     * <p>Ordering is guaranteed by fencing the two sources of events: while the
-     * replay drain runs (synchronized on the turn), live appends block; the
-     * subscription is activated only after the drain completes. Events can
-     * therefore never overtake or duplicate each other.
-     */
-    @GetMapping(value = "/sessions/{sessionId}/turn/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter attachTurnStream(
-            @PathVariable String sessionId,
-            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
-        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
-        var turn = turnStreams.get(sessionId);
-        if (turn == null) {
-            // 无进行中轮次:立刻收尾,前端据此走普通历史加载
-            try {
-                emitter.send(SseEmitter.event().name("idle").data("{\"live\":false}"));
-            } catch (IOException ignored) {
-                // client gone
-            }
-            emitter.complete();
-            return emitter;
-        }
-        // 解析 Last-Event-ID("turnId:seq"):仅当属于本轮时才作增量游标,
-        // 陈旧轮的游标对新一轮无意义,必须从 0 全量回放
-        long afterSeq = 0;
-        if (lastEventId != null) {
-            int sep = lastEventId.lastIndexOf(':');
-            if (sep > 0 && lastEventId.substring(0, sep).equals(turn.turnId)) {
-                try {
-                    afterSeq = Math.max(0, Long.parseLong(lastEventId.substring(sep + 1)));
-                } catch (NumberFormatException ignored) {
-                    // 坏游标按全量回放处理
-                }
-            }
-        }
-        java.util.Set<Long> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        java.util.function.Consumer<TurnStreamRegistry.TurnEvent> forward = event -> {
-            // exactly-once:回放与实况可能短暂重叠(finish 后的新订阅),seq 去重兜底;
-            // id 下发给客户端作断线续传游标
-            if (seen.add(event.seq())) {
-                sendRaw(emitter, event.event(), event.json(), event.seq());
-            }
-        };
-        // 回放 drain 与实况订阅在同一把锁内原子完成:drain 里没有的事件必然
-        // 会走订阅到达,实况事件不可能插队到更早的缓冲事件之前
-        java.util.List<TurnStreamRegistry.TurnEvent> backlog;
-        try {
-            backlog = turn.subscribeDraining(afterSeq, forward);
-            for (TurnStreamRegistry.TurnEvent e : backlog) {
-                forward.accept(e);
-            }
-        } catch (Exception e) {
-            log.debug("turn replay failed for {}: {}", sessionId, e.getMessage());
-            emitter.complete();
-            return emitter;
-        }
-        // subscribeDraining 之后 turn 可能已 finish(终态事件在 drain 后、
-        // finished 置位前入缓冲,订阅者已能收到;此处兜底关闭 emitter)
-        if (turn.isFinished()) {
-            emitter.complete();
-        }
-        emitter.onCompletion(() -> turn.unsubscribe(forward));
-        emitter.onTimeout(() -> turn.unsubscribe(forward));
-        return emitter;
-    }
-
-    /** Chat history of one session, oldest first (frontend ChatMessage[]). */
+    /** 某会话的对话历史,旧到新(前端 ChatMessage[])。 */
     @GetMapping("/sessions/{sessionId}/messages")
     public List<ChatStoreService.StoredMessage> messages(@PathVariable String sessionId) {
         return chatStoreService.loadMessages(sessionId);
     }
 
-    /** All sessions, most recently active first (frontend sidebar list). */
+    /** 全部会话,最近活跃在前(前端侧栏列表)。 */
     @GetMapping("/sessions")
     public ApiResponse<List<ChatStoreService.SessionSummary>> sessions() {
         return ApiResponse.ok(chatStoreService.listSessions());
     }
 
-    /** Deletes a session with its messages. */
+    /** 删除会话及其消息。 */
     @DeleteMapping("/sessions/{sessionId}")
     public ApiResponse<Void> deleteSession(@PathVariable String sessionId) {
         if (!chatStoreService.deleteSession(sessionId)) {
@@ -358,10 +261,9 @@ public class AgentController {
     }
 
     /**
-     * Truncates history from the message at {@code index} (0-based, chronological)
-     * inclusive. Used by the frontend "edit & resend" flow: the user rewinds to an
-     * earlier user message, edits it, and resends — the server context must match,
-     * so the old branch (that message and everything after) is deleted first.
+     * 从 {@code index} 处的消息(0 起、按时间序)起含自身截断历史。供前端
+     * "编辑并重发"流程:用户回退到较早的用户消息、编辑后重发——服务端上下文
+     * 必须一致,所以旧分支(该消息及其后全部)先被删除。
      */
     @DeleteMapping("/sessions/{sessionId}/messages/{index}")
     public ApiResponse<Integer> truncateFrom(@PathVariable String sessionId,
@@ -377,31 +279,11 @@ public class AgentController {
 
 
 
-    /**
-     * 发送已序列化的 JSON(TurnEvent 回放路径),不再二次 toJson。
-     * {@code id:<seq>} 供 EventSource 断线续传:浏览器重连时自动带上
-     * Last-Event-ID,服务端据此增量回放,不重不漏。
-     */
-    private void sendRaw(SseEmitter emitter, String event, String json, long seq) {
-        try {
-            emitter.send(SseEmitter.event().id(String.valueOf(seq)).name(event).data(json, MediaType.APPLICATION_JSON));
-        } catch (IOException | IllegalStateException e) {
-            log.debug("SSE replay send failed (client disconnected?): {}", e.getMessage());
-        }
-    }
 
 
 
-    /** GET /sessions/{id}/turn/live 响应:lastEvent 供增量续传(前端按游标去重)。 */
-    public record LiveTurnView(
-            boolean running,
-            String content,
-            Long startedAtMs,
-            int bufferedEvents,
-            TurnStreamRegistry.TurnEvent lastEvent,
-            String turnId,
-            long lastSeq) {
-    }
+
+
 
     /** POST /api/chat/sessions/{id}/messages body. providerId = 前端选定的渠道(同名模型跨渠道时精确定位)。 */
     public record MessageRequest(String content, String model, String reasoningLevel, String permissionMode,
@@ -415,7 +297,7 @@ public class AgentController {
         }
     }
 
-    /** POST /api/chat/approvals/{token} body. */
+    /** POST /api/chat/approvals/{token} 请求体。 */
     public record ApprovalDecision(Boolean approved) {
     }
 

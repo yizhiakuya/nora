@@ -4,13 +4,12 @@ import java.io.Serializable;
 import java.util.List;
 
 /**
- * A table (with its columns) inside a {@link SchemaSnapshot}.
+ * {@link SchemaSnapshot} 中的一张表(及其列)。
  *
- * @param schema  containing schema/catalog (e.g. pg "public"); may be {@code null}
- *                for engines without schemas
- * @param name    table name
- * @param comment table comment (JDBC REMARKS); empty when the database has none
- * @param columns ordered column list; never {@code null}, may be empty
+ * @param schema  所属 schema/catalog(如 pg "public");无 schema 的引擎可为 {@code null}
+ * @param name    表名
+ * @param comment 表注释(JDBC REMARKS);数据库没有时为空
+ * @param columns 有序列列表;绝不 {@code null},可为空
  */
 public record DbTable(
         String schema,

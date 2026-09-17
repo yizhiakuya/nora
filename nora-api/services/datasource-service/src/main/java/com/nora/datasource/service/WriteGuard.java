@@ -1,15 +1,14 @@
 package com.nora.datasource.service;
 
-import com.nora.common.exception.BusinessException;
-
 import java.util.Locale;
 import java.util.Set;
 
+import com.nora.common.exception.BusinessException;
+
 /**
- * Write-statement guard for the approval-gated execute endpoint
- * (complement of {@link SqlGuard}: that one allows only reads, this one
- * only writes). Defense in depth — the agent-side RiskClassifier is
- * advisory, this layer enforces.
+ * 审批门控 execute 端点的写语句守卫(与 {@link SqlGuard} 互补:那个只许读,
+ * 这个只许写)。纵深防御——agent 侧 RiskClassifier 是建议性的,
+ * 本层强制。
  */
 public final class WriteGuard {
 
@@ -21,7 +20,7 @@ public final class WriteGuard {
     }
 
     /**
-     * @throws BusinessException 400 when the statement is not a single write
+     * @throws BusinessException 语句不是单条写时 400
      */
     public static void requireWrite(String sql) {
         if (sql == null || sql.isBlank()) {

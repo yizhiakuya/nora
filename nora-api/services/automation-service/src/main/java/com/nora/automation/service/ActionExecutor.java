@@ -1,8 +1,5 @@
 package com.nora.automation.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -10,10 +7,14 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 /**
- * Executes automation actions.
+ * 执行自动化动作。
  *
- * Supported action types:
+ * 支持的动作类型:
  * <ul>
  *   <li>{@code sql} — 受保护的只读查询,经 datasource-service 执行
  *       (只允许 SELECT/SHOW/EXPLAIN,有行数上限和超时)</li>
@@ -39,10 +40,10 @@ public class ActionExecutor {
     }
 
     /**
-     * Runs the action payload.
+     * 运行动作载荷。
      *
-     * @param actionJson stored JSONB action, e.g. {@code {"type":"sql","sql":"SELECT ..."}}
-     * @return execution detail (success rendering or ERROR: line); never throws
+     * @param actionJson 存储的 JSONB 动作,如 {@code {"type":"sql","sql":"SELECT ..."}}
+     * @return 执行细节(成功渲染或 ERROR: 行);绝不抛异常
      */
     public String execute(String actionJson) {
         try {
@@ -151,7 +152,7 @@ public class ActionExecutor {
         return sb.toString();
     }
 
-    /** Builds the stored action JSON for a SQL rule. */
+    /** 为 SQL 规则构建存储的动作 JSON。 */
     public String sqlAction(String sql) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "sql");
@@ -159,7 +160,7 @@ public class ActionExecutor {
         return node.toString();
     }
 
-    /** Builds the stored action JSON for an agent (natural-language) rule. */
+    /** 为 agent(自然语言)规则构建存储的动作 JSON。 */
     public String agentAction(String prompt) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "agent");

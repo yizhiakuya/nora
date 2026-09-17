@@ -1,7 +1,7 @@
 package com.nora.automation.controller;
 
-import com.nora.automation.service.AutomationService;
-import com.nora.common.response.ApiResponse;
+import java.util.List;
+
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -11,11 +11,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
+import com.nora.automation.service.AutomationService;
+import com.nora.common.response.ApiResponse;
 
 /**
- * Automation endpoints per the initiation doc REST contract:
- * rule CRUD, immediate run, execution history.
+ * 自动化端点(立项文档 REST 契约):规则 CRUD、立即运行、执行历史。
  */
 @RestController
 @RequestMapping("/api/automations")
@@ -32,7 +32,7 @@ public class AutomationController {
         return "ok";
     }
 
-    /** Lists rules, newest first. */
+    /** 列出规则,最新在前。 */
     @GetMapping
     public ApiResponse<List<AutomationService.RuleView>> list() {
         return ApiResponse.ok(service.list());
@@ -45,13 +45,13 @@ public class AutomationController {
                 request.actionType(), request.sql(), request.prompt()));
     }
 
-    /** Toggles enabled/paused. */
+    /** 切换启用/暂停。 */
     @PostMapping("/{id}/toggle")
     public ApiResponse<AutomationService.RuleView> toggle(@PathVariable long id) {
         return ApiResponse.ok(service.toggle(id));
     }
 
-    /** Deletes a rule. */
+    /** 删除规则。 */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable long id) {
         if (!service.delete(id)) {
@@ -60,13 +60,13 @@ public class AutomationController {
         return ApiResponse.ok();
     }
 
-    /** Runs a rule immediately. */
+    /** 立即运行规则。 */
     @PostMapping("/{id}/run")
     public ApiResponse<AutomationService.ExecutionView> run(@PathVariable long id) {
         return ApiResponse.ok(service.runNow(id));
     }
 
-    /** Execution history across rules, newest first. */
+    /** 跨规则的执行历史,最新在前。 */
     @GetMapping("/executions")
     public ApiResponse<List<AutomationService.ExecutionView>> executions(
             @RequestParam(value = "limit", required = false) Integer limit) {
@@ -74,7 +74,7 @@ public class AutomationController {
         return ApiResponse.ok(service.listExecutions(bounded));
     }
 
-    /** POST /api/automations body. */
+    /** POST /api/automations 请求体。 */
     /** actionType 缺省 = "sql";"agent" 时用 prompt。 */
     public record CreateRequest(String name, String triggerType, String actionType, String sql, String prompt) {
     }

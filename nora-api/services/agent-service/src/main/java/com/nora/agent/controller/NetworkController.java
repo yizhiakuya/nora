@@ -1,9 +1,9 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.AppSettingStore;
-import com.nora.common.http.ProxyProperties;
-import com.nora.common.http.ProxySettingsHolder;
-import com.nora.common.response.ApiResponse;
+import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.Map;
+
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -11,17 +11,17 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.net.InetSocketAddress;
-import java.time.Duration;
-import java.util.Map;
+import com.nora.agent.service.AppSettingStore;
+import com.nora.common.http.ProxyProperties;
+import com.nora.common.http.ProxySettingsHolder;
+import com.nora.common.response.ApiResponse;
 
 /**
- * Network egress settings: view, update and probe the outbound proxy.
+ * 网络出站设置:查看、更新与探测出站代理。
  *
- * <p>Proxy config is persisted in the {@code app_setting} table and applied
- * to the runtime holder immediately on save — no restart needed. Boot
- * defaults still come from application.yml / env via {@link ProxyProperties}
- * binding; a persisted override replaces them at startup.
+ * <p>代理配置持久化在 {@code app_setting} 表,保存即应用到运行时持有器——
+ * 无需重启。启动默认值仍来自 application.yml / env({@link ProxyProperties}
+ * 绑定);持久化覆盖值在启动时替换它们。
  */
 @RestController
 @RequestMapping("/api/network")
@@ -39,7 +39,7 @@ public class NetworkController {
         // 无持久化行时它就是最终值(此前 holder 会停在 disabled,与文档不符);
         // 有持久化行时由 AppSettingStore 在 boot 时覆盖(见 onLoad)。
         ProxySettingsHolder.set(staticProxy);
-        // Runtime applier: any save (or boot load) swaps the live holder.
+        // 运行时应用器:任何保存(或启动加载)都替换生效中的持有器。
         appSettingStore.onLoad(SETTING_KEY, payload -> {
             ProxyProperties parsed = parse(payload);
             ProxySettingsHolder.set(parsed);
@@ -47,7 +47,7 @@ public class NetworkController {
         });
     }
 
-    /** Current egress proxy state as the running JVM sees it. */
+    /** 运行中 JVM 视角的当前出站代理状态。 */
     @GetMapping("/proxy")
     public ApiResponse<ProxyView> proxy() {
         ProxyProperties current = ProxySettingsHolder.current();
@@ -60,8 +60,8 @@ public class NetworkController {
     }
 
     /**
-     * Updates and persists the proxy. Applied immediately — in-flight chats
-     * keep their existing client; the next outbound call uses the new settings.
+     * 更新并持久化代理。立即生效——在途对话保持既有客户端;
+     * 下一次出站调用使用新设置。
      */
     @PutMapping("/proxy")
     public ApiResponse<ProxyView> update(@RequestBody UpdateRequest request) {
@@ -79,7 +79,7 @@ public class NetworkController {
         ProxyProperties next = new ProxyProperties(enabled, request.host() == null ? "" : request.host().trim(), port,
                 staticProxy.bypassHosts());
         if (enabled) {
-            // Fail fast on an unreachable proxy rather than silently breaking egress.
+            // 代理不可达时快速失败,而不是静默弄断出站。
             String probeUrl = "http://" + next.host() + ":" + next.port();
             InetSocketAddress addr = new InetSocketAddress(next.host(), next.port());
             if (addr.isUnresolved()) {
@@ -97,7 +97,7 @@ public class NetworkController {
         return proxy();
     }
 
-    /** Clears the persisted override, falling back to static config. */
+    /** 清除持久化覆盖值,回退静态配置。 */
     @PostMapping("/proxy/reset")
     public ApiResponse<ProxyView> reset() {
         appSettingStore.save(SETTING_KEY, Map.of(
@@ -123,9 +123,8 @@ public class NetworkController {
     }
 
     /**
-     * Probes an external URL through the current proxy (and, for comparison,
-     * directly). Lets the UI show whether the proxy actually unlocks a
-     * destination before the user commits to it.
+     * 经当前代理(并对照直连)探测外部 URL。让 UI 在用户确认前展示
+     * 代理是否真能打通某目标。
      */
     @PostMapping("/probe")
     public ApiResponse<ProbeResult> probe(@org.springframework.web.bind.annotation.RequestBody ProbeRequest request) {
@@ -138,10 +137,10 @@ public class NetworkController {
         }
         ProxyProperties current = ProxySettingsHolder.current();
         long start = System.currentTimeMillis();
-        // direct leg
+        // 直连段
         int directStatus = probe(url, null);
         long directMs = System.currentTimeMillis() - start;
-        // proxied leg (only meaningful when a proxy is configured)
+        // 代理段(仅配置了代理时有意义)
         Integer proxyStatus = null;
         Long proxyMs = null;
         if (current.usable()) {
@@ -172,19 +171,19 @@ public class NetworkController {
         }
     }
 
-    /** GET/PUT /api/network/proxy response. */
+    /** GET/PUT /api/network/proxy 响应。 */
     public record ProxyView(boolean enabled, String host, Integer port, String url) {
     }
 
-    /** PUT /api/network/proxy body. */
+    /** PUT /api/network/proxy 请求体。 */
     public record UpdateRequest(Boolean enabled, String host, Integer port) {
     }
 
-    /** POST /api/network/probe body. */
+    /** POST /api/network/probe 请求体。 */
     public record ProbeRequest(String url) {
     }
 
-    /** POST /api/network/probe response. status 0 = transport failure. */
+    /** POST /api/network/probe 响应。status 0 = 传输层失败。 */
     public record ProbeResult(Integer directStatus, Long directMs, Integer proxyStatus, Long proxyMs) {
     }
 }

@@ -10,7 +10,7 @@ class GatewayApplicationTest {
     @Test
     void applicationClassIsAnnotated() {
         SpringBootApplication annotation = GatewayApplication.class.getAnnotation(SpringBootApplication.class);
-        // (assertion removed)
+        // (断言已移除)
     }
 
     @Test

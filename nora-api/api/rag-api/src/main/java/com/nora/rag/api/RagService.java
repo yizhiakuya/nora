@@ -3,26 +3,25 @@ package com.nora.rag.api;
 import java.util.List;
 
 /**
- * Dubbo contract for knowledge retrieval, exposed by rag-service and
- * consumed by agent-service (architecture-v2.md section 5.1).
+ * 知识检索的 Dubbo 契约,由 rag-service 提供、agent-service 消费
+ * (architecture-v2.md 5.1 节)。
  *
- * <p>Implementations register with Nacos; consumers inject via
- * {@code @DubboReference}.
+ * <p>实现注册到 Nacos;消费方经 {@code @DubboReference} 注入。
  */
 public interface RagService {
 
     /**
-     * Semantic search over the knowledge index.
+     * 对知识索引做语义检索。
      *
-     * @param request query text and result size
-     * @return scored chunks ordered by relevance (best first)
+     * @param request 查询文本与结果条数
+     * @return 按相关度排序的带分块(最优在前)
      */
     List<RetrievalResult> search(SearchRequest request);
 
     /**
-     * Snapshot of the current index statistics.
+     * 当前索引统计快照。
      *
-     * @return document/chunk counts plus the embedding model in use
+     * @return 文档/分块计数及所用嵌入模型
      */
     IndexStatistics getIndexStats();
 }

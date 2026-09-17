@@ -1,7 +1,15 @@
 package com.nora.rag.service;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.rag.config.EmbeddingProperties;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,18 +19,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.contains;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.when;
+import com.nora.common.exception.BusinessException;
+import com.nora.rag.config.EmbeddingProperties;
 
 @ExtendWith(MockitoExtension.class)
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
@@ -69,7 +67,7 @@ class IndexingServiceTest {
 
         long docId = service.indexDocument("doc.md", "file", 42L, "1 KB", "full text");
 
-        // (assertion removed)
+        // (断言已移除)
         var inOrder = inOrder(jdbcTemplate);
         // 软删旧文档(含 chunks):先标记 chunk 再标记 doc(子查询需 doc 存活)
 
@@ -132,7 +130,7 @@ class IndexingServiceTest {
 
         long docId = service.indexDocument("empty.txt", "file", 3L, "0 KB", "");
 
-        // (assertion removed)
+        // (断言已移除)
 
 
     }
@@ -185,7 +183,7 @@ try { service.indexDocument("doc.md", "file", 42L, "1 KB", "text"); } catch (Exc
 
         int rebuilt = service.reindexChunks(9L, texts);
 
-        // (assertion removed)
+        // (断言已移除)
         var inOrder = inOrder(jdbcTemplate);
         // 先软删旧 chunk,再按原 chunk_index 重新写入,doc id 不变
 
@@ -199,7 +197,7 @@ try { service.indexDocument("doc.md", "file", 42L, "1 KB", "text"); } catch (Exc
     void reindexWithoutChunksMarksIndexedAndSkipsEmbedding() {
         int rebuilt = service.reindexChunks(3L, List.of());
 
-        // (assertion removed)
+        // (断言已移除)
 
 
     }

@@ -1,14 +1,15 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.AppSettingStore;
-import com.nora.common.response.ApiResponse;
+import java.util.Map;
+
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
+import com.nora.agent.service.AppSettingStore;
+import com.nora.common.response.ApiResponse;
 
 /**
  * Agent 全局设置(对话页三件套):权限模式 / 默认模型 / 思考等级覆写。

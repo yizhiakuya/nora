@@ -1,19 +1,20 @@
 package com.nora.agent.service;
 
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
-import java.util.List;
-import java.util.UUID;
 
 /**
- * Persistence for chat sessions and messages ({@code schema_agent}).
- * Steps and sources are stored as JSON strings.
+ * 对话会话与消息的持久化({@code schema_agent})。
+ * 步骤与来源存为 JSON 字符串。
  */
 @Service
 public class ChatStoreService {
@@ -38,7 +39,7 @@ public class ChatStoreService {
     }
 
     /**
-     * Creates a session row; idempotent for an existing id.
+     * 创建会话行;id 已存在时幂等。
      *
      * <p>{@code title} 只在该行首次创建时生效（{@code ON CONFLICT DO NOTHING}），
      * 因此传入的是**占位标题**——由 {@link #placeholderTitle(String)} 取首条消息
@@ -85,14 +86,14 @@ public class ChatStoreService {
         return title.length() <= MAX_TITLE_CHARS ? title : title.substring(0, MAX_TITLE_CHARS) + "…";
     }
 
-    /** Saves one message with its steps/sources snapshots. */
+    /** 保存一条消息及其步骤/来源快照。 */
     public void saveMessage(String sessionId, String role, String content,
                             List<ChatStepDto> steps, List<CitationDto> sources) {
         saveMessage(sessionId, role, content, steps, sources, null);
     }
 
     /**
-     * Saves one message with its steps/sources snapshots and the turn duration.
+     * 保存一条消息及其步骤/来源快照与轮次耗时。
      *
      * <p>{@code durationMs} 与 SSE done 事件同源（整轮墙钟耗时）。必须落库：
      * 它此前只随 done 事件下发，刷新/切会话后前端从历史重建消息就丢了，
@@ -108,7 +109,7 @@ public class ChatStoreService {
                 toJson(steps), toJson(sources), durationMs);
     }
 
-    /** Loads all messages of a session in chronological order (soft-deleted rows excluded). */
+    /** 按时间序加载会话的全部消息(排除软删行)。 */
     public List<StoredMessage> loadMessages(String sessionId) {
         List<StoredMessage> loaded = jdbcTemplate.query(
                 "SELECT role, content, steps, sources, duration_ms, created_at FROM chat_message "
@@ -135,7 +136,7 @@ public class ChatStoreService {
         return loaded;
     }
 
-    /** Collapses append-only step rows: terminal status wins; dangling running steps are dropped. */
+    /** 折叠仅追加的步骤行:终态状态优先;悬挂的 running 步骤丢弃。 */
     static List<ChatStepDto> mergeSteps(List<ChatStepDto> steps) {
         return mergeSteps(steps, true);
     }
@@ -231,7 +232,7 @@ public class ChatStoreService {
         return ordered;
     }
 
-    /** Lists live sessions with message counts, most recently active first (soft-deleted excluded). */
+    /** 列出存活会话及消息数,最近活跃在前(排除软删)。 */
     public List<SessionSummary> listSessions() {
         return jdbcTemplate.query(
                 """
@@ -253,9 +254,8 @@ public class ChatStoreService {
     }
 
     /**
-     * Soft-deletes a session and its messages (cascade, same transaction
-     * semantics as the old physical delete). Returns false when unknown or
-     * already deleted.
+     * 软删会话及其消息(级联,事务语义与原物理删除一致)。
+     * 未知或已删除时返回 false。
      */
     @org.springframework.transaction.annotation.Transactional
     public boolean deleteSession(String sessionId) {
@@ -270,12 +270,11 @@ public class ChatStoreService {
     }
 
     /**
-     * Truncates the session history from the message at {@code index}
-     * (0-based, chronological) inclusive — used by the frontend
-     * "edit & resend" flow so the LLM context stays consistent with the UI.
-     * Soft-delete (rows kept for audit; queries filter them out).
+     * 从 {@code index} 处的消息(0 起、按时间序)起含自身截断会话历史——
+     * 供前端"编辑并重发"流程使用,让 LLM 上下文与 UI 保持一致。
+     * 软删除(行留存审计;查询过滤掉)。
      *
-     * @return number of messages soft-deleted; -1 when the index is out of range
+     * @return 软删的消息数;下标越界时为 -1
      */
     public int truncateFrom(String sessionId, int index) {
         List<StoredMessage> all = loadMessages(sessionId);
@@ -309,7 +308,7 @@ public class ChatStoreService {
                 (rs, rowNum) -> rs.getString("reflection"), sessionId, taskSignature, Math.max(1, Math.min(limit, 10)));
     }
 
-    /** One session row for the sidebar list. */
+    /** 侧栏列表用的一条会话行。 */
     public record SessionSummary(
             String id,
             String title,
@@ -359,7 +358,7 @@ public class ChatStoreService {
             java.time.LocalDateTime createdAt
     ) {
 
-        /** Back-compat constructor for in-memory messages that have no DB timestamp. */
+        /** 兼容构造:无 DB 时间戳的内存消息。 */
         public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources) {
             this(role, content, steps, sources, null, null);
         }

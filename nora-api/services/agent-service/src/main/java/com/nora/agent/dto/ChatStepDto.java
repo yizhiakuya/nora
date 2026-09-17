@@ -3,21 +3,19 @@ package com.nora.agent.dto;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 /**
- * SSE {@code step} event payload, matching the frontend ChatStep contract
- * (agentApi.ts StepPayload): camelCase, duration accepts a string label or
- * milliseconds.
+ * SSE {@code step} 事件载荷,匹配前端 ChatStep 契约(agentApi.ts StepPayload):
+ * 驼峰;duration 接受字符串标签或毫秒。
  *
- * <p>Structured tool fields (toolName/input/result) follow the harness
- * research (2026-09): a tool step carries its parsed arguments and a typed
- * result instead of one flattened detail string; {@code detail} stays as a
- * human-readable summary for the timeline and persistence.
+ * <p>结构化工具字段(toolName/input/result)遵循 harness 调研(2026-09):
+ * 工具步骤携带解析后的参数与带类型结果,而不是一条压平的 detail 字符串;
+ * {@code detail} 保留为时间线与持久化用的人类可读摘要。
  *
- * @param id       step id, unique within one answer
- * @param type     {@code think} or {@code tool}
- * @param title    short label
- * @param detail   human-readable summary line
- * @param duration wall-clock duration in milliseconds (null while running)
- * @param status   {@code pending} / {@code running} / {@code completed} / {@code failed} / {@code declined}
+ * @param id       步骤 id,一次回答内唯一
+ * @param type     {@code think} 或 {@code tool}
+ * @param title    短标签
+ * @param detail   人类可读摘要行
+ * @param duration 挂钟耗时毫秒(running 时为 null)
+ * @param status   状态:{@code pending} / {@code running} / {@code completed} / {@code failed} / {@code declined}
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ChatStepDto(
@@ -34,19 +32,19 @@ public record ChatStepDto(
         ContextInfo context
 ) {
 
-    /** Convenience constructor for legacy call sites (no structured tool payload). */
+    /** 遗留调用点的便捷构造(无结构化工具载荷)。 */
     public ChatStepDto(String id, String type, String title, String detail, Long duration, String status) {
         this(id, type, title, detail, duration, status, null, null, null, null, null);
     }
 
-    /** Convenience constructor for tool steps (no context payload). */
+    /** 工具步骤的便捷构造(无 context 载荷)。 */
     public ChatStepDto(String id, String type, String title, String detail, Long duration, String status,
                        String toolName, StepInput input, StepResult result, Integer roundIndex) {
         this(id, type, title, detail, duration, status, toolName, input, result, roundIndex, null);
     }
 
     /**
-     * Parsed tool arguments, rendered per-tool by the frontend.
+     * 解析后的工具参数,由前端按工具渲染。
      *
      * @param target  manage_datasource / manage_service 的操作对象(数据源名/id、
      *                纳管源名/id);null 表示其余工具
@@ -58,25 +56,25 @@ public record ChatStepDto(
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record StepInput(String sql, String service, Integer limit, String target, String rawArgs) {
 
-        /** Back-compat constructor for existing call sites (no target). */
+        /** 既有调用点的兼容构造(无 target)。 */
         public StepInput(String sql, String service, Integer limit) {
             this(sql, service, limit, null, null);
         }
 
-        /** Back-compat constructor (target, no raw args). */
+        /** 兼容构造(有 target,无 raw args)。 */
         public StepInput(String sql, String service, Integer limit, String target) {
             this(sql, service, limit, target, null);
         }
     }
 
     /**
-     * Structured tool result.
+     * 结构化工具结果。
      *
-     * @param content   full tool output fed to the model (bounded)
-     * @param summary   one-line human summary (e.g. "3 rows in 12ms")
-     * @param rowCount  row count for SQL results
-     * @param truncated whether {@code content} was cut to the size budget
-     * @param error     machine-readable failure reason when status is failed/declined
+     * @param content   喂给模型的完整工具输出(有界)
+     * @param summary   一行人类摘要(如 "3 rows in 12ms")
+     * @param rowCount  SQL 结果的行数
+     * @param truncated {@code content} 是否被裁到大小预算
+     * @param error     status 为 failed/declined 时的机器可读失败原因
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record StepResult(

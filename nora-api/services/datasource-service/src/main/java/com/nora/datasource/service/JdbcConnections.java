@@ -6,19 +6,18 @@ import java.sql.SQLException;
 import java.util.Properties;
 
 /**
- * Opens short-lived JDBC connections from a stored {@code db_connection} row.
+ * 从存储的 {@code db_connection} 行打开短命 JDBC 连接。
  *
- * <p>Phase 3 uses plain DriverManager connections per call — the schema
- * browse and query endpoints are interactive, not hot paths, so a pool
- * (HikariCP per connection) is deferred until automation-service needs
- * scheduled queries.
+ * <p>Phase 3 每次调用用普通 DriverManager 连接——schema 浏览与查询端点
+ * 是交互式而非热路径,池化(每连接 HikariCP)推迟到 automation-service
+ * 需要计划查询时。
  */
 public final class JdbcConnections {
 
     private JdbcConnections() {
     }
 
-    /** Connection parameters from a stored row. */
+    /** 从存储行来的连接参数。 */
     public record Params(
             String engine,
             String host,
@@ -27,7 +26,7 @@ public final class JdbcConnections {
             String username,
             String password) {
 
-        /** JDBC URL for the engine. */
+        /** 引擎的 JDBC URL。 */
         public String url() {
             return switch (engine) {
                 case "postgresql" -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, database);
@@ -38,9 +37,9 @@ public final class JdbcConnections {
     }
 
     /**
-     * Opens a connection using the stored credentials.
+     * 用已存凭证打开连接。
      *
-     * @throws SQLException when the driver cannot connect
+     * @throws SQLException 驱动无法连接时
      */
     public static Connection open(Params params) throws SQLException {
         Properties props = new Properties();
@@ -50,7 +49,7 @@ public final class JdbcConnections {
         if (params.password() != null) {
             props.setProperty("password", params.password());
         }
-        // short connect timeout so a bad host fails fast instead of hanging the request
+        // 短连接超时:坏主机快速失败而不是挂起请求
         props.setProperty("connectTimeout", "5000");
         props.setProperty("socketTimeout", "30000");
         return DriverManager.getConnection(params.url(), props);

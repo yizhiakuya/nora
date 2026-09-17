@@ -1,13 +1,5 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.common.http.ProxySettingsHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.URI;
@@ -20,6 +12,15 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.common.http.ProxySettingsHolder;
 
 /**
  * GitHub OAuth 设备码流程(与 gh CLI 同款):用户在 GitHub 页面输入验证码
@@ -231,7 +232,7 @@ public class GitHubOAuthService {
         }
     }
 
-    // ---------- internals ----------
+    // ---------- 内部实现 ----------
 
     /** 默认 HTTP 实现:JDK HttpClient,遵循出站代理设置(与 LLM 调用同一套)。 */
     private String postFormJdk(String url, String formBody) throws Exception {
@@ -276,7 +277,7 @@ public class GitHubOAuthService {
         pending.entrySet().removeIf(e -> e.getValue().expiresAt() < now);
     }
 
-    // ---------- records ----------
+    // ---------- 记录类型 ----------
 
     private record PendingFlow(String deviceCode, String clientId, int interval, long expiresAt) {
     }

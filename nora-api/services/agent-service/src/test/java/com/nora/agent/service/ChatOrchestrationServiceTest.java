@@ -1,20 +1,22 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.agent.config.LlmProperties;
-import com.nora.agent.dto.ChatStepDto;
-import com.nora.agent.dto.CitationDto;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.agent.config.LlmProperties;
+import com.nora.agent.dto.ChatStepDto;
+import com.nora.agent.dto.CitationDto;
 
 @ExtendWith(MockitoExtension.class)
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
@@ -33,8 +35,8 @@ class ChatOrchestrationServiceTest {
 
     @BeforeEach
     void setUp() {
-        // No API key: the service must still run retrieval steps;
-        // the LLM call itself fails downstream (wire client hits a bad URL).
+        // 无 API key:服务仍须跑检索步骤;
+        // LLM 调用本身在下游失败(wire 客户端打到坏 URL)。
         LlmProperties properties = new LlmProperties("test-key", "http://localhost:9/v1", "test-model");
         service = new ChatOrchestrationService(properties, ragRetrievalClient,
                 sqlToolClient, serviceLogClient, new ObjectMapper());
@@ -204,7 +206,7 @@ class ChatOrchestrationServiceTest {
             if (json.get(i).contains("\"tool_calls\"")) callIdx = i;
             if (json.get(i).contains("\"role\":\"tool\"")) resultIdx = i;
         }
-        // (assertion removed)
+        // (断言已移除)
     }
 
     @Test
@@ -372,7 +374,7 @@ class ChatOrchestrationServiceTest {
         out.content();
     }
 
-    /** Builds a service with only the MCP registry wired (17-arg constructor). */
+    /** 构建只接了 MCP 注册表的服务(17 参构造)。 */
     private ChatOrchestrationService buildWithMcp(McpServerService mcp) {
         return new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
@@ -380,7 +382,7 @@ class ChatOrchestrationServiceTest {
                 null, null, null, null, null, null, mcp, null, null, null, 5, null, null);
     }
 
-    /** Invokes parseArgs (ToolStepEmitter) + executeTool (ChatToolExecutor) for one tool call. */
+    /** 对一次工具调用执行 parseArgs(ToolStepEmitter)+ executeTool(ChatToolExecutor)。 */
     private ChatToolExecutor.ToolOutcome invokeExecute(ChatOrchestrationService svc,
                                                        String tool, String args) throws Exception {
         ToolStepEmitter emitter = stepEmitterOf(svc);
@@ -559,12 +561,12 @@ class ChatOrchestrationServiceTest {
             List<Object[]> captured = new java.util.ArrayList<>();
             invokeEmit(loopService, "s-call-" + i, "execute_sql", "{\"sql\": \"SELECT 1\"}",
                     fingerprints, captured, i + 1, consumer);
-            // emitToolStep appends the tool message onto our captured list via backfill
+            // emitToolStep 经回填把工具消息追加到我们捕获的列表
             wire.add(new WireSnapshot(captured));
         }
 
         long declined = steps.stream().filter(s -> "declined".equals(s.status())).count();
-        // (assertion removed)
+        // (断言已移除)
         recorder.calls.get();
         ChatStepDto declinedStep = steps.stream().filter(s -> "declined".equals(s.status())).findFirst().orElseThrow();
         declinedStep.result();
@@ -593,7 +595,7 @@ class ChatOrchestrationServiceTest {
         steps.get(steps.size() - 1);
     }
 
-    /** emitToolStep with explicit permission mode and sessionId (headless = null session). */
+    /** 带显式权限档与 sessionId 的 emitToolStep(headless = null 会话)。 */
     private void invokeEmitFull(ChatOrchestrationService svc, String stepId, String tool, String args,
                                 Map<String, Integer> fingerprints,
                                 int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
@@ -612,7 +614,7 @@ class ChatOrchestrationServiceTest {
         }
     }
 
-    /** Captures the tool message the orchestrator backfills (role=tool JSON). */
+    /** 捕获编排层回填的工具消息(role=tool JSON)。 */
     private void invokeEmit(ChatOrchestrationService svc, String stepId, String tool, String args,
                             Map<String, Integer> fingerprints, List<Object[]> messages,
                             int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
@@ -621,7 +623,7 @@ class ChatOrchestrationServiceTest {
             var method = ToolStepEmitter.class.getDeclaredMethod("emitToolStep",
                     String.class, String.class, String.class, Map.class, List.class, String.class,
                     int.class, ChatOrchestrationService.ChatEventConsumer.class);
-            // messages is List<WireMessage> (private record); pass a proxy list that records adds
+            // messages 是 List<WireMessage>(私有 record);传一个记录 add 的代理列表
             method.setAccessible(true);
             List<Object> wireList = new java.util.ArrayList<>() {
                 @Override
@@ -639,7 +641,7 @@ class ChatOrchestrationServiceTest {
     private record WireSnapshot(List<Object[]> entries) {
     }
 
-    /** SQL client that counts invocations and always returns the same output. */
+    /** 统计调用次数且总是返回同一输出的 SQL 客户端。 */
     static final class SqlToolCallRecorder extends SqlToolClient {
         final java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
 
@@ -882,7 +884,7 @@ class ChatOrchestrationServiceTest {
                     }
                 });
 
-        // (assertion removed)
+        // (断言已移除)
         // 检索 step 一定先发;后续是工具轮失败 step + 回答失败 step(键未配置)
         steps.get(0);
         steps.get(0);
@@ -962,7 +964,7 @@ class ChatOrchestrationServiceTest {
         applyReasoning("qwen3.8-max", "openai", "none");
         applyReasoning("qwen3.8-max", "openai", "high");
         applyReasoning("qwen3.8-max", "openai", null);
-        // glm:none disabled,high enabled
+        // glm:none 禁用,high 启用
         applyReasoning("glm-5.3", "openai", "none");
         applyReasoning("glm-5.3", "openai", "high");
         // claude thinking:档位原样透传(实测 2026-09-05:不带该字段上游不返回推理内容)

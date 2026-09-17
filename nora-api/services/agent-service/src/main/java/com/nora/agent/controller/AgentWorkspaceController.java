@@ -1,8 +1,7 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.AgentWorkspaceService;
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
+import java.util.List;
+
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -11,7 +10,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
+import com.nora.agent.service.AgentWorkspaceService;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 
 /**
  * Agent 工作区管理 API({@code /api/workspace}):设置中心「工作区」标签页。

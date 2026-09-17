@@ -15,10 +15,9 @@ final class McpCommandResolver {
     }
 
     /**
-     * Resolves a command to an executable path: absolute path → exists check;
-     * bare name → PATH scan (Windows: PATHEXT candidates first — CreateProcess
-     * does not resolve the extensionless shell shim `npx`, only `npx.cmd`).
-     * Returns null when not found (callers surface an actionable error).
+     * 把命令解析为可执行路径:绝对路径 → 存在性检查;裸名称 → PATH 扫描
+     * (Windows:先试 PATHEXT 候选——CreateProcess 不解析无扩展名的 shell shim
+     * `npx`,只认 `npx.cmd`)。未找到返回 null(调用方给出可操作报错)。
      */
     static String resolveCommand(String command) {
         if (command == null || command.isBlank()) {

@@ -1,34 +1,32 @@
 package com.nora.datasource.service;
 
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
 import com.nora.common.exception.BusinessException;
 import com.nora.datasource.api.Column;
 import com.nora.datasource.api.ConnectionStatus;
 import com.nora.datasource.api.DbTable;
 import com.nora.datasource.api.QueryResult;
 import com.nora.datasource.api.SchemaSnapshot;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 
 /**
- * Core datasource operations: connection CRUD (with masked credentials),
- * connectivity test, schema introspection via {@link DatabaseMetaData}, and
- * guarded read-only query execution with persisted history.
+ * 数据源核心操作:连接 CRUD(凭证脱敏)、连通测试、经 {@link DatabaseMetaData}
+ * 的 schema 内省,以及带历史落库的受控只读查询执行。
  */
 @Service
 public class DatasourceServiceImpl {
 
-    /** Max rows returned to the client (ACI principle: bounded, LLM-friendly payloads). */
+    /** 返回给客户端的最大行数(ACI 原则:有界、LLM 友好载荷)。 */
     static final int MAX_ROWS = 200;
 
     private final JdbcTemplate jdbcTemplate;
@@ -37,7 +35,7 @@ public class DatasourceServiceImpl {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /** Lists connections (passwords never returned; a masked hint is). */
+    /** 列出连接(绝不返回密码;返回脱敏提示)。 */
     public List<ConnectionView> list() {
         return jdbcTemplate.query(
                 "SELECT id, name, engine, host, port, database, username, password, status FROM db_connection WHERE deleted_at IS NULL ORDER BY id",
@@ -53,7 +51,7 @@ public class DatasourceServiceImpl {
                         rs.getString("status")));
     }
 
-    /** Creates a connection record. */
+    /** 创建连接记录。 */
     public ConnectionView create(String name, String engine, String host, Integer port,
                                  String database, String username, String password) {
         if (name == null || name.isBlank()) {
@@ -69,13 +67,13 @@ public class DatasourceServiceImpl {
         return get(id);
     }
 
-    /** Soft-deletes a connection (row kept; history stays but becomes unreachable via filtered reads). */
+    /** 软删连接(行保留;历史仍在但经过滤读不可达)。 */
     public boolean delete(long id) {
         return jdbcTemplate.update(
                 "UPDATE db_connection SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
-    /** Loads one connection (masked). */
+    /** 加载单个连接(脱敏)。 */
     public ConnectionView get(long id) {
         List<ConnectionView> rows = jdbcTemplate.query(
                 "SELECT id, name, engine, host, port, database, username, password, status FROM db_connection WHERE id = ? AND deleted_at IS NULL",
@@ -96,7 +94,7 @@ public class DatasourceServiceImpl {
         return rows.get(0);
     }
 
-    /** Tests connectivity: opens a real JDBC connection, measures latency. */
+    /** 测试连通:打开真实 JDBC 连接并测延迟。 */
     public ConnectionStatus test(long id) {
         if (isRedis(id)) {
             return testRedis(id);
@@ -113,7 +111,7 @@ public class DatasourceServiceImpl {
         }
     }
 
-    /** Tests a Redis connection: PING round-trip, measures latency. */
+    /** 测试 Redis 连接:PING 往返并测延迟。 */
     private ConnectionStatus testRedis(long id) {
         long start = System.currentTimeMillis();
         try (RedisConnections.Open open = RedisConnections.open(redisParams(id))) {
@@ -127,7 +125,7 @@ public class DatasourceServiceImpl {
         }
     }
 
-    /** Introspects the schema of the connected database. */
+    /** 内省所连数据库的 schema。 */
     public SchemaSnapshot schema(long id) {
         if (isRedis(id)) {
             return schemaRedis(id);
@@ -175,7 +173,7 @@ public class DatasourceServiceImpl {
         }
     }
 
-    /** Renders the Redis key space into the generic schema shape. */
+    /** 把 Redis 键空间渲染为通用 schema 形态。 */
     private SchemaSnapshot schemaRedis(long id) {
         try (RedisConnections.Open open = RedisConnections.open(redisParams(id))) {
             SchemaSnapshot snapshot = RedisSchema.snapshot(open.connection().sync(), redisParams(id).db());
@@ -188,8 +186,8 @@ public class DatasourceServiceImpl {
     }
 
     /**
-     * Executes a guarded read-only statement: at most {@value #MAX_ROWS} rows,
-     * cell values rendered as strings, execution persisted to query_history.
+     * 执行受控只读语句:最多 {@value #MAX_ROWS} 行,单元格值渲染为字符串,
+     * 执行落 query_history。
      */
     public QueryResult executeReadOnly(long id, String sql) {
         if (isRedis(id)) {
@@ -234,7 +232,7 @@ public class DatasourceServiceImpl {
         }
     }
 
-    /** Query history of a connection, newest first. */
+    /** 连接的查询历史,最新在前。 */
     public List<HistoryView> history(long id, int limit) {
         return jdbcTemplate.query(
                 "SELECT id, sql_text, duration_ms, rows_affected, status, executed_at FROM query_history "
@@ -249,7 +247,7 @@ public class DatasourceServiceImpl {
                 id, limit);
     }
 
-    /** Executes a guarded read-only Redis command (console path). */
+    /** 执行受控只读 Redis 命令(控制台路径)。 */
     private QueryResult executeRedis(long id, String command) {
         List<String> argv = RedisGuard.requireReadOnly(command);
         long start = System.currentTimeMillis();
@@ -269,7 +267,7 @@ public class DatasourceServiceImpl {
         }
     }
 
-    /** True when the connection's engine is redis. */
+    /** 连接引擎为 redis 时 true。 */
     private boolean isRedis(long id) {
         String engine = jdbcTemplate.query(
                 "SELECT engine FROM db_connection WHERE id = ? AND deleted_at IS NULL",
@@ -280,7 +278,7 @@ public class DatasourceServiceImpl {
         return "redis".equals(engine);
     }
 
-    /** Redis connection parameters (database column holds the logical db index). */
+    /** Redis 连接参数(database 列存逻辑 db 序号)。 */
     private RedisConnections.Params redisParams(long id) {
         List<RedisConnections.Params> rows = jdbcTemplate.query(
                 "SELECT host, port, username, password, database FROM db_connection WHERE id = ? AND deleted_at IS NULL",
@@ -297,7 +295,7 @@ public class DatasourceServiceImpl {
         return rows.get(0);
     }
 
-    /** Redis logical db index from the database column (defaults to 0). */
+    /** 从 database 列取 Redis 逻辑 db 序号(默认 0)。 */
     private static Integer parseDbIndex(String database) {
         if (database == null || database.isBlank()) {
             return 0;
@@ -310,10 +308,9 @@ public class DatasourceServiceImpl {
     }
 
     /**
-     * Executes a single write statement after the agent's approval flow.
-     * Guarded: write verb only (agent-side RiskClassifier is advisory; this is
-     * the enforcing layer), one statement, 30s timeout. Returns the affected
-     * row count as a single-cell result. Persisted to query_history.
+     * 在 agent 审批流之后执行单条写语句。受控:仅写动词(agent 侧 RiskClassifier
+     * 是建议性的;这里是强制层)、单条语句、30s 超时。返回受影响行数作为单格结果。
+     * 落 query_history。
      */
     public QueryResult executeWrite(long id, String sql) {
         WriteGuard.requireWrite(sql);
@@ -345,7 +342,7 @@ public class DatasourceServiceImpl {
                     "INSERT INTO query_history (connection_id, sql_text, duration_ms, rows_affected, status) VALUES (?, ?, ?, ?, ?)",
                     connectionId, sql, durationMs, rows, status);
         } catch (Exception ignored) {
-            // history is best-effort; never fail the query because of it
+            // 历史是尽力而为;绝不因它让查询失败
         }
     }
 
@@ -380,7 +377,7 @@ public class DatasourceServiceImpl {
         return message.length() <= 300 ? message : message.substring(0, 300) + "…";
     }
 
-    /** Connection row as consumed by the frontend (password masked). */
+    /** 前端消费的连接行(密码脱敏)。 */
     public record ConnectionView(
             long id,
             String name,
@@ -393,7 +390,7 @@ public class DatasourceServiceImpl {
             String status) {
     }
 
-    /** Query history row as consumed by the frontend. */
+    /** 前端消费的查询历史行。 */
     public record HistoryView(
             long id,
             String sql,

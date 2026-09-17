@@ -1,7 +1,7 @@
 package com.nora.rag.service;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.rag.config.EmbeddingProperties;
+import java.util.List;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -9,15 +9,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.util.List;
+import com.nora.common.exception.BusinessException;
+import com.nora.rag.config.EmbeddingProperties;
 
 /**
- * Ingestion pipeline: pulls the extracted text from file-service, chunks it,
- * embeds the chunks, and persists {@code knowledge_doc} + {@code knowledge_chunk}.
+ * 摄入管线:从 file-service 拉取提取文本 → 分块 → 嵌入 → 落
+ * {@code knowledge_doc} + {@code knowledge_chunk}。
  *
- * <p>Phase 1 runs the pipeline synchronously (file-service triggers it after
- * its own async extraction completes). Doc status transitions:
- * processing → indexed on success, processing → failed on embedding failure.
+ * <p>Phase 1 同步执行(file-service 在自己的异步提取完成后触发)。
+ * 文档状态流转:processing → indexed(成功),processing → failed(嵌入失败)。
  */
 @Service
 public class IndexingService {
@@ -29,11 +29,10 @@ public class IndexingService {
     private final EmbeddingService embeddingService;
     private final EmbeddingProperties embeddingProperties;
     /**
-     * Programmatic transactions for the failure path: {@code status='failed'}
-     * must survive the rethrow of the very exception that caused it, and the
-     * embedding HTTP call must not run inside a DB transaction (it holds a
-     * pool connection for seconds). {@code @Transactional} can do neither —
-     * rollback undoes the failed marker, and self-invocation skips the proxy.
+     * 失败路径用编程式事务:{@code status='failed'} 必须在引发它的异常重抛后
+     * 依然留存,且嵌入 HTTP 调用不能在 DB 事务内跑(会占用连接池数秒)。
+     * {@code @Transactional} 两件都做不到——回滚会撤销失败标记,自调用又
+     * 绕过代理。
      */
     private final TransactionTemplate txTemplate;
 
@@ -50,23 +49,21 @@ public class IndexingService {
     }
 
     /**
-     * Indexes a document: chunk + embed + persist. Re-indexing the same source
-     * entity replaces its chunks (ON DELETE CASCADE), so an update never
-     * leaves stale chunks behind.
+     * 索引一个文档:分块 + 嵌入 + 落库。重复索引同一来源实体会替换其块
+     * (ON DELETE CASCADE),更新不会留下陈旧块。
      *
-     * <p>Dedup key is {@code (source, source_id)} when a sourceId is given
-     * (files, keyed by file-service fileId), otherwise {@code (source, name)} —
-     * this is what makes "re-saving the same text replaces it" true for
-     * name-keyed sources such as chat saves. Rows reached through the other key
-     * are untouched, so a text doc never evicts a file doc sharing its name.
+     * <p>去重键:给了 sourceId 用 {@code (source, source_id)}(文件按
+     * file-service fileId),否则用 {@code (source, name)}——后者让"重存同名
+     * 文本即替换"对按名索引的来源(如对话保存)成立。经另一键可达的行不受
+     * 影响,所以文本文档不会挤掉同名的文件文档。
      *
-     * @param name     display name (usually the file name)
-     * @param source   ingestion source, e.g. "file"
-     * @param sourceId id of the source entity (file-service fileId); {@code null} for name-keyed sources
-     * @param size     human-readable size label, e.g. "12 KB"
-     * @param text     extracted plain text
-     * @return persisted doc id
-     * @throws BusinessException when embedding is not configured or fails
+     * @param name     展示名(通常是文件名)
+     * @param source   摄入来源,如 "file"
+     * @param sourceId 来源实体 id(file-service fileId);按名索引的来源传 {@code null}
+     * @param size     人类可读大小标签,如 "12 KB"
+     * @param text     提取出的纯文本
+     * @return 落库的文档 id
+     * @throws BusinessException 嵌入未配置或失败时
      */
     @Transactional
     public long indexDocument(String name, String source, Long sourceId, String size, String text) {
@@ -133,27 +130,21 @@ public class IndexingService {
     }
 
     /**
-     * Re-embeds a doc's existing chunks in place, keeping its id and chunk
-     * boundaries.
+     * 原地重建文档已有块的向量,保持 id 与分块边界。
      *
-     * <p>Use cases: recovering {@code status='failed'} docs once the embedding
-     * key is configured, and refreshing vectors after the embedding model or
-     * dimension changed — stale vectors otherwise never match a query embedded
-     * with the new model. The original file is not needed: chunk text lives in
-     * {@code knowledge_chunk.content}.
+     * <p>用途:嵌入 key 配好后恢复 {@code status='failed'} 的文档;嵌入模型或
+     * 维度变更后刷新向量——旧向量与新模型的查询永远对不上。不需要原始文件:
+     * 块文本就在 {@code knowledge_chunk.content} 里。
      *
-     * <p>Structure: no method-level {@code @Transactional}. The embedding HTTP
-     * call runs outside any transaction (it must not pin a pool connection for
-     * its whole duration); the delete+insert+status writes run in one short
-     * programmatic transaction; and the {@code status='failed'} marker runs in
-     * its own committed transaction before the exception propagates — under a
-     * method-level rollback it would be silently undone and the doc would look
-     * healthy while holding no/garbage vectors.
+     * <p>结构:方法级不加 {@code @Transactional}。嵌入 HTTP 在任何事务外执行
+     * (不能整个时长占着池连接);delete+insert+status 写在一个短编程式事务里;
+     * {@code status='failed'} 标记在异常传播前以独立事务提交——若走方法级回滚
+     * 它会被静默撤销,文档看似健康却没有任何/只有垃圾向量。
      *
-     * @param docId doc to rebuild
-     * @param texts chunk texts, in chunk_index order
-     * @return number of chunks re-embedded
-     * @throws BusinessException when embedding is not configured or fails
+     * @param docId 要重建的文档
+     * @param texts 块文本,按 chunk_index 顺序
+     * @return 重建的块数
+     * @throws BusinessException 嵌入未配置或失败时
      */
     public int reindexChunks(long docId, List<String> texts) {
         if (texts == null || texts.isEmpty()) {
@@ -202,9 +193,8 @@ public class IndexingService {
     }
 
     /**
-     * Marks the doc failed in its own committed transaction so the marker
-     * survives the exception that follows (a {@code @Transactional} rollback
-     * would undo it; see class javadoc).
+     * 以独立事务把文档标记为失败,让标记在随后的异常中留存
+     * ({@code @Transactional} 回滚会撤销它;见类注释)。
      */
     private void markFailed(long docId) {
         try {

@@ -1,9 +1,8 @@
 package com.nora.file.api;
 
 /**
- * Dubbo RPC contract for file-service. The provider side (file-service)
- * implements this interface and registers it to Nacos; consumer services
- * inject it with {@code @DubboReference}.
+ * file-service 的 Dubbo RPC 契约。提供方(file-service)实现本接口并注册到
+ * Nacos;消费方服务经 {@code @DubboReference} 注入。
  *
  * @see FileItem
  * @see FileUploadRequest
@@ -12,30 +11,28 @@ package com.nora.file.api;
 public interface FileService {
 
     /**
-     * Uploads a new file. The provider persists the file item, stores the
-     * binary content, and emits the {@code file.uploaded} event (outbox)
-     * so rag-service can index it.
+     * 上传新文件。提供方持久化文件条目、存储二进制内容,并发出
+     * {@code file.uploaded} 事件(outbox),让 rag-service 可索引它。
      *
-     * @param request upload payload (name + base64 content)
-     * @return the persisted file item
+     * @param request 上传载荷(名称 + base64 内容)
+     * @return 落库的文件条目
      */
     FileItem upload(FileUploadRequest request);
 
     /**
-     * Returns the extracted plain-text preview for an uploaded file.
+     * 返回上传文件的提取纯文本预览。
      *
-     * @param fileId id of the file
-     * @return preview with type and text content
+     * @param fileId 文件 id
+     * @return 带类型与文本内容的预览
      */
     FilePreview preview(Long fileId);
 
     /**
-     * Fetches a single file item by id — the supported way for other
-     * services to read {@code file_item} rows owned by file-service
-     * (cross-schema JOIN is forbidden).
+     * 按 id 取单个文件条目——其他服务读取 file-service 所属
+     * {@code file_item} 行的受支持方式(禁止跨 schema JOIN)。
      *
-     * @param id file id
-     * @return the file item
+     * @param id 文件 id
+     * @return 文件条目
      */
     FileItem getById(Long id);
 }

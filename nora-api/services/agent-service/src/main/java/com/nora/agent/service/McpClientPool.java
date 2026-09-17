@@ -1,14 +1,5 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.modelcontextprotocol.client.McpClient;
-import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.spec.McpClientTransport;
-import io.modelcontextprotocol.spec.McpSchema;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,6 +7,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpClientTransport;
+import io.modelcontextprotocol.spec.McpSchema;
 
 /**
  * MCP 客户端连接池(2026-09-17 从 McpServerService 拆出,复杂度审计建议 #2):
@@ -34,14 +36,14 @@ class McpClientPool {
     private final ObjectMapper objectMapper;
     /** 链路自动选择(局域网优先,公网兜底);可为 null(功能未启用)。 */
     private final RelayMediaRouter router;
-    /** server id → live client (connected lazily, removed on delete/disable) */
+    /** server id → 活客户端(懒连接;删除/停用时移除) */
     private final Map<Long, McpSyncClient> clients = new ConcurrentHashMap<>();
     /** server id → 该客户端建立时实际使用的 URL(链路切换时对比驱逐用)。 */
     private final Map<Long, String> clientUrls = new ConcurrentHashMap<>();
-    /** server id → spawned stdio child process (killed on evict/disable/delete) */
+    /** server id → 拉起的 stdio 子进程(evict/停用/删除时杀掉) */
     private final Map<Long, Process> stdioProcs = new ConcurrentHashMap<>();
     /**
-     * server id → process-tree snapshot taken at connect time (root + all
+     * server id → 连接时记录的进程树快照(根 + 全部
      * descendants). 进程被中途"截断"(父进程先死)会从子孙链上消失,
      * 杀树时再查询 descendants() 已看不到它们——快照句柄不依赖父子链,
      * 是清理孤儿进程的最后防线(实测 npx 三层树:cmd → node-cli → node-server)。
@@ -53,7 +55,7 @@ class McpClientPool {
         this.router = router;
     }
 
-    /** Builds (or reuses) a connected client for the server. */
+    /** 为服务器构建(或复用)已连接客户端。 */
     McpSyncClient clientFor(McpServerService.RawServer server) {
         String desiredUrl = router == null ? server.url() : router.preferLan(server.url());
         McpSyncClient existing = clients.get(server.id());
@@ -158,7 +160,7 @@ class McpClientPool {
         };
     }
 
-    /** Reads the child process handle off StdioClientTransport (private field, best-effort). */
+    /** 从 StdioClientTransport 读子进程句柄(私有字段,尽力而为)。 */
     private Process extractProcess(McpClientTransport transport) {
         try {
             java.lang.reflect.Field f = transport.getClass().getDeclaredField("process");
@@ -207,7 +209,7 @@ class McpClientPool {
         }
     }
 
-    /** Closes the pooled client and kills the stdio process tree (self-heal on failure). */
+    /** 关闭池化客户端并杀 stdio 进程树(失败时自愈)。 */
     void evictClient(long serverId) {
         // stdio 必须"先杀进程树、后关客户端":close() 会让直接子进程(cmd.exe
         // 包装层)先退出,其孙进程(node)随即被孤儿化——之后再 taskkill /T
@@ -224,7 +226,7 @@ class McpClientPool {
         }
     }
 
-    /** Kills the spawned stdio process tree for a server (no-op for HTTP transports). */
+    /** 杀掉某服务器拉起的 stdio 进程树(HTTP 传输为无操作)。 */
     private void killProcessTree(long serverId) {
         Process proc = stdioProcs.remove(serverId);
         // 快照兜底:即使根进程已死/树被截断,连接时记录的全部句柄仍可逐个强杀

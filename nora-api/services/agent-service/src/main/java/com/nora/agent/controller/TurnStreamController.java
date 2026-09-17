@@ -1,0 +1,161 @@
+package com.nora.agent.controller;
+
+import java.io.IOException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.nora.agent.service.TurnStreamRegistry;
+import com.nora.common.response.ApiResponse;
+
+/**
+ * 断线重连子系统(2026-09-17 从 AgentController 拆出):
+ * 轮次探测 + SSE 断线续传。
+ *
+ * <p>为什么独立成类:这套协议有自己的不变量(seq 游标 / 回放与实况的
+ * fencing / exactly-once 去重 / Last-Event-ID 解析),与消息 CRUD 是两回事。
+ * 拆出后 AgentController 只剩「发起对话 + 会话管理 + 审批」,本类只关心
+ * 「连接恢复」。
+ *
+ * <p>重连协议:每个事件带 {@code id:<seq>}(轮次内单调递增)。重连的
+ * EventSource 自动带 {@code Last-Event-ID: <turnId>:<seq>};服务端回放
+ * 该 seq 之后的事件,断点精确续传,不重不漏。
+ */
+@RestController
+@RequestMapping("/api/chat")
+public class TurnStreamController {
+
+    private static final Logger log = LoggerFactory.getLogger(TurnStreamController.class);
+
+    private static final long SSE_TIMEOUT_MS = 180_000;
+
+    private final TurnStreamRegistry turnStreams;
+
+    public TurnStreamController(TurnStreamRegistry turnStreams) {
+        this.turnStreams = turnStreams;
+    }
+
+    /**
+     * 重连用的实时轮次探测:会话是否有在途轮次、已发出什么?客户端把它与
+     * 本地消息尾部对比,重建流式 UI(isTyping、步骤、半截回答),
+     * 无需等轮次结束。
+     */
+    @GetMapping("/sessions/{sessionId}/turn/live")
+    public ApiResponse<LiveTurnView> liveTurn(@PathVariable String sessionId) {
+        var turn = turnStreams.get(sessionId);
+        if (turn == null) {
+            return ApiResponse.ok(new LiveTurnView(false, null, null, 0, null, null, 0));
+        }
+        var buffer = turn.snapshotAfter(0);
+        return ApiResponse.ok(new LiveTurnView(
+                !turn.isFinished(),
+                turn.content,
+                turn.startedAtMs,
+                buffer.size(),
+                buffer.isEmpty() ? null : buffer.get(buffer.size() - 1),
+                turn.turnId,
+                turn.lastSeq()));
+    }
+
+    /**
+     * 对实时轮次的 SSE 接入:先回放缓冲事件,再实时跟随直到
+     * {@code done}/{@code error}。
+     *
+     * <p>重连/续传协议:每个事件带 {@code id:<seq>}(轮次内单调序号)。
+     * 重连的 EventSource 发送 {@code Last-Event-ID: <turnId>:<lastSeq>};
+     * 该 seq 之后的事件被回放,断开的连接精确从断点续传,不重不漏。
+     *
+     * <p>顺序由两个事件源的 fencing 保证:回放排空期间(在轮次上同步),
+     * 实况追加阻塞;排空完成后才激活订阅。事件因此绝不互相超车或重复。
+     */
+    @GetMapping(value = "/sessions/{sessionId}/turn/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter attachTurnStream(
+            @PathVariable String sessionId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
+        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+        var turn = turnStreams.get(sessionId);
+        if (turn == null) {
+            // 无进行中轮次:立刻收尾,前端据此走普通历史加载
+            try {
+                emitter.send(SseEmitter.event().name("idle").data("{\"live\":false}"));
+            } catch (IOException ignored) {
+                // 客户端已离开
+            }
+            emitter.complete();
+            return emitter;
+        }
+        // 解析 Last-Event-ID("turnId:seq"):仅当属于本轮时才作增量游标,
+        // 陈旧轮的游标对新一轮无意义,必须从 0 全量回放
+        long afterSeq = 0;
+        if (lastEventId != null) {
+            int sep = lastEventId.lastIndexOf(':');
+            if (sep > 0 && lastEventId.substring(0, sep).equals(turn.turnId)) {
+                try {
+                    afterSeq = Math.max(0, Long.parseLong(lastEventId.substring(sep + 1)));
+                } catch (NumberFormatException ignored) {
+                    // 坏游标按全量回放处理
+                }
+            }
+        }
+        java.util.Set<Long> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        java.util.function.Consumer<TurnStreamRegistry.TurnEvent> forward = event -> {
+            // exactly-once:回放与实况可能短暂重叠(finish 后的新订阅),seq 去重兜底;
+            // id 下发给客户端作断线续传游标
+            if (seen.add(event.seq())) {
+                sendRaw(emitter, event.event(), event.json(), event.seq());
+            }
+        };
+        // 回放 drain 与实况订阅在同一把锁内原子完成:drain 里没有的事件必然
+        // 会走订阅到达,实况事件不可能插队到更早的缓冲事件之前
+        java.util.List<TurnStreamRegistry.TurnEvent> backlog;
+        try {
+            backlog = turn.subscribeDraining(afterSeq, forward);
+            for (TurnStreamRegistry.TurnEvent e : backlog) {
+                forward.accept(e);
+            }
+        } catch (Exception e) {
+            log.debug("turn replay failed for {}: {}", sessionId, e.getMessage());
+            emitter.complete();
+            return emitter;
+        }
+        // subscribeDraining 之后 turn 可能已 finish(终态事件在 drain 后、
+        // finished 置位前入缓冲,订阅者已能收到;此处兜底关闭 emitter)
+        if (turn.isFinished()) {
+            emitter.complete();
+        }
+        emitter.onCompletion(() -> turn.unsubscribe(forward));
+        emitter.onTimeout(() -> turn.unsubscribe(forward));
+        return emitter;
+    }
+
+    /**
+     * 发送已序列化的 JSON(TurnEvent 回放路径),不再二次 toJson。
+     * {@code id:<seq>} 供 EventSource 断线续传:浏览器重连时自动带上
+     * Last-Event-ID,服务端据此增量回放,不重不漏。
+     */
+    private void sendRaw(SseEmitter emitter, String event, String json, long seq) {
+        try {
+            emitter.send(SseEmitter.event().id(String.valueOf(seq)).name(event).data(json, MediaType.APPLICATION_JSON));
+        } catch (IOException | IllegalStateException e) {
+            log.debug("SSE replay send failed (client disconnected?): {}", e.getMessage());
+        }
+    }
+
+    /** GET /sessions/{id}/turn/live 响应:lastEvent 供增量续传(前端按游标去重)。 */
+    public record LiveTurnView(
+            boolean running,
+            String content,
+            Long startedAtMs,
+            int bufferedEvents,
+            TurnStreamRegistry.TurnEvent lastEvent,
+            String turnId,
+            long lastSeq) {
+    }
+}

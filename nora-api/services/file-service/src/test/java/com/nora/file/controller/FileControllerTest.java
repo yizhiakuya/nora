@@ -1,13 +1,12 @@
 package com.nora.file.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.when;
+
 import java.time.Instant;
 import java.util.List;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.file.api.FileItem;
-import com.nora.file.api.FilePreview;
-import com.nora.file.client.RagIndexClient;
-import com.nora.file.service.FileStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,10 +14,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.when;
+import com.nora.common.exception.BusinessException;
+import com.nora.file.api.FileItem;
+import com.nora.file.api.FilePreview;
+import com.nora.file.client.RagIndexClient;
+import com.nora.file.service.FileStorageService;
 
 @ExtendWith(MockitoExtension.class)
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
@@ -50,7 +50,7 @@ class FileControllerTest {
 
         FileItem result = controller.upload(upload, null).data();
 
-        // (assertion removed)
+        // (断言已移除)
         result.name();
 
     }

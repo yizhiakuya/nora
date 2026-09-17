@@ -1,6 +1,7 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -9,13 +10,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Reads workbench files via file-service ({@code GET /api/files},
- * {@code GET /api/files/{id}/preview}) for the agent's {@code read_file}
- * tool. Preview text comes pre-extracted (Tika); this client only bounds
- * and renders it.
+ * 经 file-service({@code GET /api/files}、{@code GET /api/files/{id}/preview})
+ * 读取工作台文件,供 agent 的 {@code read_file} 工具。预览文本已预提取(Tika);
+ * 本客户端只做截断与渲染。
  */
 @Service
 public class FileToolClient {
@@ -29,13 +29,13 @@ public class FileToolClient {
     }
 
     /**
-     * Lists workbench files (id, name, size, indexed flag, folder).
+     * 列出工作台文件(id、名称、大小、索引标记、文件夹)。
      *
      * <p>输出带文件夹归属(2026-09-17):用户在文件中心整理的目录结构
      * 对 AI 可见——「项目资料文件夹里有什么」这类问题能直接回答;
      * 文件列表按文件夹分组渲染(根目录文件在最前)。
      *
-     * @return one line per file, grouped by folder
+     * @return 每文件一行,按文件夹分组
      */
     public String list() {
         try {
@@ -119,12 +119,11 @@ public class FileToolClient {
     }
 
     /**
-     * Reads the extracted text content of a file (Tika preview). Bounded to
-     * 12K chars with head+tail so the model sees both the beginning (docs)
-     * and the end (conclusions/logs).
+     * 读取文件的提取文本(Tika 预览)。截到 12K 字符头+尾,让模型同时看到
+     * 开头(文档)与结尾(结论/日志)。
      *
-     * @param fileId file id from {@link #list()}
-     * @return header + bounded text, or an error line
+     * @param fileId 来自 {@link #list()} 的文件 id
+     * @return 表头 + 有界文本,或一行错误
      */
     public String preview(long fileId) {
         PreviewInfo info = previewInfo(fileId);
@@ -198,7 +197,7 @@ public class FileToolClient {
     /**
      * 单个文件的元数据(id/name/mimeType/sizeBytes)。
      *
-     * @param id file id
+     * @param id 文件 id
      * @return 元数据;失败 {@code null}
      */
     public JsonNode meta(long id) {
@@ -226,7 +225,7 @@ public class FileToolClient {
      * <p>文本提取为空(二进制/图片)时调用:拿到原始字节后按文件头识别图片,
      * 作为图像附件喂给视觉模型。失败返回 {@code null},由调用方回退文本提示。
      *
-     * @param fileId file id
+     * @param fileId 文件 id
      * @return 字节与 MIME;失败 {@code null}
      */
     public RawFile raw(long fileId) {
@@ -307,7 +306,7 @@ public class FileToolClient {
         return String.format(java.util.Locale.ROOT, "%.1fMB", bytes / (1024.0 * 1024));
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 }

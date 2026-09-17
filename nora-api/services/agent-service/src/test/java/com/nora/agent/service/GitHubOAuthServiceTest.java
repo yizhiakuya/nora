@@ -1,17 +1,16 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-
-import java.util.Map;
-
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+
+import java.util.Map;
+
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * GitHub OAuth 设备码流程:start(申请设备码)→ poll(轮询换 token →
@@ -32,7 +31,7 @@ class GitHubOAuthServiceTest {
     @Test
     void startRequiresClientId() {
         GitHubOAuthService svc = buildWith("", (url, body) -> "{}");
-        // (assertion removed)
+        // (断言已移除)
     }
 
     @Test
@@ -55,7 +54,7 @@ class GitHubOAuthServiceTest {
     void startSurfacesGitHubError() {
         GitHubOAuthService svc = buildWith("bad-client", (url, body) ->
                 "{\"error\":\"invalid_client\",\"error_description\":\"The client_id is not valid\"}");
-        // (assertion removed)
+        // (断言已移除)
     }
 
     @Test

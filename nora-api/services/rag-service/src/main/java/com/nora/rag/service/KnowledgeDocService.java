@@ -1,17 +1,18 @@
 package com.nora.rag.service;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.rag.config.EmbeddingProperties;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
 import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.nora.common.exception.BusinessException;
+import com.nora.rag.config.EmbeddingProperties;
+
 /**
- * Read-side queries over {@code schema_rag.knowledge_doc}: the docs list and
- * the index stats snapshot consumed by the frontend KnowledgeDoc/IndexStats types.
+ * {@code schema_rag.knowledge_doc} 的读侧查询:前端 KnowledgeDoc/IndexStats
+ * 类型消费的文档列表与索引统计快照。
  */
 @Service
 public class KnowledgeDocService {
@@ -26,7 +27,7 @@ public class KnowledgeDocService {
         this.embeddingProperties = embeddingProperties;
     }
 
-    /** All knowledge docs, newest first, shaped for the KnowledgeDoc frontend type. */
+    /** 全部知识文档,最新在前,按前端 KnowledgeDoc 类型塑形。 */
     public List<KnowledgeDocView> listDocs() {
         return jdbcTemplate.query(
                 "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
@@ -44,7 +45,7 @@ public class KnowledgeDocService {
         );
     }
 
-    /** Single doc by id (used by the index endpoint response). */
+    /** 按 id 取单文档(索引端点响应用)。 */
     public KnowledgeDocView getDoc(long id) {
         List<KnowledgeDocView> docs = jdbcTemplate.query(
                 "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
@@ -65,10 +66,10 @@ public class KnowledgeDocService {
     }
 
     /**
-     * Soft-deletes a doc and its chunks (rows kept; queries filter them out).
+     * 软删文档及其分块(行保留;查询过滤掉)。
      *
-     * @param id doc id
-     * @return false when the id does not exist (or is already deleted)
+     * @param id 文档 id
+     * @return id 不存在(或已删除)时 false
      */
     @org.springframework.transaction.annotation.Transactional
     public boolean deleteDoc(long id) {
@@ -83,10 +84,10 @@ public class KnowledgeDocService {
     }
 
     /**
-     * Soft-deletes many docs (and their chunks) in one statement.
+     * 一条语句软删多个文档(及其分块)。
      *
-     * @param ids doc ids; null/empty is a no-op
-     * @return number of soft-deleted rows
+     * @param ids 文档 id;null/空为无操作
+     * @return 软删的行数
      */
     @org.springframework.transaction.annotation.Transactional
     public int deleteDocs(List<Long> ids) {
@@ -190,19 +191,18 @@ public class KnowledgeDocService {
     }
 
     /**
-     * Renames a doc. Chunks and embeddings are untouched, so this is cheap and
-     * safe even when no embedding API key is configured.
+     * 重命名文档。分块与嵌入不受影响,所以即使没配嵌入 API key 也便宜且安全。
      *
-     * <p>The doc's {@code (source, name)} uniqueness (V3 partial unique index,
-     * name-keyed rows) is enforced here with a pre-check that yields a clean
-     * 400 from the controller instead of a {@code DataIntegrityViolation} 500:
-     * renaming onto an existing sibling name is a caller error, not a crash.
+     * <p>文档的 {@code (source, name)} 唯一性(V3 部分唯一索引,按名索引的行)
+     * 在这里用预检强制,让控制器给出干净的 400 而不是
+     * {@code DataIntegrityViolation} 500:改成已存在的同源同名是调用方错误,
+     * 不是崩溃。
      *
-     * @param id   doc id
-     * @param name new display name (trimmed, non-blank)
-     * @return false when the id does not exist
-     * @throws com.nora.common.exception.BusinessException 409 when a same-source
-     *         name-keyed doc already holds the new name
+     * @param id   文档 id
+     * @param name 新展示名(去空白,非空)
+     * @return id 不存在时 false
+     * @throws com.nora.common.exception.BusinessException 同源同名文档已占用
+     *         新名称时 409
      */
     public boolean renameDoc(long id, String name) {
         String trimmed = name.trim();
@@ -219,7 +219,7 @@ public class KnowledgeDocService {
                 trimmed, id) > 0;
     }
 
-    /** A doc's chunks in index order, for the detail drawer. */
+    /** 文档的分块,按 index 序,供详情抽屉。 */
     public List<ChunkView> listChunks(long id) {
         return jdbcTemplate.query(
                 "SELECT chunk_index, content, token_count FROM schema_rag.knowledge_chunk "
@@ -238,10 +238,10 @@ public class KnowledgeDocService {
     }
 
     /**
-     * Chunk rows of a doc, as the raw material for re-indexing.
+     * 文档的分块行,作为重建索引的原料。
      *
-     * @param id doc id
-     * @return chunk contents in index order; empty when the doc has none
+     * @param id 文档 id
+     * @return 按 index 序的分块内容;文档没有分块时为空
      */
     public List<String> chunkTexts(long id) {
         List<String> texts = jdbcTemplate.query(
@@ -251,7 +251,7 @@ public class KnowledgeDocService {
         return texts == null ? List.of() : texts;
     }
 
-    /** A single chunk as consumed by the frontend detail drawer. */
+    /** 前端详情抽屉消费的单条分块。 */
     public record ChunkView(
             int chunkIndex,
             String content,
@@ -289,7 +289,7 @@ public class KnowledgeDocService {
         return timestamp == null ? "—" : DISPLAY_FORMAT.format(timestamp.toLocalDateTime());
     }
 
-    /** KnowledgeDoc row as consumed by the frontend (camelCase, display date). */
+    /** 前端消费的 KnowledgeDoc 行(驼峰、展示日期)。 */
     public record KnowledgeDocView(
             long id,
             String name,
@@ -304,7 +304,7 @@ public class KnowledgeDocService {
     ) {
     }
 
-    /** IndexStats snapshot as consumed by the frontend IndexStatus.tsx. */
+    /** 前端 IndexStatus.tsx 消费的 IndexStats 快照。 */
     public record IndexStatsView(
             long totalDocs,
             long totalChunks,

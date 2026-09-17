@@ -1,10 +1,10 @@
 package com.nora.agent.service;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.List;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
 
 /**
  * 指令型技能:名称 + 描述 + 指令正文,启用后以「技能目录」注入系统提示,

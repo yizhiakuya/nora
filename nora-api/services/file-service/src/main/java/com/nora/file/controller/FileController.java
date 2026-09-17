@@ -4,11 +4,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
-import com.nora.common.response.ApiResponse;
-import com.nora.file.api.FileItem;
-import com.nora.file.api.FilePreview;
-import com.nora.file.client.RagIndexClient;
-import com.nora.file.service.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,9 +16,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.nora.common.response.ApiResponse;
+import com.nora.file.api.FileItem;
+import com.nora.file.api.FilePreview;
+import com.nora.file.client.RagIndexClient;
+import com.nora.file.service.FileStorageService;
+
 /**
- * REST endpoints for file upload, listing, deletion, preview, and indexing.
- * All responses use the unified {@link ApiResponse} envelope (camelCase JSON).
+ * 文件上传/列表/删除/预览/索引的 REST 端点。
+ * 全部响应使用统一 {@link ApiResponse} 信封(驼峰 JSON)。
  */
 @RestController
 @RequestMapping("/api/files")
@@ -40,11 +41,11 @@ public class FileController {
     }
 
     /**
-     * Uploads a file (multipart), stores it, and persists its metadata.
+     * 上传文件(multipart),存储并持久化其元数据。
      *
-     * @param file     multipart file part
-     * @param folderId optional target folder (files page "upload into current folder")
-     * @return the persisted file item
+     * @param file     multipart 文件部件
+     * @param folderId 可选目标文件夹(文件页"上传到当前文件夹")
+     * @return 落库的文件条目
      */
     @PostMapping("/upload")
     public ApiResponse<FileItem> upload(@RequestParam("file") MultipartFile file,
@@ -53,13 +54,12 @@ public class FileController {
     }
 
     /**
-     * Lists files. When {@code ids} is present, only those ids are returned
-     * (also used to poll indexing state); otherwise all files are returned.
-     * When {@code folderId} is present, only files in that folder are returned.
+     * 列出文件。带 {@code ids} 时只返回这些 id(也用于轮询索引状态);
+     * 否则返回全部文件。带 {@code folderId} 时只返回该文件夹内的文件。
      *
-     * @param ids      optional comma-separated id filter
-     * @param folderId optional folder filter
-     * @return matching file items
+     * @param ids      可选逗号分隔 id 过滤
+     * @param folderId 可选文件夹过滤
+     * @return 匹配的文件条目
      */
     @GetMapping
     public ApiResponse<List<FileItem>> list(@RequestParam(value = "ids", required = false) String ids,
@@ -68,12 +68,12 @@ public class FileController {
     }
 
     /**
-     * Deletes files by ids and removes the backing files from disk.
+     * 按 ids 删除文件并从磁盘移除底层文件。
      *
      * <p>联动(2026-09-17):同步通知 rag-service 软删对应知识库文档——
      * 删除的文件不应继续被 AI 检索到。
      *
-     * @param ids comma-separated id list (required)
+     * @param ids 逗号分隔 id 列表(必填)
      * @return {@code ok(null)}
      */
     @DeleteMapping
@@ -87,10 +87,10 @@ public class FileController {
     }
 
     /**
-     * Returns the extracted plain-text preview of a file.
+     * 返回文件的提取纯文本预览。
      *
-     * @param id file id
-     * @return preview with type and text content
+     * @param id 文件 id
+     * @return 带类型与文本内容的预览
      */
     @GetMapping("/{id}/preview")
     public ApiResponse<FilePreview> preview(@PathVariable Long id) {
@@ -105,9 +105,9 @@ public class FileController {
      * 几百 MB 的视频会 OOM 且无法 seek。单区间 Range 返回 206 +
      * Content-Range(多区间合并为整体返回,视频 seek 只发单区间)。
      *
-     * @param id    file id
+     * @param id    文件 id
      * @param range 可选 Range 头(形如 {@code bytes=0-1023})
-     * @return streaming resource (200) or partial region (206)
+     * @return 流式资源(200)或区间切片(206)
      */
     @GetMapping("/{id}/raw")
     public org.springframework.http.ResponseEntity<?> raw(
@@ -196,11 +196,11 @@ public class FileController {
     }
 
     /**
-     * Triggers rag-service indexing asynchronously (fire-and-forget) and
-     * immediately returns the current file item (still {@code indexed=false}).
+     * 异步触发 rag-service 索引(发后即忘),立即返回当前文件条目
+     * (此时 {@code indexed=false})。
      *
-     * @param id file id
-     * @return the current file item
+     * @param id 文件 id
+     * @return 当前文件条目
      */
     @PostMapping("/{id}/index")
     public ApiResponse<FileItem> index(@PathVariable Long id) {
@@ -210,10 +210,10 @@ public class FileController {
     }
 
     /**
-     * Callback endpoint for rag-service: marks the file as indexed.
+     * rag-service 的回调端点:把文件标记为已索引。
      *
-     * @param id file id
-     * @return the updated file item with {@code indexed=true}
+     * @param id 文件 id
+     * @return {@code indexed=true} 的更新后文件条目
      */
     @PostMapping("/{id}/indexed")
     public ApiResponse<FileItem> indexed(@PathVariable Long id) {
@@ -330,8 +330,7 @@ public class FileController {
                 });
     }
 
-    /** Parses a comma-separated id list; blank/absent values yield an empty list. */
-    /** Parses a comma-separated id list; blank/absent values yield an empty list.
+    /** 解析逗号分隔的 id 列表;空白/缺省产出空列表。
      *  非法数字(如 "abc")抛 400 而非 500——畸形输入是客户端错误。 */
     private List<Long> parseIds(String ids) {
         try {

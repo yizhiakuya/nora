@@ -1,17 +1,18 @@
 package com.nora.automation.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.common.exception.BusinessException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nora.common.exception.BusinessException;
+
 /**
- * CRUD + execution for automation rules ({@code schema_automation}).
- * Every run (manual or scheduled) lands in {@code execution_record}.
+ * 自动化规则的 CRUD + 执行({@code schema_automation})。
+ * 每次运行(手动或计划)都落 {@code execution_record}。
  */
 @Service
 public class AutomationService {
@@ -29,7 +30,7 @@ public class AutomationService {
         this.objectMapper = objectMapper;
     }
 
-    /** Lists rules, newest first (frontend AutomationRule[]). */
+    /** 列出规则,最新在前(前端 AutomationRule[])。 */
     public List<RuleView> list() {
         return jdbcTemplate.query(
                 "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule WHERE deleted_at IS NULL ORDER BY id DESC",
@@ -76,7 +77,7 @@ public class AutomationService {
         return get(id);
     }
 
-    /** Enables/disables a rule. */
+    /** 启用/停用规则。 */
     public RuleView toggle(long id) {
         RuleView current = get(id);
         boolean next = !current.enabled();
@@ -86,24 +87,23 @@ public class AutomationService {
         return get(id);
     }
 
-    /** Soft-deletes a rule (row kept; execution history stays in the table). */
+    /** 软删规则(行保留;执行历史留在表里)。 */
     public boolean delete(long id) {
         return jdbcTemplate.update(
                 "UPDATE automation_rule SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
     /**
-     * Runs a rule now (manual trigger): executes the action and persists an
-     * execution record with status/detail.
+     * 立即运行规则(手动触发):执行动作并落一条带 status/detail 的执行记录。
      *
-     * @return the execution record view
+     * @return 执行记录视图
      */
     public ExecutionView runNow(long id) {
         RuleView rule = get(id);
         return execute(rule);
     }
 
-    /** Shared execution path for manual runs and the scheduler. */
+    /** 手动运行与调度器共用的执行路径。 */
     public ExecutionView execute(RuleView rule) {
         // 同一规则不并发执行:agent 动作一次可跑数分钟,期间调度器每分钟都会
         // 重新扫到这条规则,不挡会重复烧 LLM token。跳过时返回最近一条记录。
@@ -127,7 +127,7 @@ public class AutomationService {
         }
     }
 
-    /** Latest executions across all rules (frontend ExecutionRecord[]). */
+    /** 全部规则的最新执行(前端 ExecutionRecord[])。 */
     public List<ExecutionView> listExecutions(int limit) {
         return jdbcTemplate.query(
                 "SELECT e.id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
@@ -143,16 +143,15 @@ public class AutomationService {
                 limit);
     }
 
-    /** Scheduled scan: runs enabled daily/weekly rules whose window has come. */
+    /** 计划扫描:运行窗口已到的启用 daily/weekly 规则。 */
     public int runDueScheduled() {
         int ran = 0;
         for (RuleView rule : list()) {
             if (!rule.enabled() || !List.of("daily", "weekly").contains(rule.triggerType())) {
                 continue;
             }
-            // v1 cadence: fire once per service process per rule window is not tracked —
-            // the scheduler calls this every minute and fires when last_run predates today
-            // (daily) or predates 7 days (weekly).
+            // v1 节律:不追踪"每服务进程每窗口只触发一次"——调度器每分钟调用,
+            // 当 last_run 早于今天(daily)或早于 7 天前(weekly)时触发。
             java.sql.Timestamp last = rule.lastRunAt();
             boolean due = switch (rule.triggerType()) {
                 case "daily" -> last == null || last.before(todayMinus(0));
@@ -217,7 +216,7 @@ public class AutomationService {
         };
     }
 
-    /** Rule row as consumed by the frontend. */
+    /** 前端消费的规则行。 */
     public record RuleView(
             long id,
             String name,
@@ -229,7 +228,7 @@ public class AutomationService {
             java.sql.Timestamp lastRunAt) {
     }
 
-    /** Execution row as consumed by the frontend. */
+    /** 前端消费的执行行。 */
     public record ExecutionView(
             long id,
             String ruleName,

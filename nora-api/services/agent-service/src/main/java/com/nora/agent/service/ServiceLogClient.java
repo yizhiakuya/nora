@@ -1,6 +1,7 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import java.util.List;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -8,14 +9,14 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.List;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Tails container logs from env-service
- * ({@code GET /api/environment/services} + {@code POST .../start|stop|restart}).
+ * 从 env-service 取容器日志
+ * ({@code GET /api/environment/services} + {@code POST .../start|stop|restart})。
  *
- * <p>ACI principle: the payload fed to the LLM is the recent tail, cleaned of
- * blank lines, with a line budget — not an unbounded firehose.
+ * <p>ACI 原则:喂给 LLM 的载荷是近期尾部、去掉空行、有行数预算——
+ * 不是无界的消防水带。
  */
 @Service
 public class ServiceLogClient {
@@ -29,9 +30,9 @@ public class ServiceLogClient {
     }
 
     /**
-     * Lists the managed container names.
+     * 列出纳管容器名。
      *
-     * @return container names, or an empty list when env-service is unreachable
+     * @return 容器名;env-service 不可达时为空列表
      */
     public List<String> listServices() {
         try {
@@ -55,12 +56,12 @@ public class ServiceLogClient {
     }
 
     /**
-     * Tails recent log lines of a managed source (DOCKER container name, FILE
-     * path source, or PROC managed process — all are addressable by name).
+     * 取纳管源的最近日志行(DOCKER 容器名、FILE 路径源或 PROC 纳管进程——
+     * 都按名称寻址)。
      *
-     * @param service managed source name
-     * @param limit   max lines
-     * @return LLM-friendly rendering: header + lines, or an error line
+     * @param service 纳管源名称
+     * @param limit   最大行数
+     * @return 面向 LLM 的渲染:表头 + 行,或一行错误
      */
     public String readLogs(String service, int limit) {
         try {
@@ -95,9 +96,9 @@ public class ServiceLogClient {
     }
 
     /**
-     * Managed source name → source id (GET /services returns id+name pairs).
+     * 纳管源名称 → 源 id(GET /services 返回 id+name 对)。
      *
-     * @return id as string, or null when the name is unknown
+     * @return id 字符串;名称未知时 null
      */
     private String findSourceId(String name) {
         try {
@@ -122,7 +123,7 @@ public class ServiceLogClient {
         }
     }
 
-    /** ApiResponse envelope. */
+    /** ApiResponse 信封。 */
     record Envelope<T>(int code, T data, String message) {
     }
 }

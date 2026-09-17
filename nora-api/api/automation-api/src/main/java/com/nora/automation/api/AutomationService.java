@@ -1,35 +1,34 @@
 package com.nora.automation.api;
 
 /**
- * Dubbo contract for automation-service (per architecture-v2.md section 5.1).
+ * automation-service 的 Dubbo 契约(architecture-v2.md 5.1 节)。
  *
- * <p>Provider: services/automation-service (Quartz scheduling, event triggers,
- * action executor). Consumers: agent-service ({@code NoraTools#createAutomation}
- * ReAct tool) and gateway-routed REST callers.
+ * <p>提供方:services/automation-service(Quartz 调度、事件触发、动作执行器)。
+ * 消费方:agent-service({@code NoraTools#createAutomation} ReAct 工具)与经
+ * 网关路由的 REST 调用方。
  *
- * <p>Implementations are registered to Nacos via Dubbo and injected on the
- * consumer side with {@code @DubboReference}.
+ * <p>实现经 Dubbo 注册到 Nacos,消费方以 {@code @DubboReference} 注入。
  */
 public interface AutomationService {
 
     /**
-     * Runs the automation rule with the given id exactly once.
+     * 精确运行一次给定 id 的自动化规则。
      *
-     * @param ruleId id of the automation rule to execute
-     * @return execution record with status, duration and outcome detail
+     * @param ruleId 要执行的规则 id
+     * @return 带 status、duration 与结果 detail 的执行记录
      */
     ExecutionRecord run(Long ruleId);
 
     /**
-     * Registers a new automation rule.
+     * 注册新的自动化规则。
      *
-     * <p>Per the ACI design (architecture-v2.md section 4.8.3), the return value
-     * is a structured confirmation (ruleId + name), not execution details.
+     * <p>按 ACI 设计(architecture-v2.md 4.8.3 节),返回值是结构化确认
+     * (ruleId + name),不是执行细节。
      *
-     * @param name    human-readable rule name
-     * @param trigger trigger condition (cron expression or event pattern)
-     * @param action  action to execute when the trigger fires
-     * @return confirmation string containing the created ruleId and name
+     * @param name    人类可读规则名
+     * @param trigger 触发条件(cron 表达式或事件模式)
+     * @param action  触发时执行的动作
+     * @return 含创建出的 ruleId 与 name 的确认字符串
      */
     String addRule(String name, String trigger, String action);
 }

@@ -1,16 +1,17 @@
 package com.nora.agent.service;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * 上下文装配器(2026-09-17 从 ChatOrchestrationService 拆出,复杂度审计 Step 4):
@@ -540,9 +541,8 @@ class ChatContextAssembler {
     }
 
     /**
-     * Extracts plain text from a tool message content node: either a plain string
-     * (legacy) or a multimodal array (text + image_url parts, new). Images are
-     * represented by a short marker so callers that only need text stay correct.
+     * 从工具消息 content 节点提取纯文本:普通字符串(遗留)或多模态数组
+     * (text + image_url 部件,新)。图片以短标记表示,只关心文本的调用方仍正确。
      */
     static String textOfContent(JsonNode content) {
         if (content == null || content.isMissingNode() || content.isNull()) return null;

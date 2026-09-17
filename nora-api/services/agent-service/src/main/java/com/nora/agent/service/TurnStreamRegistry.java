@@ -1,51 +1,46 @@
 package com.nora.agent.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
 /**
- * In-memory event bus for in-flight chat turns, keyed by sessionId.
+ * 进行中对话轮次的内存事件总线,按 sessionId 索引。
  *
- * <p><b>Why it exists:</b> an SSE disconnect must not cost the user their
- * turn. The orchestration thread keeps running when the browser navigates
- * away; every event (step / delta / sources / approval) is appended to a
- * bounded per-turn buffer here, so a reconnecting client can replay what it
- * missed and then follow live. Turns that finish with no subscriber still
- * persist through {@code ChatStoreService} — the buffer only covers the
- * in-flight window.
+ * <p><b>为什么存在:</b>SSE 断线不该让用户损失一整轮。浏览器离开页面时
+ * 编排线程继续运行;每个事件(step / delta / sources / approval)追加到
+ * 这里的有界轮次缓冲,重连的客户端可回放错过的部分再跟随实况。无人订阅
+ * 时完成的轮次仍经 {@code ChatStoreService} 落库——缓冲只覆盖进行中窗口。
  *
- * <p>Single-user, single-node deployment: buffer loss on restart is
- * acceptable (the turn itself also dies with the process; DB history remains
- * authoritative).
+ * <p>单用户单节点部署:重启丢缓冲可接受(轮次本身也随进程消失;DB 历史
+ * 仍是权威)。
  */
 @Service
 public class TurnStreamRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(TurnStreamRegistry.class);
 
-    /** Per-turn buffer cap: deltas are small; 8000 covers long turns with reasoning. */
+    /** 每轮缓冲上限:delta 很小,8000 足以覆盖带推理的长轮次。 */
     private static final int MAX_BUFFERED_EVENTS = 8000;
 
-    /** One buffered SSE event: monotonic per-turn sequence + name + pre-serialized JSON payload.
-     *  The sequence is the SSE event id — clients reconnect with Last-Event-ID to resume
-     *  exactly where they left off, and it gives replay a total order. */
+    /** 一条缓冲的 SSE 事件:轮次内单调序号 + 名称 + 预序列化 JSON。
+     *  序号即 SSE 事件 id——客户端用 Last-Event-ID 精确续传,回放也因此有全序。 */
     public record TurnEvent(long seq, String event, String json) {
     }
 
-    /** Live state of one running turn. Methods are thread-safe (monitor on this). */
+    /** 一个运行中轮次的实时状态。方法线程安全(以 this 为监视器)。 */
     public static final class LiveTurn {
         public final String sessionId;
         public final String content;
         public final long startedAtMs;
-        /** Unique per LiveTurn instance; lets SSE clients scope their Last-Event-ID cursor
-         *  to THIS turn (a stale cursor from a previous turn must not swallow new events). */
+        /** 每个 LiveTurn 实例唯一;让 SSE 客户端把 Last-Event-ID 游标限定在
+         *  本轮(上一轮的陈旧游标不得吞掉新事件)。 */
         public final String turnId = java.util.UUID.randomUUID().toString().substring(0, 8);
         private final List<TurnEvent> buffer = new ArrayList<>();
         private final List<Consumer<TurnEvent>> subscribers = new ArrayList<>();
@@ -76,7 +71,7 @@ public class TurnStreamRegistry {
             }
         }
 
-        /** Events strictly after {@code afterSeq} (0 = full replay), in seq order. */
+        /** 严格在 {@code afterSeq} 之后的事件(0 = 全量回放),按序号排序。 */
         public synchronized List<TurnEvent> snapshotAfter(long afterSeq) {
             if (afterSeq <= 0) {
                 return List.copyOf(buffer);
@@ -93,11 +88,10 @@ public class TurnStreamRegistry {
         }
 
         /**
-         * Atomically snapshots the backlog (events after {@code afterSeq}) and
-         * registers {@code subscriber} — both under the turn monitor. An append
-         * can therefore never fall into the gap between "drained" and
-         * "subscribed": anything not in the returned backlog will reach the
-         * subscriber live. Caller sends the backlog outside the lock.
+         * 原子地快照积压( {@code afterSeq} 之后的事件)并注册 {@code subscriber}
+         * ——两者都在轮次监视器内完成。追加因此绝不会落进「已排空」与「已订阅」
+         * 之间的缝隙:不在返回积压里的事件必然以实况到达订阅者。调用方在锁外
+         * 发送积压。
          */
         public synchronized List<TurnEvent> subscribeDraining(long afterSeq, Consumer<TurnEvent> subscriber) {
             List<TurnEvent> backlog = snapshotAfter(afterSeq);
@@ -105,7 +99,7 @@ public class TurnStreamRegistry {
             return backlog;
         }
 
-        /** Alias kept for tests: full backlog + subscribe in one atomic step. */
+        /** 测试用别名:全量积压 + 订阅一步原子完成。 */
         public synchronized List<TurnEvent> subscribeDraining(Consumer<TurnEvent> subscriber) {
             return subscribeDraining(0, subscriber);
         }
@@ -126,14 +120,14 @@ public class TurnStreamRegistry {
 
     private final Map<String, LiveTurn> live = new ConcurrentHashMap<>();
 
-    /** Registers a starting turn, superseding any stale entry for the session. */
+    /** 注册开始的轮次,顶替该会话的任何陈旧条目。 */
     public LiveTurn start(String sessionId, String content) {
         LiveTurn turn = new LiveTurn(sessionId, content);
         live.put(sessionId, turn);
         return turn;
     }
 
-    /** Marks the turn finished and drops it from the live map after replay window. */
+    /** 标记轮次完成,并在回放窗口后从实时 map 移除。 */
     public void finish(String sessionId, LiveTurn turn) {
         turn.finish();
         // 完成事件入缓冲后再移除;短暂保留让「刚完成」的轮次还能被 /live 观测为
@@ -141,18 +135,18 @@ public class TurnStreamRegistry {
         live.remove(sessionId, turn);
     }
 
-    /** The session's live turn, or null when idle. */
+    /** 该会话的实时轮次;空闲时为 null。 */
     public LiveTurn get(String sessionId) {
         return live.get(sessionId);
     }
 
-    /** Whether the session currently has a running turn. */
+    /** 该会话当前是否有运行中的轮次。 */
     public boolean isRunning(String sessionId) {
         LiveTurn t = live.get(sessionId);
         return t != null && !t.finished;
     }
 
-    /** Broadcasts one event to the buffer and all live subscribers. */
+    /** 把一个事件广播到缓冲与全部实时订阅者。 */
     public void publish(LiveTurn turn, String event, String json) {
         turn.append(event, json);
     }

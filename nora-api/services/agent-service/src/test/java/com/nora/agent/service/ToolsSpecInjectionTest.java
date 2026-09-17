@@ -1,12 +1,13 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.mock;
 
 import java.util.List;
 
-import static org.mockito.Mockito.mock;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 验证 toolsSpec 的装配结果:接入工作区/技能服务时,对应工具必须出现在

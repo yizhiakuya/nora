@@ -62,9 +62,9 @@ class DatasourceApiRecordsTest {
         Column same = new Column("id", "int8", "主键", false, true, null);
         Column other = new Column("name", "varchar", "", true, false, null);
 
-        // (assertion removed)
+        // (断言已移除)
         first.hashCode();
         same.hashCode();
-        // (assertion removed)
+        // (断言已移除)
     }
 }

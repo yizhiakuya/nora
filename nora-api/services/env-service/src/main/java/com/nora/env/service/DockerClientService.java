@@ -1,13 +1,5 @@
 package com.nora.env.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -17,10 +9,19 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import jakarta.annotation.PreDestroy;
+
 /**
- * Docker facade. v1 shells out to the {@code docker} CLI (simple, no extra
- * dependencies, works with Docker Desktop's named pipe); the JSON output
- * mode keeps parsing stable. A later phase can swap in the Docker HTTP API.
+ * Docker 门面。v1 外调 {@code docker} CLI(简单、无额外依赖、兼容 Docker
+ * Desktop 的命名管道);JSON 输出模式保持解析稳定。后续阶段可换 Docker HTTP API。
  */
 @Service
 public class DockerClientService {
@@ -45,7 +46,7 @@ public class DockerClientService {
     });
     private final AtomicBoolean statsRefreshing = new AtomicBoolean(false);
 
-    /** One managed container as consumed by the frontend ServiceInstance. */
+    /** 前端 ServiceInstance 消费的一个纳管容器。 */
     public record ContainerView(
             String id,
             String name,
@@ -58,7 +59,7 @@ public class DockerClientService {
             String memory) {
     }
 
-    /** Lists containers (running + exited) as JSON via docker ps. */
+    /** 经 docker ps 以 JSON 列出容器(running + exited)。 */
     public List<ContainerView> list() {
         try {
             String raw = exec("docker", "ps", "-a",
@@ -73,7 +74,7 @@ public class DockerClientService {
                 result.add(toView(node));
             }
             if (result.isEmpty()) {
-                // no labeled containers yet: fall back to all running containers
+                // 还没有带标签的容器:回退到全部运行中容器
                 return listAll();
             }
             return result;
@@ -194,7 +195,7 @@ public class DockerClientService {
     }
 
     private static String firstPort(String ports) {
-        // e.g. "0.0.0.0:5432->5432/tcp, ..." → "5432"
+        // 如 "0.0.0.0:5432->5432/tcp, ..." → "5432"
         int arrow = ports.indexOf("->");
         if (arrow > 0) {
             String before = ports.substring(0, arrow);
@@ -204,29 +205,28 @@ public class DockerClientService {
         return ports.split("/")[0];
     }
 
-    /** Starts a container by name or id. */
+    /** 按名称或 id 启动容器。 */
     public String start(String idOrName) {
         return execIgnoringError("docker", "start", idOrName);
     }
 
-    /** Stops a container by name or id. */
+    /** 按名称或 id 停止容器。 */
     public String stop(String idOrName) {
         return execIgnoringError("docker", "stop", idOrName);
     }
 
-    /** Restarts a container by name or id. */
+    /** 按名称或 id 重启容器。 */
     public String restart(String idOrName) {
         return execIgnoringError("docker", "restart", idOrName);
     }
 
     /**
-     * Tails recent logs of a container (no follow — the SSE endpoint streams
-     * via repeated polling, which survives gateway hops better than a raw
-     * {@code --follow} pipe).
+     * 取容器最近日志(不带 follow——SSE 端点用重复轮询流式推送,比裸
+     * {@code --follow} 管道更能扛网关跳转)。
      *
-     * @param idOrName container name or id
-     * @param tail     number of recent lines
-     * @return log lines, newest last
+     * @param idOrName 容器名或 id
+     * @param tail     最近行数
+     * @return 日志行,最新在最后
      */
     public List<String> logs(String idOrName, int tail) {
         try {
@@ -261,7 +261,7 @@ public class DockerClientService {
         }
     }
 
-    /** Like {@link #exec} but merges stderr into stdout (docker logs writes there for most images). */
+    /** 同 {@link #exec},但把 stderr 并入 stdout(多数镜像的 docker logs 写在那里)。 */
     private String execMergeStderr(String... command) throws Exception {        ProcessBuilder pb = new ProcessBuilder(command);
         pb.environment().putAll(System.getenv());
         pb.redirectErrorStream(true);

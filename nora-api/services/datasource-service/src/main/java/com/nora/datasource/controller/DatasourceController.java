@@ -1,10 +1,7 @@
 package com.nora.datasource.controller;
 
-import com.nora.common.response.ApiResponse;
-import com.nora.datasource.api.ConnectionStatus;
-import com.nora.datasource.api.QueryResult;
-import com.nora.datasource.api.SchemaSnapshot;
-import com.nora.datasource.service.DatasourceServiceImpl;
+import java.util.List;
+
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,12 +11,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
+import com.nora.common.response.ApiResponse;
+import com.nora.datasource.api.ConnectionStatus;
+import com.nora.datasource.api.QueryResult;
+import com.nora.datasource.api.SchemaSnapshot;
+import com.nora.datasource.service.DatasourceServiceImpl;
 
 /**
- * Datasource endpoints per the initiation doc REST contract:
- * connection CRUD, connectivity test, schema browse, guarded read-only
- * query, and query history.
+ * 数据源端点(立项文档 REST 契约):连接 CRUD、连通测试、schema 浏览、
+ * 受控只读查询与查询历史。
  */
 @RestController
 @RequestMapping("/api/datasources")
@@ -36,20 +36,20 @@ public class DatasourceController {
         return "ok";
     }
 
-    /** Lists connections (passwords masked). */
+    /** 列出连接(密码脱敏)。 */
     @GetMapping
     public ApiResponse<List<DatasourceServiceImpl.ConnectionView>> list() {
         return ApiResponse.ok(service.list());
     }
 
-    /** Creates a connection record. */
+    /** 创建连接记录。 */
     @PostMapping
     public ApiResponse<DatasourceServiceImpl.ConnectionView> create(@RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(request.name(), request.engine(), request.host(),
                 request.port(), request.database(), request.username(), request.password()));
     }
 
-    /** Deletes a connection (history cascades). */
+    /** 删除连接(历史级联)。 */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable long id) {
         if (!service.delete(id)) {
@@ -58,36 +58,35 @@ public class DatasourceController {
         return ApiResponse.ok();
     }
 
-    /** Tests connectivity with the stored credentials. */
+    /** 用已存凭证测试连通。 */
     @PostMapping("/{id}/test")
     public ApiResponse<ConnectionStatus> test(@PathVariable long id) {
         return ApiResponse.ok(service.test(id));
     }
 
-    /** Table/column structure of the connected database. */
+    /** 所连数据库的表/列结构。 */
     @GetMapping("/{id}/schema")
     public ApiResponse<SchemaSnapshot> schema(@PathVariable long id) {
         return ApiResponse.ok(service.schema(id));
     }
 
-    /** Executes a guarded read-only statement. */
+    /** 执行受控只读语句。 */
     @PostMapping("/{id}/query")
     public ApiResponse<QueryResult> query(@PathVariable long id, @RequestBody QueryRequest request) {
         return ApiResponse.ok(service.executeReadOnly(id, request.sql()));
     }
 
     /**
-     * Executes a single write statement (INSERT/UPDATE/DELETE/DDL) after the
-     * agent's approval flow. Guarded: one statement, write verb only, capped
-     * row mutation count via the driver's max-rows equivalent (statement
-     * timeout 30s). Only call after explicit user approval.
+     * 在 agent 审批流之后执行单条写语句(INSERT/UPDATE/DELETE/DDL)。受控:
+     * 单条语句、仅写动词、经驱动等价 max-rows 限制变更行数(语句超时 30s)。
+     * 仅在用户明确批准后调用。
      */
     @PostMapping("/{id}/execute")
     public ApiResponse<QueryResult> execute(@PathVariable long id, @RequestBody QueryRequest request) {
         return ApiResponse.ok(service.executeWrite(id, request.sql()));
     }
 
-    /** Query history of a connection, newest first. */
+    /** 连接的查询历史,最新在前。 */
     @GetMapping("/{id}/history")
     public ApiResponse<List<DatasourceServiceImpl.HistoryView>> history(
             @PathVariable long id,
@@ -96,13 +95,13 @@ public class DatasourceController {
         return ApiResponse.ok(service.history(id, bounded));
     }
 
-    /** POST /api/datasources body. */
+    /** POST /api/datasources 请求体。 */
     public record CreateRequest(
             String name, String engine, String host, Integer port,
             String database, String username, String password) {
     }
 
-    /** POST /{id}/query body. */
+    /** POST /{id}/query 请求体。 */
     public record QueryRequest(String sql) {
     }
 }

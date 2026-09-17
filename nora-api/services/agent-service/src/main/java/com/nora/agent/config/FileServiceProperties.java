@@ -3,7 +3,7 @@ package com.nora.agent.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Downstream file-service settings ({@code nora.file.*}).
+ * 下游 file-service 设置({@code nora.file.*})。
  */
 @ConfigurationProperties(prefix = "nora.file")
 public record FileServiceProperties(String baseUrl) {

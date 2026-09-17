@@ -1,6 +1,5 @@
 package com.nora.datasource.service;
 
-import com.nora.common.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 
 
@@ -21,7 +20,7 @@ class SqlGuardTest {
                 "CREATE TABLE x (id int)",
                 "ALTER TABLE x ADD COLUMN y int",
                 "GRANT ALL ON db TO user"}) {
-            // (assertion removed)
+            // (断言已移除)
         }
     }
 

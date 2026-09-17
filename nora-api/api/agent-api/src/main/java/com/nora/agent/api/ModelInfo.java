@@ -1,10 +1,10 @@
 package com.nora.agent.api;
 
 /**
- * One model available for chat, as configured in agent-service.
+ * agent-service 中配置的一个可用对话模型。
  *
- * @param protocol  provider protocol family (e.g. {@code openai}, {@code anthropic}, {@code ollama})
- * @param modelName model identifier as expected by the provider (e.g. {@code gpt-4o-mini})
+ * @param protocol  provider 协议族(如 {@code openai}、{@code anthropic}、{@code ollama})
+ * @param modelName provider 期望的模型标识(如 {@code gpt-4o-mini})
  */
 public record ModelInfo(
         String protocol,

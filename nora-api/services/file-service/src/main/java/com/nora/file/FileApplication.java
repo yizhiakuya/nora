@@ -5,10 +5,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
 
 /**
- * Entry point of file-service (port 8081): file upload, Tika-based text
- * extraction, preview, and fire-and-forget indexing via rag-service.
- * Scans the whole {@code com.nora} tree so nora-common's
- * {@code GlobalExceptionHandler} is registered alongside this service's beans.
+ * file-service 入口(端口 8081):文件上传、Tika 文本提取、预览,
+ * 以及经 rag-service 的发后即忘索引。
+ * 扫描整个 {@code com.nora} 树,让 nora-common 的
+ * {@code GlobalExceptionHandler} 与本服务的 bean 一起注册。
  */
 @SpringBootApplication(scanBasePackages = "com.nora")
 @EnableAsync

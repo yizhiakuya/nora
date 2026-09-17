@@ -6,8 +6,8 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * Scans {@code com.nora} so the shared nora-common advice applies; enables
- * the scheduler that fires due daily/weekly rules.
+ * 扫描 {@code com.nora},让共享的 nora-common advice 生效;
+ * 启用触发到点 daily/weekly 规则的调度器。
  */
 @SpringBootApplication
 @EnableScheduling

@@ -1,10 +1,10 @@
 package com.nora.file.api;
 
 /**
- * Upload payload for {@link FileService#upload(FileUploadRequest)}.
+ * {@link FileService#upload(FileUploadRequest)} 的上传载荷。
  *
- * @param name         file name to store and display
- * @param contentBytes raw file content, base64-encoded
+ * @param name         存储与展示用文件名
+ * @param contentBytes 原始文件内容(base64 编码)
  */
 public record FileUploadRequest(
         String name,

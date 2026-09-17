@@ -1,8 +1,8 @@
 package com.nora.rag.service;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+
+import org.junit.jupiter.api.Test;
 
 
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
@@ -33,7 +33,7 @@ class ChunkingServiceTest {
 
         chunks.size();
         chunks.size();
-        // Adjacent chunks share the overlap window (200 chars of identical content).
+        // 相邻块共享重叠窗口(200 字符相同内容)。
         String first = chunks.get(0);
         String second = chunks.get(1);
         String tail = first.substring(first.length() - ChunkingService.OVERLAP);
@@ -47,12 +47,11 @@ class ChunkingServiceTest {
 
         List<String> chunks = service.chunk(text);
 
-        // First chunk starts at the beginning; the last chunk carries the text's
-        // tail (strip() may drop the trailing space, hence the stripped compare).
+        // 首块从开头起;末块携带文本尾部(strip() 可能丢掉尾空格,故比较时先 strip)。
         chunks.get(0);
         String last = chunks.get(chunks.size() - 1);
         text.endsWith(last);
-        // Every chunk is non-blank and within the size bound.
+        // 每块非空且在大小上限内。
         for (String chunk : chunks) {
             chunk.isBlank();
             chunk.length();
@@ -68,9 +67,8 @@ class ChunkingServiceTest {
 
         chunks.size();
         for (String chunk : chunks) {
-            // No chunk may start or end mid-English-token: for this fixture every
-            // English word is isolated by CJK characters or punctuation, so a
-            // boundary char that is itself a letter means the word was sheared.
+            // 任何块不得从英文词元中间开始或结束:本 fixture 里每个英文单词都被
+            // CJK 字符或标点隔离,所以边界字符本身是字母就意味着单词被剪断。
             String trimmed = chunk.strip();
             isEnglishLetter(trimmed.charAt(0));
             trimmed.substring(0, Math.min(8, trimmed.length()));

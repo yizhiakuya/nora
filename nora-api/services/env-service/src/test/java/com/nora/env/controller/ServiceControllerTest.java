@@ -1,18 +1,18 @@
 package com.nora.env.controller;
 
-import com.nora.env.service.DockerClientService;
-import com.nora.env.service.ManagedSourceService;
-import com.nora.env.service.ProcessSupervisorService;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.Mockito;
 
-import java.util.List;
-
-import static org.mockito.Mockito.when;
+import com.nora.env.service.DockerClientService;
+import com.nora.env.service.ManagedSourceService;
+import com.nora.env.service.ProcessSupervisorService;
 
 @ExtendWith(MockitoExtension.class)
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。

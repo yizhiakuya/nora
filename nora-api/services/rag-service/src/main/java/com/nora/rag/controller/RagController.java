@@ -1,12 +1,8 @@
 package com.nora.rag.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
-import com.nora.rag.api.RetrievalResult;
-import com.nora.rag.service.IndexingService;
-import com.nora.rag.service.KnowledgeDocService;
-import com.nora.rag.service.RetrievalService;
+import java.util.List;
+import java.util.Objects;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -16,18 +12,23 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 
-import java.util.List;
-import java.util.Objects;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
+import com.nora.rag.api.RetrievalResult;
+import com.nora.rag.service.IndexingService;
+import com.nora.rag.service.KnowledgeDocService;
+import com.nora.rag.service.RetrievalService;
 
 /**
- * RAG endpoints, all wrapped in {@link ApiResponse} with camelCase payloads
- * matching the frontend contract (ragService.ts + types/index.ts).
+ * RAG 端点,全部包在 {@link ApiResponse} 中,驼峰载荷与前端契约
+ * (ragService.ts + types/index.ts)一致。
  */
 @RestController
 @RequestMapping("/api/rag")
@@ -56,12 +57,11 @@ public class RagController {
     }
 
     /**
-     * Triggers indexing for an uploaded file: pulls the extracted text from
-     * file-service, chunks + embeds + persists it, then calls back
-     * {@code POST /api/files/{fileId}/indexed}. Synchronous in Phase 1.
+     * 触发上传文件的索引:从 file-service 拉提取文本 → 分块 + 嵌入 + 落库,
+     * 然后回调 {@code POST /api/files/{fileId}/indexed}。Phase 1 同步执行。
      *
-     * @param request {@code {fileId}} plus optional display name
-     * @return the persisted KnowledgeDoc
+     * @param request {@code {fileId}} 加可选展示名
+     * @return 落库的 KnowledgeDoc
      */
     @PostMapping("/index")
     public ApiResponse<KnowledgeDocService.KnowledgeDocView> index(@RequestBody IndexRequest request) {
@@ -118,19 +118,19 @@ public class RagController {
         }
     }
 
-    /** All knowledge docs (frontend KnowledgeDoc[]). */
+    /** 全部知识文档(前端 KnowledgeDoc[])。 */
     @GetMapping("/docs")
     public ApiResponse<List<KnowledgeDocService.KnowledgeDocView>> docs() {
         return ApiResponse.ok(knowledgeDocService.listDocs());
     }
 
-    /** Index stats snapshot (frontend IndexStats, IndexStatus.tsx). */
+    /** 索引统计快照(前端 IndexStats,IndexStatus.tsx)。 */
     @GetMapping("/index/stats")
     public ApiResponse<KnowledgeDocService.IndexStatsView> indexStats() {
         return ApiResponse.ok(knowledgeDocService.getIndexStats());
     }
 
-    /** Semantic search (frontend RetrievalResult[]). */
+    /** 语义检索(前端 RetrievalResult[])。 */
     @PostMapping("/search")
     public ApiResponse<List<RetrievalResult>> search(@RequestBody SearchBody request) {
         if (request.query() == null || request.query().isBlank()) {
@@ -140,7 +140,7 @@ public class RagController {
         return ApiResponse.ok(retrievalService.search(request.query(), topK));
     }
 
-    /** Citation alias of /search (frontend Citation[]). */
+    /** /search 的引用别名(前端 Citation[])。 */
     @PostMapping("/citations")
     public ApiResponse<List<RetrievalResult>> citations(@RequestBody SearchBody request) {
         return search(request);
@@ -148,7 +148,7 @@ public class RagController {
 
     private FilePreviewBody fetchPreview(Long fileId) {
         try {
-            // file-service wraps payloads in the shared ApiResponse envelope {code,data,message}
+            // file-service 把载荷包在共享 ApiResponse 信封 {code,data,message} 里
             Envelope<FilePreviewBody> envelope = fileServiceRestClient.get()
                     .uri("/api/files/{fileId}/preview", fileId)
                     .accept(MediaType.APPLICATION_JSON)
@@ -178,17 +178,17 @@ public class RagController {
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {
-            // The knowledge base is authoritative; a failed callback only means
-            // file-service's indexed flag stays false until the next index run.
+            // 知识库是权威;回调失败只意味着 file-service 的 indexed 标记
+            // 保持 false 直到下次索引运行。
             log.warn("file-service indexed callback failed for fileId={}: {}", fileId, e.getMessage());
         }
     }
 
     /**
-     * POST /api/rag/index/text — indexes raw text under a display name
-     * (name-keyed source "text"; re-saving the same name replaces its chunks).
+     * POST /api/rag/index/text —— 按展示名索引原始文本
+     * (按名索引的来源 "text";重存同名会替换其分块)。
      * Consumed by the chat "保存到知识库" action so saved answers survive
-     * refresh and are retrievable cross-device.
+     * 刷新后仍在,且跨设备可检索。
      */
     @PostMapping("/index/text")
     public ApiResponse<KnowledgeDocService.KnowledgeDocView> indexText(@RequestBody TextIndexRequest request) {
@@ -203,10 +203,10 @@ public class RagController {
     }
 
     /**
-     * Doc detail with its chunks (frontend detail drawer).
+     * 文档详情及其分块(前端详情抽屉)。
      *
-     * @param id doc id
-     * @return doc plus chunk texts, or 404 when the id is unknown
+     * @param id 文档 id
+     * @return 文档 + 分块文本;id 未知时 404
      */
     @GetMapping("/docs/{id}")
     public ApiResponse<DocDetailView> docDetail(@PathVariable long id) {
@@ -218,11 +218,11 @@ public class RagController {
     }
 
     /**
-     * Renames a doc; chunks and vectors are untouched.
+     * 重命名文档;分块与向量不受影响。
      *
-     * @param id      doc id
-     * @param request {@code {name}}
-     * @return the updated doc
+     * @param id      文档 id
+     * @param request 请求体 {@code {name}}
+     * @return 更新后的文档
      */
     @PatchMapping("/docs/{id}")
     public ApiResponse<KnowledgeDocService.KnowledgeDocView> renameDoc(@PathVariable long id,
@@ -237,10 +237,10 @@ public class RagController {
     }
 
     /**
-     * Deletes a doc and its chunks.
+     * 删除文档及其分块。
      *
-     * @param id doc id
-     * @return count of removed docs (0 or 1)
+     * @param id 文档 id
+     * @return 删除的文档数(0 或 1)
      */
     @DeleteMapping("/docs/{id}")
     public ApiResponse<DeleteResult> deleteDoc(@PathVariable long id) {
@@ -248,10 +248,10 @@ public class RagController {
     }
 
     /**
-     * Batch delete. Unknown ids are ignored and reported in {@code deleted}.
+     * 批量删除。未知 id 被忽略并在 {@code deleted} 中体现。
      *
-     * @param request {@code {ids:[…]}}
-     * @return count of removed docs
+     * @param request 请求体 {@code {ids:[…]}}
+     * @return 删除的文档数
      */
     @PostMapping("/docs/delete")
     public ApiResponse<DeleteResult> deleteDocs(@RequestBody DeleteRequest request) {
@@ -263,11 +263,10 @@ public class RagController {
     }
 
     /**
-     * Re-embeds a doc's stored chunks. Recovers failed docs and refreshes
-     * vectors after an embedding model change.
+     * 重建文档已存分块的向量。恢复失败文档,并在嵌入模型变更后刷新向量。
      *
-     * @param id doc id
-     * @return the updated doc
+     * @param id 文档 id
+     * @return 更新后的文档
      */
     @PostMapping("/docs/{id}/reindex")
     public ApiResponse<KnowledgeDocService.KnowledgeDocView> reindexDoc(@PathVariable long id) {
@@ -283,18 +282,18 @@ public class RagController {
         return ApiResponse.ok(knowledgeDocService.getDoc(id));
     }
 
-    /** Doc plus its chunks (frontend detail drawer). */
+    /** 文档及其分块(前端详情抽屉)。 */
     public record DocDetailView(
             KnowledgeDocService.KnowledgeDocView doc,
             List<KnowledgeDocService.ChunkView> chunks
     ) {
     }
 
-    /** PATCH /api/rag/docs/{id} body. */
+    /** PATCH /api/rag/docs/{id} 请求体。 */
     public record RenameRequest(String name) {
     }
 
-    /** POST /api/rag/docs/delete body. */
+    /** POST /api/rag/docs/delete 请求体。 */
     public record DeleteRequest(List<Long> ids) {
     }
 
@@ -319,27 +318,27 @@ public class RagController {
         return ApiResponse.ok(affected);
     }
 
-    /** Delete result; {@code deleted} counts rows actually removed. */
+    /** 删除结果;{@code deleted} 为实际删除的行数。 */
     public record DeleteResult(int deleted) {
     }
 
-    /** POST /api/rag/index/text body. */
+    /** POST /api/rag/index/text 请求体。 */
     public record TextIndexRequest(String name, String text) {
     }
 
-    /** POST /api/rag/index body. */
+    /** POST /api/rag/index 请求体。 */
     public record IndexRequest(Long fileId, String name) {
     }
 
-    /** POST /api/rag/search and /api/rag/citations body. */
+    /** POST /api/rag/search 与 /api/rag/citations 请求体。 */
     public record SearchBody(String query, Integer topK) {
     }
 
-    /** file-service preview response subset (the {@code data} of the ApiResponse envelope). */
+    /** file-service 预览响应子集(ApiResponse 信封的 {@code data})。 */
     public record FilePreviewBody(Long fileId, String type, String textContent, String name, String size) {
     }
 
-    /** ApiResponse envelope as returned by file-service. */
+    /** file-service 返回的 ApiResponse 信封。 */
     public record Envelope<T>(int code, T data, String message) {
     }
 }

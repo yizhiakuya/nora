@@ -1,39 +1,38 @@
 package com.nora.datasource.service;
 
-import com.nora.common.exception.BusinessException;
-
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import com.nora.common.exception.BusinessException;
+
 /**
- * Read-only SQL guard (architecture-v2.md section 4.8.3 tool-input layer).
+ * 只读 SQL 守卫(architecture-v2.md 4.8.3 节工具输入层)。
  *
- * <p>Rejects any statement that is not a single SELECT / SHOW / EXPLAIN
- * before it reaches the driver. Statements come from the browser (and later
- * the LLM tool) and must never be trusted.
+ * <p>在语句到达驱动前拒绝任何非单条 SELECT / SHOW / EXPLAIN 的语句。
+ * 语句来自浏览器(以及后来的 LLM 工具),绝不可信任。
  */
 public final class SqlGuard {
 
-    /** Leading verbs allowed for read-only execution. */
+    /** 只读执行允许的起始动词。 */
     private static final Set<String> ALLOWED_PREFIXES = Set.of("select", "show", "explain");
 
-    /** Verbs that must never appear as the first token, defense in depth. */
+    /** 绝不可作为首 token 出现的动词,纵深防御。 */
     private static final Set<String> MUTATING_PREFIXES = Set.of(
             "insert", "update", "delete", "drop", "alter", "create", "truncate",
             "grant", "revoke", "copy", "vacuum", "reindex", "call", "do", "merge");
 
-    /** Semicolon inside a statement body (string literal comments aside, good enough for a tripwire). */
+    /** 语句体内的分号(撇开字符串字面量不谈,作为绊线足够)。 */
     private static final Pattern MULTIPLE_STATEMENTS = Pattern.compile(";\\s*\\S");
 
     private SqlGuard() {
     }
 
     /**
-     * Validates that the SQL is a single read-only statement.
+     * 校验 SQL 是单条只读语句。
      *
-     * @param sql raw SQL text
-     * @throws BusinessException 400 when the statement is rejected
+     * @param sql 原始 SQL 文本
+     * @throws BusinessException 语句被拒时 400
      */
     public static void requireReadOnly(String sql) {
         if (sql == null || sql.isBlank()) {
@@ -43,7 +42,7 @@ public final class SqlGuard {
         if (trimmed.isEmpty()) {
             throw new BusinessException(400, "sql is required");
         }
-        // strip trailing semicolon before inspection
+        // 检查前去掉尾部分号
         String body = trimmed.endsWith(";") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
         if (body.contains(";")) {
             throw new BusinessException(400, "multiple statements are not allowed");
@@ -60,7 +59,7 @@ public final class SqlGuard {
         }
         String lower = body.toLowerCase(Locale.ROOT);
         if (lower.contains("into") && firstWord.equals("select")) {
-            // SELECT ... INTO writes
+            // SELECT ... INTO 会写数据
             throw new BusinessException(400, "SELECT INTO is not allowed");
         }
     }

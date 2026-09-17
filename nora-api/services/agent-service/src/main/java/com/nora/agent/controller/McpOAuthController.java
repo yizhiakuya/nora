@@ -1,15 +1,16 @@
 package com.nora.agent.controller;
 
-import com.nora.agent.service.GitHubOAuthService;
-import com.nora.agent.service.McpServerService;
-import com.nora.common.exception.BusinessException;
-import com.nora.common.response.ApiResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.nora.agent.service.GitHubOAuthService;
+import com.nora.agent.service.McpServerService;
+import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 
 /**
  * GitHub OAuth 设备码登录({@code /api/mcp/oauth/github/**})——MCP 设置页

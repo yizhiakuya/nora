@@ -1,24 +1,23 @@
 package com.nora.common.redis;
 
+import java.time.Duration;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.time.Duration;
-import java.util.Optional;
 
 /**
- * Shared Redis facade for Nora services (platform component, architecture-v2.md).
+ * Nora 服务的共享 Redis 门面(平台组件,architecture-v2.md)。
  *
- * <p>Lifecycle: lazily connects on first use and reconnects transparently via
- * Lettuce's auto-reconnect. Every operation is best-effort — a missing or
- * unreachable Redis logs once and returns empty, so callers can fall back to
- * in-process behaviour instead of failing the request (Redis must never be a
- * hard dependency for boot or for serving traffic).
+ * <p>生命周期:首次使用时懒连接,经 Lettuce 自动重连透明恢复。每个操作都是
+ * 尽力而为——Redis 缺失或不可达只记一次日志并返回空,调用方可落回进程内
+ * 行为而不是让请求失败(Redis 绝不可成为启动或对外服务的硬依赖)。
  */
 public final class NoraRedis implements AutoCloseable {
 
@@ -35,14 +34,14 @@ public final class NoraRedis implements AutoCloseable {
         this.properties = properties;
     }
 
-    /** Whether the feature flag is on (does not probe connectivity). */
+    /** 功能开关是否打开(不探测连通性)。 */
     public boolean enabled() {
         return properties.enabled();
     }
 
     /**
-     * Runs a synchronous command against Redis, returning empty when disabled
-     * or unreachable. Never throws for connectivity problems.
+     * 对 Redis 执行同步命令,禁用或不可达时返回空。
+     * 绝不因连通性问题抛异常。
      */
     public <T> Optional<T> call(java.util.function.Function<io.lettuce.core.api.sync.RedisCommands<String, String>, T> action) {
         if (!properties.enabled()) {
@@ -61,9 +60,8 @@ public final class NoraRedis implements AutoCloseable {
     }
 
     /**
-     * Opens (or reuses) the pub/sub connection for cross-instance notifications
-     * (e.g. approval resolved in another instance). Returns empty when Redis is
-     * disabled or unreachable.
+     * 打开(或复用)跨实例通知的 pub/sub 连接
+     * (如审批在另一实例被 resolve)。Redis 禁用或不可达时返回空。
      */
     public Optional<StatefulRedisPubSubConnection<String, String>> pubSub() {
         if (!properties.enabled()) {
@@ -82,7 +80,7 @@ public final class NoraRedis implements AutoCloseable {
         }
     }
 
-    /** Publishes one message; silent no-op when Redis is unavailable. */
+    /** 发布一条消息;Redis 不可用时静默无操作。 */
     public void publish(String channel, String message) {
         call(commands -> {
             commands.publish(channel, message);
@@ -91,9 +89,8 @@ public final class NoraRedis implements AutoCloseable {
     }
 
     /**
-     * Fire-and-forget write on the async pipeline — never blocks the caller.
-     * For hot paths (per-token SSE buffering) where a Redis stall must not
-     * slow the stream; failures are logged once and the write is dropped.
+     * 异步管线上的发后即忘写入——绝不阻塞调用方。用于热路径(逐 token SSE
+     * 缓冲),Redis 卡顿不得拖慢流;失败记一次日志并丢弃写入。
      */
     public void callAsync(java.util.function.Function<RedisAsyncCommands<String, String>, io.lettuce.core.RedisFuture<?>> action) {
         if (!properties.enabled()) {
@@ -158,14 +155,14 @@ public final class NoraRedis implements AutoCloseable {
                 try {
                     pubSubConnection.close();
                 } catch (Exception ignored) {
-                    // closing best-effort
+                    // 尽力关闭
                 }
             }
             if (connection != null) {
                 try {
                     connection.close();
                 } catch (Exception ignored) {
-                    // closing best-effort
+                    // 尽力关闭
                 }
             }
             if (client != null) {

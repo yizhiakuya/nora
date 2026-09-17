@@ -1,15 +1,14 @@
 package com.nora.common.http;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.util.List;
 
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
 /**
- * Outbound proxy settings for external (non-LAN) HTTP calls.
+ * 外网(非 LAN)HTTP 调用的出站代理设置。
  *
- * <p>Scope: backend egress only (LLM upstreams, embedding providers, ...).
- * Service-to-service calls inside the LAN never use the proxy —
- * {@link ProxySupport#isLanTarget(String)} bypasses it.
+ * <p>范围:仅后端出站(LLM 上游、嵌入 provider 等)。LAN 内的服务间调用
+ * 绝不走代理——{@link ProxySupport#isLanTarget(String)} 会绕过它。
  *
  * <p>Configuration (application.yml or env):
  * <pre>
@@ -31,12 +30,12 @@ public record ProxyProperties(boolean enabled, String host, int port, List<Strin
         if (bypassHosts == null) bypassHosts = List.of();
     }
 
-    /** Defaults for disabled state (yml omits the block entirely). */
+    /** 禁用状态的默认值(yml 可整块省略)。 */
     public static ProxyProperties disabled() {
         return new ProxyProperties(false, "127.0.0.1", 0, List.of());
     }
 
-    /** A proxy is usable only when enabled with a valid port. */
+    /** 代理仅在启用且端口有效时可用。 */
     public boolean usable() {
         return enabled && port > 0 && port <= 65535;
     }

@@ -3,36 +3,31 @@ package com.nora.rag.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Retrieval tuning settings ({@code nora.retrieval.*}).
+ * 检索调参设置({@code nora.retrieval.*})。
  *
- * <p>Hybrid retrieval fuses two ranked lists — pgvector cosine similarity and
- * pg_trgm keyword similarity — via weighted Reciprocal Rank Fusion (RRF).
- * RRF is used instead of score blending because the two scores are not
- * commensurable: cosine similarity for jina-embeddings-v3 clusters in a narrow
- * high band (typically 0.6–0.9) while trigram similarity spans 0–1 with a very
- * different distribution. Rank-based fusion is scale-free and needs no
- * calibration.
+ * <p>混合检索把两个排名表——pgvector 余弦相似度与 pg_trgm 关键词相似度——
+ * 经加权 RRF(Reciprocal Rank Fusion)融合。用 RRF 而非分数混合,因为两种
+ * 分数不可通约:jina-embeddings-v3 的余弦聚集在窄高区间(典型 0.6–0.9),
+ * 而 trigram 相似度分布迥异、跨度 0–1。基于排名的融合与量纲无关,无需校准。
  */
 @ConfigurationProperties(prefix = "nora.retrieval")
 public record RetrievalProperties(
-        /** Drop hits below this cosine similarity (0 disables the floor). */
+        /** 丢弃低于此余弦相似度的命中(0 = 关闭下限)。 */
         Double minScore,
-        /** Weight of the vector ranking in RRF fusion. */
+        /** 向量排名在 RRF 融合中的权重。 */
         Integer vectorWeight,
-        /** Weight of the keyword ranking in RRF fusion. */
+        /** 关键词排名在 RRF 融合中的权重。 */
         Integer keywordWeight,
-        /** Candidate pool size per ranking before fusion. */
+        /** 融合前每路排名的候选池大小。 */
         Integer candidatePool,
-        /** Keyword ranking is skipped when the query is shorter than this (trigrams are noise on tiny queries). */
+        /** 查询短于此值时跳过关键词排名(微小查询上 trigram 是噪音)。 */
         Integer minKeywordQueryLength
 ) {
 
     /**
-     * Default cosine floor. Calibrated against jina-embeddings-v3 on this corpus:
-     * related chunks score ~0.46–0.76 while unrelated queries top out at
-     * ~0.31–0.42, so 0.45 sits in the gap between the two bands. Below that
-     * gap, retrieval injects noise into every prompt — including greetings that
-     * have no answer in the knowledge base at all.
+     * 默认余弦下限。在本语料上对 jina-embeddings-v3 校准:相关块约 0.46–0.76,
+     * 不相关查询最高约 0.31–0.42,0.45 正好落在两带之间。低于该间隙,
+     * 检索会把噪音注入每一个提示词——包括在知识库里根本没有答案的问候语。
      */
     public static final double DEFAULT_MIN_SCORE = 0.45;
     public static final int DEFAULT_VECTOR_WEIGHT = 2;

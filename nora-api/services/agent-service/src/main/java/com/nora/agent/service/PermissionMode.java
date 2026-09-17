@@ -12,7 +12,7 @@ public enum PermissionMode {
     ASK, ASSIST, FULL;
 
     /**
-     * Parses the frontend string; unknown/null falls back to ASSIST.
+     * 解析前端字符串;未知/null 回退 ASSIST。
      *
      * <p>例外:机对机端点 {@code POST /api/chat/agent/run} 对 blank 显式取 FULL
      * (automation 场景无人在场审批,ASSIST 会让写操作永远挂起),见 AgentController。

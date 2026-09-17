@@ -1,15 +1,15 @@
 package com.nora.rag.config;
 
-import com.nora.common.http.ProxyProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import com.nora.common.http.EnvelopeErrorHandler;
 import org.springframework.web.client.RestClient;
 
+import com.nora.common.http.EnvelopeErrorHandler;
+import com.nora.common.http.ProxyProperties;
+
 /**
- * Bean wiring for rag-service: embedding settings, the embedding client,
- * and the RestClient used to call file-service.
+ * rag-service 的 Bean 装配:嵌入设置、嵌入客户端与调用 file-service 的 RestClient。
  */
 @Configuration
 @EnableConfigurationProperties({EmbeddingProperties.class, FileServiceProperties.class,
@@ -17,9 +17,9 @@ import org.springframework.web.client.RestClient;
 public class RagConfig {
 
     /**
-     * HTTP client for file-service calls (text preview for indexing, indexed callback).
+     * 调用 file-service(索引用文本预览、indexed 回调)的 HTTP 客户端。
      *
-     * @param fileServiceBaseUrl base URL, e.g. http://localhost:8081
+     * @param fileServiceBaseUrl base URL,如 http://localhost:8081
      */
     @Bean
     public RestClient fileServiceRestClient(FileServiceProperties fileServiceProperties) {

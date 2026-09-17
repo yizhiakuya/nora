@@ -1,46 +1,45 @@
 package com.nora.datasource.service;
 
-import com.nora.common.exception.BusinessException;
-import com.nora.datasource.api.QueryResult;
-import io.lettuce.core.KeyScanCursor;
-import io.lettuce.core.KeyValue;
-import io.lettuce.core.Limit;
-import io.lettuce.core.MapScanCursor;
-import io.lettuce.core.Range;
-import io.lettuce.core.ScoredValue;
-import io.lettuce.core.ScanArgs;
-import io.lettuce.core.ScanCursor;
-import io.lettuce.core.ValueScanCursor;
-import io.lettuce.core.api.sync.RedisCommands;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.nora.common.exception.BusinessException;
+import com.nora.datasource.api.QueryResult;
+
+import io.lettuce.core.KeyScanCursor;
+import io.lettuce.core.KeyValue;
+import io.lettuce.core.Limit;
+import io.lettuce.core.Range;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
+import io.lettuce.core.ScoredValue;
+import io.lettuce.core.ValueScanCursor;
+import io.lettuce.core.api.sync.RedisCommands;
+
 /**
- * Executes guarded read-only Redis commands and renders their replies into the
- * generic {@link QueryResult} shape so the existing console UI can display them
- * without a Redis-specific protocol.
+ * 执行受控只读 Redis 命令,把回复渲染为通用 {@link QueryResult} 形态,
+ * 让既有控制台 UI 无需 Redis 专用协议即可展示。
  *
- * <p>Reply rendering: flat replies (GET/MGET/HGETALL/…) become a two-column
- * {@code key | value} table; {@code SCAN}/{@code KEYS} list keys. The scan family
- * is bounded by {@link #MAX_KEYS} to keep payloads LLM/browser friendly.
+ * <p>回复渲染:平铺回复(GET/MGET/HGETALL/…)成为两列
+ * {@code key | value} 表;{@code SCAN}/{@code KEYS} 列出键。scan 族受
+ * {@link #MAX_KEYS} 限制,载荷保持 LLM/浏览器友好。
  */
 public final class RedisExecutor {
 
-    /** Max keys/entries rendered for a single command (bounded payloads). */
+    /** 单命令渲染的最大键/条目数(有界载荷)。 */
     static final int MAX_KEYS = 200;
 
     private RedisExecutor() {
     }
 
     /**
-     * Runs one read-only command on an open connection.
+     * 在打开的连接上运行一条只读命令。
      *
-     * @param commands sync command interface from the caller's connection
-     * @param argv     validated argv from {@link RedisGuard#requireReadOnly(String)}
+     * @param commands 调用方连接上的同步命令接口
+     * @param argv     经 {@link RedisGuard#requireReadOnly(String)} 校验的 argv
      */
     public static QueryResult execute(RedisCommands<String, String> commands, List<String> argv) {
         String verb = argv.get(0).toLowerCase(java.util.Locale.ROOT);
@@ -235,7 +234,7 @@ public final class RedisExecutor {
         throw new BusinessException(400, "XINFO 用法: XINFO STREAM key | XINFO GROUPS key | XINFO CONSUMERS key group");
     }
 
-    /** Converts the flat key/value list returned by XINFO STREAM into a map. */
+    /** 把 XINFO STREAM 返回的平铺键/值列表转成 map。 */
     private static Map<String, Object> toMap(List<Object> flat) {
         Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i + 1 < flat.size(); i += 2) {
@@ -265,7 +264,7 @@ public final class RedisExecutor {
         return new QueryResult(List.of("key", "value"), rows, 1, 0, false);
     }
 
-    /** Removes the noisy leading blank of LIST results before rendering. */
+    /** 渲染前去掉 LIST 结果开头噪音性的空项。 */
     private static List<String> nonNull(List<String> values) {
         List<String> out = new ArrayList<>(values.size());
         for (String v : values) {

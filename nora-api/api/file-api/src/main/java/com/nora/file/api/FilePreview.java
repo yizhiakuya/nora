@@ -1,14 +1,13 @@
 package com.nora.file.api;
 
 /**
- * Extracted preview of an uploaded file, produced by file-service
- * (Apache Tika text extraction).
+ * 上传文件的提取预览,由 file-service 产出(Apache Tika 文本提取)。
  *
- * @param fileId      id of the previewed file
- * @param type        preview type, e.g. {@code text}
- * @param textContent extracted plain-text content ({@code null} when the file has no text preview)
- * @param name        original file name (lets rag-service name the knowledge doc)
- * @param size        human-readable file size, e.g. {@code "1.5 MB"}
+ * @param fileId      被预览文件 id
+ * @param type        预览类型,如 {@code text}
+ * @param textContent 提取的纯文本内容(文件无文本预览时为 {@code null})
+ * @param name        原始文件名(让 rag-service 命名知识文档)
+ * @param size        人类可读文件大小,如 {@code "1.5 MB"}
  */
 public record FilePreview(
         Long fileId,

@@ -1,41 +1,40 @@
 package com.nora.datasource.service;
 
-import com.nora.common.exception.BusinessException;
-
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import com.nora.common.exception.BusinessException;
+
 /**
- * Read-only guard for Redis commands (mirrors {@link SqlGuard} for the
- * key-value engine). Only an allowlist of non-mutating commands is accepted;
- * anything else (SET/DEL/FLUSHALL/EVAL/…) is rejected before it reaches the
- * server. Commands are single-line, whitespace-separated (RESP arguments with
- * quotes are intentionally not supported — the console is a read-only peek tool).
+ * Redis 命令的只读守卫(对标键值引擎的 {@link SqlGuard})。
+ * 只接受非变更命令的白名单;其余(SET/DEL/FLUSHALL/EVAL/…)在到达服务端前
+ * 拒绝。命令为单行、空白分隔(刻意不支持带引号的 RESP 参数——控制台是
+ * 只读窥探工具)。
  */
 public final class RedisGuard {
 
-    /** Read-only commands allowed from the console (lower-case, first token). */
+    /** 控制台允许的只读命令(小写、首 token)。 */
     private static final Set<String> ALLOWED = Set.of(
-            // keyspace / metadata
+            // 键空间 / 元数据
             "keys", "scan", "type", "ttl", "pttl", "exists", "dbsize", "randomkey", "object",
-            // strings
+            // 字符串
             "get", "mget", "strlen", "getrange", "substr",
-            // hashes
+            // 哈希
             "hget", "hmget", "hgetall", "hkeys", "hvals", "hlen", "hexists", "hscan", "hrandfield",
-            // lists
+            // 列表
             "lrange", "llen", "lindex", "lpos",
-            // sets
+            // 集合
             "smembers", "scard", "sismember", "srandmember", "sscan", "smismember",
-            // sorted sets
+            // 有序集合
             "zrange", "zrevrange", "zrangebyscore", "zrevrangebyscore", "zrangebylex", "zcard",
             "zscore", "zmscore", "zrank", "zrevrank", "zcount", "zscan", "zrandmember",
-            // streams / bitmaps / hll (read-only forms)
+            // 流 / 位图 / HyperLogLog(只读形式)
             "xrange", "xrevrange", "xlen", "xinfo", "getbit", "bitcount", "bitpos", "pfcount",
-            // server info
+            // 服务信息
             "info", "time", "memory", "command", "lastsave", "lolwut");
 
-    /** Explicit deny list for defense in depth (even if a typo slips into ALLOWED). */
+    /** 显式拒绝清单,纵深防御(即使白名单混入笔误也挡住)。 */
     private static final Set<String> DENIED = Set.of(
             "set", "setnx", "setex", "psetex", "mset", "msetnx", "append", "setrange", "incr",
             "decr", "incrby", "decrby", "incrbyfloat", "getset", "getdel", "getex",
@@ -57,11 +56,11 @@ public final class RedisGuard {
     }
 
     /**
-     * Validates that the command line is a single read-only Redis command.
+     * 校验命令行是单条只读 Redis 命令。
      *
-     * @param command raw command text, e.g. {@code GET user:1} or {@code KEYS session:*}
-     * @return parsed argv (first element lower-case command, rest raw arguments)
-     * @throws BusinessException 400 when rejected
+     * @param command 原始命令文本,如 {@code GET user:1} 或 {@code KEYS session:*}
+     * @return 解析后的 argv(首元素小写命令,其余原样参数)
+     * @throws BusinessException 拒绝时 400
      */
     public static List<String> requireReadOnly(String command) {
         if (command == null || command.isBlank()) {

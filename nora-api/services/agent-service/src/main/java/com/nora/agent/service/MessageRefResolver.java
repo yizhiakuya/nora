@@ -1,13 +1,14 @@
 package com.nora.agent.service;
 
-import com.nora.agent.dto.CitationDto;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.nora.agent.dto.CitationDto;
 
 /**
  * 消息引用解析与注入(2026-09-17,对话框 📎/📄/@ 按钮的后端侧):

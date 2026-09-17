@@ -1,18 +1,18 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
 import java.util.Arrays;
 import java.util.List;
 
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 /**
- * CRUD over {@code schema_agent.model_provider}. API keys never leave the
- * service unmasked: responses carry a masked preview, the raw key is only
- * used server-side for connectivity tests.
+ * {@code schema_agent.model_provider} 的 CRUD。API key 绝不脱敏离开本服务:
+ * 响应携带脱敏预览,原文只在服务端连通性测试时使用。
  */
 @Service
 public class ModelProviderService {
@@ -25,7 +25,7 @@ public class ModelProviderService {
         this.objectMapper = objectMapper;
     }
 
-    /** Lists providers with masked keys (frontend ModelProvider[]; soft-deleted excluded). */
+    /** 列出带脱敏 key 的 provider(前端 ModelProvider[];排除软删)。 */
     public List<ProviderView> list() {
         return jdbcTemplate.query(
                 "SELECT id, name, protocol, endpoint, api_key, enabled, models, status, model_settings FROM model_provider WHERE deleted_at IS NULL ORDER BY id",
@@ -41,12 +41,12 @@ public class ModelProviderService {
                         parseModelSettings(rs.getString("model_settings"))));
     }
 
-    /** Parses the per-model settings JSONB column; corrupt JSON is treated as absent. */
+    /** 解析 per-model 设置的 JSONB 列;坏 JSON 视为不存在。 */
     private ModelSettings parseModelSettings(String raw) {
         return parseModelSettingsStatic(raw);
     }
 
-    /** Static variant used by the orchestration layer to read a provider's settings JSON. */
+    /** 静态变体,供编排层读取 provider 的设置 JSON。 */
     static ModelSettings parseModelSettingsStatic(String raw) {
         if (raw == null || raw.isBlank()) {
             return new ModelSettings(java.util.Map.of());
@@ -82,7 +82,7 @@ public class ModelProviderService {
         }
     }
 
-    /** Serializes per-model settings into the JSONB column value. */
+    /** 把 per-model 设置序列化为 JSONB 列值。 */
     private String writeModelSettings(ModelSettings settings) {
         try {
             ObjectNode root = objectMapper.createObjectNode();
@@ -106,20 +106,20 @@ public class ModelProviderService {
         }
     }
 
-    /** Creates a provider; key is stored as given (encryption is a later step). */
+    /** 创建 provider;key 按原样存储(加密是后续步骤)。 */
     public ProviderView create(String name, String protocol, String endpoint,
                                String apiKey, List<String> models,
                                ModelSettings modelSettings) {
         return upsert(null, name, protocol, endpoint, apiKey, true, models, "untested", modelSettings);
     }
 
-    /** Updates any subset of fields; null fields keep their stored value. */
+    /** 更新任意字段子集;null 字段保持已存值。 */
     public ProviderView update(long id, String name, Boolean enabled, List<String> models,
                                ModelSettings modelSettings) {
         return update(id, name, null, null, null, enabled, models, modelSettings);
     }
 
-    /** Full-subset update; null protocol/endpoint/apiKey keep their stored value. */
+    /** 全子集更新;null 的 protocol/endpoint/apiKey 保持已存值。 */
     public ProviderView update(long id, String name, String protocol, String endpoint, String apiKey,
                                Boolean enabled, List<String> models, ModelSettings modelSettings) {
         List<StoredProvider> existing = jdbcTemplate.query(
@@ -148,24 +148,24 @@ public class ModelProviderService {
                 modelSettings != null ? modelSettings : current.modelSettings());
     }
 
-    /** Soft-deletes by id (row kept; queries filter it out). */
+    /** 按 id 软删(行保留;查询过滤掉)。 */
     public boolean delete(long id) {
         return jdbcTemplate.update(
                 "UPDATE model_provider SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
     }
 
-    /** Marks the connectivity status of a provider (live rows only). */
+    /** 标记 provider 的连通状态(仅存活行)。 */
     public void markStatus(long id, String status) {
         jdbcTemplate.update("UPDATE model_provider SET status = ? WHERE id = ? AND deleted_at IS NULL", status, id);
     }
 
-    /** Replaces the model list of a provider (auto-discovered from upstream; live rows only). */
+    /** 替换 provider 的模型列表(自上游自动发现;仅存活行)。 */
     public void updateModels(long id, List<String> models) {
         jdbcTemplate.update("UPDATE model_provider SET models = ? WHERE id = ? AND deleted_at IS NULL",
                 models.toArray(new String[0]), id);
     }
 
-    /** Loads the raw endpoint+key pair for a provider (connectivity test / chat use; live rows only). */
+    /** 加载 provider 的原始 endpoint+key(连通测试/对话用;仅存活行)。 */
     public StoredCredentials credentials(long id) {
         List<StoredCredentials> rows = jdbcTemplate.query(
                 "SELECT endpoint, api_key FROM model_provider WHERE id = ? AND deleted_at IS NULL",
@@ -174,7 +174,7 @@ public class ModelProviderService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Returns the first enabled live provider with a usable key for chat execution. */
+    /** 返回第一个可用的启用存活 provider(有可用 key,供对话执行)。 */
     public ActiveProvider activeProvider() {
         List<ActiveProvider> rows = jdbcTemplate.query(
                 "SELECT endpoint, api_key, models, protocol, model_settings FROM model_provider WHERE enabled = true AND api_key IS NOT NULL AND trim(api_key) <> '' AND deleted_at IS NULL ORDER BY id",
@@ -182,7 +182,7 @@ public class ModelProviderService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** Returns the first enabled live provider that actually serves the requested model. */
+    /** 返回第一个实际提供所请求模型的启用存活 provider。 */
     public ActiveProvider activeProvider(String requestedModel) {
         if (requestedModel == null || requestedModel.isBlank()) {
             return activeProvider();
@@ -266,7 +266,7 @@ public class ModelProviderService {
         return key.substring(0, 4) + "••••••••" + key.substring(key.length() - 4);
     }
 
-    /** Provider row as consumed by the frontend (key masked). */
+    /** 前端消费的 provider 行(key 脱敏)。 */
     public record ProviderView(
             long id,
             String name,
@@ -281,9 +281,9 @@ public class ModelProviderService {
     }
 
     /**
-     * Per-model overrides: context window + reasoning level config.
-     * Serialized flat ({@code {"<model>": {...}}}) via @JsonAnyGetter so the
-     * JSONB column and the REST payload share one shape.
+     * Per-model 覆盖:上下文窗口 + 思考等级配置。
+     * 经 @JsonAnyGetter 平铺序列化({@code {"<model>": {...}}}),
+     * 让 JSONB 列与 REST 载荷共用一种形态。
      */
     public static class ModelSettings {
 
@@ -297,7 +297,7 @@ public class ModelProviderService {
             return models;
         }
 
-        /** Returns settings for one model, or empty defaults. */
+        /** 返回某模型的设置,或空默认值。 */
         public PerModelSettings forModel(String model) {
             PerModelSettings s = model == null ? null : models.get(model);
             return s != null ? s : new PerModelSettings(null, List.of(), null);
@@ -308,7 +308,7 @@ public class ModelProviderService {
             return models;
         }
 
-        /** Deserializes the flat {@code {model: settings}} shape. */
+        /** 反序列化平铺的 {@code {model: settings}} 形态。 */
         @com.fasterxml.jackson.annotation.JsonCreator
         public static ModelSettings fromJson(java.util.Map<String, PerModelSettings> models) {
             return new ModelSettings(models);
@@ -316,10 +316,10 @@ public class ModelProviderService {
     }
 
     /**
-     * One model's settings. {@code reasoningLevels} empty = no restriction;
-     * {@code defaultReasoningLevel} null/"auto" = family default applies;
-     * {@code protocol} null = inherit the provider-level protocol;
-     * {@code vision} null = auto-detect from the model name, TRUE/FALSE = forced.
+     * 单个模型的设置。{@code reasoningLevels} 空 = 不限制;
+     * {@code defaultReasoningLevel} null/"auto" = 用家族默认;
+     * {@code protocol} null = 继承 provider 级协议;
+     * {@code vision} null = 从模型名自动检测,TRUE/FALSE = 强制。
      */
     public record PerModelSettings(Long contextWindow, List<String> reasoningLevels,
                                    String defaultReasoningLevel, String protocol,
@@ -330,13 +330,13 @@ public class ModelProviderService {
             if (reasoningLevels == null) reasoningLevels = List.of();
         }
 
-        /** Jackson-compatible constructor: protocol/vision are optional in payloads. */
+        /** Jackson 兼容构造:载荷中 protocol/vision 可选。 */
         public PerModelSettings(Long contextWindow, List<String> reasoningLevels,
                                 String defaultReasoningLevel) {
             this(contextWindow, reasoningLevels, defaultReasoningLevel, null, null);
         }
 
-        /** Jackson-compatible constructor: vision is optional in payloads. */
+        /** Jackson 兼容构造:载荷中 vision 可选。 */
         public PerModelSettings(Long contextWindow, List<String> reasoningLevels,
                                 String defaultReasoningLevel, String protocol) {
             this(contextWindow, reasoningLevels, defaultReasoningLevel, protocol, null);
@@ -348,7 +348,7 @@ public class ModelProviderService {
                           ModelSettings modelSettings) {
     }
 
-    /** Raw endpoint+key pair (never returned to clients). */
+    /** 原始 endpoint+key 对(绝不返回给客户端)。 */
     public record StoredCredentials(String endpoint, String apiKey) {
     }
 

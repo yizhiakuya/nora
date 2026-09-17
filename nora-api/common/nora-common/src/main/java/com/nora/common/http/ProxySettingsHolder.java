@@ -3,16 +3,14 @@ package com.nora.common.http;
 import java.net.InetSocketAddress;
 
 /**
- * Runtime-mutable holder for outbound proxy settings.
+ * 出站代理设置的运行时可变持有器。
  *
- * <p>Starts from the static configuration (application.yml / env) and can be
- * overridden at runtime via the settings UI (persisted in DB by the owning
- * service). All HTTP client construction sites read {@link #current()} at
- * call time, so an update takes effect immediately — no restart.
+ * <p>从静态配置(application.yml / env)起步,可经设置 UI 在运行时覆盖
+ * (由属主服务持久化到 DB)。所有 HTTP 客户端构造点都在调用时读
+ * {@link #current()},所以更新立即生效——无需重启。
  *
- * <p>Static mutable state is deliberate here: {@code ProxyProperties} is
- * injected in several services/controllers and a holder keeps the change
- * site-minimal while remaining thread-safe.
+ * <p>这里的静态可变状态是刻意的:{@code ProxyProperties} 被多个服务/控制器
+ * 注入,持有器让变更点最小化且保持线程安全。
  */
 public final class ProxySettingsHolder {
 
@@ -21,17 +19,17 @@ public final class ProxySettingsHolder {
     private ProxySettingsHolder() {
     }
 
-    /** Value to use for the next outbound call. Never null. */
+    /** 下一次出站调用使用的值。绝不为 null。 */
     public static ProxyProperties current() {
         return current;
     }
 
-    /** Swap the active settings (e.g. on startup or when the UI saves). */
+    /** 替换生效设置(如启动时或 UI 保存时)。 */
     public static void set(ProxyProperties props) {
         current = props != null ? props : ProxyProperties.disabled();
     }
 
-    /** Convenience for client construction sites. */
+    /** 客户端构造点的便捷方法。 */
     public static InetSocketAddress addressFor(String targetUrl) {
         return ProxySupport.addressFor(current(), targetUrl);
     }

@@ -3,7 +3,7 @@ package com.nora.agent.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Downstream rag-service settings ({@code nora.rag.*}).
+ * 下游 rag-service 设置({@code nora.rag.*})。
  */
 @ConfigurationProperties(prefix = "nora.rag")
 public record RagServiceProperties(String baseUrl) {

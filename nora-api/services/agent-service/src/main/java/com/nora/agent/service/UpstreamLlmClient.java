@@ -1,19 +1,20 @@
 package com.nora.agent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * LLM 上游流式客户端(2026-09-17 从 ChatOrchestrationService 拆出,复杂度审计 Step 3):
@@ -35,12 +36,11 @@ class UpstreamLlmClient {
     }
 
     /**
-     * Executes the request and relays upstream SSE chunks as they arrive.
-     * Uses raw byte reading with incremental UTF-8 decoding (the relay can split
-     * multi-byte characters across chunks — RestClient's string converter also
-     * mangles text/event-stream to ISO-8859-1, browser-verified 2026-09-05).
-     * Protocol dispatch: openai → POST /chat/completions (stream),
-     * responses → POST /responses (stream) with event-name mapping.
+     * 执行请求并实时转发上游 SSE 块。用原始字节读取 + 增量 UTF-8 解码
+     * (中继可能把多字节字符拆到多个块——RestClient 的字符串转换器还会把
+     * text/event-stream 弄成 ISO-8859-1,2026-09-05 浏览器实测)。
+     * 协议分发:openai → POST /chat/completions(stream),
+     * responses → POST /responses(stream)并做事件名映射。
      */
     StreamTurnResult streamUpstream(ResolvedLlm llm, ObjectNode body, TokenSink sink) {
         logUpstreamRequest(llm, body);
@@ -49,7 +49,7 @@ class UpstreamLlmClient {
         }
         StringBuilder content = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
-        // tool_calls accumulation: index → {id, name, args-builder} (fragments arrive out of order)
+        // tool_calls 累积:index → {id, name, args-builder}(碎片到达顺序不定)
         Map<Integer, String> callIds = new HashMap<>();
         Map<Integer, String> callNames = new HashMap<>();
         Map<Integer, StringBuilder> callArgs = new HashMap<>();
@@ -119,7 +119,7 @@ class UpstreamLlmClient {
                         return new StreamTurnResult(true, "上游 " + friendlyUpstreamError(errText),
                                 content.toString(), reasoning.toString(), null, List.of(), usage);
                     }
-                    // usage rides the last chunk with an empty choices array (relay-verified)
+                    // usage 搭在最后一个 chunk 上(choices 为空数组;中继实测)
                     JsonNode usageNode = chunkRoot.path("usage");
                     if (usageNode.isObject() && !usageNode.isEmpty()) {
                         usage = new ChatOrchestrationService.TokenUsage(
@@ -161,7 +161,7 @@ class UpstreamLlmClient {
             if (!done && content.isEmpty() && reasoning.isEmpty() && callArgs.isEmpty()) {
                 return new StreamTurnResult(true, "empty stream", "", "", null, List.of(), usage);
             }
-            // rebuild tool_calls in index order with accumulated ids/names/args
+            // 按 index 序用累积的 id/name/args 重建 tool_calls
             for (Integer idx : new java.util.TreeSet<>(callArgs.isEmpty() ? callIds.keySet() : unionKeys(callIds, callArgs))) {
                 ObjectNode call = objectMapper.createObjectNode();
                 call.put("id", callIds.getOrDefault(idx, "call_" + idx));
@@ -206,23 +206,23 @@ class UpstreamLlmClient {
     }
 
     /**
-     * Responses API (POST {base}/responses, SSE) variant of {@link #streamUpstream}.
-     * Body conversion (chat.completions shape → responses shape):
-     * - messages → input[] with type: message(role/content)
-     * - assistant tool_calls → output_item message with type: function_call + call_id
-     * - tool results → input item type: function_call_output
-     * - tools[] flatten function → {type:"function", name, description, parameters}
-     * - reasoning_effort passes through; stream_options dropped
-     * Event mapping (SSE `event:` lines):
+     * {@link #streamUpstream} 的 Responses API(POST {base}/responses,SSE)变体。
+     * 请求体转换(chat.completions 形态 → responses 形态):
+     * - messages → input[],type: message(role/content)
+     * - assistant 的 tool_calls → output_item 消息,type: function_call + call_id
+     * - 工具结果 → input 项 type: function_call_output
+     * - tools[] 拍平 function → {type:"function", name, description, parameters}
+     * - reasoning_effort 透传;stream_options 丢弃
+     * 事件映射(SSE `event:` 行):
      * - response.output_text.delta            → content token
      * - response.reasoning()_summary_text.delta → reasoning token
-     * - response.output_item.added (function_call) / response.function_call_arguments.delta → tool accumulation
-     * - response.completed → usage from response.usage
+     * - response.output_item.added (function_call) / response.function_call_arguments.delta → 工具累积
+     * - response.completed → 从 response.usage 取用量
      */
     private StreamTurnResult streamUpstreamResponses(ResolvedLlm llm, ObjectNode chatBody, TokenSink sink) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
-        // function_call accumulation keyed by item_id
+        // 按 item_id 键控的 function_call 累积
         Map<String, String> callIds = new LinkedHashMap<>();
         Map<String, String> callNames = new LinkedHashMap<>();
         Map<String, StringBuilder> callArgs = new LinkedHashMap<>();
@@ -246,7 +246,7 @@ class UpstreamLlmClient {
                     ((ObjectNode) reasoningNode).put("summary", "auto");
                 }
             }
-            // tools: flatten {type:function, function:{...}} → {type:function, name, ...}
+            // tools:拍平 {type:function, function:{...}} → {type:function, name, ...}
             ArrayNode tools = body.putArray("tools");
             for (JsonNode t : chatBody.path("tools")) {
                 if (!"function".equals(t.path("type").asText())) continue;
@@ -256,8 +256,8 @@ class UpstreamLlmClient {
                 flat.put("description", t.path("function").path("description").asText(""));
                 flat.set("parameters", t.path("function").path("parameters"));
             }
-            // messages → input[]; tool results → function_call_output items.
-            // Responses API has no system role: the system prompt rides as instructions.
+            // messages → input[];工具结果 → function_call_output 项。
+            // Responses API 没有 system 角色:系统提示词搭在 instructions 上。
             StringBuilder instructions = new StringBuilder();
             ArrayNode input = body.putArray("input");
             for (WireMessage wm : wireMessagesOf(chatBody)) {
@@ -298,7 +298,7 @@ class UpstreamLlmClient {
                 ObjectNode part = parts.addObject();
                 part.put("type", "assistant".equals(role) ? "output_text" : "input_text");
                 part.put("text", m.path("content").asText(""));
-                // assistant turn that issued tool_calls: emit function_call items after the message
+                // 发起过 tool_calls 的 assistant 轮:在消息后发出 function_call 项
                 JsonNode calls = m.path("tool_calls");
                 if (calls.isArray()) {
                     for (JsonNode c : calls) {
@@ -411,8 +411,8 @@ class UpstreamLlmClient {
             if (content.isEmpty() && reasoning.isEmpty() && callArgs.isEmpty()) {
                 return new StreamTurnResult(true, "empty stream", "", "", null, List.of(), usage);
             }
-            // rebuild assistant message: content + tool_calls (chat.completions shape, so the
-            // ReAct loop / persistence layers stay protocol-agnostic)
+            // 重建 assistant 消息:content + tool_calls(chat.completions 形态,
+            // 让 ReAct 循环/持久化层保持协议无关)
             ObjectNode assistant = objectMapper.createObjectNode();
             assistant.put("role", "assistant");
             assistant.put("content", content.toString());
@@ -500,7 +500,7 @@ class UpstreamLlmClient {
     }
 
     /**
-     * OpenAI-compatible reasoning switches; models with native reasoning need no override.
+     * OpenAI 兼容的思考开关;原生支持推理的模型无需覆盖。
      * 生效等级(effectiveReasoningLevel)来自设置页 per-model 配置或对话框请求:
      * - 用户显式选的档位一律原样透传(含 none=关闭);家族名单只决定“未指定时的默认值”:
      *   gpt-5/o 默认 medium,claude thinking 与带档位后缀的模型不注入

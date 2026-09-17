@@ -1,18 +1,18 @@
 package com.nora.agent.service;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
-
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.when;
 
 
 /**
@@ -30,7 +30,7 @@ class McpServerServiceTest {
     void bareNameResolvesViaPath() {
         // 本机有 node(测试环境即开发机,node 在 PATH);解析结果应是绝对路径
         String resolved = McpCommandResolver.resolveCommand("node");
-        // (assertion removed)
+        // (断言已移除)
         McpCommandResolver.resolveCommand("java");
     }
 
@@ -44,7 +44,7 @@ class McpServerServiceTest {
     @Test
     void absolutePathChecksExistence() {
         String javaHome = System.getProperty("java.home");
-        // (assertion removed)
+        // (断言已移除)
         // 存在的绝对路径目录本身不是文件 → null(只接受可执行文件)
         McpCommandResolver.resolveCommand(javaHome);
         // 明确不存在的绝对路径
@@ -57,7 +57,7 @@ class McpServerServiceTest {
             return; // Windows 专属行为:CreateProcess 不解析无扩展名的 npx,须补 .cmd
         }
         String npx = McpCommandResolver.resolveCommand("npx");
-        // (assertion removed)
+        // (断言已移除)
         npx.toLowerCase();
     }
 

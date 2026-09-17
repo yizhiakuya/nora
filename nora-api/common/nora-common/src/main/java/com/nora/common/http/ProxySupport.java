@@ -6,11 +6,10 @@ import java.net.URI;
 import java.util.List;
 
 /**
- * Shared helpers to attach the configured outbound proxy to HTTP clients.
+ * 把配置的出站代理挂到 HTTP 客户端上的共享辅助。
  *
- * <p>Policy: only destinations outside the LAN go through the proxy, so
- * service-to-service calls (localhost / 192.168.x / 172.16-31.x / 10.x)
- * always connect directly regardless of configuration.
+ * <p>策略:只有 LAN 之外的目标走代理,服务间调用(localhost / 192.168.x /
+ * 172.16-31.x / 10.x)无论配置如何一律直连。
  */
 public final class ProxySupport {
 
@@ -18,9 +17,8 @@ public final class ProxySupport {
     }
 
     /**
-     * Returns a {@link ProxySelector} for the target URL: the configured proxy
-     * for external hosts, direct for LAN/loopback targets or when the proxy
-     * is disabled. Never null — direct semantics when bypassing.
+     * 返回目标 URL 的 {@link ProxySelector}:外网主机用配置的代理,
+     * LAN/回环目标或代理禁用时直连。绝不返回 null——绕过时即直连语义。
      */
     public static ProxySelector selectorFor(ProxyProperties props, String targetUrl) {
         if (props == null || !props.usable() || isLanTarget(targetUrl) || isBypassHost(props, targetUrl)) {
@@ -41,9 +39,8 @@ public final class ProxySupport {
     }
 
     /**
-     * True when the proxy is usable and the target is external. Convenience
-     * for clients that need the proxy address themselves (e.g. JDK HttpClient
-     * builder takes the address directly).
+     * 代理可用且目标为外网时返回 true。供需要自己拿代理地址的客户端使用
+     * (如 JDK HttpClient builder 直接收地址)。
      */
     public static InetSocketAddress addressFor(ProxyProperties props, String targetUrl) {
         if (props == null || !props.usable() || isLanTarget(targetUrl) || isBypassHost(props, targetUrl)) {
@@ -99,9 +96,8 @@ public final class ProxySupport {
     }
 
     /**
-     * LAN/loopback detection: localhost, 127.0.0.0/8, 10/8, 172.16/12,
-     * 192.168/16, and *.local. Hostnames that don't parse as IPs are treated
-     * as external (they need DNS + possibly the proxy anyway).
+     * LAN/回环检测:localhost、127.0.0.0/8、10/8、172.16/12、192.168/16
+     * 与 *.local。解析不成 IP 的主机名按外网处理(反正要 DNS,可能也要代理)。
      */
     public static boolean isLanTarget(String url) {
         if (url == null || url.isBlank()) {
@@ -124,7 +120,7 @@ public final class ProxySupport {
         if ("localhost".equals(h) || h.endsWith(".local") || h.endsWith(".internal")) {
             return true;
         }
-        // bare hostname (no dot) — service discovery name like "agent-service"
+        // 裸主机名(无点)——如 "agent-service" 这类服务发现名
         if (!h.matches(".*\\d+.*") && !h.contains(".")) {
             return true;
         }
@@ -154,7 +150,7 @@ public final class ProxySupport {
         return false;
     }
 
-    /** Prevents unused warnings in tests that only exercise isLanTarget. */
+    /** 防止只测 isLanTarget 的测试出现未用警告。 */
     static List<String> supportedSchemes() {
         return List.of("http", "https");
     }
