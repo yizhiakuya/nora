@@ -1,9 +1,11 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
 import { useBackendHealth } from "@/hooks/useBackendHealth";
 import { installGlobalErrorReporting } from "@/lib/errorReporter";
+import { GlobalRouteError, reportRenderError } from "@/app/error";
 
 // 全局错误兜底(window.onerror/unhandledrejection/资源加载失败)→ 上报后端日志
 installGlobalErrorReporting();
@@ -57,19 +59,37 @@ function RouteShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * 页面级包裹(2026-09-17):RouteShell(健康探测/侧栏/标题)+ 渲染错误边界
+ * ——渲染崩溃时展示 GlobalRouteError 兜底并上报(白屏类灾难的最后防线)。
+ */
+function Page({ children }: { children: React.ReactNode }) {
+  return (
+    <RouteShell>
+      <ErrorBoundary
+        FallbackComponent={GlobalRouteError}
+        onError={reportRenderError}
+        onReset={() => window.location.reload()}
+      >
+        {children}
+      </ErrorBoundary>
+    </RouteShell>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<RouteShell><HomePage /></RouteShell>} />
-      <Route path="/files" element={<RouteShell><FilesPage /></RouteShell>} />
-      <Route path="/chat" element={<RouteShell><ChatPage /></RouteShell>} />
-      <Route path="/knowledge" element={<RouteShell><KnowledgePage /></RouteShell>} />
-      <Route path="/skills" element={<RouteShell><SkillsPage /></RouteShell>} />
-      <Route path="/mcp" element={<RouteShell><McpPage /></RouteShell>} />
-      <Route path="/data-sources" element={<RouteShell><DataSourcesPage /></RouteShell>} />
-      <Route path="/environments" element={<RouteShell><EnvironmentsPage /></RouteShell>} />
-      <Route path="/automations" element={<RouteShell><AutomationsPage /></RouteShell>} />
-      <Route path="/settings" element={<RouteShell><SettingsPage /></RouteShell>} />
+      <Route path="/" element={<Page><HomePage /></Page>} />
+      <Route path="/files" element={<Page><FilesPage /></Page>} />
+      <Route path="/chat" element={<Page><ChatPage /></Page>} />
+      <Route path="/knowledge" element={<Page><KnowledgePage /></Page>} />
+      <Route path="/skills" element={<Page><SkillsPage /></Page>} />
+      <Route path="/mcp" element={<Page><McpPage /></Page>} />
+      <Route path="/data-sources" element={<Page><DataSourcesPage /></Page>} />
+      <Route path="/environments" element={<Page><EnvironmentsPage /></Page>} />
+      <Route path="/automations" element={<Page><AutomationsPage /></Page>} />
+      <Route path="/settings" element={<Page><SettingsPage /></Page>} />
       {/* 兼容旧路由 → 重定向 */}
       <Route path="/models" element={<Navigate to="/settings?tab=模型管理" replace />} />
       <Route path="/env-vars" element={<Navigate to="/settings?tab=环境变量" replace />} />

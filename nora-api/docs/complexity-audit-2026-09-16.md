@@ -86,7 +86,7 @@ env-service / env-api 的 Java 源码（4 个目录，~1.7k 行）曾被索引�
 2. ~~中：`AgentController` / `McpServerService` 按域拆分~~ **已于 2026-09-17 完成**（AgentController 760 → 426 行 + ChatTurnRunner 394 行；McpServerService 863 → 593 行 + McpClientPool 243 行 + McpCommandResolver 91 行）；
 3. ~~低：`AgentThoughtBlock.tsx` 可拆子组件~~ **已于 2026-09-17 完成**（651 → 235 行 + ToolStepRow 280 行 + ContextStepRow 140 行）。
 
-**剩余死代码候选（未处理，待定）**：`nora-web/src/app/loading.tsx`（RouteLoading）与 `error.tsx`（GlobalRouteError）——Next.js 约定文件残留，Vite 路由未接线（App.tsx 无引用）。删除或接线由后续决定。
+**剩余死代码候选（已处理，2026-09-17）**：`nora-web/src/app/loading.tsx`（RouteLoading）已删除（Vite 无路由级加载约定）；`error.tsx`（GlobalRouteError）已接线为真正的渲染错误边界（react-error-boundary 包裹各路由，崩溃时兜底展示 + 上报 `react.render-error`，补上 errorReporter 注释里指出的「白屏类灾难」缺口）。
 
 **已知误报（勿删）**：图谱死代码列表中的 React 回调（`handleSave` / `copyId` / `goUp` / `openUpload` / `askAi` / `toggleAll` / `openAdd` / `openCreate` / `handleQueryTable` / `PreviewSkeleton` 等）——图谱不追踪 JSX 引用，逐条人工核验全部在用。
 
