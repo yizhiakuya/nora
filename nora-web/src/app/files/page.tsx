@@ -234,8 +234,17 @@ export default function FilesPage() {
     <>
       <Header
         breadcrumbs={[
-          { label: "工作台", isCurrent: false },
-          { label: "文件中心", isCurrent: inRootView },
+          { label: "工作台", href: "/", isCurrent: false },
+          {
+            label: "文件中心",
+            isCurrent: inRootView,
+            // 非根视图(文件夹/工作区/媒体缓存内)时点击回退到文件中心根
+            onClick: inRootView ? undefined : () => {
+              setCurrentFolder(null);
+              setWorkspaceDir(null);
+              setMediaCacheOpen(false);
+            },
+          },
           ...(workspaceDir !== null
             ? [{ label: "Agent 工作区", isCurrent: true }]
             : []),

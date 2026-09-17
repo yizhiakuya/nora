@@ -9,6 +9,8 @@ import { useServices } from "@/hooks/useServices";
 interface Breadcrumb {
   label: string;
   href?: string;
+  /** 自定义点击行为(优先于 href;用于页内状态回退,如退出文件夹视图)。 */
+  onClick?: () => void;
   isCurrent?: boolean;
 }
 
@@ -27,7 +29,7 @@ export function Header({ breadcrumbs, actions }: HeaderProps) {
     <header className="h-14 flex items-center justify-between px-4 sm:px-6 border-b border-border bg-card z-10 flex-shrink-0 shadow-sm sticky top-0 overflow-hidden">
       <div className="flex items-center gap-3 shrink-0 min-w-0">
         {/* Mobile Menu Toggle */}
-        <button 
+        <button
           onClick={toggleMenu}
           className="md:hidden p-1.5 -ml-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md transition-colors shrink-0"
         >
@@ -38,9 +40,14 @@ export function Header({ breadcrumbs, actions }: HeaderProps) {
         <div className="hidden sm:flex items-center gap-2 text-sm font-medium min-w-0">
           {breadcrumbs.map((bc, idx) => (
             <React.Fragment key={idx}>
-              <span 
+              <span
                   className={bc.isCurrent ? "text-foreground flex items-center gap-2 max-w-[100px] lg:max-w-none truncate" : "text-muted-foreground hover:text-foreground cursor-pointer transition-colors max-w-[80px] lg:max-w-none truncate"}
-                  onClick={() => { if (bc.href) navigate(bc.href); }}
+                  onClick={() => {
+                    // 非当前段可点击:onClick 优先(页内状态回退),否则 href 导航
+                    if (bc.isCurrent) return;
+                    if (bc.onClick) bc.onClick();
+                    else if (bc.href) navigate(bc.href);
+                  }}
               >
                 {bc.label}
               </span>

@@ -23,7 +23,7 @@ export default function McpPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "MCP", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "MCP", isCurrent: true }]}
         actions={
           <div className="flex items-center gap-2">
             <Button

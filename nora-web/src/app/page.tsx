@@ -60,7 +60,7 @@ export default function Home() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", isCurrent: false }, { label: "概览", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "概览", isCurrent: true }]}
         actions={headerActions}
       />
 
