@@ -124,20 +124,22 @@ class ChatOrchestrationServiceTest {
 
     @Test
     void scrubArgsForLogMasksCredentialValues() throws Exception {
-        var method = ChatOrchestrationService.class.getDeclaredMethod("scrubArgsForLog", String.class);
+        // 2026-09-17 拆分后 scrubArgsForLog 在 ToolStepEmitter(包可见)
+        ToolStepEmitter emitter = stepEmitterOf(service);
+        var method = ToolStepEmitter.class.getDeclaredMethod("scrubArgsForLog", String.class);
         method.setAccessible(true);
         // headers 值(headers 的键保留、值替换);name/url 等非凭据字段原样
-        String scrubbed = (String) method.invoke(service,
+        String scrubbed = (String) method.invoke(emitter,
                 "{\"action\":\"register\",\"name\":\"weather\",\"url\":\"https://x\","
                         + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}");
         scrubbed.contains("secret123");
         scrubbed.contains("\"name\":\"weather\"");
         scrubbed.contains("***");
         // password/token 类字段同样脱敏(manage_datasource create 的既有泄漏点)
-        String scrubbed2 = (String) method.invoke(service, "{\"action\":\"create\",\"password\":\"hunter2\"}");
+        String scrubbed2 = (String) method.invoke(emitter, "{\"action\":\"create\",\"password\":\"hunter2\"}");
         scrubbed2.contains("hunter2");
         // 非法 JSON 原样返回,不炸日志行
-        method.invoke(service, "not json");
+        method.invoke(emitter, "not json");
     }
 
     @Test
@@ -378,12 +380,13 @@ class ChatOrchestrationServiceTest {
                 null, null, null, null, null, null, mcp, null, null, null, 5, null);
     }
 
-    /** Invokes parseArgs (facade) + executeTool (ChatToolExecutor) for one tool call. */
+    /** Invokes parseArgs (ToolStepEmitter) + executeTool (ChatToolExecutor) for one tool call. */
     private ChatToolExecutor.ToolOutcome invokeExecute(ChatOrchestrationService svc,
                                                        String tool, String args) throws Exception {
-        var parse = ChatOrchestrationService.class.getDeclaredMethod("parseArgs", String.class, String.class);
+        ToolStepEmitter emitter = stepEmitterOf(svc);
+        var parse = ToolStepEmitter.class.getDeclaredMethod("parseArgs", String.class, String.class);
         parse.setAccessible(true);
-        Object parsed = parse.invoke(svc, tool, args);
+        Object parsed = parse.invoke(emitter, tool, args);
         ChatToolExecutor executor = toolExecutorOf(svc);
         var exec = ChatToolExecutor.class.getDeclaredMethod("executeTool",
                 String.class, String.class, parsed.getClass(), java.util.function.Consumer.class);
@@ -397,6 +400,13 @@ class ChatOrchestrationServiceTest {
         var field = ChatOrchestrationService.class.getDeclaredField("toolExecutor");
         field.setAccessible(true);
         return (ChatToolExecutor) field.get(svc);
+    }
+
+    /** 从 facade 取私有 stepEmitter 字段(2026-09-17 拆分后 emitToolStep/parseArgs 在新类)。 */
+    private ToolStepEmitter stepEmitterOf(ChatOrchestrationService svc) throws Exception {
+        var field = ChatOrchestrationService.class.getDeclaredField("stepEmitter");
+        field.setAccessible(true);
+        return (ToolStepEmitter) field.get(svc);
     }
 
     @Test
@@ -588,13 +598,14 @@ class ChatOrchestrationServiceTest {
                                 Map<String, Integer> fingerprints,
                                 int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
         try {
-            var method = ChatOrchestrationService.class.getDeclaredMethod("emitToolStep",
+            ToolStepEmitter emitter = stepEmitterOf(svc);
+            var method = ToolStepEmitter.class.getDeclaredMethod("emitToolStep",
                     String.class, String.class, String.class, Map.class, List.class, String.class,
                     int.class, PermissionMode.class, String.class,
                     ChatOrchestrationService.ChatEventConsumer.class);
             method.setAccessible(true);
             List<Object> wireList = new java.util.ArrayList<>();
-            method.invoke(svc, stepId, tool, args, fingerprints, wireList, "call-h1", roundIndex,
+            method.invoke(emitter, stepId, tool, args, fingerprints, wireList, "call-h1", roundIndex,
                     PermissionMode.FULL, null, consumer);
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -606,7 +617,8 @@ class ChatOrchestrationServiceTest {
                             Map<String, Integer> fingerprints, List<Object[]> messages,
                             int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
         try {
-            var method = ChatOrchestrationService.class.getDeclaredMethod("emitToolStep",
+            ToolStepEmitter emitter = stepEmitterOf(svc);
+            var method = ToolStepEmitter.class.getDeclaredMethod("emitToolStep",
                     String.class, String.class, String.class, Map.class, List.class, String.class,
                     int.class, ChatOrchestrationService.ChatEventConsumer.class);
             // messages is List<WireMessage> (private record); pass a proxy list that records adds
@@ -618,7 +630,7 @@ class ChatOrchestrationServiceTest {
                     return true;
                 }
             };
-            method.invoke(svc, stepId, tool, args, fingerprints, wireList, "call-1", roundIndex, consumer);
+            method.invoke(emitter, stepId, tool, args, fingerprints, wireList, "call-1", roundIndex, consumer);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

@@ -97,7 +97,7 @@ class ChatToolExecutor {
      * (what was refused + which rule + a correct example) so the model can
      * self-correct on the next round.
      */
-    ToolOutcome executeTool(String name, String args, ChatOrchestrationService.ParsedArgs parsed,
+    ToolOutcome executeTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                                     java.util.function.Consumer<String> liveOutput) {
         if ("execute_sql".equals(name)) {
             String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
