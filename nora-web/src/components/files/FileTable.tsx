@@ -13,6 +13,7 @@ import {
 import { EmptyState } from "@/components/ui/custom/States";
 import { SelectionResult } from "@/hooks/useSelection";
 import { FileItem } from "@/types";
+import { USE_BACKEND } from "@/lib/api/client";
 
 type FileSelection = SelectionResult<number>;
 
@@ -185,8 +186,8 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                   </td>
                   <td className="p-3 overflow-hidden">
                     <div className="flex items-center gap-3 min-w-0">
-                      {/* 图片文件显示真实缩略图(小圆角),其他类型用类型图标 */}
-                      {isImageFile(file.name) ? (
+                      {/* 图片文件显示真实缩略图(小圆角);mock 模式无 raw 端点,退回类型图标 */}
+                      {USE_BACKEND && isImageFile(file.name) ? (
                         <img
                           src={`/api/files/${file.id}/raw`}
                           alt=""

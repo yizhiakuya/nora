@@ -55,6 +55,9 @@ public class MediaCacheController {
 
     private static final Logger log = LoggerFactory.getLogger(MediaCacheController.class);
 
+    /** 保存到文件中心的大小上限:与 file-service 的 max-file-size 一致(100MB)。 */
+    private static final long MAX_SAVE_BYTES = 100L * 1024 * 1024;
+
     private final MediaCacheService mediaCache;
     /** 保存到文件中心(缓存条目 → file-service 上传)。 */
     private final com.nora.agent.service.FileToolClient fileToolClient;
@@ -243,6 +246,16 @@ public class MediaCacheController {
                 "刷新列表后重试");
         }
         MediaCacheService.CacheEntry entry = hit.get();
+        // 大小前置检查:媒体缓存条目可达数百 MB(原片),而 file-service 上传上限
+        // 100MB——不先查就 readAllBytes 会白耗内存(数百 MB 分配 → GC 压力,
+        // 大文件还必然被 file-service 拒绝,错误在内存峰值之后才出现)。
+        long size = entry.size();
+        if (size > MAX_SAVE_BYTES) {
+            throw BusinessException.validation("MEDIA_TOO_LARGE_FOR_SAVE",
+                "该媒体 " + (size / 1024 / 1024) + "MB,超过文件中心单文件上限 "
+                    + (MAX_SAVE_BYTES / 1024 / 1024) + "MB",
+                "如需留存请在手机上导出,或直接下载到本机保存");
+        }
         byte[] bytes;
         try {
             bytes = Files.readAllBytes(entry.file());

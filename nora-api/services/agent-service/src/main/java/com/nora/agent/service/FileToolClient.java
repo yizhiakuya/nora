@@ -87,6 +87,20 @@ public class FileToolClient {
                     sb.append("📁 文件夹「").append(e.getValue()).append("」:\n").append(group);
                 }
             }
+            // 兜底:文件夹列表拉取失败时,带 folderId 的文件会在上面的分组循环里
+            // 全部漏掉(用户整理进文件夹的文件对 AI 不可见)。这里把它们以
+            // 「文件夹 #id」形态补上,保证 read_file list 永远覆盖全部文件。
+            if (folderNames.isEmpty()) {
+                StringBuilder orphan = new StringBuilder();
+                for (JsonNode n : envelope.data()) {
+                    if (!n.path("folderId").isNull() && !n.path("folderId").isMissingNode()) {
+                        orphan.append(renderFileLine(n, "文件夹#" + n.path("folderId").asLong()));
+                    }
+                }
+                if (orphan.length() > 0) {
+                    sb.append("📁 文件夹(名称暂不可用,按 id 展示):\n").append(orphan);
+                }
+            }
             return sb.toString().stripTrailing();
         } catch (Exception e) {
             log.warn("file list failed: {}", e.getMessage());

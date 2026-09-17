@@ -1,5 +1,6 @@
 package com.nora.rag.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.nora.common.exception.BusinessException;
 import com.nora.common.response.ApiResponse;
 import com.nora.rag.api.RetrievalResult;
@@ -81,10 +82,40 @@ public class RagController {
 
         long docId = indexingService.indexDocument(name, "file", request.fileId(), size, text);
 
+        // 竞态补偿:索引耗时可观(embedding 数秒),期间文件可能已被删除
+        // (用户点了「加入知识库」马上又删了它)。删除通知到达时文档行还不存在
+        // (softDeleteByFileId 返回 0),索引完成后就留下一条存活文档——AI 仍能
+        // 检索到已删文件的内容(正是该功能要防的)。这里复查文件存活:已删则
+        // 把刚建的文档软删掉,让状态收敛到「文件已删 → 文档不可检索」。
+        if (!isFileAlive(request.fileId())) {
+            knowledgeDocService.softDeleteByFileId(request.fileId());
+            log.info("file {} deleted during indexing; compensating soft-delete of doc {}", request.fileId(), docId);
+            throw BusinessException.conflict("文件在索引期间已被删除,本次索引结果已撤销: " + request.fileId()
+                    + "(若仍需索引请先从回收站恢复该文件)");
+        }
+
         notifyFileIndexed(request.fileId());
 
         KnowledgeDocService.KnowledgeDocView doc = knowledgeDocService.getDoc(docId);
         return ApiResponse.ok(doc);
+    }
+
+    /** 文件是否仍存活(未被软删):按 ids 查 file-service,查不到视为已删。 */
+    private boolean isFileAlive(Long fileId) {
+        try {
+            Envelope<JsonNode> envelope = fileServiceRestClient.get()
+                    .uri("/api/files?ids={fileId}", fileId)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            return envelope != null && envelope.code() == 0 && envelope.data() != null
+                    && envelope.data().isArray() && !envelope.data().isEmpty();
+        } catch (Exception e) {
+            // 查询失败时保守返回 true(不误删刚建的文档;极端情况宁可多留一份,
+            // 用户可在知识库手动删除)
+            return true;
+        }
     }
 
     /** All knowledge docs (frontend KnowledgeDoc[]). */

@@ -127,12 +127,15 @@ export function ImageLightbox({
     return () => window.removeEventListener("keydown", onKey);
   }, [go, onClose, isVideo]);
 
-  // 打开期间锁定页面滚动
+  // 打开期间锁定页面滚动 + 标记灯箱已打开(外层查看器据此让出键盘控制权,
+  // 避免一次 Esc 连关两层/←→ 把文件切走)
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    document.body.dataset.noraLightboxOpen = "1";
     return () => {
       document.body.style.overflow = prev;
+      delete document.body.dataset.noraLightboxOpen;
     };
   }, []);
 

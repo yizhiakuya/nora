@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/ui/custom/States";
 import { SelectionResult } from "@/hooks/useSelection";
 import { FileItem } from "@/types";
 import { Search } from "lucide-react";
+import { USE_BACKEND } from "@/lib/api/client";
 import type { FolderRow } from "./FileTable";
 
 type FileSelection = SelectionResult<number>;
@@ -165,7 +166,7 @@ export function FileGrid({ files, selection, onOpen, folderRows, onDownload, onR
               >
                 {/* 缩略图区 */}
                 <div className="aspect-[4/3] bg-muted/50 flex items-center justify-center overflow-hidden">
-                  {isImageFile(file.name) ? (
+                  {USE_BACKEND && isImageFile(file.name) ? (
                     <img
                       src={`/api/files/${file.id}/raw`}
                       alt={file.name}
@@ -201,8 +202,9 @@ export function FileGrid({ files, selection, onOpen, folderRows, onDownload, onR
                     {file.size} · {file.date}
                   </div>
                 </div>
-                {/* 悬停操作 */}
-                <div className="absolute top-1.5 right-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                {/* 操作按钮:桌面悬停显示;触屏(<md,网格是唯一视图)恒显——
+                    否则触屏用户没有可用入口(双击被浏览器当缩放) */}
+                <div className="absolute top-1.5 right-1.5 flex gap-0.5 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                   <button
                     type="button"
                     title="预览"

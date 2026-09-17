@@ -5,7 +5,7 @@ import { filesApi } from '@/lib/services/filesApi';
 import { USE_BACKEND } from '@/lib/api/client';
 import { FileItem } from '@/types';
 
-type UploadStatus = 'idle' | 'uploading' | 'success';
+type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
 
 /** 多文件上传进度(弹窗展示用)。 */
 export interface UploadProgress {
@@ -98,17 +98,22 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
         try {
           const item = USE_BACKEND
             ? await filesApi.uploadFile(f, folderRef.current)
-            : await new Promise<FileItem>((resolve) => setTimeout(() => resolve({} as FileItem), 300));
+            // mock 模式:返回 null(不是空对象!)——空对象会让文件页把它当真实
+            // 文件 syncFile 进 store(id/name/icon 全 undefined),列表渲染 Icon
+            // 为 undefined 直接崩页面(实测回归)。
+            : await new Promise<FileItem | null>((resolve) => setTimeout(() => resolve(null), 300));
           ok++;
           setProgress((p) => p ? { ...p, done: p.done + 1, current: null } : p);
-          onSuccess?.(item.name ?? f.name, item);
+          onSuccess?.(f.name, item ?? undefined);
         } catch (e) {
           fail++;
           setProgress((p) => p ? { ...p, done: p.done + 1, failed: p.failed + 1, current: null } : p);
           toast.error(`「${f.name}」上传失败：${e instanceof Error ? e.message : "未知错误"}`);
         }
       }
-      setStatus('success');
+      // 状态反映真实结果:全部失败时进 error 态(不再无条件打绿勾"上传成功"——
+      // 失败只体现在 toast 里,弹窗却显示大对勾,用户误以为已入库)
+      setStatus(ok === 0 && fail > 0 ? 'error' : 'success');
       schedule(() => {
         close();
         setStatus('idle');

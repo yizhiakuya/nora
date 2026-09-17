@@ -138,21 +138,36 @@ public class KnowledgeDocService {
     /**
      * 文件恢复(回收站) → 联动恢复其知识库文档。
      *
+     * <p>只恢复**最近一次索引**的文档与**随本次文件删除一起软删**的 chunk：
+     * <ul>
+     *   <li>同 fileId 可能有多行 doc(重复索引会软删旧行再插新行),全部恢复会撞
+     *       (source, source_id) 部分唯一索引 → 整条语句失败 → 文件恢复了但知识库
+     *       永远回不来;取 id 最大(最新)的一行;</li>
+     *   <li>chunk 同理:重建索引会软删旧版本 chunk,其 deleted_at 更早;文件删除时
+     *       软删的是当时存活的 chunk,deleted_at 与 doc 完全相同(同一事务 now())。
+     *       按该时间戳精确恢复,旧版本 chunk 保持删除,避免同一内容检索出两份。</li>
+     * </ul>
+     *
      * @return 恢复的文档数
      */
     @org.springframework.transaction.annotation.Transactional
     public int restoreByFileId(long fileId) {
         List<Long> docIds = jdbcTemplate.queryForList(
-                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ? AND deleted_at IS NOT NULL",
+                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ? AND deleted_at IS NOT NULL ORDER BY id DESC LIMIT 1",
                 Long.class, fileId);
         if (docIds.isEmpty()) {
             return 0;
         }
-        String in = docIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        long docId = docIds.get(0);
+        Timestamp docDeletedAt = jdbcTemplate.queryForObject(
+                "SELECT deleted_at FROM schema_rag.knowledge_doc WHERE id = ?", Timestamp.class, docId);
         int updated = jdbcTemplate.update(
-                "UPDATE schema_rag.knowledge_doc SET deleted_at = NULL WHERE id IN (" + in + ") AND deleted_at IS NOT NULL");
-        jdbcTemplate.update(
-                "UPDATE schema_rag.knowledge_chunk SET deleted_at = NULL WHERE doc_id IN (" + in + ") AND deleted_at IS NOT NULL");
+                "UPDATE schema_rag.knowledge_doc SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL", docId);
+        if (docDeletedAt != null) {
+            jdbcTemplate.update(
+                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = NULL WHERE doc_id = ? AND deleted_at = ?",
+                    docId, docDeletedAt);
+        }
         return updated;
     }
 

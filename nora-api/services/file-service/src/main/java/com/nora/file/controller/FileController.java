@@ -163,8 +163,13 @@ public class FileController {
         if (request == null || request.ids() == null || request.ids().isEmpty()) {
             throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
         }
-        int restored = fileStorageService.restore(request.ids());
-        for (Long id : request.ids()) {
+        // 过滤 null 元素:畸形 body(如 [null])会让 notify 的拆箱 NPE → 500
+        List<Long> idList = request.ids().stream().filter(java.util.Objects::nonNull).toList();
+        if (idList.isEmpty()) {
+            throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
+        }
+        int restored = fileStorageService.restore(idList);
+        for (Long id : idList) {
             ragIndexClient.notifyLifecycleAsync(id, "restore");
         }
         return ApiResponse.ok(restored);
@@ -173,6 +178,9 @@ public class FileController {
     /**
      * 永久删除(回收站清空):数据库行 + 磁盘文件一并删除。不可恢复。
      * 联动永久删除知识库文档与 chunk。
+     *
+     * <p>只对**实际被清除**的 id 发联动通知——未删除的 id(列表过期/已被
+     * 其他客户端恢复)若发 purge 通知,会把存活文件的知识库文档物理删除。
      */
     @DeleteMapping("/trash")
     public ApiResponse<Integer> purge(@RequestParam("ids") String ids) {
@@ -180,11 +188,11 @@ public class FileController {
         if (idList.isEmpty()) {
             throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
         }
-        int purged = fileStorageService.purge(idList);
-        for (Long id : idList) {
+        List<Long> purged = fileStorageService.purge(idList);
+        for (Long id : purged) {
             ragIndexClient.notifyLifecycleAsync(id, "purge");
         }
-        return ApiResponse.ok(purged);
+        return ApiResponse.ok(purged.size());
     }
 
     /**
@@ -323,14 +331,21 @@ public class FileController {
     }
 
     /** Parses a comma-separated id list; blank/absent values yield an empty list. */
+    /** Parses a comma-separated id list; blank/absent values yield an empty list.
+     *  非法数字(如 "abc")抛 400 而非 500——畸形输入是客户端错误。 */
     private List<Long> parseIds(String ids) {
-        return Optional.ofNullable(ids)
-                .filter(s -> !s.isBlank())
-                .stream()
-                .flatMap(s -> Arrays.stream(s.split(",")))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .map(Long::valueOf)
-                .toList();
+        try {
+            return Optional.ofNullable(ids)
+                    .filter(s -> !s.isBlank())
+                    .stream()
+                    .flatMap(s -> Arrays.stream(s.split(",")))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .map(Long::valueOf)
+                    .toList();
+        } catch (NumberFormatException e) {
+            throw new com.nora.common.exception.BusinessException(400,
+                    "ids 必须是逗号分隔的数字,收到: " + ids);
+        }
     }
 }

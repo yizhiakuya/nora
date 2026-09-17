@@ -5,6 +5,7 @@ import { filesApi, type TrashedFile, toFileItem, humanSize } from "@/lib/service
 import { ResponsiveList } from "@/components/shared/ResponsiveList";
 import { toast } from "sonner";
 import { USE_BACKEND } from "@/lib/api/client";
+import { useFiles } from "@/hooks/useFiles";
 
 interface TrashBrowserProps {
   /** 退出回收站,回到文件中心根视图 */
@@ -20,6 +21,9 @@ interface TrashBrowserProps {
 export function TrashBrowser({ onExit }: TrashBrowserProps) {
   const [items, setItems] = useState<TrashedFile[]>([]);
   const [loading, setLoading] = useState(true);
+  // 恢复后必须同步文件中心 store:删除时文件页已把它从 store 剔除,
+  // 只刷回收站列表的话,回到文件中心看不到恢复的文件(像恢复失败)
+  const syncFromBackend = useFiles((s) => s.syncFromBackend);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -41,6 +45,8 @@ export function TrashBrowser({ onExit }: TrashBrowserProps) {
       const n = await filesApi.restoreTrash(ids);
       toast.success(`已恢复 ${n} 个文件（回到根目录）`);
       void refresh();
+      // 同步文件中心(恢复的文件立刻出现在列表里)
+      void syncFromBackend();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "恢复失败");
     }

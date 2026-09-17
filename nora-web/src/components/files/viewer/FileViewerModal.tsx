@@ -59,12 +59,16 @@ export function FileViewerModal({ file, preview, status, onClose, onNavigate, ha
     window.open(`/api/files/${file.id}/raw`, "_blank");
   }, [file]);
 
-  // 键盘:Esc 关闭、←/→ 切换、F 全屏(输入框聚焦时不拦截)
+  // 键盘:Esc 关闭、←/→ 切换、F 全屏(输入框聚焦时不拦截)。
+  // 内层灯箱(ImageLightbox)打开时它自己处理键盘——通过 body 上的标记检测,
+  // 避免一次 Esc 连关两层 / ←→ 把文件切走(实测冲突)。
   useEffect(() => {
     if (!file) return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // 内层灯箱打开:键盘归它管
+      if (document.body.dataset.noraLightboxOpen === "1") return;
       if (e.key === "Escape") {
         e.preventDefault();
         if (fullscreen) setFullscreen(false);
@@ -75,7 +79,8 @@ export function FileViewerModal({ file, preview, status, onClose, onNavigate, ha
       } else if (e.key === "ArrowRight" && onNavigate) {
         e.preventDefault();
         onNavigate(1);
-      } else if (e.key === "f" || e.key === "F") {
+      } else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // 排除修饰键:Ctrl+F 是浏览器查找,不该切全屏
         setFullscreen((v) => !v);
       }
     };
@@ -216,7 +221,9 @@ export function FileViewerModal({ file, preview, status, onClose, onNavigate, ha
         <div
           className={`${bodyWidth} ${isMedia || fullscreen ? "h-full" : ""} transition-all duration-200`}
           onClick={(e) => e.stopPropagation()}
-          onDoubleClick={() => setFullscreen((v) => !v)}
+          // 双击全屏只在媒体类内容上生效——文本/Word/表格里双击是"选中词",
+          // 全局挂会打断阅读(选中一个词的同时布局跳到全屏)
+          onDoubleClick={isMedia ? () => setFullscreen((v) => !v) : undefined}
         >
           <div key={file.id} className={`animate-in fade-in slide-in-from-bottom-1 duration-200 ${isMedia ? "h-full" : ""}`}>
             {renderBody()}

@@ -19,8 +19,9 @@ export function ImagePreview({ preview }: { preview: FilePreview }) {
 
   return (
     <>
-      {/* 无边界:图片直接居中撑满,原比例 */}
-      <div className="relative w-full h-full flex items-center justify-center">
+      {/* 无边界:图片直接居中撑满,原比例。放大(>100%)时容器可滚动——
+          否则超出部分被 overflow-hidden 裁掉,无法平移查看(只能缩小) */}
+      <div className={`relative w-full h-full flex items-center justify-center ${scale > 1 ? "overflow-auto" : "overflow-hidden"}`}>
         <img
           src={src}
           alt="图片预览"

@@ -345,14 +345,25 @@ public class FileStorageService {
     /**
      * 永久删除(从回收站清空):软删除行 + 磁盘文件一并删除。不可恢复。
      *
-     * @return 实际删除的文件数
+     * <p>原子性:purge 的 DELETE 必须带 {@code deleted_at IS NOT NULL} 守卫——
+     * 先查后删之间存在竞态(另一客户端此刻「恢复」该文件),无守卫的 DELETE
+     * 会把已恢复的存活文件连磁盘一起删掉(用户看到"恢复成功"但文件消失)。
+     *
+     * <p>返回**实际被清除**的 id 列表:调用方(RAG 联动通知)必须只对这份列表
+     * 发通知——对未删除的 id(已恢复/不在回收站)发 purge 通知会把存活文件的
+     * 知识库文档物理删除(不可恢复)。
+     *
+     * @return 实际删除的 id 列表
      */
-    public int purge(List<Long> ids) {
+    public List<Long> purge(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new BusinessException(400, "ids parameter is required");
         }
-        int count = 0;
+        List<Long> purged = new ArrayList<>();
         for (Long id : ids) {
+            if (id == null) {
+                continue;
+            }
             List<String> paths = new ArrayList<>();
             jdbcTemplate.query(
                     "SELECT file_path FROM file_item WHERE id = ? AND deleted_at IS NOT NULL",
@@ -361,7 +372,14 @@ public class FileStorageService {
             if (paths.isEmpty()) {
                 continue;
             }
-            jdbcTemplate.update("DELETE FROM file_item WHERE id = ?", id);
+            // 带守卫的 DELETE:与 restore 的竞态下,只有仍处于回收站状态的行被删
+            int deleted = jdbcTemplate.update(
+                    "DELETE FROM file_item WHERE id = ? AND deleted_at IS NOT NULL", id);
+            if (deleted == 0) {
+                // 查询后被恢复:不删磁盘、不计入
+                continue;
+            }
+            purged.add(id);
             // 磁盘文件删除失败不阻断(数据行已清;残留文件后续可人工回收)
             try {
                 if (paths.get(0) != null) {
@@ -370,9 +388,8 @@ public class FileStorageService {
             } catch (Exception e) {
                 log.warn("purge: could not delete file on disk for id {}: {}", id, e.getMessage());
             }
-            count++;
         }
-        return count;
+        return purged;
     }
 
     /** Reads only the {@code file_path} column for the given id. */

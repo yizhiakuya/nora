@@ -82,6 +82,21 @@ export function UploadModal({ upload, title, hint = "单文件最大支持 50MB"
           <div className="text-xs text-muted-foreground mt-2">处理完毕后将自动添加到列表</div>
         </div>
       )}
+      {upload.status === "error" && (
+        <div className="py-12 flex flex-col items-center justify-center animate-in zoom-in">
+          <div className="w-12 h-12 rounded-full bg-red-50 dark:bg-red-950/40 flex items-center justify-center mb-4">
+            <svg className="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </div>
+          <div className="text-sm font-bold text-foreground">上传失败</div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {upload.progress && upload.progress.total > 1
+              ? `${upload.progress.total} 个文件全部失败，请查看错误提示后重试`
+              : "请查看错误提示后重试"}
+          </div>
+        </div>
+      )}
       {upload.status === "success" && (
         <div className="py-12 flex flex-col items-center justify-center animate-in zoom-in">
           <CheckCircle2 className="w-12 h-12 text-green-500 dark:text-green-400 mb-4" />

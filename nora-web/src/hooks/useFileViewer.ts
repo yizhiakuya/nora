@@ -25,8 +25,32 @@ export function useFileViewer() {
   const [fileList, setFileList] = useState<FileItem[]>([]);
   const [index, setIndex] = useState(-1);
   const requestSeq = useRef(0);
-  /** 预览缓存：fileId → preview（会话内；二次打开零等待）。 */
+  /** 预览缓存：fileId → preview（会话内；二次打开零等待）。
+   *  上限 30 条 LRU——text/csv/word 的 preview 含 Tika 全量文本(可达 MB 级),
+   *  无上限的话连续翻看大文档会在会话内持续增长。Map 迭代序 = 插入序,
+   *  命中时删除重插即 LRU。 */
   const cache = useRef(new Map<number, FilePreview>());
+  const CACHE_MAX = 30;
+  const cachePut = (id: number, p: FilePreview) => {
+    const m = cache.current;
+    if (m.has(id)) m.delete(id);
+    m.set(id, p);
+    while (m.size > CACHE_MAX) {
+      const oldest = m.keys().next().value;
+      if (oldest === undefined) break;
+      m.delete(oldest);
+    }
+  };
+  const cacheGet = (id: number): FilePreview | undefined => {
+    const m = cache.current;
+    const v = m.get(id);
+    if (v !== undefined) {
+      // 命中即提升到最新(LRU 序)
+      m.delete(id);
+      m.set(id, v);
+    }
+    return v;
+  };
 
   /** 注入当前上下文列表（文件页/首页各自传入；弹窗内 ←/→ 在此列表内切换）。 */
   const attachList = useCallback((files: FileItem[]) => {
@@ -35,7 +59,7 @@ export function useFileViewer() {
 
   /** 拉取预览（带缓存）；供 open / 预取共用。 */
   const fetchInto = useCallback(async (file: FileItem, seq: number) => {
-    const cached = cache.current.get(file.id);
+    const cached = cacheGet(file.id);
     if (cached) {
       if (seq === requestSeq.current) {
         setPreview(cached);
@@ -45,7 +69,7 @@ export function useFileViewer() {
     }
     try {
       const data = await filesApi.fetchPreview(file.id, file.name);
-      if (USE_BACKEND) cache.current.set(file.id, data);
+      if (USE_BACKEND) cachePut(file.id, data);
       if (seq !== requestSeq.current) return; // 过期响应，丢弃
       setPreview(data);
       setStatus("ready");
@@ -59,7 +83,7 @@ export function useFileViewer() {
   const prefetch = useCallback((file: FileItem | undefined) => {
     if (!file || cache.current.has(file.id)) return;
     void filesApi.fetchPreview(file.id, file.name)
-      .then((data) => { if (USE_BACKEND) cache.current.set(file.id, data); })
+      .then((data) => { if (USE_BACKEND) cachePut(file.id, data); })
       .catch(() => { /* 预取失败无感 */ });
   }, []);
 
@@ -70,7 +94,7 @@ export function useFileViewer() {
       setFileList(list);
       setIndex(list.findIndex((f) => f.id === file.id));
     }
-    const cached = cache.current.get(file.id);
+    const cached = cacheGet(file.id);
     if (cached) {
       // 缓存命中：直接 ready（无骨架闪烁）
       setPreview(cached);
