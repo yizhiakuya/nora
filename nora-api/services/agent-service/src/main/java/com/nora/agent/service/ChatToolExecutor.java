@@ -569,7 +569,7 @@ class ChatToolExecutor {
         }
     }
 
-    /** manage_mcp handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    /** manage_mcp handler(2026-09-17 从 executeTool 拆出;内部再拆 list/register/目标操作三段)。 */
     ToolOutcome execManageMcp(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             java.util.function.Consumer<String> liveOutput) {
         if (mcpServerService == null) {
@@ -584,118 +584,12 @@ class ChatToolExecutor {
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
             if ("list".equals(action)) {
-                List<McpServerService.ServerView> all = mcpServerService.list();
-                if (all.isEmpty()) {
-                    return new ToolOutcome("(暂无 MCP 服务器)。可用 action=register 注册:"
-                            + "{\"action\": \"register\", \"name\": \"名称\", \"url\": \"https://...\"}",
-                            null, null, false);
-                }
-                StringBuilder sb = new StringBuilder("已注册 MCP 服务器:\n");
-                for (McpServerService.ServerView s : all) {
-                    sb.append("id=").append(s.id())
-                            .append(s.enabled() ? "" : " [已停用]")
-                            .append(" ").append(s.name())
-                            .append(" · ").append(s.transport())
-                            .append(" · ").append(s.status())
-                            .append(s.statusDetail() != null ? "(" + Texts.abbreviate(s.statusDetail(), 80) + ")" : "")
-                            .append(" · 工具数 ").append(s.toolCount())
-                            .append('\n');
-                }
-                return new ToolOutcome(sb.toString(), null, null, false);
+                return mcpListResult();
             }
             if ("register".equals(action)) {
-                String rName = a.path("name").asText(null);
-                String rUrl = a.path("url").asText(null);
-                String rTransport = a.path("transport").asText(null);
-                // STDIO(本地进程)注册:command + args + env
-                String rCommand = a.path("command").asText(null);
-                // 推断:给了 command 没给 url/transport → 本地进程形态(模型常省略 transport)
-                if ((rTransport == null || rTransport.isBlank())
-                        && rCommand != null && !rCommand.isBlank()
-                        && (rUrl == null || rUrl.isBlank())) {
-                    rTransport = "STDIO";
-                }
-                List<String> rArgs = new java.util.ArrayList<>();
-                if (a.path("args").isArray()) {
-                    for (JsonNode n : a.path("args")) {
-                        rArgs.add(n.asText(""));
-                    }
-                }
-                String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport, rCommand, rArgs);
-                if (registerGuard != null) {
-                    return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
-                }
-                if (mcpServerService.findByName(rName) != null) {
-                    return new ToolOutcome("ERROR: 服务器名「" + rName.trim() + "」已存在。如需改用 remove 后重新注册,"
-                            + "或用 refresh 重新拉取工具", null, null, false);
-                }
-                // headers/env 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
-                Map<String, String> headers = new java.util.LinkedHashMap<>();
-                JsonNode h = a.path("headers");
-                if (h.isObject()) {
-                    h.fields().forEachRemaining(e -> headers.put(e.getKey(), e.getValue().asText("")));
-                }
-                Map<String, String> env = new java.util.LinkedHashMap<>();
-                JsonNode envNode = a.path("env");
-                if (envNode.isObject()) {
-                    envNode.fields().forEachRemaining(e -> env.put(e.getKey(), e.getValue().asText("")));
-                }
-                McpServerService.ServerView created = mcpServerService.create(rName, rUrl, rTransport,
-                        headers.isEmpty() ? null : headers,
-                        rCommand, rArgs.isEmpty() ? null : rArgs, env.isEmpty() ? null : env);
-                // 注册后自动测试连接(refresh):对齐 manage_datasource create 后自动 test 的语义;
-                // 连接失败不回滚注册(注册本身成功,失败原因如实报告,用户可稍后重试 refresh)
-                String testResult;
-                try {
-                    List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(created.id());
-                    StringBuilder names = new StringBuilder();
-                    for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
-                        names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
-                    }
-                    testResult = "连接成功,发现 " + toolEntries.size() + " 个工具"
-                            + (toolEntries.isEmpty() ? "" : ": " + names
-                            + (toolEntries.size() > 10 ? " 等" : ""))
-                            + "。工具已挂载(mcp__" + created.name() + "__*),下轮对话可直接调用";
-                } catch (Exception e) {
-                    testResult = "连接测试失败: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200)
-                            + "(注册已保留;可检查地址/鉴权后用 refresh 重试)";
-                }
-                return new ToolOutcome("已注册 MCP 服务器(id=" + created.id() + "): " + created.name()
-                        + " · " + created.transport() + "\n" + testResult, null, null, false);
+                return mcpRegisterResult(a);
             }
-            // refresh / enable / disable / remove:目标 = 名称或数字 id
-            String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
-            if (target == null || target.isBlank()) {
-                return new ToolOutcome("ERROR: 缺少目标服务器(target = 名称或 id)。可先用 action=list 查看",
-                        null, null, false);
-            }
-            McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
-            if (server == null) {
-                return new ToolOutcome("ERROR: 找不到 MCP 服务器「" + target + "」。可先用 action=list 查看现有服务器"
-                        + "(服务器名不能猜测)", null, null, false);
-            }
-            String content = switch (action) {
-                case "refresh" -> {
-                    List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
-                    StringBuilder names = new StringBuilder();
-                    for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
-                        names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
-                    }
-                    yield "已连接「" + server.name() + "」,发现 " + toolEntries.size() + " 个工具"
-                            + (toolEntries.isEmpty() ? "" : ": " + names + (toolEntries.size() > 10 ? " 等" : ""));
-                }
-                case "enable" -> mcpServerService.setEnabled(server.id(), true)
-                        ? "已启用「" + server.name() + "」。工具将在下轮对话挂载(缓存过工具清单则立即可用)"
-                        : "ERROR: 启用失败,服务器可能已被删除";
-                case "disable" -> mcpServerService.setEnabled(server.id(), false)
-                        ? "已停用「" + server.name() + "」。其工具不再挂载"
-                        : "ERROR: 停用失败,服务器可能已被删除";
-                default -> mcpServerService.delete(server.id())
-                        ? "已删除 MCP 服务器「" + server.name() + "」及其连接"
-                        : "ERROR: 删除失败,服务器可能已被删除";
-            };
-            boolean failure = content.startsWith("ERROR:");
-            return new ToolOutcome(content, failure ? null : content, null, false);
+            return mcpTargetOpResult(action, a);
         } catch (IllegalArgumentException | IllegalStateException e) {
             // create/refresh 的参数与连接错误:直接作为可自纠错误回给模型
             return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 300),
@@ -703,6 +597,129 @@ class ChatToolExecutor {
         } catch (Exception e) {
             return new ToolOutcome("ERROR: MCP 操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
         }
+    }
+
+    /** manage_mcp action=list:服务器清单(含状态/工具数)。 */
+    private ToolOutcome mcpListResult() {
+        List<McpServerService.ServerView> all = mcpServerService.list();
+        if (all.isEmpty()) {
+            return new ToolOutcome("(暂无 MCP 服务器)。可用 action=register 注册:"
+                    + "{\"action\": \"register\", \"name\": \"名称\", \"url\": \"https://...\"}",
+                    null, null, false);
+        }
+        StringBuilder sb = new StringBuilder("已注册 MCP 服务器:\n");
+        for (McpServerService.ServerView s : all) {
+            sb.append("id=").append(s.id())
+                    .append(s.enabled() ? "" : " [已停用]")
+                    .append(" ").append(s.name())
+                    .append(" · ").append(s.transport())
+                    .append(" · ").append(s.status())
+                    .append(s.statusDetail() != null ? "(" + Texts.abbreviate(s.statusDetail(), 80) + ")" : "")
+                    .append(" · 工具数 ").append(s.toolCount())
+                    .append('\n');
+        }
+        return new ToolOutcome(sb.toString(), null, null, false);
+    }
+
+    /** manage_mcp action=register:注册 + 自动测试连接(失败不回滚注册)。 */
+    private ToolOutcome mcpRegisterResult(JsonNode a) {
+        String rName = a.path("name").asText(null);
+        String rUrl = a.path("url").asText(null);
+        String rTransport = a.path("transport").asText(null);
+        // STDIO(本地进程)注册:command + args + env
+        String rCommand = a.path("command").asText(null);
+        // 推断:给了 command 没给 url/transport → 本地进程形态(模型常省略 transport)
+        if ((rTransport == null || rTransport.isBlank())
+                && rCommand != null && !rCommand.isBlank()
+                && (rUrl == null || rUrl.isBlank())) {
+            rTransport = "STDIO";
+        }
+        List<String> rArgs = new java.util.ArrayList<>();
+        if (a.path("args").isArray()) {
+            for (JsonNode n : a.path("args")) {
+                rArgs.add(n.asText(""));
+            }
+        }
+        String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport, rCommand, rArgs);
+        if (registerGuard != null) {
+            return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
+        }
+        if (mcpServerService.findByName(rName) != null) {
+            return new ToolOutcome("ERROR: 服务器名「" + rName.trim() + "」已存在。如需改用 remove 后重新注册,"
+                    + "或用 refresh 重新拉取工具", null, null, false);
+        }
+        // headers/env 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
+        Map<String, String> headers = new java.util.LinkedHashMap<>();
+        JsonNode h = a.path("headers");
+        if (h.isObject()) {
+            h.fields().forEachRemaining(e -> headers.put(e.getKey(), e.getValue().asText("")));
+        }
+        Map<String, String> env = new java.util.LinkedHashMap<>();
+        JsonNode envNode = a.path("env");
+        if (envNode.isObject()) {
+            envNode.fields().forEachRemaining(e -> env.put(e.getKey(), e.getValue().asText("")));
+        }
+        McpServerService.ServerView created = mcpServerService.create(rName, rUrl, rTransport,
+                headers.isEmpty() ? null : headers,
+                rCommand, rArgs.isEmpty() ? null : rArgs, env.isEmpty() ? null : env);
+        // 注册后自动测试连接(refresh):对齐 manage_datasource create 后自动 test 的语义;
+        // 连接失败不回滚注册(注册本身成功,失败原因如实报告,用户可稍后重试 refresh)
+        String testResult;
+        try {
+            List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(created.id());
+            testResult = "连接成功,发现 " + toolEntries.size() + " 个工具"
+                    + (toolEntries.isEmpty() ? "" : ": " + formatToolNames(toolEntries)
+                    + (toolEntries.size() > 10 ? " 等" : ""))
+                    + "。工具已挂载(mcp__" + created.name() + "__*),下轮对话可直接调用";
+        } catch (Exception e) {
+            testResult = "连接测试失败: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200)
+                    + "(注册已保留;可检查地址/鉴权后用 refresh 重试)";
+        }
+        return new ToolOutcome("已注册 MCP 服务器(id=" + created.id() + "): " + created.name()
+                + " · " + created.transport() + "\n" + testResult, null, null, false);
+    }
+
+    /** manage_mcp 目标操作:refresh / enable / disable / remove(目标 = 名称或数字 id)。 */
+    private ToolOutcome mcpTargetOpResult(String action, JsonNode a) {
+        // refresh / enable / disable / remove:目标 = 名称或数字 id
+        String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+        if (target == null || target.isBlank()) {
+            return new ToolOutcome("ERROR: 缺少目标服务器(target = 名称或 id)。可先用 action=list 查看",
+                    null, null, false);
+        }
+        McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
+        if (server == null) {
+            return new ToolOutcome("ERROR: 找不到 MCP 服务器「" + target + "」。可先用 action=list 查看现有服务器"
+                    + "(服务器名不能猜测)", null, null, false);
+        }
+        String content = switch (action) {
+            case "refresh" -> {
+                List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
+                yield "已连接「" + server.name() + "」,发现 " + toolEntries.size() + " 个工具"
+                        + (toolEntries.isEmpty() ? "" : ": " + formatToolNames(toolEntries)
+                        + (toolEntries.size() > 10 ? " 等" : ""));
+            }
+            case "enable" -> mcpServerService.setEnabled(server.id(), true)
+                    ? "已启用「" + server.name() + "」。工具将在下轮对话挂载(缓存过工具清单则立即可用)"
+                    : "ERROR: 启用失败,服务器可能已被删除";
+            case "disable" -> mcpServerService.setEnabled(server.id(), false)
+                    ? "已停用「" + server.name() + "」。其工具不再挂载"
+                    : "ERROR: 停用失败,服务器可能已被删除";
+            default -> mcpServerService.delete(server.id())
+                    ? "已删除 MCP 服务器「" + server.name() + "」及其连接"
+                    : "ERROR: 删除失败,服务器可能已被删除";
+        };
+        boolean failure = content.startsWith("ERROR:");
+        return new ToolOutcome(content, failure ? null : content, null, false);
+    }
+
+    /** 工具名清单(最多 10 个,逗号分隔;register/refresh 的结果文案共用)。 */
+    private static String formatToolNames(List<McpServerService.ToolEntry> toolEntries) {
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
+            names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
+        }
+        return names.toString();
     }
 
     /** run_command handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
