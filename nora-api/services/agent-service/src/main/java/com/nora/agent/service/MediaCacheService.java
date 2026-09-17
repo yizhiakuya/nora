@@ -109,6 +109,11 @@ public class MediaCacheService {
     public record CacheEntry(Path file, String contentType, long size, String quality, String phoneKind) {
     }
 
+    /** 文件中心「媒体缓存」文件夹用的条目视图。 */
+    public record CachedItem(String key, String url, String contentType, long size,
+                             String quality, String phoneKind, long savedAt) {
+    }
+
     /** 上游流式响应:打开连接并拿到响应头后交给调用方流式消费。 */
     public record UpstreamStream(int status, String contentType, long contentLength,
                                  String contentRange, InputStream body, String errorBody,
@@ -384,6 +389,62 @@ public class MediaCacheService {
     /** 链路状态描述(排障:当前公网/局域网、手机网络)。 */
     public String routerStatus() {
         return router == null ? "disabled" : router.status();
+    }
+
+    /**
+     * 列出全部缓存条目(文件中心「媒体缓存」文件夹用)。
+     *
+     * <p>按最近访问时间(mtime,LRU 序)倒序;损坏的 .bin 无 meta 时用文件名兜底。
+     */
+    public List<CachedItem> listCached() {
+        List<CachedItem> out = new ArrayList<>();
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(cacheDir, "*.bin")) {
+            for (Path p : ds) {
+                String name = p.getFileName().toString();
+                String key = name.substring(0, name.length() - ".bin".length());
+                try {
+                    Meta meta = readMeta(key);
+                    out.add(new CachedItem(key, meta.url(), meta.contentType(), Files.size(p),
+                            meta.quality(), meta.phoneKind(), Files.getLastModifiedTime(p).toMillis()));
+                } catch (IOException ignored) {
+                    // 单个条目读取失败跳过
+                }
+            }
+        } catch (IOException e) {
+            log.debug("media cache list failed: {}", e.getMessage());
+        }
+        out.sort(java.util.Comparator.comparingLong(CachedItem::savedAt).reversed());
+        return out;
+    }
+
+    /** 删除单个缓存条目(文件中心里的「删除」)。 */
+    public boolean deleteCached(String key) {
+        if (key == null || !key.matches("[0-9a-f]{8,64}")) {
+            return false;
+        }
+        try {
+            boolean removed = Files.deleteIfExists(cacheDir.resolve(key + ".bin"));
+            Files.deleteIfExists(cacheDir.resolve(key + ".meta"));
+            return removed;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** 清空全部缓存(文件中心里的「清空」;正在预取的条目不受影响,完成后再入盘)。 */
+    public int clearCached() {
+        int count = 0;
+        for (CachedItem item : listCached()) {
+            if (deleteCached(item.key())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** 缓存目录绝对路径(文件中心展示"真实磁盘位置"用)。 */
+    public String cacheDirPath() {
+        return cacheDir.toAbsolutePath().toString();
     }
 
     /**

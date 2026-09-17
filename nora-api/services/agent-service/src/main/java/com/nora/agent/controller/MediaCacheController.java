@@ -9,7 +9,9 @@ import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -24,6 +26,7 @@ import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -183,6 +186,40 @@ public class MediaCacheController {
 
     /** GET /api/media/status response。 */
     public record StatusView(String router, boolean prefetchAllowed) {
+    }
+
+    /**
+     * 文件中心「媒体缓存」文件夹:列出全部缓存条目。
+     *
+     * <p>媒体缓存不再只是磁盘上的黑盒——用户在文件中心能看到缓存了什么、
+     * 各占多大、按档位(high/low)区分,并可删除/清空。
+     */
+    @GetMapping("/cached")
+    public ApiResponse<CachedListView> cached() {
+        var items = mediaCache.listCached();
+        long totalBytes = items.stream().mapToLong(MediaCacheService.CachedItem::size).sum();
+        return ApiResponse.ok(new CachedListView(items, items.size(), totalBytes, mediaCache.cacheDirPath()));
+    }
+
+    /** GET /api/media/cached response。 */
+    public record CachedListView(List<MediaCacheService.CachedItem> items, int count,
+                                 long totalBytes, String dir) {
+    }
+
+    /** 删除单个缓存条目。 */
+    @DeleteMapping("/cached/{key}")
+    public ApiResponse<Boolean> deleteCached(@PathVariable("key") String key) {
+        if (!mediaCache.deleteCached(key)) {
+            throw BusinessException.validation("MEDIA_CACHE_NOT_FOUND", "缓存条目不存在或已被删除",
+                "刷新列表后重试");
+        }
+        return ApiResponse.ok(true);
+    }
+
+    /** 清空全部媒体缓存。 */
+    @DeleteMapping("/cached")
+    public ApiResponse<Integer> clearCached() {
+        return ApiResponse.ok(mediaCache.clearCached());
     }
 
     /** tee 响应:客户端流与磁盘缓存同时写(客户端断开仍完成缓存)。 */

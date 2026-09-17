@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { Search, FolderPlus, CloudUpload, Bot } from "lucide-react";
+import { Search, FolderPlus, CloudUpload, Bot, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FolderGrid } from "@/components/files/FolderGrid";
@@ -13,6 +13,7 @@ import { useSimulatedUpload } from "@/hooks/useUpload";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { WorkspaceBrowser } from "@/components/files/WorkspaceBrowser";
+import { MediaCacheBrowser } from "@/components/files/MediaCacheBrowser";
 import { toast } from "sonner";
 import { FileItem } from "@/types";
 import { useFiles } from "@/hooks/useFiles";
@@ -27,6 +28,8 @@ export default function FilesPage() {
   /** 工作区导航状态:null=文件中心根视图;""=工作区根目录;"memory/..."=子目录。
    *  工作区是文件系统的一部分——像普通文件夹一样进入,而不是独立 Tab。 */
   const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
+  /** 媒体缓存文件夹视图(与工作区互斥)。 */
+  const [mediaCacheOpen, setMediaCacheOpen] = useState(false);
   const files = useFiles((s) => s.files);
   const addFile = useFiles((s) => s.addFile);
   const deleteFiles = useFiles((s) => s.deleteFiles);
@@ -108,14 +111,17 @@ export default function FilesPage() {
       <Header
         breadcrumbs={[
           { label: "工作台", isCurrent: false },
-          { label: "文件中心", isCurrent: workspaceDir === null },
+          { label: "文件中心", isCurrent: workspaceDir === null && !mediaCacheOpen },
           ...(workspaceDir !== null
             ? [{ label: "Agent 工作区", isCurrent: true }]
+            : []),
+          ...(mediaCacheOpen
+            ? [{ label: "媒体缓存", isCurrent: true }]
             : []),
         ]}
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            {workspaceDir === null && (
+            {workspaceDir === null && !mediaCacheOpen && (
             <>
             <div className="relative w-[100px] sm:w-[180px] shrink-0">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3.5 h-3.5" />
@@ -141,7 +147,9 @@ export default function FilesPage() {
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          {workspaceDir === null ? (
+          {mediaCacheOpen ? (
+            <MediaCacheBrowser onExit={() => setMediaCacheOpen(false)} />
+          ) : workspaceDir === null ? (
             <>
               <div className="flex items-center justify-between mb-4 animate-in fade-in">
                 <h2 className="text-sm font-bold text-foreground">所有文件</h2>
@@ -154,12 +162,20 @@ export default function FilesPage() {
                 onDeleteSelected={handleDeleteSelected}
                 onOpen={(f) => { addRecent(f.name, f.type); viewer.open(f); }}
                 onIndex={handleIndexFile}
-                folderRow={{
-                  name: "Agent 工作区",
-                  description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
-                  icon: Bot,
-                  onOpen: () => setWorkspaceDir(""),
-                }}
+                folderRows={[
+                  {
+                    name: "Agent 工作区",
+                    description: "AI 的工作目录与长期记忆(SOUL/AGENTS/USER/MEMORY.md)",
+                    icon: Bot,
+                    onOpen: () => setWorkspaceDir(""),
+                  },
+                  {
+                    name: "媒体缓存",
+                    description: "相册等远程媒体的本地副本(查看秒开、手机离线可看)",
+                    icon: HardDrive,
+                    onOpen: () => setMediaCacheOpen(true),
+                  },
+                ]}
               />
             </>
           ) : (

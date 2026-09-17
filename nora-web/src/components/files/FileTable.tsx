@@ -25,11 +25,15 @@ interface FileTableProps {
   onOpen: (file: FileItem) => void;
   /** 未索引文件 → 加入知识库 */
   onIndex?: (file: FileItem) => void;
-  /** 置顶显示的文件夹行(文件系统一体化:工作区作为目录出现) */
+  /** 置顶显示的文件夹行(文件系统一体化:工作区/媒体缓存作为目录出现) */
   folderRow?: FolderRow;
+  /** 置顶文件夹行(多行版本;与 folderRow 二选一,优先本字段) */
+  folderRows?: FolderRow[];
 }
 
-export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex, folderRow }: FileTableProps) {
+export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex, folderRow, folderRows }: FileTableProps) {
+  // 统一为列表:folderRows 优先,兼容既有单行调用
+  const folders: FolderRow[] = folderRows ?? (folderRow ? [folderRow] : []);
   return (
     <>
       {/* Batch Action Bar */}
@@ -70,22 +74,23 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
             </tr>
           </thead>
           <tbody className="text-sm">
-            {folderRow && (
+            {folders.map((folder) => (
               <tr
+                key={folder.name}
                 className="border-b border-border transition-colors group cursor-pointer hover:bg-muted"
-                onClick={folderRow.onOpen}
-                title={folderRow.description}
+                onClick={folder.onOpen}
+                title={folder.description}
               >
                 <td className="p-3 pl-4 w-10" />
                 <td className="p-3 max-w-[200px]">
                   <div className="flex items-center gap-3">
-                    {folderRow.icon
-                      ? <folderRow.icon className="w-5 h-5 shrink-0 text-blue-500 dark:text-blue-400" />
+                    {folder.icon
+                      ? <folder.icon className="w-5 h-5 shrink-0 text-blue-500 dark:text-blue-400" />
                       : <FolderIcon />}
                     <span className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
-                      {folderRow.name}
+                      {folder.name}
                     </span>
-                    <span className="text-[10px] text-muted-foreground/70 truncate hidden md:inline ml-1">{folderRow.description}</span>
+                    <span className="text-[10px] text-muted-foreground/70 truncate hidden md:inline ml-1">{folder.description}</span>
                   </div>
                 </td>
                 <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">文件夹</td>
@@ -95,8 +100,8 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                   <ChevronRight className="w-4 h-4 text-muted-foreground inline-block" />
                 </td>
               </tr>
-            )}
-            {files.length === 0 && !folderRow ? (
+            ))}
+            {files.length === 0 && folders.length === 0 ? (
               <tr>
                 <td colSpan={6}>
                   <EmptyState icon={Search} title="没有找到匹配的文件" description="换个关键词搜索，或者上传一份新文件吧。" />
