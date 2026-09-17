@@ -9,6 +9,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.util.Map;
+
 /**
  * Reads workbench files via file-service ({@code GET /api/files},
  * {@code GET /api/files/{id}/preview}) for the agent's {@code read_file}
@@ -27,9 +29,13 @@ public class FileToolClient {
     }
 
     /**
-     * Lists workbench files (id, name, size, indexed flag).
+     * Lists workbench files (id, name, size, indexed flag, folder).
      *
-     * @return one "id | name | size | indexed" line per file
+     * <p>输出带文件夹归属(2026-09-17):用户在文件中心整理的目录结构
+     * 对 AI 可见——「项目资料文件夹里有什么」这类问题能直接回答;
+     * 文件列表按文件夹分组渲染(根目录文件在最前)。
+     *
+     * @return one line per file, grouped by folder
      */
     public String list() {
         try {
@@ -45,19 +51,57 @@ public class FileToolClient {
             if (envelope.data().isEmpty()) {
                 return "(工作台还没有上传任何文件)";
             }
+            // 文件夹名映射(拿不到就只显示 id——不阻断列表)
+            Map<Long, String> folderNames = new java.util.HashMap<>();
+            try {
+                Envelope<JsonNode> folders = restClient.get()
+                        .uri("/api/files/folders")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {
+                        });
+                if (folders != null && folders.data() != null && folders.data().isArray()) {
+                    for (JsonNode f : folders.data()) {
+                        folderNames.put(f.path("id").asLong(), f.path("name").asText("?"));
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("folder list unavailable for read_file: {}", e.getMessage());
+            }
             StringBuilder sb = new StringBuilder();
+            // 根目录文件先列(无 folderId)
             for (JsonNode n : envelope.data()) {
-                sb.append("id=").append(n.path("id").asLong())
-                        .append(" | ").append(n.path("name").asText("?"))
-                        .append(" | ").append(formatSize(n.path("sizeBytes").asLong(0)))
-                        .append(" | ").append(n.path("indexed").asBoolean() ? "indexed" : "not-indexed")
-                        .append('\n');
+                if (n.path("folderId").isNull() || n.path("folderId").isMissingNode()) {
+                    sb.append(renderFileLine(n, null));
+                }
+            }
+            // 再按文件夹分组
+            for (Map.Entry<Long, String> e : folderNames.entrySet()) {
+                StringBuilder group = new StringBuilder();
+                for (JsonNode n : envelope.data()) {
+                    if (!n.path("folderId").isMissingNode() && n.path("folderId").asLong(-1) == e.getKey()) {
+                        group.append(renderFileLine(n, e.getValue()));
+                    }
+                }
+                if (group.length() > 0) {
+                    sb.append("📁 文件夹「").append(e.getValue()).append("」:\n").append(group);
+                }
             }
             return sb.toString().stripTrailing();
         } catch (Exception e) {
             log.warn("file list failed: {}", e.getMessage());
             return "ERROR: " + e.getMessage();
         }
+    }
+
+    /** 单行文件渲染(id | 名称 | 大小 | 索引状态)。 */
+    private static String renderFileLine(JsonNode n, String folderName) {
+        return "id=" + n.path("id").asLong()
+                + " | " + n.path("name").asText("?")
+                + " | " + formatSize(n.path("sizeBytes").asLong(0))
+                + " | " + (n.path("indexed").asBoolean() ? "indexed" : "not-indexed")
+                + (folderName == null ? "" : " | 文件夹:" + folderName)
+                + '\n';
     }
 
     /**

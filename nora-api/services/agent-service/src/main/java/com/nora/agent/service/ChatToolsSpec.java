@@ -240,7 +240,8 @@ class ChatToolsSpec {
         ObjectNode fileFn = fileTool.putObject("function");
         fileFn.put("name", "read_file");
         fileFn.put("description", "工作台文件管理。"
-                + "list 列出全部文件;带 id 读取某个文件的提取文本(支持文档/PDF/代码等);"
+                + "list 列出全部文件(按文件夹分组展示,可看到用户整理的结构);"
+                + "带 id 读取某个文件的提取文本(支持文档/PDF/代码等);"
                 + "**import 把远程 URL 下载并存成工作台文件**"
                 + "(适合把 MCP 工具返回的图片链接存起来:用户可在「文件」页直接看到)。"
                 + "用户问\"我的文件里/上传的文档里\"这类问题时使用——"
