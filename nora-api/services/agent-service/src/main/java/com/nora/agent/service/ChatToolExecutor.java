@@ -27,6 +27,8 @@ class ChatToolExecutor {
     private final TerminalService terminalService;
     private final AgentWorkspaceService agentWorkspaceService;
     private final AgentSkillService agentSkillService;
+    /** 画廊列表预取(可为 null:测试等场景未接)。 */
+    private final GalleryPrefetcher galleryPrefetcher;
 
     ChatToolExecutor(ObjectMapper objectMapper,
                      SqlToolClient sqlToolClient,
@@ -40,6 +42,24 @@ class ChatToolExecutor {
                      TerminalService terminalService,
                      AgentWorkspaceService agentWorkspaceService,
                      AgentSkillService agentSkillService) {
+        this(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient, containerControlClient,
+                dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService, terminalService,
+                agentWorkspaceService, agentSkillService, null);
+    }
+
+    ChatToolExecutor(ObjectMapper objectMapper,
+                     SqlToolClient sqlToolClient,
+                     ServiceLogClient serviceLogClient,
+                     WriteSqlClient writeSqlClient,
+                     ContainerControlClient containerControlClient,
+                     DataSourceManageClient dataSourceManageClient,
+                     ServiceManageClient serviceManageClient,
+                     FileToolClient fileToolClient,
+                     McpServerService mcpServerService,
+                     TerminalService terminalService,
+                     AgentWorkspaceService agentWorkspaceService,
+                     AgentSkillService agentSkillService,
+                     GalleryPrefetcher galleryPrefetcher) {
         this.objectMapper = objectMapper;
         this.sqlToolClient = sqlToolClient;
         this.serviceLogClient = serviceLogClient;
@@ -52,6 +72,7 @@ class ChatToolExecutor {
         this.terminalService = terminalService;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
+        this.galleryPrefetcher = galleryPrefetcher;
     }
 
     /** 技能定位:target 是数字 → 按 id,否则按名称(不区分大小写)。 */
@@ -149,6 +170,12 @@ class ChatToolExecutor {
             }
             McpServerService.McpToolResult mcpResult =
                     mcpServerService.callToolRich(server.id(), McpServerService.rawToolName(name), args);
+            // 画廊列表预取(2026-09-17):结果里出现 nora-gallery 围栏(photos_showcase)
+            // 时立即后台缓存每条媒体的播放流——用户还在看列表的窗口里把手机转码
+            // (视频首次 10-15s)与传输都做完,点开即秒播。用未截断全文解析。
+            if (galleryPrefetcher != null && !mcpResult.isError()) {
+                galleryPrefetcher.prefetchFromToolResult(mcpResult.text());
+            }
             ToolOutcome mcpOutcome = bounded(mcpResult.text(), "MCP " + server.name() + " 执行完成");
             // 保留 image 块:图片本体不参与文本截断(避免把 base64 当文本切)，
             // 由回填层按模型识图能力决定是否附上

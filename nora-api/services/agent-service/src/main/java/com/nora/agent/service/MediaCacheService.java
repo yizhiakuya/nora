@@ -332,9 +332,53 @@ public class MediaCacheService {
         prefetchAsync(url, true);
     }
 
+    /**
+     * 画廊列表预取(2026-09-17):工具结果封装出画廊块时调用,后台缓存
+     * **播放流**(视频 /video 压缩流、图片 /content)——用户还在看列表的
+     * 时间窗口里把视频转码(手机端首次 10-15s)与传输都做完,点开秒播。
+     *
+     * <p>与 [prefetchOriginalOnView] 的区别:这里要的就是"点开时播放的
+     * 那个版本"(档位压缩流),不是原片;网络策略相同——仅 Wi-Fi 执行。
+     * 若已缓存的是省流量档(low,蜂窝下看过的),回到 Wi-Fi 后重拉覆盖。
+     */
+    public void prefetchPlaybackStream(String url) {
+        if (router == null || !router.phoneOnWifi()) {
+            return;
+        }
+        Optional<CacheEntry> hit = lookup(url);
+        if (hit.isEmpty()) {
+            prefetchAsync(url, false);
+        } else if ("low".equalsIgnoreCase(hit.get().quality())) {
+            // 蜂窝下看过的低清版本:Wi-Fi 下重拉高清版覆盖(秒播 + 画质都对)
+            refreshAsync(url);
+        }
+    }
+
     /** 当前是否允许原片预取(手机在 Wi-Fi);供前端/接口展示。 */
     public boolean originalPrefetchAllowed() {
         return router != null && router.phoneOnWifi();
+    }
+
+    /**
+     * 若有同 URL 的后台预取在途,等待其完成(最多 timeoutMs)并返回缓存条目。
+     *
+     * <p>为什么需要:用户点开"正在预取中"的视频时,若直接回源会发一个重复
+     * 请求,排在手机转码队列后面(前面还有别的预取任务)——反而更慢。
+     * 加入在途预取 = 等它完成直接读盘,且不浪费手机 CPU 转第二遍。
+     *
+     * @return 完成后的缓存条目;无在途预取/超时/失败返回 empty(调用方回源)
+     */
+    public Optional<CacheEntry> awaitPrefetch(String url, long timeoutMs) {
+        CompletableFuture<Path> f = inFlight.get(url);
+        if (f == null) {
+            return Optional.empty();
+        }
+        try {
+            f.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return lookup(url);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 
     /** 链路状态描述(排障:当前公网/局域网、手机网络)。 */

@@ -81,6 +81,16 @@ public class MediaCacheController {
             return serveCached(e, range);
         }
 
+        // 1.5) 有同 URL 的预取在途(画廊列表刚触发):等它完成直接读盘——
+        //      否则会发重复请求排在手机转码队列后面,反而更慢。等不到就回源。
+        //      视频转码首次 10-15s;20s 是"值得等"的上限(用户刚点开)。
+        Optional<MediaCacheService.CacheEntry> warmed = mediaCache.awaitPrefetch(url, 20_000);
+        if (warmed.isPresent()) {
+            MediaCacheService.CacheEntry e = warmed.get();
+            mediaCache.touch(e);
+            return serveCached(e, range);
+        }
+
         // 2) 未命中 + 带 Range(视频首播):上游支持 Range → 直通(206);
         //    不支持(部分中继/隧道永远回 200 全量)→ 退化为 tee 边播边缓存,
         //    缓存完成后本地即可 Range(seek 不再依赖上游)。
