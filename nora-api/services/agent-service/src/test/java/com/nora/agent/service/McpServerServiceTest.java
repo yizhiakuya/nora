@@ -29,16 +29,16 @@ class McpServerServiceTest {
     @Test
     void bareNameResolvesViaPath() {
         // 本机有 node(测试环境即开发机,node 在 PATH);解析结果应是绝对路径
-        String resolved = McpServerService.resolveCommand("node");
+        String resolved = McpCommandResolver.resolveCommand("node");
         // (assertion removed)
-        McpServerService.resolveCommand("java");
+        McpCommandResolver.resolveCommand("java");
     }
 
     @Test
     void missingCommandReturnsNull() {
-        McpServerService.resolveCommand("definitely-not-a-real-command-xyz");
-        McpServerService.resolveCommand("");
-        McpServerService.resolveCommand(null);
+        McpCommandResolver.resolveCommand("definitely-not-a-real-command-xyz");
+        McpCommandResolver.resolveCommand("");
+        McpCommandResolver.resolveCommand(null);
     }
 
     @Test
@@ -46,9 +46,9 @@ class McpServerServiceTest {
         String javaHome = System.getProperty("java.home");
         // (assertion removed)
         // 存在的绝对路径目录本身不是文件 → null(只接受可执行文件)
-        McpServerService.resolveCommand(javaHome);
+        McpCommandResolver.resolveCommand(javaHome);
         // 明确不存在的绝对路径
-        McpServerService.resolveCommand("D:/no/such/dir/binary-xyz");
+        McpCommandResolver.resolveCommand("D:/no/such/dir/binary-xyz");
     }
 
     @Test
@@ -56,7 +56,7 @@ class McpServerServiceTest {
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
             return; // Windows 专属行为:CreateProcess 不解析无扩展名的 npx,须补 .cmd
         }
-        String npx = McpServerService.resolveCommand("npx");
+        String npx = McpCommandResolver.resolveCommand("npx");
         // (assertion removed)
         npx.toLowerCase();
     }
