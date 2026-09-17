@@ -440,7 +440,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                   </div>
 
                   <div className="flex min-w-0 flex-1 justify-end gap-1.5 items-center">
-                      <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer shrink-0" title={`上下文用量 ${contextPercent}%`}>
+                      <div className="hidden sm:flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer shrink-0" title={`上下文用量 ${contextPercent}%`}>
                           <Layers className={`w-3 h-3 shrink-0 ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : "text-muted-foreground"}`} />
                           <div className="hidden lg:flex w-12 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
                               <div className={`h-full ${contextPercent >= 90 ? "bg-red-500" : contextPercent >= 75 ? "bg-amber-500" : "bg-blue-500"}`} style={{width: `${contextPercent}%`}}></div>
@@ -450,8 +450,9 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
 
                       <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
 
-                      {/* 思考等级:仅列出设置页为当前模型启用的等级 */}
+                      {/* 思考等级:仅列出设置页为当前模型启用的等级(窄屏隐藏,减拥挤) */}
                       {onReasoningLevelChange && availableLevels.length > 0 && (
+                        <div className="hidden sm:flex items-center">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground" title="思考等级">
@@ -486,9 +487,10 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                             ))}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        </div>
                       )}
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
+                      <div className="hidden sm:block w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
 
                       {/* 三档权限模式 */}
                       {onPermissionModeChange && (
@@ -500,8 +502,8 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                               className={`h-7 text-xs px-2 shrink-0 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
                               title="权限模式"
                             >
-                              <ShieldAlert className="w-3 h-3 mr-1 shrink-0" />
-                              <span className="truncate">{PERMISSION_MODE_META[permissionMode].label}</span>
+                              <ShieldAlert className="w-3 h-3 sm:mr-1 shrink-0" />
+                              <span className="hidden sm:inline truncate">{PERMISSION_MODE_META[permissionMode].label}</span>
                               <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -532,11 +534,11 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </DropdownMenu>
                       )}
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
+                      <div className="hidden sm:block w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 shrink"
+                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 shrink max-w-[100px] sm:max-w-none"
                             title={activeProvider ? `当前渠道：${activeProvider.name}` : undefined}>
                             <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
                           </Button>

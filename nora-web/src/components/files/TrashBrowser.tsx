@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Trash2, RotateCcw, FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { filesApi, type TrashedFile, toFileItem, humanSize } from "@/lib/services/filesApi";
+import { ResponsiveList } from "@/components/shared/ResponsiveList";
 import { toast } from "sonner";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -104,68 +105,76 @@ export function TrashBrowser({ onExit }: TrashBrowserProps) {
             )}
           </div>
 
-          <div className="bg-card border border-border rounded-xl overflow-hidden overflow-x-auto animate-in fade-in">
-            <table className="w-full text-left border-collapse min-w-[560px]">
-              <thead>
-                <tr className="bg-muted border-b border-border text-xs text-muted-foreground font-medium select-none">
-                  <th className="p-3 pl-4">文件名</th>
-                  <th className="p-3">类型</th>
-                  <th className="p-3">大小</th>
-                  <th className="p-3">删除时间</th>
-                  <th className="p-3 text-right pr-4">操作</th>
-                </tr>
-              </thead>
-              <tbody className="text-sm">
-                {loading ? (
-                  <tr>
-                    <td colSpan={5} className="py-16 text-center text-xs text-muted-foreground">加载中…</td>
-                  </tr>
-                ) : items.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-16 text-center text-xs text-muted-foreground">
-                      （回收站为空）删除的文件会出现在这里
-                    </td>
-                  </tr>
-                ) : (
-                  items.map(({ item, deletedAt }) => {
-                    const f = toFileItem(item);
-                    const Icon = f.icon ?? FileText;
-                    return (
-                      <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
-                        <td className="p-3 pl-4 max-w-[240px]">
-                          <div className="flex items-center gap-3">
-                            <Icon className={`${f.color} w-5 h-5 shrink-0`} />
-                            <span className="text-foreground truncate" title={f.name}>{f.name}</span>
-                          </div>
-                        </td>
-                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{f.type}</td>
-                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{humanSize(item.sizeBytes)}</td>
-                        <td className="p-3 text-muted-foreground text-xs whitespace-nowrap">{relativeTime(deletedAt)}</td>
-                        <td className="p-3 text-right pr-4">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost" size="sm"
-                              className="h-7 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
-                              onClick={() => void handleRestore([item.id])}
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 mr-1" /> 恢复
-                            </Button>
-                            <Button
-                              variant="ghost" size="sm"
-                              className="h-7 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
-                              onClick={() => void handlePurge([item.id])}
-                            >
-                              <Trash2 className="w-3.5 h-3.5 mr-1" /> 彻底删除
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveList
+            className="animate-in fade-in"
+            rows={loading ? [] : items}
+            rowKey={({ item }) => item.id}
+            mobileTitle={({ item }) => toFileItem(item).name}
+            mobileSubtitle={({ item, deletedAt }) => `${toFileItem(item).size} · 删除于 ${relativeTime(deletedAt)}`}
+            mobileActions={({ item }) => (
+              <>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                  onClick={() => void handleRestore([item.id])}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" /> 恢复
+                </Button>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
+                  onClick={() => void handlePurge([item.id])}
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1" /> 彻底删除
+                </Button>
+              </>
+            )}
+            columns={[
+              {
+                header: "文件名",
+                // 移动端标题已显示文件名,卡片里不重复
+                cell: ({ item }) => {
+                  const f = toFileItem(item);
+                  const Icon = f.icon ?? FileText;
+                  return (
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Icon className={`${f.color} w-5 h-5 shrink-0`} />
+                      <span className="text-foreground truncate" title={f.name}>{f.name}</span>
+                    </div>
+                  );
+                },
+              },
+              { header: "类型", cell: ({ item }) => <span className="text-muted-foreground text-xs whitespace-nowrap">{toFileItem(item).type}</span> },
+              { header: "大小", cell: ({ item }) => <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">{humanSize(item.sizeBytes)}</span> },
+              { header: "删除时间", cell: ({ deletedAt }) => <span className="text-muted-foreground text-xs whitespace-nowrap">{relativeTime(deletedAt)}</span> },
+              {
+                header: "操作",
+                cell: ({ item }) => (
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      variant="ghost" size="sm"
+                      className="h-7 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                      onClick={() => void handleRestore([item.id])}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> 恢复
+                    </Button>
+                    <Button
+                      variant="ghost" size="sm"
+                      className="h-7 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
+                      onClick={() => void handlePurge([item.id])}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" /> 彻底删除
+                    </Button>
+                  </div>
+                ),
+              },
+            ]}
+            empty={
+              <div className="bg-card border border-border rounded-xl py-16 text-center text-xs text-muted-foreground">
+                {loading ? "加载中…" : "（回收站为空）删除的文件会出现在这里"}
+              </div>
+            }
+          />
         </>
       )}
     </>

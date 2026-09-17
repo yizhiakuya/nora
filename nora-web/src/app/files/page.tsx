@@ -46,6 +46,17 @@ export default function FilesPage() {
     if (typeof window === "undefined") return "list";
     return (localStorage.getItem("nora-files-view") as "list" | "grid") || "list";
   });
+  /** 小屏(手机/窄窗)自动用网格:列表表格在窄屏下操作列不可达;
+   *  网格卡片是窄屏的自然形态。大屏仍按用户偏好。 */
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    setIsNarrow(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setIsNarrow(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  const effectiveView = isNarrow ? "grid" : viewMode;
   const switchView = (mode: "list" | "grid") => {
     setViewMode(mode);
     try { localStorage.setItem("nora-files-view", mode); } catch { /* 隐私模式等忽略 */ }
@@ -439,8 +450,8 @@ export default function FilesPage() {
               <div className="flex items-center justify-between mb-4 animate-in fade-in gap-3 flex-wrap">
                 <h2 className="text-sm font-bold text-foreground">{currentFolder ? currentFolder.name : "所有文件"}</h2>
                 <div className="flex items-center gap-3">
-                  {/* 视图切换:列表 / 网格 */}
-                  <div className="flex items-center rounded-lg border border-border overflow-hidden">
+                  {/* 视图切换:列表 / 网格(窄屏自动网格,切换按钮隐藏) */}
+                  <div className="hidden md:flex items-center rounded-lg border border-border overflow-hidden">
                     <button
                       type="button"
                       title="列表视图"
@@ -496,7 +507,7 @@ export default function FilesPage() {
                 onDeleteSelected={handleDeleteSelected}
               />
 
-              {viewMode === "list" ? (
+              {effectiveView === "list" ? (
                 <FileTable
                   files={filteredFiles}
                   selection={selection}

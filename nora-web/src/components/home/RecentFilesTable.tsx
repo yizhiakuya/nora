@@ -7,6 +7,7 @@ import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useBackendOnline } from "@/hooks/useBackendHealth";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
+import { ResponsiveList } from "@/components/shared/ResponsiveList";
 import { FileItem } from "@/types";
 
 function iconFor(name: string) {
@@ -58,56 +59,52 @@ export function RecentFilesTable() {
         <span className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer hover:underline" onClick={() => navigate("/files")}>查看全部</span>
       </div>
 
-      <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden overflow-x-auto">
-        <table className="w-full min-w-[500px] text-left border-collapse">
-          <thead>
-            <tr className="bg-gray-50/80 dark:bg-gray-900/80 border-b border-border text-[11px] text-muted-foreground font-medium">
-              <th className="p-3 pl-4">文件名</th>
-              <th className="p-3">索引状态</th>
-              <th className="p-3 whitespace-nowrap">打开时间</th>
-            </tr>
-          </thead>
-          <tbody className="text-sm">
-            {recent.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="p-6 text-center text-xs text-muted-foreground">
-                  {stale ? "暂时拿不到最近使用记录,连接恢复后自动显示" : "还没有打开过文件,去文件中心看看吧"}
-                </td>
-              </tr>
-            ) : (
-            recent.map(({ name, type, time }) => {
+      <ResponsiveList
+        rows={recent}
+        rowKey={({ name }) => name}
+        mobileTitle={({ name }) => name}
+        mobileSubtitle={({ type, time }) => `${type} · ${time}`}
+        onRowClick={({ name, type }) => openRecent(name, type)}
+        mobileActions={({ name }) => (
+          <span className="text-[10px] text-muted-foreground">
+            {docs.some((d) => d.name === name) ? "已索引" : "未索引"}
+          </span>
+        )}
+        columns={[
+          {
+            header: "文件名",
+            cell: ({ name }) => {
               const { Icon, color } = iconFor(name);
+              return (
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon className={`${color} w-5 h-5 flex-shrink-0`} />
+                  <span className="font-medium text-foreground truncate" title={name}>{name}</span>
+                </div>
+              );
+            },
+          },
+          {
+            header: "索引状态",
+            cell: ({ name }) => {
               const indexed = docs.some((d) => d.name === name);
               return (
-                <tr key={name} className="border-b border-gray-50 dark:border-gray-800 hover:bg-muted transition-colors group">
-                  <td className="p-3 pl-4">
-                    <div className="flex items-center gap-3">
-                      <Icon className={`${color} w-5 h-5 flex-shrink-0`} />
-                      <div
-                        className="font-medium text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 cursor-pointer hover:underline underline-offset-2 truncate max-w-[150px] sm:max-w-[200px]"
-                        title="点击预览"
-                        onClick={() => openRecent(name, type)}
-                      >
-                        {name}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    <span
-                      onClick={() => navigate("/knowledge")}
-                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] border cursor-pointer hover:opacity-80 transition-colors whitespace-nowrap ${indexed ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-100 dark:border-green-900" : "bg-gray-50 dark:bg-gray-800 text-muted-foreground border-border"}`}
-                    >
-                      <BookOpen className="w-3 h-3" /> {indexed ? "已索引" : "未索引"}
-                    </span>
-                  </td>
-                  <td className="p-3 text-[11px] text-muted-foreground whitespace-nowrap">{time}</td>
-                </tr>
+                <span
+                  onClick={(e) => { e.stopPropagation(); navigate("/knowledge"); }}
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] border cursor-pointer hover:opacity-80 transition-colors whitespace-nowrap ${indexed ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-100 dark:border-green-900" : "bg-gray-50 dark:bg-gray-800 text-muted-foreground border-border"}`}
+                >
+                  <BookOpen className="w-3 h-3" /> {indexed ? "已索引" : "未索引"}
+                </span>
               );
-            })
-            )}
-          </tbody>
-        </table>
-      </div>
+            },
+          },
+          { header: "打开时间", cell: ({ time }) => <span className="text-[11px] text-muted-foreground whitespace-nowrap">{time}</span> },
+        ]}
+        empty={
+          <div className="bg-card border border-border rounded-xl shadow-sm p-6 text-center text-xs text-muted-foreground">
+            {stale ? "暂时拿不到最近使用记录,连接恢复后自动显示" : "还没有打开过文件,去文件中心看看吧"}
+          </div>
+        }
+      />
 
       <FileViewerModal
         file={viewer.activeFile}
