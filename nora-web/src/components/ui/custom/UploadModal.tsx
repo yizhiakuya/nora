@@ -11,20 +11,40 @@ interface UploadModalProps {
   title: string;
   hint?: string;
   onUploadComplete?: (fileName?: string, file?: import("@/types").FileItem) => void;
+  /** 全部完成后的汇总回调(成功数, 失败数)。 */
+  onBatchComplete?: (okCount: number, failCount: number) => void;
 }
 
 /**
  * 全局统一的上传弹窗：所有页面的上传交互共用同一状态机（useSimulatedUpload）。
+ *
+ * 支持多文件：点击区域打开系统多选对话框(隐藏 input)，或一次拖入多个文件；
+ * 串行上传并在弹窗内显示进度（第 n/N 个 + 当前文件名）。
  */
-export function UploadModal({ upload, title, hint = "单文件最大支持 50MB", onUploadComplete }: UploadModalProps) {
+export function UploadModal({ upload, title, hint = "单文件最大支持 50MB", onUploadComplete, onBatchComplete }: UploadModalProps) {
+  const p = upload.progress;
   return (
     <Modal isOpen={upload.isOpen} onClose={upload.close} title={title} width="w-[90%] sm:w-[450px]">
+      {/* 隐藏的多选文件输入(点击区域触发) */}
+      <input
+        ref={upload.inputRef}
+        type="file"
+        multiple
+        className="hidden"
+        aria-hidden
+      />
       {upload.status === "idle" && (
         <div
-          onClick={() => upload.startUpload((fileName, file) => onUploadComplete?.(fileName, file))}
+          onClick={() => upload.pickAndUpload(
+            (fileName, file) => onUploadComplete?.(fileName, file),
+            onBatchComplete,
+          )}
           onDragOver={upload.handleDragOver}
           onDragLeave={upload.handleDragLeave}
-          onDrop={(e) => upload.handleDrop(e, (fileName, file) => onUploadComplete?.(fileName, file))}
+          onDrop={(e) => upload.handleDrop(
+            e,
+            (fileName, file) => onUploadComplete?.(fileName, file),
+          )}
           className={`border-2 border-dashed rounded-xl p-8 sm:p-10 flex flex-col items-center justify-center text-center transition-all cursor-pointer group ${
             upload.isDragging
               ? "border-blue-500 bg-blue-100 dark:bg-blue-900/50 scale-[1.02]"
@@ -35,7 +55,7 @@ export function UploadModal({ upload, title, hint = "单文件最大支持 50MB"
             <CloudUpload className="w-6 h-6 text-blue-500 dark:text-blue-400" />
           </div>
           <div className="text-sm font-bold text-foreground">
-            {upload.isDragging ? "松开鼠标以开始上传" : "点击或拖拽文件到此处"}
+            {upload.isDragging ? "松开鼠标以开始上传" : "点击或拖拽文件到此处（可多选）"}
           </div>
           <div className="text-xs text-muted-foreground mt-1">{hint}</div>
         </div>
@@ -43,14 +63,33 @@ export function UploadModal({ upload, title, hint = "单文件最大支持 50MB"
       {upload.status === "uploading" && (
         <div className="py-12 flex flex-col items-center justify-center">
           <div className="w-12 h-12 border-4 border-blue-100 dark:border-blue-900 border-t-blue-500 rounded-full animate-spin mb-4"></div>
-          <div className="text-sm font-bold text-foreground">正在上传...</div>
-          <div className="text-xs text-muted-foreground mt-1">处理完毕后将自动添加到列表</div>
+          <div className="text-sm font-bold text-foreground">
+            {p && p.total > 1 ? `正在上传（${p.done + 1}/${p.total}）` : "正在上传..."}
+          </div>
+          {p?.current && (
+            <div className="text-xs text-muted-foreground mt-1 max-w-[80%] truncate" title={p.current}>
+              {p.current}
+            </div>
+          )}
+          {p && p.total > 1 && (
+            <div className="w-[70%] h-1.5 bg-muted rounded-full mt-3 overflow-hidden">
+              <div
+                className="h-full bg-blue-500 transition-all duration-300"
+                style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
+              />
+            </div>
+          )}
+          <div className="text-xs text-muted-foreground mt-2">处理完毕后将自动添加到列表</div>
         </div>
       )}
       {upload.status === "success" && (
         <div className="py-12 flex flex-col items-center justify-center animate-in zoom-in">
           <CheckCircle2 className="w-12 h-12 text-green-500 dark:text-green-400 mb-4" />
-          <div className="text-sm font-bold text-foreground">上传成功</div>
+          <div className="text-sm font-bold text-foreground">
+            {p && p.total > 1
+              ? `上传完成（成功 ${p.done - p.failed}/${p.total}${p.failed > 0 ? `，失败 ${p.failed}` : ""}）`
+              : "上传成功"}
+          </div>
           <div className="text-xs text-muted-foreground mt-1">文件已保存到您的空间</div>
         </div>
       )}

@@ -158,17 +158,19 @@ public class FileStorageService {
 
     // ---------- 文件夹(2026-09-17:文件中心真实目录组织) ----------
 
-    /** 文件夹行(含文件数,列表页展示用)。 */
-    public record FolderRow(Long id, String name, int fileCount, Instant createdAt) {
+    /** 文件夹行(含文件数与总大小,列表页展示用)。 */
+    public record FolderRow(Long id, String name, int fileCount, Long totalBytes, Instant createdAt) {
     }
 
-    /** 列出全部文件夹(含各自存活文件数),按名称排序。 */
+    /** 列出全部文件夹(含各自存活文件数与总大小),按名称排序。 */
     public List<FolderRow> listFolders() {
         return jdbcTemplate.query(
                 """
                 SELECT f.id, f.name, f.created_at,
                        (SELECT count(*) FROM file_item i
-                         WHERE i.folder_id = f.id AND i.deleted_at IS NULL) AS file_count
+                         WHERE i.folder_id = f.id AND i.deleted_at IS NULL) AS file_count,
+                       (SELECT coalesce(sum(i.size_bytes), 0) FROM file_item i
+                         WHERE i.folder_id = f.id AND i.deleted_at IS NULL) AS total_bytes
                   FROM file_folder f
                  ORDER BY f.name
                 """,
@@ -176,6 +178,7 @@ public class FileStorageService {
                         rs.getLong("id"),
                         rs.getString("name"),
                         rs.getInt("file_count"),
+                        rs.getLong("total_bytes"),
                         rs.getTimestamp("created_at") == null ? null : rs.getTimestamp("created_at").toInstant()));
     }
 
@@ -199,7 +202,7 @@ public class FileStorageService {
             return ps;
         }, keyHolder);
         long id = keyHolder.getKey().longValue();
-        return new FolderRow(id, trimmed, 0, Instant.now());
+        return new FolderRow(id, trimmed, 0, 0L, Instant.now());
     }
 
     /** 重命名文件夹。 */
@@ -215,7 +218,7 @@ public class FileStorageService {
         jdbcTemplate.update("UPDATE file_folder SET name = ? WHERE id = ?", trimmed, id);
         int count = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM file_item WHERE folder_id = ? AND deleted_at IS NULL", Integer.class, id);
-        return new FolderRow(id, trimmed, count, null);
+        return new FolderRow(id, trimmed, count, null, null);
     }
 
     /**

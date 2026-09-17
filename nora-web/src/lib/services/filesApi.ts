@@ -19,6 +19,8 @@ export interface BackendFolder {
   id: number;
   name: string;
   fileCount: number;
+  /** 文件夹内文件总字节数 */
+  totalBytes: number;
   createdAt: string | null;
 }
 

@@ -7,27 +7,44 @@ import { FileItem } from '@/types';
 
 type UploadStatus = 'idle' | 'uploading' | 'success';
 
+/** 多文件上传进度(弹窗展示用)。 */
+export interface UploadProgress {
+  total: number;
+  done: number;
+  failed: number;
+  /** 当前正在上传的文件名 */
+  current: string | null;
+}
+
 /**
  * 上传状态机:USE_BACKEND=true 时真实上传到 file-service,否则本地模拟。
  * 后端模式下 onUploadComplete 收到完整的 FileItem(含服务端 id);
  * Mock 模式保持旧行为(只回传文件名)。
+ *
+ * 支持**多文件**:点击/拖拽可一次选多个,逐个上传(串行,进度可见);
+ * 全部完成后统一回调(onUploadComplete 每个文件各调一次,批量汇总另给
+ * onUploadBatchComplete)。
  */
 export function useSimulatedUpload(durationMs: number = 2000, successDurationMs: number = 1500) {
   const [isOpen, setIsOpen] = useState(false);
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [isDragging, setIsDragging] = useState(false);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
   const { schedule, cancelAll } = useTimedSequence();
-  /** 拖拽上传时的真实文件(后端模式上传它;点击上传无文件保持 null) */
-  const fileRef = useRef<globalThis.File | null>(null);
+  /** 待上传的真实文件(后端模式上传它们;点击上传无文件保持空) */
+  const filesRef = useRef<globalThis.File[]>([]);
   const fileNameRef = useRef<string | null>(null);
   /** 上传目标文件夹(文件页进入某文件夹时设置;null = 根目录)。 */
   const folderRef = useRef<number | null>(null);
+  /** 隐藏的 file input(点击区域触发系统多选对话框)。 */
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const open = useCallback(() => {
     setIsOpen(true);
     setStatus('idle');
     setIsDragging(false);
-    fileRef.current = null;
+    setProgress(null);
+    filesRef.current = [];
     fileNameRef.current = null;
   }, []);
 
@@ -40,39 +57,64 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     cancelAll();
     setIsOpen(false);
     setIsDragging(false);
+    setProgress(null);
   }, [cancelAll]);
 
-  const startUpload = useCallback((onSuccess?: (fileName?: string, file?: FileItem) => void) => {
+  /**
+   * 开始上传(支持多文件)。
+   *
+   * @param onSuccess 每个文件成功后的回调(文件名, FileItem)
+   * @param onBatch   全部完成后的汇总回调(成功数, 失败数)
+   */
+  const startUpload = useCallback((
+    onSuccess?: (fileName?: string, file?: FileItem) => void,
+    onBatch?: (okCount: number, failCount: number) => void,
+  ) => {
     if (status !== 'idle') return;
-    setStatus('uploading');
-
-    const uploadPromise = USE_BACKEND && fileRef.current
-      ? filesApi.uploadFile(fileRef.current, folderRef.current)
-          .then((item) => {
-            fileNameRef.current = item.name;
-            return item;
-          })
-      : new Promise<FileItem | null>((resolve) => setTimeout(() => resolve(null), durationMs));
-
-    toast.promise(
-      uploadPromise,
-      {
-        loading: '正在上传处理文件...',
-        success: (item) => {
-          setStatus('success');
-          schedule(() => {
-            close();
-            setStatus('idle');
-            if (onSuccess) onSuccess(fileNameRef.current ?? undefined, item ?? undefined);
-          }, successDurationMs);
-          return '文件上传成功！';
-        },
-        error: (err: Error) => {
+    const picked = filesRef.current;
+    if (picked.length === 0) {
+      // 无文件(点击上传的 mock 路径):保持旧的模拟行为
+      setStatus('uploading');
+      setTimeout(() => {
+        setStatus('success');
+        schedule(() => {
+          close();
           setStatus('idle');
-          return err?.message ? `上传失败：${err.message}` : '文件上传失败';
-        },
+          onSuccess?.(undefined, undefined);
+        }, successDurationMs);
+      }, durationMs);
+      return;
+    }
+
+    setStatus('uploading');
+    setProgress({ total: picked.length, done: 0, failed: 0, current: picked[0]?.name ?? null });
+
+    // 串行上传:逐个进行,进度可见;单个失败不阻断后续
+    void (async () => {
+      let ok = 0;
+      let fail = 0;
+      for (const f of picked) {
+        setProgress((p) => p ? { ...p, current: f.name } : p);
+        try {
+          const item = USE_BACKEND
+            ? await filesApi.uploadFile(f, folderRef.current)
+            : await new Promise<FileItem>((resolve) => setTimeout(() => resolve({} as FileItem), 300));
+          ok++;
+          setProgress((p) => p ? { ...p, done: p.done + 1, current: null } : p);
+          onSuccess?.(item.name ?? f.name, item);
+        } catch (e) {
+          fail++;
+          setProgress((p) => p ? { ...p, done: p.done + 1, failed: p.failed + 1, current: null } : p);
+          toast.error(`「${f.name}」上传失败：${e instanceof Error ? e.message : "未知错误"}`);
+        }
       }
-    );
+      setStatus('success');
+      schedule(() => {
+        close();
+        setStatus('idle');
+        onBatch?.(ok, fail);
+      }, successDurationMs);
+    })();
   }, [status, close, durationMs, successDurationMs, schedule]);
 
   // Drag & Drop Handlers
@@ -94,19 +136,40 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     setIsDragging(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      fileRef.current = e.dataTransfer.files[0];
-      fileNameRef.current = e.dataTransfer.files[0].name;
+      // 支持多文件拖入:全部接收
+      filesRef.current = Array.from(e.dataTransfer.files);
+      fileNameRef.current = filesRef.current[0]?.name ?? null;
       startUpload(onSuccess);
     }
+  }, [startUpload]);
+
+  /** 打开系统文件选择对话框(支持多选);选择后自动开始上传。 */
+  const pickAndUpload = useCallback((onSuccess?: (fileName?: string, file?: FileItem) => void,
+                                     onBatch?: (okCount: number, failCount: number) => void) => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.value = "";
+    input.onchange = () => {
+      const picked = Array.from(input.files ?? []);
+      if (picked.length === 0) return;
+      filesRef.current = picked;
+      fileNameRef.current = picked[0]?.name ?? null;
+      startUpload(onSuccess, onBatch);
+    };
+    input.click();
   }, [startUpload]);
 
   return {
     isOpen,
     status,
     isDragging,
+    progress,
+    /** 隐藏 input 的 ref(UploadModal 挂载) */
+    inputRef,
     open,
     close,
     startUpload,
+    pickAndUpload,
     setTargetFolder,
     handleDragOver,
     handleDragLeave,

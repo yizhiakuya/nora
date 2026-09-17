@@ -21,7 +21,7 @@ import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
-import { filesApi, type BackendFolder } from "@/lib/services/filesApi";
+import { filesApi, humanSize, type BackendFolder } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
 export default function FilesPage() {
@@ -423,7 +423,7 @@ export default function FilesPage() {
                   ] : []),
                   ...folders.map((folder) => ({
                     name: folder.name,
-                    description: `${folder.fileCount} 个文件 · 点击进入`,
+                    description: `${folder.fileCount} 个文件 · ${humanSize(folder.totalBytes)} · 点击进入`,
                     icon: undefined,
                     onOpen: () => setCurrentFolder(folder),
                     onRename: USE_BACKEND ? () => {
@@ -499,7 +499,19 @@ export default function FilesPage() {
         </div>
       </Modal>
 
-      <UploadModal upload={upload} title={currentFolder ? `上传到「${currentFolder.name}」` : "上传到文件中心"} onUploadComplete={handleUploadComplete} />
+      <UploadModal
+        upload={upload}
+        title={currentFolder ? `上传到「${currentFolder.name}」` : "上传到文件中心"}
+        onUploadComplete={handleUploadComplete}
+        onBatchComplete={(ok) => {
+          // 多文件批量完成:刷新列表与文件夹计数(逐个 sync 已在 onUploadComplete 做过,
+          // 这里再拉一次保证一致——批量上传几十个文件时避免逐条去重遗漏)
+          if (ok > 0) {
+            void syncFromBackend();
+            refreshFolders();
+          }
+        }}
+      />
       <FileViewerModal file={viewer.activeFile} preview={viewer.preview} status={viewer.status} onClose={viewer.close} />
     </>
   );
