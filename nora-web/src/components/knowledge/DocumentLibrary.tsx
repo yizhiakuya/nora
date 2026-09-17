@@ -26,7 +26,7 @@ function StatusBadge({ status }: { status: KnowledgeDoc["status"] }) {
     failed:     { label: "失败",   cls: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800" },
   } as const;
   const s = map[status];
-  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${s.cls}`}>{s.label}</span>;
+  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border whitespace-nowrap ${s.cls}`}>{s.label}</span>;
 }
 
 function QualityBar({ score }: { score: number }) {
@@ -185,18 +185,18 @@ export function DocumentLibrary() {
               <span className="text-sm font-bold text-foreground">{meta.label}</span>
               <span className="text-xs text-muted-foreground">({docs.length})</span>
             </div>
-            <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <table className="w-full text-left">
+            <div className="bg-card border border-border rounded-xl overflow-hidden overflow-x-auto">
+              <table className="w-full text-left table-fixed md:table-auto md:min-w-[640px]">
                 <thead>
                   <tr className="bg-muted border-b border-border text-xs text-muted-foreground">
                     <th className="p-3 pl-4 w-10" />
                     <th className="p-3 font-medium">文档名</th>
-                    <th className="p-3 font-medium">Chunks</th>
-                    <th className="p-3 font-medium">大小</th>
-                    <th className="p-3 font-medium">质量</th>
-                    <th className="p-3 font-medium">状态</th>
-                    <th className="p-3 font-medium text-right pr-4">更新时间</th>
-                    <th className="p-3 font-medium text-right pr-4">操作</th>
+                    <th className="p-3 font-medium hidden md:table-cell">Chunks</th>
+                    <th className="p-3 font-medium hidden lg:table-cell">大小</th>
+                    <th className="p-3 font-medium hidden lg:table-cell">质量</th>
+                    <th className="p-3 font-medium w-[76px] md:w-auto">状态</th>
+                    <th className="p-3 font-medium text-right pr-4 hidden md:table-cell">更新时间</th>
+                    <th className="p-3 font-medium text-right pr-4 w-[104px] md:w-auto">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -210,37 +210,42 @@ export function DocumentLibrary() {
                         />
                       </td>
                       <td className="p-3">
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
                           <DocIcon source={doc.source} />
-                          <button
-                            type="button"
-                            onClick={() => openDetail(doc)}
-                            className="font-medium text-foreground hover:underline cursor-pointer text-left"
-                            title="查看分块详情"
-                          >
-                            {doc.name}
-                          </button>
-                          {detailLoading === doc.id && (
-                            <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-                          )}
-                          {/* 来源文件:跳转文件中心(预览原文件)——知识库与文件系统一体 */}
-                          {doc.source === "file" && doc.sourceId != null && (
-                            <a
-                              href={`/files?open=${doc.sourceId}`}
-                              className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline shrink-0"
-                              title="在文件中心查看原文件"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              原文件
-                            </a>
-                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openDetail(doc)}
+                                className="font-medium text-foreground hover:underline cursor-pointer text-left truncate"
+                                title="查看分块详情"
+                              >
+                                {doc.name}
+                              </button>
+                              {detailLoading === doc.id && (
+                                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground shrink-0" />
+                              )}
+                            </div>
+                            {/* 来源文件:跳转文件中心(预览原文件)——知识库与文件系统一体。
+                                名称下方小字(窄屏不挤状态列) */}
+                            {doc.source === "file" && doc.sourceId != null && (
+                              <a
+                                href={`/files?open=${doc.sourceId}`}
+                                className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline"
+                                title="在文件中心查看原文件"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                原文件
+                              </a>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td className="p-3 text-muted-foreground text-xs tabular-nums">{doc.chunks}</td>
-                      <td className="p-3 text-muted-foreground text-xs">{doc.size}</td>
-                      <td className="p-3"><QualityBar score={doc.quality} /></td>
+                      <td className="p-3 text-muted-foreground text-xs tabular-nums hidden md:table-cell">{doc.chunks}</td>
+                      <td className="p-3 text-muted-foreground text-xs hidden lg:table-cell">{doc.size}</td>
+                      <td className="p-3 hidden lg:table-cell"><QualityBar score={doc.quality} /></td>
                       <td className="p-3"><StatusBadge status={doc.status} /></td>
-                      <td className="p-3 text-right text-muted-foreground text-xs whitespace-nowrap">{doc.updatedAt}</td>
+                      <td className="p-3 text-right text-muted-foreground text-xs whitespace-nowrap hidden md:table-cell">{doc.updatedAt}</td>
                       <td className="p-3 pr-4">
                         <div className="flex items-center justify-end gap-1">
                           <button
