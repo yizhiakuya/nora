@@ -25,14 +25,6 @@ export function UploadModal({ upload, title, hint = "单文件最大支持 50MB"
   const p = upload.progress;
   return (
     <Modal isOpen={upload.isOpen} onClose={upload.close} title={title} width="w-[90%] sm:w-[450px]">
-      {/* 隐藏的多选文件输入(点击区域触发) */}
-      <input
-        ref={upload.inputRef}
-        type="file"
-        multiple
-        className="hidden"
-        aria-hidden
-      />
       {upload.status === "idle" && (
         <div
           onClick={() => upload.pickAndUpload(

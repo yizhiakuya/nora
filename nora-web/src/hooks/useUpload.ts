@@ -36,8 +36,7 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
   const fileNameRef = useRef<string | null>(null);
   /** 上传目标文件夹(文件页进入某文件夹时设置;null = 根目录)。 */
   const folderRef = useRef<number | null>(null);
-  /** 隐藏的 file input(点击区域触发系统多选对话框)。 */
-  const inputRef = useRef<HTMLInputElement | null>(null);
+
 
   const open = useCallback(() => {
     setIsOpen(true);
@@ -148,12 +147,19 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     }
   }, [startUpload]);
 
-  /** 打开系统文件选择对话框(支持多选);选择后自动开始上传。 */
+  /**
+   * 打开系统文件选择对话框(支持多选);选择后自动开始上传。
+   *
+   * 动态创建 input 元素(不进 DOM、无需 ref 绑定)——比在弹窗里渲染隐藏
+   * <input> + ref 传递更简单,也避免 react-hooks/refs 规则把 hook 返回值
+   * 整体标记为 ref 污染源(实测:ref 绑定会让整个 upload 对象的所有属性
+   * 访问被误报为"render 期间访问 ref",39 个错误)。
+   */
   const pickAndUpload = useCallback((onSuccess?: (fileName?: string, file?: FileItem) => void,
                                      onBatch?: (okCount: number, failCount: number) => void) => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.value = "";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
     input.onchange = () => {
       const picked = Array.from(input.files ?? []);
       if (picked.length === 0) return;
@@ -169,8 +175,7 @@ export function useSimulatedUpload(durationMs: number = 2000, successDurationMs:
     status,
     isDragging,
     progress,
-    /** 隐藏 input 的 ref(UploadModal 挂载) */
-    inputRef,
+
     open,
     close,
     startUpload,
