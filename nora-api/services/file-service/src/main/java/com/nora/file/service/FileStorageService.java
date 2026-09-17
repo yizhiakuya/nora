@@ -313,6 +313,65 @@ public class FileStorageService {
                 ids.toArray());
     }
 
+    // ---------- 回收站(2026-09-17:兑现"数据不真丢"的承诺) ----------
+
+    /** 回收站条目(含删除时间)。 */
+    public record TrashedItem(FileItem item, Instant deletedAt) {
+    }
+
+    /** 列出回收站中的文件(按删除时间倒序,最近删的先显示)。 */
+    public List<TrashedItem> listTrash() {
+        return jdbcTemplate.query(
+                "SELECT * FROM file_item WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+                (rs, i) -> new TrashedItem(
+                        mapRow(rs, i),
+                        rs.getTimestamp("deleted_at") == null ? null : rs.getTimestamp("deleted_at").toInstant()));
+    }
+
+    /** 从回收站恢复文件(回到根目录,避免原文件夹已删除的悬空引用)。 */
+    public int restore(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new BusinessException(400, "ids parameter is required");
+        }
+        String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
+        return jdbcTemplate.update(
+                "UPDATE file_item SET deleted_at = NULL, folder_id = NULL WHERE id IN (" + placeholders + ") AND deleted_at IS NOT NULL",
+                ids.toArray());
+    }
+
+    /**
+     * 永久删除(从回收站清空):软删除行 + 磁盘文件一并删除。不可恢复。
+     *
+     * @return 实际删除的文件数
+     */
+    public int purge(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new BusinessException(400, "ids parameter is required");
+        }
+        int count = 0;
+        for (Long id : ids) {
+            List<String> paths = new ArrayList<>();
+            jdbcTemplate.query(
+                    "SELECT file_path FROM file_item WHERE id = ? AND deleted_at IS NOT NULL",
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> paths.add(rs.getString("file_path")),
+                    id);
+            if (paths.isEmpty()) {
+                continue;
+            }
+            jdbcTemplate.update("DELETE FROM file_item WHERE id = ?", id);
+            // 磁盘文件删除失败不阻断(数据行已清;残留文件后续可人工回收)
+            try {
+                if (paths.get(0) != null) {
+                    Files.deleteIfExists(Path.of(paths.get(0)));
+                }
+            } catch (Exception e) {
+                log.warn("purge: could not delete file on disk for id {}: {}", id, e.getMessage());
+            }
+            count++;
+        }
+        return count;
+    }
+
     /** Reads only the {@code file_path} column for the given id. */
     private String filePathOf(Long id) {
         List<String> paths = new ArrayList<>();

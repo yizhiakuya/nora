@@ -213,7 +213,33 @@ export const filesApi = {
   downloadUrl(ids: number[]): string {
     return `/api/files/download?ids=${ids.join(",")}`;
   },
+
+  // ---------- 回收站 ----------
+
+  async listTrash(): Promise<TrashedFile[]> {
+    if (!USE_BACKEND) return [];
+    return requestJson<TrashedFile[]>("/files/trash");
+  },
+
+  /** 从回收站恢复(回到根目录)。 */
+  async restoreTrash(ids: number[]): Promise<number> {
+    return requestJson<number>("/files/trash/restore", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    });
+  },
+
+  /** 永久删除(不可恢复;磁盘文件一并删除)。 */
+  async purgeTrash(ids: number[]): Promise<number> {
+    return requestJson<number>(`/files/trash?ids=${ids.join(",")}`, { method: "DELETE" });
+  },
 };
+
+/** 回收站条目(后端 TrashedItem)。 */
+export interface TrashedFile {
+  item: BackendFileItem;
+  deletedAt: string | null;
+}
 
 export { toFileItem, humanSize, mimeToType, getFileMeta };
 export type { BackendFileItem, BackendFilePreview };

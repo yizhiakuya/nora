@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { Search, FolderPlus, CloudUpload, Bot, HardDrive } from "lucide-react";
+import { Search, FolderPlus, CloudUpload, Bot, HardDrive, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
@@ -14,6 +14,7 @@ import { useFileViewer } from "@/hooks/useFileViewer";
 import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { WorkspaceBrowser } from "@/components/files/WorkspaceBrowser";
 import { MediaCacheBrowser } from "@/components/files/MediaCacheBrowser";
+import { TrashBrowser } from "@/components/files/TrashBrowser";
 import { toast } from "sonner";
 import { FileItem } from "@/types";
 import { useFiles } from "@/hooks/useFiles";
@@ -34,6 +35,11 @@ export default function FilesPage() {
   const [currentFolder, setCurrentFolder] = useState<BackendFolder | null>(null);
   /** 用户文件夹列表(后端;mock 模式为空)。 */
   const [folders, setFolders] = useState<BackendFolder[]>([]);
+  /** 回收站视图。 */
+  const [trashOpen, setTrashOpen] = useState(false);
+  /** 排序:名称/大小/时间 × 升降序(前端排序,列表数据量级小)。 */
+  const [sortBy, setSortBy] = useState<"name" | "size" | "date">("date");
+  const [sortAsc, setSortAsc] = useState(false);
   /** 新建/重命名文件夹弹窗状态。 */
   const [folderDialog, setFolderDialog] = useState<{ mode: "create" } | { mode: "rename"; folder: BackendFolder } | null>(null);
   const [folderNameInput, setFolderNameInput] = useState("");
@@ -64,11 +70,27 @@ export default function FilesPage() {
   }, [syncFile]);
 
   /** 当前视图中的文件(根视图=无归属文件;文件夹内=该文件夹文件)。 */
-  const inRootView = workspaceDir === null && !mediaCacheOpen && currentFolder === null;
+  const inRootView = workspaceDir === null && !mediaCacheOpen && !trashOpen && currentFolder === null;
   const viewFiles = currentFolder === null
     ? files.filter((f) => f.folderId == null)
     : files.filter((f) => f.folderId === currentFolder.id);
-  const filteredFiles = viewFiles.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  /** 排序 + 搜索(前端;列表数据量级小)。 */
+  const parseSize = (s: string): number => {
+    const m = s.match(/([\d.]+)\s*(B|KB|MB|GB)?/i);
+    if (!m) return 0;
+    const n = parseFloat(m[1]);
+    const unit = (m[2] ?? "B").toUpperCase();
+    return n * (unit === "GB" ? 1e9 : unit === "MB" ? 1e6 : unit === "KB" ? 1e3 : 1);
+  };
+  const sortedFiles = [...viewFiles].sort((a, b) => {
+    let cmp: number;
+    if (sortBy === "name") cmp = a.name.localeCompare(b.name, "zh");
+    else if (sortBy === "size") cmp = parseSize(a.size) - parseSize(b.size);
+    else cmp = (a.date ?? "").localeCompare(b.date ?? "");
+    return sortAsc ? cmp : -cmp;
+  });
+  const filteredFiles = sortedFiles.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const selection = useSelection(filteredFiles, "id");
 
   /** 上传目标文件夹(进入文件夹后上传到该文件夹)。 */
@@ -238,11 +260,12 @@ export default function FilesPage() {
           {
             label: "文件中心",
             isCurrent: inRootView,
-            // 非根视图(文件夹/工作区/媒体缓存内)时点击回退到文件中心根
+            // 非根视图(文件夹/工作区/媒体缓存/回收站内)时点击回退到文件中心根
             onClick: inRootView ? undefined : () => {
               setCurrentFolder(null);
               setWorkspaceDir(null);
               setMediaCacheOpen(false);
+              setTrashOpen(false);
             },
           },
           ...(workspaceDir !== null
@@ -251,11 +274,14 @@ export default function FilesPage() {
           ...(mediaCacheOpen
             ? [{ label: "媒体缓存", isCurrent: true }]
             : []),
+          ...(trashOpen
+            ? [{ label: "回收站", isCurrent: true }]
+            : []),
           ...breadcrumbTail,
         ]}
         actions={
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            {workspaceDir === null && !mediaCacheOpen && (
+            {workspaceDir === null && !mediaCacheOpen && !trashOpen && (
             <>
             <div className="relative w-[100px] sm:w-[180px] shrink-0">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3.5 h-3.5" />
@@ -293,7 +319,9 @@ export default function FilesPage() {
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          {mediaCacheOpen ? (
+          {trashOpen ? (
+            <TrashBrowser onExit={() => setTrashOpen(false)} />
+          ) : mediaCacheOpen ? (
             <MediaCacheBrowser onExit={() => setMediaCacheOpen(false)} />
           ) : workspaceDir !== null ? (
             <WorkspaceBrowser
@@ -318,10 +346,36 @@ export default function FilesPage() {
                 </div>
               )}
 
-              <div className="flex items-center justify-between mb-4 animate-in fade-in">
+              <div className="flex items-center justify-between mb-4 animate-in fade-in gap-3 flex-wrap">
                 <h2 className="text-sm font-bold text-foreground">{currentFolder ? currentFolder.name : "所有文件"}</h2>
-                <div className="text-xs text-muted-foreground">
-                  共 {viewFiles.length} 个文件{!currentFolder && folders.length > 0 ? ` · ${folders.length} 个文件夹` : ""}
+                <div className="flex items-center gap-3">
+                  {/* 排序控件:名称/大小/时间,点击切换升降序 */}
+                  <div className="flex items-center gap-1 text-xs">
+                    {([
+                      ["date", "时间"],
+                      ["name", "名称"],
+                      ["size", "大小"],
+                    ] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`px-1.5 py-0.5 rounded transition-colors ${sortBy === key ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                        onClick={() => {
+                          if (sortBy === key) setSortAsc((v) => !v);
+                          else {
+                            setSortBy(key);
+                            setSortAsc(false);
+                          }
+                        }}
+                      >
+                        {label}
+                        {sortBy === key && <span className="ml-0.5">{sortAsc ? "↑" : "↓"}</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    共 {viewFiles.length} 个文件{!currentFolder && folders.length > 0 ? ` · ${folders.length} 个文件夹` : ""}
+                  </div>
                 </div>
               </div>
 
@@ -359,6 +413,12 @@ export default function FilesPage() {
                       description: "相册等远程媒体的本地副本(查看秒开、手机离线可看)",
                       icon: HardDrive,
                       onOpen: () => setMediaCacheOpen(true),
+                    },
+                    {
+                      name: "回收站",
+                      description: "已删除的文件（可恢复或彻底删除）",
+                      icon: Trash2,
+                      onOpen: () => setTrashOpen(true),
                     },
                   ] : []),
                   ...folders.map((folder) => ({

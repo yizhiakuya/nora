@@ -142,6 +142,35 @@ public class FileController {
                 .body(resource);
     }
 
+    // ---------- 回收站(2026-09-17) ----------
+
+    /** 回收站列表(软删除的文件;按删除时间倒序)。 */
+    @GetMapping("/trash")
+    public ApiResponse<List<FileStorageService.TrashedItem>> trash() {
+        return ApiResponse.ok(fileStorageService.listTrash());
+    }
+
+    /** 从回收站恢复文件(回到根目录)。 */
+    @PostMapping("/trash/restore")
+    public ApiResponse<Integer> restore(@RequestBody MoveRequest request) {
+        if (request == null || request.ids() == null || request.ids().isEmpty()) {
+            throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
+        }
+        return ApiResponse.ok(fileStorageService.restore(request.ids()));
+    }
+
+    /**
+     * 永久删除(回收站清空):数据库行 + 磁盘文件一并删除。不可恢复。
+     */
+    @DeleteMapping("/trash")
+    public ApiResponse<Integer> purge(@RequestParam("ids") String ids) {
+        List<Long> idList = parseIds(ids);
+        if (idList.isEmpty()) {
+            throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
+        }
+        return ApiResponse.ok(fileStorageService.purge(idList));
+    }
+
     /**
      * Triggers rag-service indexing asynchronously (fire-and-forget) and
      * immediately returns the current file item (still {@code indexed=false}).
