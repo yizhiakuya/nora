@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-react";
+import { requestJson } from "@/lib/api/client";
 
 /**
  * 媒体灯箱：聊天里的照片/视频点击后页内放大查看，不再跳外部标签页。
@@ -8,7 +9,11 @@ import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-rea
  * - 点击遮罩 / 右上角 × / Esc 关闭；
  * - 多张时左右箭头 / ← → 键切换（单张时隐藏；视频播放中左右键由播放器接管）；
  * - 顶栏给"新窗口打开"与"下载"两个显式出口（需要时才离开页内）；
- * - `kind: "video"` 的条目用原生 <video> 播放（相册视频走 content 端点直出）。
+ * - `kind: "video"` 的条目用原生 <video> 播放（相册视频走压缩流端点）。
+ *
+ * 原片自动缓存（2026-09-17）：打开查看时后台调 `/api/media/warm`——
+ * 手机在 Wi-Fi 时后端把**原片**拉入磁盘缓存（与正在看的压缩流互不冲突），
+ * 之后任何网络/离线场景都能看原片；蜂窝下后端自动跳过（不偷偷烧流量）。
  */
 
 export interface LightboxImage {
@@ -21,6 +26,11 @@ export interface LightboxImage {
   alt?: string;
   /** 媒体类型;缺省 image。video 时用 <video controls> 渲染 */
   kind?: "image" | "video";
+  /**
+   * 原片地址（与播放用的压缩流区分）:视频的 src 是压缩流,下载/新窗口
+   * 打开应给原片——查看时后端已自动缓存原片,此处链接直通缓存。
+   */
+  originalSrc?: string;
 }
 
 export function ImageLightbox({
@@ -38,6 +48,31 @@ export function ImageLightbox({
   const current = images[index];
   const hasMultiple = images.length > 1;
   const isVideo = current?.kind === "video";
+
+  /**
+   * 原片自动缓存：打开/切换到某媒体时调一次 /api/media/warm。
+   * 后端仅在手机处于 Wi-Fi 时执行（蜂窝下跳过，不偷偷烧流量）；
+   * fire-and-forget——失败不影响查看（缓存是增益，不是依赖）。
+   *
+   * 缓存目标是**原片**：视频的 src 是压缩流(/video)，预热时还原为原片
+   * (/content)——原片进缓存后，任何网络下都可下载/回看完整版。
+   */
+  useEffect(() => {
+    const raw = current?.originalSrc ?? current?.src;
+    if (!raw) return;
+    const m = raw.match(/\/api\/media\/cache\?url=([^&]+)/);
+    let original = m ? decodeURIComponent(m[1]) : raw;
+    // 压缩流 → 原片（/photo/{id}/video → /photo/{id}/content）
+    original = original.replace(/(\/photo\/\d+\/)video(\?|$)/, "$1content$2");
+    if (!/^https?:\/\//i.test(original)) return;
+    requestJson<{ cached: boolean; allowed: boolean }>("/media/warm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: original }),
+    }).catch(() => {
+      // 预热失败静默（观看本身不受影响）
+    });
+  }, [current?.src, current?.originalSrc]);
 
   /**
    * 预加载相邻大图（左右各一张）：手机相册的原图要走中继隧道，
@@ -124,7 +159,7 @@ export function ImageLightbox({
         )}
         <div className="ml-auto flex items-center gap-1 shrink-0">
           <a
-            href={current.src}
+            href={current.originalSrc ?? current.src}
             target="_blank"
             rel="noreferrer"
             title="在新窗口打开"
@@ -134,9 +169,9 @@ export function ImageLightbox({
             <ExternalLink className="w-4 h-4" />
           </a>
           <a
-            href={current.src}
+            href={current.originalSrc ?? current.src}
             download
-            title="下载原图"
+            title={isVideo ? "下载原片" : "下载原图"}
             onClick={(e) => e.stopPropagation()}
             className="p-2 rounded-lg hover:bg-white/10 transition-colors"
           >

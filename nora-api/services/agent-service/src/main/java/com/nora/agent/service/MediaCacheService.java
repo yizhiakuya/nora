@@ -76,11 +76,22 @@ public class MediaCacheService {
     private final ExecutorService prefetchExecutor;
     /** 单飞:同一 URL 的后台预热下载只跑一个。 */
     private final ConcurrentHashMap<String, CompletableFuture<Path>> inFlight = new ConcurrentHashMap<>();
+    /** 链路自动选择(局域网优先,公网兜底);可为 null(未启用)。 */
+    private final RelayMediaRouter router;
+    /**
+     * HttpClient 缓存(按代理配置键控):JDK HttpClient 自带连接池,
+     * 复用实例才能吃到 keep-alive——此前每请求 new 一个,连 TLS/连接
+     * 都要重来,是公网路径上的固定开销。代理配置运行时可变,键 = "direct"
+     * 或 "host:port",配置变了自然换新实例。
+     */
+    private final ConcurrentHashMap<String, HttpClient> clients = new ConcurrentHashMap<>();
 
     public MediaCacheService(@Value("${nora.media-cache.dir:./data/media-cache}") String dir,
-                             @Value("${nora.media-cache.max-bytes:" + DEFAULT_MAX_BYTES + "}") long maxBytes) {
+                             @Value("${nora.media-cache.max-bytes:" + DEFAULT_MAX_BYTES + "}") long maxBytes,
+                             RelayMediaRouter router) {
         this.cacheDir = Path.of(dir);
         this.maxBytes = Math.max(MIN_MAX_BYTES, maxBytes);
+        this.router = router;
         this.prefetchExecutor = Executors.newFixedThreadPool(2, r -> {
             Thread t = new Thread(r, "media-prefetch");
             t.setDaemon(true);
@@ -95,12 +106,13 @@ public class MediaCacheService {
     }
 
     /** 缓存条目(已完成下载)。 */
-    public record CacheEntry(Path file, String contentType, long size) {
+    public record CacheEntry(Path file, String contentType, long size, String quality, String phoneKind) {
     }
 
     /** 上游流式响应:打开连接并拿到响应头后交给调用方流式消费。 */
     public record UpstreamStream(int status, String contentType, long contentLength,
-                                 String contentRange, InputStream body, String errorBody) {
+                                 String contentRange, InputStream body, String errorBody,
+                                 String quality, String phoneKind, String sourceUrl) {
     }
 
     /** 上游错误(状态码 + 可读信息)。 */
@@ -125,7 +137,8 @@ public class MediaCacheService {
             return Optional.empty();
         }
         try {
-            return Optional.of(new CacheEntry(bin, readContentType(key), Files.size(bin)));
+            Meta meta = readMeta(key);
+            return Optional.of(new CacheEntry(bin, meta.contentType(), Files.size(bin), meta.quality(), meta.phoneKind()));
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -143,13 +156,34 @@ public class MediaCacheService {
     /**
      * 打开上游媒体连接(同步等到响应头)。
      *
+     * <p>链路:局域网优先(中继内网端口可达时自动重写),失败立即回退公网——
+     * 对调用方透明。重写只影响网络路径,URL 里的 path/query 原样保留。
+     *
      * @param range 可选 Range 头(视频 seek);null = 整体
      * @return 上游响应(>=400 时 body 为 null、errorBody 有内容)
      */
     public UpstreamStream openUpstream(String url, String range) throws IOException {
-        HttpClient client = buildClient(url);
+        String effective = router == null ? url : router.preferLan(url);
+        try {
+            return openUpstreamDirect(effective, range, url);
+        } catch (IOException e) {
+            if (!effective.equals(url)) {
+                // 局域网失败:回退公网,并让路由器下次探测前不再优先内网
+                if (router != null) {
+                    router.reportLanFailure();
+                }
+                log.info("局域网拉取失败,回退公网: {} ({})", url, e.getMessage());
+                return openUpstreamDirect(url, range, url);
+            }
+            throw e;
+        }
+    }
+
+    /** 打开指定地址的上游连接(不做链路选择);sourceUrl 仅用于元数据/日志。 */
+    private UpstreamStream openUpstreamDirect(String effective, String range, String sourceUrl) throws IOException {
+        HttpClient client = buildClient(effective);
         HttpRequest.Builder rb = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+                .uri(URI.create(effective))
                 .timeout(Duration.ofSeconds(90)) // 等到响应头;响应体流式读取不受此限
                 .header("User-Agent", "Nora-MediaCache/1.0")
                 .GET();
@@ -165,6 +199,13 @@ public class MediaCacheService {
         String ct = resp.headers().firstValue("Content-Type").orElse("application/octet-stream");
         long len = resp.headers().firstValueAsLong("Content-Length").orElse(-1);
         String cr = resp.headers().firstValue("Content-Range").orElse(null);
+        // 手机出图档位(high=原尺寸,low=降采样)与真实网络类型(wifi/metered):
+        // 前者是缓存分档依据,后者供「观看时自动缓存原片」判断
+        String quality = resp.headers().firstValue("X-Net-Quality").orElse(null);
+        String phoneKind = resp.headers().firstValue("X-Net-Kind").orElse(null);
+        if (router != null && phoneKind != null) {
+            router.reportPhoneKind(phoneKind);
+        }
         if (resp.statusCode() >= 400) {
             String err;
             try (InputStream in = resp.body()) {
@@ -172,9 +213,9 @@ public class MediaCacheService {
             } catch (Exception e) {
                 err = "";
             }
-            return new UpstreamStream(resp.statusCode(), ct, len, cr, null, err);
+            return new UpstreamStream(resp.statusCode(), ct, len, cr, null, err, quality, phoneKind, sourceUrl);
         }
-        return new UpstreamStream(resp.statusCode(), ct, len, cr, resp.body(), null);
+        return new UpstreamStream(resp.statusCode(), ct, len, cr, resp.body(), null, quality, phoneKind, sourceUrl);
     }
 
     /** 把上游错误转成可操作提示(手机离线等已知文案给出引导)。 */
@@ -191,15 +232,17 @@ public class MediaCacheService {
      * 边下边写(tee):已打开的上游流 → 客户端 + 磁盘同时写。
      * 客户端中途断开时继续写盘完成缓存;写盘失败(磁盘满等)只告警不阻断客户端。
      *
+     * @param u 已打开的上游流(携带档位/来源元数据)
      * @return 完整缓存条目(写盘失败时为 null,客户端不受影响)
      */
-    public CacheEntry teeStream(String url, String contentType, InputStream upstream, OutputStream clientOut)
+    public CacheEntry teeStream(UpstreamStream u, OutputStream clientOut)
             throws IOException {
+        String url = u.sourceUrl();
         String key = key(url);
         Path target = cacheDir.resolve(key + ".bin");
         Path part = cacheDir.resolve(key + "." + System.nanoTime() + ".part");
         long total = 0;
-        try (InputStream in = upstream; OutputStream fileOut = Files.newOutputStream(part)) {
+        try (InputStream in = u.body(); OutputStream fileOut = Files.newOutputStream(part)) {
             byte[] buf = new byte[64 * 1024];
             boolean clientAlive = true;
             int n;
@@ -227,24 +270,33 @@ public class MediaCacheService {
         }
         try {
             Files.move(part, target, StandardCopyOption.REPLACE_EXISTING);
-            writeMeta(key, contentType, url);
+            writeMeta(key, u.contentType(), url, u.quality(), u.phoneKind());
             evictIfNeeded();
-            return new CacheEntry(target, contentType, total);
+            return new CacheEntry(target, u.contentType(), total, u.quality(), u.phoneKind());
         } catch (IOException e) {
             log.warn("media cache persist failed ({}): {}", url, e.getMessage());
             return null;
         }
     }
 
-    /** 后台预热:整文件下载入缓存(单飞;已缓存/在飞则跳过)。 */
-    public void prefetchAsync(String url) {
+    /**
+     * 后台预热:整文件下载入缓存(单飞;已缓存/在飞则跳过)。
+     *
+     * @param url         缓存键所用的原始 URL(公网形态)
+     * @param requireHigh 仅当上游档位为 high(原尺寸)时入库——实时观看请求的
+     *                    「自动缓存原片」用它:观看本身拿到的是压缩流(low 档),
+     *                    同时后台把原片拉进来;若手机当前就是 low 档(蜂窝),
+     *                    拉到的"原片"其实是降采样图,不满足原片语义 → 放弃,
+     *                    等 Wi-Fi 下再看时重新预取。false = 不限制档位。
+     */
+    public void prefetchAsync(String url, boolean requireHigh) {
         if (lookup(url).isPresent()) {
             return;
         }
         inFlight.computeIfAbsent(url, u -> {
             CompletableFuture<Path> f = CompletableFuture.supplyAsync(() -> {
                 try {
-                    return downloadToDisk(u);
+                    return downloadToDisk(u, requireHigh);
                 } catch (Exception e) {
                     throw new CompletionException(e);
                 }
@@ -261,11 +313,77 @@ public class MediaCacheService {
         });
     }
 
+    /** 后台预热(不限制档位;兼容既有调用)。 */
+    public void prefetchAsync(String url) {
+        prefetchAsync(url, false);
+    }
+
+    /**
+     * 实时观看时自动缓存原片:前端正在看某媒体(压缩流)时调用。
+     *
+     * <p>策略:仅当手机在 Wi-Fi(不计费)时执行——蜂窝下预取原片会偷偷烧流量。
+     * 预取的是原始 URL(原图/原片),与观看用的压缩流互不冲突;单飞去重,
+     * 失败静默(观看本身不受影响)。
+     */
+    public void prefetchOriginalOnView(String url) {
+        if (router == null || !router.phoneOnWifi()) {
+            return;
+        }
+        prefetchAsync(url, true);
+    }
+
+    /** 当前是否允许原片预取(手机在 Wi-Fi);供前端/接口展示。 */
+    public boolean originalPrefetchAllowed() {
+        return router != null && router.phoneOnWifi();
+    }
+
+    /** 链路状态描述(排障:当前公网/局域网、手机网络)。 */
+    public String routerStatus() {
+        return router == null ? "disabled" : router.status();
+    }
+
+    /**
+     * 强制刷新缓存条目(已有低档位缓存时重新拉取当前档位)。
+     *
+     * <p>场景:用户在蜂窝下看过一张图(缓存的是降采样版),回家(Wi-Fi)再看——
+     * 此时缓存的 low 档位版本不满足「原片」语义,后台重拉 high 版覆盖。
+     * 单飞去重;失败保留旧缓存(降级可用)。
+     */
+    public void refreshAsync(String url) {
+        inFlight.computeIfAbsent(url, u -> {
+            CompletableFuture<Path> f = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return downloadToDisk(u, true);
+                } catch (Exception e) {
+                    throw new CompletionException(e);
+                }
+            }, prefetchExecutor);
+            f.whenComplete((p, err) -> {
+                inFlight.remove(u, f);
+                if (err != null) {
+                    log.debug("media refresh failed ({}): {}", u, err.getMessage());
+                } else {
+                    log.info("media refreshed to original: {}", u);
+                }
+            });
+            return f;
+        });
+    }
+
     /** 整文件下载到缓存(阻塞;失败删 .part)。 */
-    private Path downloadToDisk(String url) throws IOException {
+    private Path downloadToDisk(String url, boolean requireHigh) throws IOException {
         UpstreamStream u = openUpstream(url, null);
         if (u.body() == null) {
             throw new UpstreamException(u.status(), friendlyError(u));
+        }
+        // requireHigh 语义:手机上报 low(降采样)说明现在拿不到原片,放弃本次;
+        // 档位未知(旧版手机无该头)时按可用处理——旧版 content 端点本就出原图
+        if (requireHigh && "low".equalsIgnoreCase(u.quality())) {
+            try (InputStream in = u.body()) {
+                // 必须排空关闭,否则连接泄漏
+                in.transferTo(OutputStream.nullOutputStream());
+            }
+            throw new IOException("手机当前为省流量档(low),跳过原片预取");
         }
         String key = key(url);
         Path target = cacheDir.resolve(key + ".bin");
@@ -281,20 +399,34 @@ public class MediaCacheService {
             throw e;
         }
         Files.move(part, target, StandardCopyOption.REPLACE_EXISTING);
-        writeMeta(key, u.contentType(), url);
+        writeMeta(key, u.contentType(), url, u.quality(), u.phoneKind());
         evictIfNeeded();
         return target;
     }
 
     // ---------- 内部 ----------
 
+    /**
+     * 取共享 HttpClient(keep-alive 连接池)。按代理配置键控:
+     * 代理开关/地址变化时自动换新实例;同配置下所有请求复用同一池
+     * (此前每请求 new 一个,连接/TLS 握手开销全白付)。
+     *
+     * <p>强制 HTTP/1.1:JDK HttpClient 对**明文 http** 默认先发 h2c 升级
+     * (Upgrade: h2c 头),中继的 upgrade 处理器会把这类 socket 当非法
+     * WebSocket 销毁——局域网链路(明文)下所有请求都会失败(实测踩坑)。
+     */
     private HttpClient buildClient(String url) {
-        HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15));
         InetSocketAddress proxy = ProxySettingsHolder.addressFor(url);
-        if (proxy != null) {
-            b.proxy(ProxySelector.of(proxy));
-        }
-        return b.build();
+        String key = proxy == null ? "direct" : proxy.getHostString() + ":" + proxy.getPort();
+        return clients.computeIfAbsent(key, k -> {
+            HttpClient.Builder b = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(Duration.ofSeconds(15));
+            if (proxy != null) {
+                b.proxy(ProxySelector.of(proxy));
+            }
+            return b.build();
+        });
     }
 
     /** 缓存键:URL 的 sha256(十六进制)。 */
@@ -308,25 +440,34 @@ public class MediaCacheService {
         }
     }
 
-    private void writeMeta(String key, String contentType, String url) {
+    /** 缓存元数据:Content-Type + 来源 URL + 出图档位(high/low) + 手机网络类型。 */
+    private record Meta(String contentType, String url, String quality, String phoneKind) {
+    }
+
+    private void writeMeta(String key, String contentType, String url, String quality, String phoneKind) {
         try {
             Files.writeString(cacheDir.resolve(key + ".meta"),
-                    contentType + "\n" + url + "\n", StandardCharsets.UTF_8);
+                    contentType + "\n" + url + "\n"
+                            + (quality == null ? "" : quality) + "\n"
+                            + (phoneKind == null ? "" : phoneKind) + "\n",
+                    StandardCharsets.UTF_8);
         } catch (IOException e) {
             log.debug("media meta write failed ({}): {}", key, e.getMessage());
         }
     }
 
-    private String readContentType(String key) {
+    private Meta readMeta(String key) {
         try {
             List<String> lines = Files.readAllLines(cacheDir.resolve(key + ".meta"), StandardCharsets.UTF_8);
-            if (!lines.isEmpty() && !lines.get(0).isBlank()) {
-                return lines.get(0).trim();
-            }
-        } catch (Exception ignored) {
+            String ct = lines.size() > 0 && !lines.get(0).isBlank() ? lines.get(0).trim() : "application/octet-stream";
+            String url = lines.size() > 1 ? lines.get(1).trim() : "";
+            String quality = lines.size() > 2 && !lines.get(2).isBlank() ? lines.get(2).trim() : null;
+            String kind = lines.size() > 3 && !lines.get(3).isBlank() ? lines.get(3).trim() : null;
+            return new Meta(ct, url, quality, kind);
+        } catch (Exception e) {
             // meta 缺失:按通用二进制流服务
+            return new Meta("application/octet-stream", "", null, null);
         }
-        return "application/octet-stream";
     }
 
     /** LRU 淘汰:总量超上限时按 mtime(最近访问)从旧到新清理到 90%。 */

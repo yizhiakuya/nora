@@ -1,6 +1,7 @@
 package com.nora.agent.controller;
 
 import com.nora.common.exception.BusinessException;
+import com.nora.common.response.ApiResponse;
 import com.nora.agent.service.MediaCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -107,7 +110,7 @@ public class MediaCacheController {
                 });
             }
             // 上游不支持 Range(回 200 全量):tee 全量给客户端 + 入缓存
-            return teeResponse(url, u);
+            return teeResponse(u);
         }
 
         // 3) 未命中 + 无 Range(图片等):tee 边下边写,首字节立即到达
@@ -116,21 +119,74 @@ public class MediaCacheController {
             throw BusinessException.dependency("MEDIA_UPSTREAM_FAILED", mediaCache.friendlyError(u),
                     "检查手机相册 App 的隧道连接,或稍后重试(已缓存的媒体不受影响)");
         }
-        return teeResponse(url, u);
+        return teeResponse(u);
+    }
+
+    /**
+     * 实时观看时自动缓存原片(2026-09-17)。
+     *
+     * <p>前端打开媒体灯箱时对同一媒体调用一次:后端后台把**原片**拉入磁盘缓存
+     * (与前端正在看的压缩流互不冲突)。仅当手机在 Wi-Fi(不计费网络)时执行
+     * ——蜂窝下预取原片会偷偷烧流量(中继 /health 上报手机网络类型)。
+     * 立即返回,不等下载完成;失败静默(观看本身不受影响)。
+     *
+     * @param url 媒体的原始 URL(与 /cache 的 url 同形态;前端传 fullUrl)
+     */
+    @PostMapping("/warm")
+    public ApiResponse<WarmResult> warm(@RequestBody WarmRequest request) {
+        String url = request == null ? null : request.url();
+        if (url == null || !url.matches("(?i)^https?://.*")) {
+            throw BusinessException.validation("INVALID_MEDIA_URL", "url 必须是 http/https 地址",
+                "媒体预热只接受远程 http(s) 地址");
+        }
+        Optional<MediaCacheService.CacheEntry> hit = mediaCache.lookup(url);
+        boolean allowed = mediaCache.originalPrefetchAllowed();
+        if (allowed) {
+            if (hit.isEmpty()) {
+                // 未缓存:后台拉原片入缓存
+                mediaCache.prefetchOriginalOnView(url);
+            } else if ("low".equalsIgnoreCase(hit.get().quality())) {
+                // 已有省流量档缓存(蜂窝下看过):重拉原片覆盖,回 Wi-Fi 后就是清晰版
+                mediaCache.refreshAsync(url);
+            }
+        }
+        return ApiResponse.ok(new WarmResult(hit.isPresent(), allowed));
+    }
+
+    /** POST /api/media/warm body。 */
+    public record WarmRequest(String url) {
+    }
+
+    /** POST /api/media/warm response。 */
+    public record WarmResult(boolean cached, boolean allowed) {
+    }
+
+    /**
+     * 链路状态快照(排障用):当前走公网还是局域网、手机是否 Wi-Fi。
+     * 返回原始状态行 + 结构化字段。
+     */
+    @GetMapping("/status")
+    public ApiResponse<StatusView> status() {
+        String raw = mediaCache.routerStatus();
+        return ApiResponse.ok(new StatusView(raw, mediaCache.originalPrefetchAllowed()));
+    }
+
+    /** GET /api/media/status response。 */
+    public record StatusView(String router, boolean prefetchAllowed) {
     }
 
     /** tee 响应:客户端流与磁盘缓存同时写(客户端断开仍完成缓存)。 */
-    private ResponseEntity<StreamingResponseBody> teeResponse(String url, MediaCacheService.UpstreamStream u) {
+    private ResponseEntity<StreamingResponseBody> teeResponse(MediaCacheService.UpstreamStream u) {
         return ResponseEntity.ok()
                 .header("Cache-Control", MediaCacheService.BROWSER_CACHE_CONTROL)
                 .header("Accept-Ranges", "bytes")
                 .contentType(parseMediaType(u.contentType()))
                 .body(out -> {
                     try {
-                        mediaCache.teeStream(url, u.contentType(), u.body(), out);
+                        mediaCache.teeStream(u, out);
                     } catch (IOException ex) {
                         // 流已开始无法改状态码;teeStream 内部已处理客户端断开
-                        log.warn("media tee stream failed ({}): {}", url, ex.getMessage());
+                        log.warn("media tee stream failed ({}): {}", u.sourceUrl(), ex.getMessage());
                     }
                 });
     }

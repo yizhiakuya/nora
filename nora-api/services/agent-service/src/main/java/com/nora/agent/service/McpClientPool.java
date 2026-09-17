@@ -32,8 +32,12 @@ class McpClientPool {
     private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(60);
 
     private final ObjectMapper objectMapper;
+    /** 链路自动选择(局域网优先,公网兜底);可为 null(功能未启用)。 */
+    private final RelayMediaRouter router;
     /** server id → live client (connected lazily, removed on delete/disable) */
     private final Map<Long, McpSyncClient> clients = new ConcurrentHashMap<>();
+    /** server id → 该客户端建立时实际使用的 URL(链路切换时对比驱逐用)。 */
+    private final Map<Long, String> clientUrls = new ConcurrentHashMap<>();
     /** server id → spawned stdio child process (killed on evict/disable/delete) */
     private final Map<Long, Process> stdioProcs = new ConcurrentHashMap<>();
     /**
@@ -44,15 +48,23 @@ class McpClientPool {
      */
     private final Map<Long, List<ProcessHandle>> stdioTrees = new ConcurrentHashMap<>();
 
-    McpClientPool(ObjectMapper objectMapper) {
+    McpClientPool(ObjectMapper objectMapper, RelayMediaRouter router) {
         this.objectMapper = objectMapper;
+        this.router = router;
     }
 
     /** Builds (or reuses) a connected client for the server. */
     McpSyncClient clientFor(McpServerService.RawServer server) {
+        String desiredUrl = router == null ? server.url() : router.preferLan(server.url());
         McpSyncClient existing = clients.get(server.id());
         if (existing != null) {
-            return existing;
+            // 链路切换(公网↔局域网)后旧连接还在旧地址上:地址变了就驱逐重建,
+            // 让「在家自动走内网」对 MCP 调用同样即时生效
+            String builtFor = clientUrls.get(server.id());
+            if (desiredUrl == null || desiredUrl.equals(builtFor)) {
+                return existing;
+            }
+            evictClient(server.id());
         }
         String transportName = server.transport() == null ? "STREAMABLE" : server.transport();
         McpClientTransport transport;
@@ -84,17 +96,23 @@ class McpClientPool {
             // 注册时收集的鉴权头(Authorization 等)必须真正带上——SDK 2.x 没有
             // headers builder API,统一走 httpRequestCustomizer 在每个请求上注入
             Map<String, String> headers = parseHeaders(server.headers());
+            // 链路自动选择(2026-09-17):中继地址(如 home.rainaki.top:8900)在
+            // 局域网可达时自动改走内网端口(192.168.x.x:8902)——MCP 调用
+            // 同样享受「在家快一档」。URL 为空/非中继地址时原样。
+            String effectiveUrl = desiredUrl;
             io.modelcontextprotocol.client.transport.customizer.McpSyncHttpClientRequestCustomizer
                     headerInjector = (requestBuilder, method, uri, requestBody, context) -> {
                 headers.forEach(requestBuilder::header);
             };
             transport = switch (transportName) {
                 case "SSE" ->
-                    io.modelcontextprotocol.client.transport.HttpClientSseClientTransport.builder(server.url())
+                    io.modelcontextprotocol.client.transport.HttpClientSseClientTransport.builder(effectiveUrl)
+                            .customizeClient(http11For(effectiveUrl))
                             .httpRequestCustomizer(headerInjector)
                             .build();
                 default ->
-                    io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport.builder(server.url())
+                    io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport.builder(effectiveUrl)
+                            .customizeClient(http11For(effectiveUrl))
                             .httpRequestCustomizer(headerInjector)
                             .build();
             };
@@ -119,7 +137,25 @@ class McpClientPool {
             }
         }
         clients.put(server.id(), client);
+        clientUrls.put(server.id(), desiredUrl == null ? "" : desiredUrl);
         return client;
+    }
+
+    /**
+     * 明文 http 地址强制 HTTP/1.1(https 保持默认协商)。
+     *
+     * <p>原因:JDK HttpClient 对明文 http 默认先发 h2c 升级(Upgrade: h2c 头),
+     * 中继的 WebSocket upgrade 处理器会把这些 socket 当非法升级销毁——局域网
+     * 链路(明文 8902 端口)下 MCP 调用会全部失败(实测 "header parser received
+     * no bytes")。https 走 ALPN 正常协商 h2,不受影响。
+     */
+    private static java.util.function.Consumer<java.net.http.HttpClient.Builder> http11For(String url) {
+        boolean plainHttp = url != null && url.regionMatches(true, 0, "http://", 0, 7);
+        return builder -> {
+            if (plainHttp) {
+                builder.version(java.net.http.HttpClient.Version.HTTP_1_1);
+            }
+        };
     }
 
     /** Reads the child process handle off StdioClientTransport (private field, best-effort). */
@@ -177,6 +213,7 @@ class McpClientPool {
         // 包装层)先退出,其孙进程(node)随即被孤儿化——之后再 taskkill /T
         // 已找不到树,node 会一直残留(实测踩坑)。
         killProcessTree(serverId);
+        clientUrls.remove(serverId);
         McpSyncClient stale = clients.remove(serverId);
         if (stale != null) {
             try {

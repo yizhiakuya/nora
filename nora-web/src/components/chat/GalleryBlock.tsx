@@ -74,13 +74,16 @@ export function GalleryBlock({ data }: { data: GalleryData }) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxImages = data.items.map((item) => {
     const full = item.fullUrl ?? item.url;
+    const isVideo = item.type === "video";
     return {
       // 视频走压缩流端点(/video,手机端按网络档位转码);图片走原图(content)
-      src: mediaCacheUrl(item.type === "video" ? videoStreamVariant(full) : full),
+      src: mediaCacheUrl(isVideo ? videoStreamVariant(full) : full),
       thumb: mediaCacheUrl(item.url),
       caption: item.caption,
       alt: item.filename ?? `照片 ${item.id}`,
-      kind: item.type === "video" ? ("video" as const) : ("image" as const),
+      kind: isVideo ? ("video" as const) : ("image" as const),
+      // 原片直链(下载/新窗口打开用):查看时后端已自动缓存原片,此链接命中缓存
+      originalSrc: mediaCacheUrl(isVideo ? full.replace(/(\/photo\/\d+\/)video(\?|$)/, "$1content$2") : full),
     };
   });
 

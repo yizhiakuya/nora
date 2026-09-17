@@ -50,10 +50,10 @@ public class McpServerService {
     private final McpClientPool clientPool;
     private final ObjectMapper objectMapper;
 
-    public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, RelayMediaRouter relayRouter) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
-        this.clientPool = new McpClientPool(objectMapper);
+        this.clientPool = new McpClientPool(objectMapper, relayRouter);
     }
 
     // ---------- registry CRUD ----------

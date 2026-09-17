@@ -64,7 +64,8 @@ class McpServerServiceTest {
     @Test
     void cachedToolsParsesSnapshotAndHandlesUnknownId() {
         McpServerService service = new McpServerService(jdbcTemplate,
-                new com.fasterxml.jackson.databind.ObjectMapper());
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                new RelayMediaRouter(new com.fasterxml.jackson.databind.ObjectMapper(), "", 120));
         // 有快照:解析出 name/description/inputSchema
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq(3L)))
                 .thenReturn(List.of(

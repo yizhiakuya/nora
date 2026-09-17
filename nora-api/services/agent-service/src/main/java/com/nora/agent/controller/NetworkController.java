@@ -35,6 +35,10 @@ public class NetworkController {
     public NetworkController(ProxyProperties staticProxy, AppSettingStore appSettingStore) {
         this.staticProxy = staticProxy;
         this.appSettingStore = appSettingStore;
+        // 启动基线:先按静态配置(application.yml / env)初始化 holder——
+        // 无持久化行时它就是最终值(此前 holder 会停在 disabled,与文档不符);
+        // 有持久化行时由 AppSettingStore 在 boot 时覆盖(见 onLoad)。
+        ProxySettingsHolder.set(staticProxy);
         // Runtime applier: any save (or boot load) swaps the live holder.
         appSettingStore.onLoad(SETTING_KEY, payload -> {
             ProxyProperties parsed = parse(payload);
@@ -72,7 +76,8 @@ public class NetworkController {
             }
             port = request.port();
         }
-        ProxyProperties next = new ProxyProperties(enabled, request.host() == null ? "" : request.host().trim(), port);
+        ProxyProperties next = new ProxyProperties(enabled, request.host() == null ? "" : request.host().trim(), port,
+                staticProxy.bypassHosts());
         if (enabled) {
             // Fail fast on an unreachable proxy rather than silently breaking egress.
             String probeUrl = "http://" + next.host() + ":" + next.port();
@@ -102,7 +107,7 @@ public class NetworkController {
         return proxy();
     }
 
-    private static ProxyProperties parse(Map<String, Object> payload) {
+    private ProxyProperties parse(Map<String, Object> payload) {
         boolean enabled = Boolean.TRUE.equals(payload.get("enabled"));
         Object hostObj = payload.get("host");
         Object portObj = payload.get("port");
@@ -113,7 +118,8 @@ public class NetworkController {
         } catch (Exception e) {
             port = 0;
         }
-        return new ProxyProperties(enabled, host, port);
+        // bypass-hosts 属于静态配置(application.yml),不随 UI 保存变化
+        return new ProxyProperties(enabled, host, port, staticProxy.bypassHosts());
     }
 
     /**

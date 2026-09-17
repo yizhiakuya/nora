@@ -51,6 +51,18 @@ nora:
     enabled: ${NORA_PROXY_ENABLED:false}
     host: ${NORA_PROXY_HOST:127.0.0.1}
     port: ${NORA_PROXY_PORT:7897}
+    # 直连名单(不走代理):这些「公网域名」实际指向自家宽带/内网,
+    # 经代理远程节点绕行反而慢(实测 +2.3s)。媒体中继 home.rainaki.top 即此类。
+    bypass-hosts: ${NORA_PROXY_BYPASS_HOSTS:home.rainaki.top}
+  # 媒体磁盘缓存(相册等远程媒体):一次拉取跨会话复用,手机离线也能看
+  media-cache:
+    dir: ${NORA_MEDIA_CACHE_DIR:./data/media-cache}
+    max-bytes: ${NORA_MEDIA_CACHE_MAX_BYTES:2147483648}
+    # 中继公网基址:用于后台探测其局域网端点(链路自动选择)+ 手机网络状态。
+    # 空 = 关闭该功能(媒体拉取仍可走公网直连)。
+    relay-base: ${NORA_RELAY_BASE:https://home.rainaki.top:8900}
+    # 局域网端点探测周期(秒);探测只打中继 /health,开销可忽略
+    lan-probe-seconds: ${NORA_RELAY_LAN_PROBE_SECONDS:120}
   llm:
     api-key: ${NORA_LLM_API_KEY:}
     base-url: ${NORA_LLM_BASE_URL:http://192.168.0.109:28765/v1}

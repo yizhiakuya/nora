@@ -23,7 +23,7 @@ public final class ProxySupport {
      * is disabled. Never null — direct semantics when bypassing.
      */
     public static ProxySelector selectorFor(ProxyProperties props, String targetUrl) {
-        if (props == null || !props.usable() || isLanTarget(targetUrl)) {
+        if (props == null || !props.usable() || isLanTarget(targetUrl) || isBypassHost(props, targetUrl)) {
             return ProxySelector.getDefault() != null
                     ? ProxySelector.getDefault()
                     : new ProxySelector() {
@@ -46,10 +46,56 @@ public final class ProxySupport {
      * builder takes the address directly).
      */
     public static InetSocketAddress addressFor(ProxyProperties props, String targetUrl) {
-        if (props == null || !props.usable() || isLanTarget(targetUrl)) {
+        if (props == null || !props.usable() || isLanTarget(targetUrl) || isBypassHost(props, targetUrl)) {
             return null;
         }
         return new InetSocketAddress(props.host(), props.port());
+    }
+
+    /**
+     * bypass-hosts 名单匹配：域名等于/后缀匹配任一条目即直连。
+     *
+     * <p>用途：某些「公网域名」实际指向自家内网（如媒体中继 home.rainaki.top），
+     * 经代理远程节点绕行反而慢（实测 +2.3s）。配到 nora.proxy.bypass-hosts 后
+     * 这些域名一律直连。匹配大小写不敏感；条目可带前导点（.rainaki.top）。
+     */
+    public static boolean isBypassHost(ProxyProperties props, String url) {
+        if (props == null || props.bypassHosts() == null || props.bypassHosts().isEmpty()) {
+            return false;
+        }
+        String host = hostOf(url);
+        if (host == null) {
+            return false;
+        }
+        String h = host.toLowerCase();
+        for (String raw : props.bypassHosts()) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            String entry = raw.trim().toLowerCase();
+            if (entry.startsWith(".")) {
+                // 后缀式:".rainaki.top" 匹配 a.rainaki.top 与 rainaki.top
+                if (h.equals(entry.substring(1)) || h.endsWith(entry)) {
+                    return true;
+                }
+            } else if (h.equals(entry) || h.endsWith("." + entry)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 从 URL 提取小写主机名;解析失败返回 null。 */
+    private static String hostOf(String url) {
+        try {
+            String work = url == null ? "" : url.trim();
+            if (!work.matches("(?i)^[a-z][a-z0-9+.-]*://.*")) {
+                work = "http://" + work;
+            }
+            return URI.create(work).getHost();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
