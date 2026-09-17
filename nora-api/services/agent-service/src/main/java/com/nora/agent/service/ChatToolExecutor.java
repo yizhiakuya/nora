@@ -97,538 +97,47 @@ class ChatToolExecutor {
      * (what was refused + which rule + a correct example) so the model can
      * self-correct on the next round.
      */
+    /**
+     * Dispatches a tool call. Guardrail rejections return a three-part error
+     * (what was refused + which rule + a correct example) so the model can
+     * self-correct on the next round.
+     *
+     * <p>2026-09-17:各工具分支拆为独立 handler(见下方 exec* 方法),此处只做分发。
+     */
     ToolOutcome executeTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                                     java.util.function.Consumer<String> liveOutput) {
         if ("execute_sql".equals(name)) {
-            String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
-            String guard = guardSql(sql);
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            SqlToolClient.SqlOutcome outcome = sqlToolClient.executeSqlDetailed(sql, parsed.input().target());
-            return new ToolOutcome(outcome.content(), outcome.summary(), null, outcome.truncated());
+            return execExecuteSql(name, args, parsed, liveOutput);
         }
         if ("read_service_logs".equals(name)) {
-            String service = parsed.input().service() != null ? parsed.input().service() : "";
-            int limit = parsed.input().limit() != null ? Math.min(parsed.input().limit(), 100) : 50;
-            String guard = guardService(service);
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            return bounded(serviceLogClient.readLogs(service, limit), null);
+            return execReadServiceLogs(name, args, parsed, liveOutput);
         }
         if ("execute_write_sql".equals(name)) {
-            String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
-            String guard = RiskClassifier.validateWriteSql(sql);
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            if (writeSqlClient == null) {
-                return new ToolOutcome("ERROR: 写入能力未启用(服务未配置)", null, null, false);
-            }
-            String content = writeSqlClient.executeWrite(sql, parsed.input().target());
-            boolean failure = content.startsWith("ERROR:");
-            return new ToolOutcome(content, failure ? null : content, null, false);
+            return execExecuteWriteSql(name, args, parsed, liveOutput);
         }
         if ("manage_container".equals(name)) {
-            String service = parsed.input().service() == null ? "" : parsed.input().service();
-            String guard = RiskClassifier.validateContainerAction(parsed.containerAction());
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            String guardService = guardService(service);
-            if (guardService != null) {
-                return new ToolOutcome("ERROR: " + guardService, null, null, false);
-            }
-            if (!serviceLogClient.listServices().contains(service)) {
-                return new ToolOutcome("ERROR: unknown service " + service + ". 可用服务必须来自环境服务注册表", null, null, false);
-            }
-            if (containerControlClient == null) {
-                return new ToolOutcome("ERROR: 容器控制能力未启用(服务未配置)", null, null, false);
-            }
-            String content = containerControlClient.control(service, parsed.containerAction());
-            boolean failure = content.startsWith("ERROR:");
-            return new ToolOutcome(content, failure ? null : content, null, false);
+            return execManageContainer(name, args, parsed, liveOutput);
         }
         if ("manage_datasource".equals(name)) {
-            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-            String guard = RiskClassifier.validateDatasourceAction(action);
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            if ("list".equals(action)) {
-                return bounded(dataSourceManageClient.list(), null);
-            }
-            if ("schema".equals(action)) {
-                // schema 不在工具 spec 里宣传,但模型从 list 结果推断时放行(只读)
-                return bounded(dataSourceManageClient.schema(parsed.input().target()), null);
-            }
-            if ("create".equals(action)) {
-                // 连接参数从原始 args 取(密码只 here 使用,不进 ParsedArgs/步骤记录)
-                JsonNode a;
-                try {
-                    a = objectMapper.readTree(args == null ? "{}" : args);
-                } catch (Exception e) {
-                    return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
-                }
-                String dName = a.path("name").asText(null);
-                String engine = a.path("engine").asText(null);
-                String host = a.path("host").asText(null);
-                Integer port = a.path("port").isInt() ? a.path("port").asInt() : null;
-                String database = a.path("database").asText(null);
-                String username = a.path("username").asText(null);
-                String password = a.path("password").asText(null);
-                String createGuard = RiskClassifier.validateDatasourceCreate(engine, host, port, database);
-                if (createGuard != null) {
-                    return new ToolOutcome("ERROR: " + createGuard, null, null, false);
-                }
-                if (dName == null || dName.isBlank()) {
-                    return new ToolOutcome("ERROR: 缺少 name 参数(连接显示名,如 \"订单库-生产\")", null, null, false);
-                }
-                String content = dataSourceManageClient.create(dName, engine, host, port, database, username, password);
-                boolean failure = content.startsWith("ERROR:");
-                return new ToolOutcome(content, failure ? null : summarizeCreate(content), null, false);
-            }
-            // test / remove:目标 = name 或数字 id
-            String target = parsed.input().target();
-            if (target == null || target.isBlank()) {
-                return new ToolOutcome("ERROR: 缺少目标数据源(name 或 id)。可先用 action=list 查看", null, null, false);
-            }
-            Long connectionId = sqlToolClient.resolveConnectionId(target);
-            if (connectionId == null) {
-                return new ToolOutcome("ERROR: 找不到数据源 \"" + target + "\"。可用连接:\n" + dataSourceManageClient.list(),
-                        null, null, false);
-            }
-            String content = "test".equals(action)
-                    ? dataSourceManageClient.test(connectionId)
-                    : dataSourceManageClient.remove(connectionId);
-            boolean failure = content.startsWith("ERROR:");
-            return new ToolOutcome(content, failure ? null : content, null, false);
+            return execManageDatasource(name, args, parsed, liveOutput);
         }
         if ("manage_service".equals(name)) {
-            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-            String guard = RiskClassifier.validateServiceAction(action);
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            if ("list".equals(action)) {
-                return bounded(serviceManageClient.list(), null);
-            }
-            if ("register".equals(action)) {
-                JsonNode a;
-                try {
-                    a = objectMapper.readTree(args == null ? "{}" : args);
-                } catch (Exception e) {
-                    return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
-                }
-                String kind = a.path("kind").asText(null);
-                String sName = a.path("name").asText(null);
-                String fileLogPath = a.path("fileLogPath").asText(null);
-                String containerName = a.path("containerName").asText(null);
-                String command = a.path("command").asText(null);
-                String workDir = a.path("workDir").asText(null);
-                String registerGuard = RiskClassifier.validateServiceRegister(kind, fileLogPath, containerName, command);
-                if (registerGuard != null) {
-                    return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
-                }
-                if (sName == null || sName.isBlank()) {
-                    return new ToolOutcome("ERROR: 缺少 name 参数(纳管源显示名)", null, null, false);
-                }
-                String content = serviceManageClient.register(kind, sName, fileLogPath, containerName, command, workDir);
-                boolean failure = content.startsWith("ERROR:");
-                return new ToolOutcome(content, failure ? null : content, null, false);
-            }
-            // enable / disable / remove:目标 = name 或数字 id
-            String target = parsed.input().target();
-            if (target == null || target.isBlank()) {
-                return new ToolOutcome("ERROR: 缺少目标纳管源(name 或 id)。可先用 action=list 查看", null, null, false);
-            }
-            Long sourceId = resolveManagedSourceId(target);
-            if (sourceId == null) {
-                return new ToolOutcome("ERROR: 找不到纳管源 \"" + target + "\"。可用纳管源:\n" + serviceManageClient.list(),
-                        null, null, false);
-            }
-            String content = switch (action) {
-                case "enable" -> serviceManageClient.setEnabled(sourceId, true);
-                case "disable" -> serviceManageClient.setEnabled(sourceId, false);
-                default -> serviceManageClient.remove(sourceId);
-            };
-            boolean failure = content.startsWith("ERROR:");
-            return new ToolOutcome(content, failure ? null : content, null, false);
+            return execManageService(name, args, parsed, liveOutput);
         }
         if ("read_file".equals(name)) {
-            String action = parsed.datasourceAction() == null ? "list" : parsed.datasourceAction().trim().toLowerCase();
-            // import: 把远程 URL 下载并存成工作台文件(用户可见可管理)
-            if ("import".equals(action)) {
-                String r = importToWorkbenchFile(args);
-                return r.startsWith("ERROR:") ? new ToolOutcome(r, null, null, false)
-                        : new ToolOutcome(r, r, null, false);
-            }
-            if ("list".equals(action) || parsed.input().target() == null) {
-                // 无 id = 列出文件让模型挑;显式 action=list 同理
-                return bounded(fileToolClient.list(), null);
-            }
-            String target = parsed.input().target();
-            if (!target.matches("\\d+")) {
-                return new ToolOutcome("ERROR: id 必须是数字(先用 action=list 查看可用文件)"
-                        + ",不能按文件名猜测。当前收到: " + target, null, null, false);
-            }
-            long fileId = Long.parseLong(target);
-            FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
-            if (info.failed()) {
-                return bounded("ERROR: " + info.error(), null);
-            }
-            if (info.hasText()) {
-                return bounded(fileToolClient.renderPreview(info), null);
-            }
-            // 无文本=二进制/图片:图片走图像通道(视觉模型直接看图;
-            // 非视觉模型由 backfillToolMessage 明确告知看不到,不静默丢弃)
-            JsonNode meta = fileToolClient.meta(fileId);
-            String mime = meta == null ? null : meta.path("mimeType").asText(null);
-            if (mime != null && mime.startsWith("image/")) {
-                FileToolClient.RawFile raw = fileToolClient.raw(fileId);
-                if (raw != null && raw.bytes().length > 0) {
-                    String b64 = java.util.Base64.getEncoder().encodeToString(raw.bytes());
-                    String desc = "图片文件 " + info.name() + "(" + FileToolClient.formatSize(raw.bytes().length)
-                            + ", " + mime + "),原始字节已作为图像附件返回;直接描述你看到的内容";
-                    return new ToolOutcome(desc, "图片", null, false,
-                            List.of(new McpServerService.McpToolResult.ImageBlock(mime, b64)));
-                }
-            }
-            return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
+            return execReadFile(name, args, parsed, liveOutput);
         }
         if ("manage_workspace".equals(name)) {
-            if (agentWorkspaceService == null) {
-                return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
-            }
-            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-            if (!java.util.Set.of("list", "read", "write", "append", "delete", "import").contains(action)) {
-                return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / write / append / delete / import",
-                        null, null, false);
-            }
-            try {
-                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
-                String path = a.path("path").asText(null);
-                // read 图片:文本解码必然失败("Input length = 1"),改走图像通道——
-                // 原始字节作为图像附件喂给视觉模型;非视觉模型由 backfillToolMessage
-                // 明确告知「看不到」,不静默丢弃、不报解码错误。
-                if ("read".equals(action) && path != null && !path.isBlank()) {
-                    String imgMime = AgentWorkspaceService.imageMime(path);
-                    if (imgMime != null) {
-                        try {
-                            byte[] bytes = agentWorkspaceService.readBytesAny(path);
-                            String b64 = java.util.Base64.getEncoder().encodeToString(bytes);
-                            return new ToolOutcome(
-                                    "图片文件 " + path + "(" + FileToolClient.formatSize(bytes.length)
-                                            + ", " + imgMime + "),原始字节已作为图像附件返回;直接描述你看到的内容",
-                                    "图片", null, false,
-                                    List.of(new McpServerService.McpToolResult.ImageBlock(imgMime, b64)));
-                        } catch (IllegalArgumentException e) {
-                            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
-                        }
-                    }
-                }
-                return new ToolOutcome(switch (action) {
-                    case "list" -> {
-                        // dir 优先,其次 path(agent 可能把路径塞进 path)
-                        String dirArg = a.path("dir").asText(null);
-                        if (dirArg == null) {
-                            dirArg = a.path("path").asText(null);
-                        }
-                        List<AgentWorkspaceService.FileEntry> entries =
-                                agentWorkspaceService.listAny(dirArg);
-                        if (entries.isEmpty()) {
-                            yield "(空目录)";
-                        }
-                        StringBuilder sb = new StringBuilder("工作区文件(" + path + " 相对根目录):\n");
-                        for (AgentWorkspaceService.FileEntry f : entries) {
-                            sb.append(f.directory() ? "[目录] " : "").append(f.path())
-                                    .append(f.directory() ? "" : " (" + f.size() + "B, " + f.modifiedAt() + ")")
-                                    .append('\n');
-                        }
-                        yield sb.toString();
-                    }
-                    case "read" -> {
-                        if (path == null || path.isBlank()) {
-                            yield "ERROR: 缺少 path 参数。相对路径=工作区内(如 USER.md);绝对路径可读整机(如 D:/projects/x/README.md)";
-                        }
-                        yield agentWorkspaceService.readAny(path);
-                    }
-                    case "write" -> {
-                        if (path == null || path.isBlank()) {
-                            yield "ERROR: 缺少 path 参数(相对路径)";
-                        }
-                        String content = a.path("content").asText(null);
-                        if (content == null) {
-                            yield "ERROR: 缺少 content 参数(要写入的完整内容;如需保留原内容请先 read)";
-                        }
-                        int written = agentWorkspaceService.writeAny(path, content);
-                        yield "已写入 " + path + "(" + written + " 字符)";
-                    }
-                    case "append" -> {
-                        if (path == null || path.isBlank()) {
-                            yield "ERROR: 缺少 path 参数(相对路径)";
-                        }
-                        String content = a.path("content").asText(null);
-                        if (content == null || content.isBlank()) {
-                            yield "ERROR: 缺少 content 参数(要追加的内容)";
-                        }
-                        int written = agentWorkspaceService.appendAny(path, content);
-                        yield "已追加 " + written + " 字符到 " + path;
-                    }
-                    case "import" -> importFromUrl(a, path);
-                    default -> {
-                        if (path == null || path.isBlank()) {
-                            yield "ERROR: 缺少 path 参数;删除不可恢复,请先向用户确认";
-                        }
-                        agentWorkspaceService.deleteAny(path);
-                        yield "已删除 " + path;
-                    }
-                }, null, null, false);
-            } catch (IllegalArgumentException e) {
-                return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
-            } catch (Exception e) {
-                return new ToolOutcome("ERROR: 工作区操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
-            }
+            return execManageWorkspace(name, args, parsed, liveOutput);
         }
         if ("manage_skill".equals(name)) {
-            if (agentSkillService == null) {
-                return new ToolOutcome("ERROR: 技能能力未启用(服务未配置)", null, null, false);
-            }
-            String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-            if (!java.util.Set.of("list", "read", "create", "update", "remove").contains(action)) {
-                return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / create / update / remove", null, null, false);
-            }
-            try {
-                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
-                return new ToolOutcome(switch (action) {
-                    case "list" -> {
-                        List<AgentSkillService.SkillView> all = agentSkillService.list();
-                        if (all.isEmpty()) {
-                            yield "(暂无技能)";
-                        }
-                        StringBuilder sb = new StringBuilder("现有技能:\n");
-                        for (AgentSkillService.SkillView s : all) {
-                            sb.append("id=").append(s.id())
-                                    .append(s.enabled() ? "" : " [已停用]")
-                                    .append(" [").append(s.category()).append("] ")
-                                    .append(s.name()).append(": ").append(s.description()).append('\n');
-                        }
-                        yield sb.toString();
-                    }
-                    case "read" -> {
-                        String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
-                        AgentSkillService.SkillView skill = resolveSkill(target);
-                        if (skill == null) {
-                            yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
-                        }
-                        yield "技能「" + skill.name() + "」完整指令:\n" + skill.instructions();
-                    }
-                    case "create" -> {
-                        String sName = a.path("name").asText(null);
-                        String instr = a.path("instructions").asText(null);
-                        if (sName == null || sName.isBlank()) {
-                            yield "ERROR: 缺少 name 参数(技能名称)";
-                        }
-                        if (instr == null || instr.isBlank()) {
-                            yield "ERROR: 缺少 instructions 参数(技能正文)";
-                        }
-                        if (agentSkillService.getByName(sName.trim()) != null) {
-                            yield "ERROR: 技能名「" + sName.trim() + "」已存在。如需修改用 action=update";
-                        }
-                        AgentSkillService.SkillView created = agentSkillService.create(
-                                sName, a.path("description").asText(null), instr, a.path("category").asText(null));
-                        yield "已创建技能(id=" + created.id() + "): " + created.name();
-                    }
-                    case "update" -> {
-                        String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
-                        AgentSkillService.SkillView skill = resolveSkill(target);
-                        if (skill == null) {
-                            yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
-                        }
-                        Boolean enabled = a.has("enabled") ? a.path("enabled").asBoolean() : null;
-                        AgentSkillService.SkillView updated = agentSkillService.update(skill.id(),
-                                a.has("name") ? a.path("name").asText(null) : null,
-                                a.has("description") ? a.path("description").asText(null) : null,
-                                a.has("instructions") ? a.path("instructions").asText(null) : null,
-                                a.has("category") ? a.path("category").asText(null) : null,
-                                enabled);
-                        yield "已更新技能(id=" + updated.id() + ", " + (updated.enabled() ? "启用" : "停用") + "): " + updated.name();
-                    }
-                    default -> {
-                        String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
-                        AgentSkillService.SkillView skill = resolveSkill(target);
-                        if (skill == null) {
-                            yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
-                        }
-                        yield agentSkillService.delete(skill.id()) ? "已删除技能: " + skill.name() : "ERROR: 删除失败";
-                    }
-                }, null, null, false);
-            } catch (IllegalArgumentException e) {
-                return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
-            } catch (org.springframework.dao.DuplicateKeyException e) {
-                return new ToolOutcome("ERROR: 技能名已存在,先 action=list 查看现有技能", null, null, false);
-            } catch (Exception e) {
-                return new ToolOutcome("ERROR: 技能操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
-            }
+            return execManageSkill(name, args, parsed, liveOutput);
         }
         if ("manage_mcp".equals(name)) {
-            if (mcpServerService == null) {
-                return new ToolOutcome("ERROR: MCP 管理能力未启用(服务未配置)", null, null, false);
-            }
-            // 与分类器共用归一化:create/delete 等别名 → register/remove(两处必须一致)
-            String action = RiskClassifier.normalizeMcpAction(parsed.datasourceAction());
-            String guard = RiskClassifier.validateMcpAction(action);
-            if (guard != null) {
-                return new ToolOutcome("ERROR: " + guard, null, null, false);
-            }
-            try {
-                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
-                if ("list".equals(action)) {
-                    List<McpServerService.ServerView> all = mcpServerService.list();
-                    if (all.isEmpty()) {
-                        return new ToolOutcome("(暂无 MCP 服务器)。可用 action=register 注册:"
-                                + "{\"action\": \"register\", \"name\": \"名称\", \"url\": \"https://...\"}",
-                                null, null, false);
-                    }
-                    StringBuilder sb = new StringBuilder("已注册 MCP 服务器:\n");
-                    for (McpServerService.ServerView s : all) {
-                        sb.append("id=").append(s.id())
-                                .append(s.enabled() ? "" : " [已停用]")
-                                .append(" ").append(s.name())
-                                .append(" · ").append(s.transport())
-                                .append(" · ").append(s.status())
-                                .append(s.statusDetail() != null ? "(" + Texts.abbreviate(s.statusDetail(), 80) + ")" : "")
-                                .append(" · 工具数 ").append(s.toolCount())
-                                .append('\n');
-                    }
-                    return new ToolOutcome(sb.toString(), null, null, false);
-                }
-                if ("register".equals(action)) {
-                    String rName = a.path("name").asText(null);
-                    String rUrl = a.path("url").asText(null);
-                    String rTransport = a.path("transport").asText(null);
-                    // STDIO(本地进程)注册:command + args + env
-                    String rCommand = a.path("command").asText(null);
-                    // 推断:给了 command 没给 url/transport → 本地进程形态(模型常省略 transport)
-                    if ((rTransport == null || rTransport.isBlank())
-                            && rCommand != null && !rCommand.isBlank()
-                            && (rUrl == null || rUrl.isBlank())) {
-                        rTransport = "STDIO";
-                    }
-                    List<String> rArgs = new java.util.ArrayList<>();
-                    if (a.path("args").isArray()) {
-                        for (JsonNode n : a.path("args")) {
-                            rArgs.add(n.asText(""));
-                        }
-                    }
-                    String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport, rCommand, rArgs);
-                    if (registerGuard != null) {
-                        return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
-                    }
-                    if (mcpServerService.findByName(rName) != null) {
-                        return new ToolOutcome("ERROR: 服务器名「" + rName.trim() + "」已存在。如需改用 remove 后重新注册,"
-                                + "或用 refresh 重新拉取工具", null, null, false);
-                    }
-                    // headers/env 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
-                    Map<String, String> headers = new java.util.LinkedHashMap<>();
-                    JsonNode h = a.path("headers");
-                    if (h.isObject()) {
-                        h.fields().forEachRemaining(e -> headers.put(e.getKey(), e.getValue().asText("")));
-                    }
-                    Map<String, String> env = new java.util.LinkedHashMap<>();
-                    JsonNode envNode = a.path("env");
-                    if (envNode.isObject()) {
-                        envNode.fields().forEachRemaining(e -> env.put(e.getKey(), e.getValue().asText("")));
-                    }
-                    McpServerService.ServerView created = mcpServerService.create(rName, rUrl, rTransport,
-                            headers.isEmpty() ? null : headers,
-                            rCommand, rArgs.isEmpty() ? null : rArgs, env.isEmpty() ? null : env);
-                    // 注册后自动测试连接(refresh):对齐 manage_datasource create 后自动 test 的语义;
-                    // 连接失败不回滚注册(注册本身成功,失败原因如实报告,用户可稍后重试 refresh)
-                    String testResult;
-                    try {
-                        List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(created.id());
-                        StringBuilder names = new StringBuilder();
-                        for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
-                            names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
-                        }
-                        testResult = "连接成功,发现 " + toolEntries.size() + " 个工具"
-                                + (toolEntries.isEmpty() ? "" : ": " + names
-                                + (toolEntries.size() > 10 ? " 等" : ""))
-                                + "。工具已挂载(mcp__" + created.name() + "__*),下轮对话可直接调用";
-                    } catch (Exception e) {
-                        testResult = "连接测试失败: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200)
-                                + "(注册已保留;可检查地址/鉴权后用 refresh 重试)";
-                    }
-                    return new ToolOutcome("已注册 MCP 服务器(id=" + created.id() + "): " + created.name()
-                            + " · " + created.transport() + "\n" + testResult, null, null, false);
-                }
-                // refresh / enable / disable / remove:目标 = 名称或数字 id
-                String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
-                if (target == null || target.isBlank()) {
-                    return new ToolOutcome("ERROR: 缺少目标服务器(target = 名称或 id)。可先用 action=list 查看",
-                            null, null, false);
-                }
-                McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
-                if (server == null) {
-                    return new ToolOutcome("ERROR: 找不到 MCP 服务器「" + target + "」。可先用 action=list 查看现有服务器"
-                            + "(服务器名不能猜测)", null, null, false);
-                }
-                String content = switch (action) {
-                    case "refresh" -> {
-                        List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
-                        StringBuilder names = new StringBuilder();
-                        for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
-                            names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
-                        }
-                        yield "已连接「" + server.name() + "」,发现 " + toolEntries.size() + " 个工具"
-                                + (toolEntries.isEmpty() ? "" : ": " + names + (toolEntries.size() > 10 ? " 等" : ""));
-                    }
-                    case "enable" -> mcpServerService.setEnabled(server.id(), true)
-                            ? "已启用「" + server.name() + "」。工具将在下轮对话挂载(缓存过工具清单则立即可用)"
-                            : "ERROR: 启用失败,服务器可能已被删除";
-                    case "disable" -> mcpServerService.setEnabled(server.id(), false)
-                            ? "已停用「" + server.name() + "」。其工具不再挂载"
-                            : "ERROR: 停用失败,服务器可能已被删除";
-                    default -> mcpServerService.delete(server.id())
-                            ? "已删除 MCP 服务器「" + server.name() + "」及其连接"
-                            : "ERROR: 删除失败,服务器可能已被删除";
-                };
-                boolean failure = content.startsWith("ERROR:");
-                return new ToolOutcome(content, failure ? null : content, null, false);
-            } catch (IllegalArgumentException | IllegalStateException e) {
-                // create/refresh 的参数与连接错误:直接作为可自纠错误回给模型
-                return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 300),
-                        null, null, false);
-            } catch (Exception e) {
-                return new ToolOutcome("ERROR: MCP 操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
-            }
+            return execManageMcp(name, args, parsed, liveOutput);
         }
-        // 本机终端:非交互命令;实时输出经 liveOutput 流式刷新,最终结果走 bounded
         if ("run_command".equals(name)) {
-            if (terminalService == null) {
-                return new ToolOutcome("ERROR: 终端能力未启用(服务未配置)", null, null, false);
-            }
-            try {
-                JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
-                String cmd = a.path("command").asText(null);
-                String cwdArg = a.path("cwd").asText(null);
-                Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
-                String shell = a.path("shell").asText(null);
-                TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell, liveOutput);
-                // 非零退出码按失败处理(红色步骤 + ERROR 前缀回填模型):
-                // 与 Claude Code 同语义——"命令跑了但失败了"不是成功结果;
-                // 仍走 bounded():失败预算 10K、成功 30K,且做脱敏
-                boolean failure = r.exitCode() != 0 || r.timedOut() || r.cancelled();
-                String rendered = r.render();
-                return bounded(failure ? "ERROR: " + rendered : rendered, summarizeCommand(r));
-            } catch (IllegalArgumentException e) {
-                // 参数/启动错误:可自纠错误回给模型
-                return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage(), 300), null, null, false);
-            } catch (Exception e) {
-                return new ToolOutcome("ERROR: 命令执行失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
-            }
+            return execRunCommand(name, args, parsed, liveOutput);
         }
         // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
         // 输出同样走 bounded 截断与脱敏
@@ -658,6 +167,569 @@ class ChatToolExecutor {
                 + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,风险跟随权限档位）、"
                 + "run_command（本机终端非交互命令,风险跟随权限档位）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
+    }
+
+    /** execute_sql handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execExecuteSql(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
+        String guard = guardSql(sql);
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        SqlToolClient.SqlOutcome outcome = sqlToolClient.executeSqlDetailed(sql, parsed.input().target());
+        return new ToolOutcome(outcome.content(), outcome.summary(), null, outcome.truncated());
+    }
+
+    /** read_service_logs handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execReadServiceLogs(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String service = parsed.input().service() != null ? parsed.input().service() : "";
+        int limit = parsed.input().limit() != null ? Math.min(parsed.input().limit(), 100) : 50;
+        String guard = guardService(service);
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        return bounded(serviceLogClient.readLogs(service, limit), null);
+    }
+
+    /** execute_write_sql handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execExecuteWriteSql(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
+        String guard = RiskClassifier.validateWriteSql(sql);
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        if (writeSqlClient == null) {
+            return new ToolOutcome("ERROR: 写入能力未启用(服务未配置)", null, null, false);
+        }
+        String content = writeSqlClient.executeWrite(sql, parsed.input().target());
+        boolean failure = content.startsWith("ERROR:");
+        return new ToolOutcome(content, failure ? null : content, null, false);
+    }
+
+    /** manage_container handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execManageContainer(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String service = parsed.input().service() == null ? "" : parsed.input().service();
+        String guard = RiskClassifier.validateContainerAction(parsed.containerAction());
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        String guardService = guardService(service);
+        if (guardService != null) {
+            return new ToolOutcome("ERROR: " + guardService, null, null, false);
+        }
+        if (!serviceLogClient.listServices().contains(service)) {
+            return new ToolOutcome("ERROR: unknown service " + service + ". 可用服务必须来自环境服务注册表", null, null, false);
+        }
+        if (containerControlClient == null) {
+            return new ToolOutcome("ERROR: 容器控制能力未启用(服务未配置)", null, null, false);
+        }
+        String content = containerControlClient.control(service, parsed.containerAction());
+        boolean failure = content.startsWith("ERROR:");
+        return new ToolOutcome(content, failure ? null : content, null, false);
+    }
+
+    /** manage_datasource handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execManageDatasource(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        String guard = RiskClassifier.validateDatasourceAction(action);
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        if ("list".equals(action)) {
+            return bounded(dataSourceManageClient.list(), null);
+        }
+        if ("schema".equals(action)) {
+            // schema 不在工具 spec 里宣传,但模型从 list 结果推断时放行(只读)
+            return bounded(dataSourceManageClient.schema(parsed.input().target()), null);
+        }
+        if ("create".equals(action)) {
+            // 连接参数从原始 args 取(密码只 here 使用,不进 ParsedArgs/步骤记录)
+            JsonNode a;
+            try {
+                a = objectMapper.readTree(args == null ? "{}" : args);
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
+            }
+            String dName = a.path("name").asText(null);
+            String engine = a.path("engine").asText(null);
+            String host = a.path("host").asText(null);
+            Integer port = a.path("port").isInt() ? a.path("port").asInt() : null;
+            String database = a.path("database").asText(null);
+            String username = a.path("username").asText(null);
+            String password = a.path("password").asText(null);
+            String createGuard = RiskClassifier.validateDatasourceCreate(engine, host, port, database);
+            if (createGuard != null) {
+                return new ToolOutcome("ERROR: " + createGuard, null, null, false);
+            }
+            if (dName == null || dName.isBlank()) {
+                return new ToolOutcome("ERROR: 缺少 name 参数(连接显示名,如 \"订单库-生产\")", null, null, false);
+            }
+            String content = dataSourceManageClient.create(dName, engine, host, port, database, username, password);
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : summarizeCreate(content), null, false);
+        }
+        // test / remove:目标 = name 或数字 id
+        String target = parsed.input().target();
+        if (target == null || target.isBlank()) {
+            return new ToolOutcome("ERROR: 缺少目标数据源(name 或 id)。可先用 action=list 查看", null, null, false);
+        }
+        Long connectionId = sqlToolClient.resolveConnectionId(target);
+        if (connectionId == null) {
+            return new ToolOutcome("ERROR: 找不到数据源 \"" + target + "\"。可用连接:\n" + dataSourceManageClient.list(),
+                    null, null, false);
+        }
+        String content = "test".equals(action)
+                ? dataSourceManageClient.test(connectionId)
+                : dataSourceManageClient.remove(connectionId);
+        boolean failure = content.startsWith("ERROR:");
+        return new ToolOutcome(content, failure ? null : content, null, false);
+    }
+
+    /** manage_service handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execManageService(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        String guard = RiskClassifier.validateServiceAction(action);
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        if ("list".equals(action)) {
+            return bounded(serviceManageClient.list(), null);
+        }
+        if ("register".equals(action)) {
+            JsonNode a;
+            try {
+                a = objectMapper.readTree(args == null ? "{}" : args);
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
+            }
+            String kind = a.path("kind").asText(null);
+            String sName = a.path("name").asText(null);
+            String fileLogPath = a.path("fileLogPath").asText(null);
+            String containerName = a.path("containerName").asText(null);
+            String command = a.path("command").asText(null);
+            String workDir = a.path("workDir").asText(null);
+            String registerGuard = RiskClassifier.validateServiceRegister(kind, fileLogPath, containerName, command);
+            if (registerGuard != null) {
+                return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
+            }
+            if (sName == null || sName.isBlank()) {
+                return new ToolOutcome("ERROR: 缺少 name 参数(纳管源显示名)", null, null, false);
+            }
+            String content = serviceManageClient.register(kind, sName, fileLogPath, containerName, command, workDir);
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : content, null, false);
+        }
+        // enable / disable / remove:目标 = name 或数字 id
+        String target = parsed.input().target();
+        if (target == null || target.isBlank()) {
+            return new ToolOutcome("ERROR: 缺少目标纳管源(name 或 id)。可先用 action=list 查看", null, null, false);
+        }
+        Long sourceId = resolveManagedSourceId(target);
+        if (sourceId == null) {
+            return new ToolOutcome("ERROR: 找不到纳管源 \"" + target + "\"。可用纳管源:\n" + serviceManageClient.list(),
+                    null, null, false);
+        }
+        String content = switch (action) {
+            case "enable" -> serviceManageClient.setEnabled(sourceId, true);
+            case "disable" -> serviceManageClient.setEnabled(sourceId, false);
+            default -> serviceManageClient.remove(sourceId);
+        };
+        boolean failure = content.startsWith("ERROR:");
+        return new ToolOutcome(content, failure ? null : content, null, false);
+    }
+
+    /** read_file handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execReadFile(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        String action = parsed.datasourceAction() == null ? "list" : parsed.datasourceAction().trim().toLowerCase();
+        // import: 把远程 URL 下载并存成工作台文件(用户可见可管理)
+        if ("import".equals(action)) {
+            String r = importToWorkbenchFile(args);
+            return r.startsWith("ERROR:") ? new ToolOutcome(r, null, null, false)
+                    : new ToolOutcome(r, r, null, false);
+        }
+        if ("list".equals(action) || parsed.input().target() == null) {
+            // 无 id = 列出文件让模型挑;显式 action=list 同理
+            return bounded(fileToolClient.list(), null);
+        }
+        String target = parsed.input().target();
+        if (!target.matches("\\d+")) {
+            return new ToolOutcome("ERROR: id 必须是数字(先用 action=list 查看可用文件)"
+                    + ",不能按文件名猜测。当前收到: " + target, null, null, false);
+        }
+        long fileId = Long.parseLong(target);
+        FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
+        if (info.failed()) {
+            return bounded("ERROR: " + info.error(), null);
+        }
+        if (info.hasText()) {
+            return bounded(fileToolClient.renderPreview(info), null);
+        }
+        // 无文本=二进制/图片:图片走图像通道(视觉模型直接看图;
+        // 非视觉模型由 backfillToolMessage 明确告知看不到,不静默丢弃)
+        JsonNode meta = fileToolClient.meta(fileId);
+        String mime = meta == null ? null : meta.path("mimeType").asText(null);
+        if (mime != null && mime.startsWith("image/")) {
+            FileToolClient.RawFile raw = fileToolClient.raw(fileId);
+            if (raw != null && raw.bytes().length > 0) {
+                String b64 = java.util.Base64.getEncoder().encodeToString(raw.bytes());
+                String desc = "图片文件 " + info.name() + "(" + FileToolClient.formatSize(raw.bytes().length)
+                        + ", " + mime + "),原始字节已作为图像附件返回;直接描述你看到的内容";
+                return new ToolOutcome(desc, "图片", null, false,
+                        List.of(new McpServerService.McpToolResult.ImageBlock(mime, b64)));
+            }
+        }
+        return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
+    }
+
+    /** manage_workspace handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execManageWorkspace(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        if (agentWorkspaceService == null) {
+            return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
+        }
+        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        if (!java.util.Set.of("list", "read", "write", "append", "delete", "import").contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / write / append / delete / import",
+                    null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            String path = a.path("path").asText(null);
+            // read 图片:文本解码必然失败("Input length = 1"),改走图像通道——
+            // 原始字节作为图像附件喂给视觉模型;非视觉模型由 backfillToolMessage
+            // 明确告知「看不到」,不静默丢弃、不报解码错误。
+            if ("read".equals(action) && path != null && !path.isBlank()) {
+                String imgMime = AgentWorkspaceService.imageMime(path);
+                if (imgMime != null) {
+                    try {
+                        byte[] bytes = agentWorkspaceService.readBytesAny(path);
+                        String b64 = java.util.Base64.getEncoder().encodeToString(bytes);
+                        return new ToolOutcome(
+                                "图片文件 " + path + "(" + FileToolClient.formatSize(bytes.length)
+                                        + ", " + imgMime + "),原始字节已作为图像附件返回;直接描述你看到的内容",
+                                "图片", null, false,
+                                List.of(new McpServerService.McpToolResult.ImageBlock(imgMime, b64)));
+                    } catch (IllegalArgumentException e) {
+                        return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+                    }
+                }
+            }
+            return new ToolOutcome(switch (action) {
+                case "list" -> {
+                    // dir 优先,其次 path(agent 可能把路径塞进 path)
+                    String dirArg = a.path("dir").asText(null);
+                    if (dirArg == null) {
+                        dirArg = a.path("path").asText(null);
+                    }
+                    List<AgentWorkspaceService.FileEntry> entries =
+                            agentWorkspaceService.listAny(dirArg);
+                    if (entries.isEmpty()) {
+                        yield "(空目录)";
+                    }
+                    StringBuilder sb = new StringBuilder("工作区文件(" + path + " 相对根目录):\n");
+                    for (AgentWorkspaceService.FileEntry f : entries) {
+                        sb.append(f.directory() ? "[目录] " : "").append(f.path())
+                                .append(f.directory() ? "" : " (" + f.size() + "B, " + f.modifiedAt() + ")")
+                                .append('\n');
+                    }
+                    yield sb.toString();
+                }
+                case "read" -> {
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: 缺少 path 参数。相对路径=工作区内(如 USER.md);绝对路径可读整机(如 D:/projects/x/README.md)";
+                    }
+                    yield agentWorkspaceService.readAny(path);
+                }
+                case "write" -> {
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: 缺少 path 参数(相对路径)";
+                    }
+                    String content = a.path("content").asText(null);
+                    if (content == null) {
+                        yield "ERROR: 缺少 content 参数(要写入的完整内容;如需保留原内容请先 read)";
+                    }
+                    int written = agentWorkspaceService.writeAny(path, content);
+                    yield "已写入 " + path + "(" + written + " 字符)";
+                }
+                case "append" -> {
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: 缺少 path 参数(相对路径)";
+                    }
+                    String content = a.path("content").asText(null);
+                    if (content == null || content.isBlank()) {
+                        yield "ERROR: 缺少 content 参数(要追加的内容)";
+                    }
+                    int written = agentWorkspaceService.appendAny(path, content);
+                    yield "已追加 " + written + " 字符到 " + path;
+                }
+                case "import" -> importFromUrl(a, path);
+                default -> {
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: 缺少 path 参数;删除不可恢复,请先向用户确认";
+                    }
+                    agentWorkspaceService.deleteAny(path);
+                    yield "已删除 " + path;
+                }
+            }, null, null, false);
+        } catch (IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 工作区操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** manage_skill handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execManageSkill(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        if (agentSkillService == null) {
+            return new ToolOutcome("ERROR: 技能能力未启用(服务未配置)", null, null, false);
+        }
+        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        if (!java.util.Set.of("list", "read", "create", "update", "remove").contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / create / update / remove", null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            return new ToolOutcome(switch (action) {
+                case "list" -> {
+                    List<AgentSkillService.SkillView> all = agentSkillService.list();
+                    if (all.isEmpty()) {
+                        yield "(暂无技能)";
+                    }
+                    StringBuilder sb = new StringBuilder("现有技能:\n");
+                    for (AgentSkillService.SkillView s : all) {
+                        sb.append("id=").append(s.id())
+                                .append(s.enabled() ? "" : " [已停用]")
+                                .append(" [").append(s.category()).append("] ")
+                                .append(s.name()).append(": ").append(s.description()).append('\n');
+                    }
+                    yield sb.toString();
+                }
+                case "read" -> {
+                    String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                    AgentSkillService.SkillView skill = resolveSkill(target);
+                    if (skill == null) {
+                        yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
+                    }
+                    yield "技能「" + skill.name() + "」完整指令:\n" + skill.instructions();
+                }
+                case "create" -> {
+                    String sName = a.path("name").asText(null);
+                    String instr = a.path("instructions").asText(null);
+                    if (sName == null || sName.isBlank()) {
+                        yield "ERROR: 缺少 name 参数(技能名称)";
+                    }
+                    if (instr == null || instr.isBlank()) {
+                        yield "ERROR: 缺少 instructions 参数(技能正文)";
+                    }
+                    if (agentSkillService.getByName(sName.trim()) != null) {
+                        yield "ERROR: 技能名「" + sName.trim() + "」已存在。如需修改用 action=update";
+                    }
+                    AgentSkillService.SkillView created = agentSkillService.create(
+                            sName, a.path("description").asText(null), instr, a.path("category").asText(null));
+                    yield "已创建技能(id=" + created.id() + "): " + created.name();
+                }
+                case "update" -> {
+                    String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                    AgentSkillService.SkillView skill = resolveSkill(target);
+                    if (skill == null) {
+                        yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
+                    }
+                    Boolean enabled = a.has("enabled") ? a.path("enabled").asBoolean() : null;
+                    AgentSkillService.SkillView updated = agentSkillService.update(skill.id(),
+                            a.has("name") ? a.path("name").asText(null) : null,
+                            a.has("description") ? a.path("description").asText(null) : null,
+                            a.has("instructions") ? a.path("instructions").asText(null) : null,
+                            a.has("category") ? a.path("category").asText(null) : null,
+                            enabled);
+                    yield "已更新技能(id=" + updated.id() + ", " + (updated.enabled() ? "启用" : "停用") + "): " + updated.name();
+                }
+                default -> {
+                    String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+                    AgentSkillService.SkillView skill = resolveSkill(target);
+                    if (skill == null) {
+                        yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
+                    }
+                    yield agentSkillService.delete(skill.id()) ? "已删除技能: " + skill.name() : "ERROR: 删除失败";
+                }
+            }, null, null, false);
+        } catch (IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            return new ToolOutcome("ERROR: 技能名已存在,先 action=list 查看现有技能", null, null, false);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 技能操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** manage_mcp handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execManageMcp(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        if (mcpServerService == null) {
+            return new ToolOutcome("ERROR: MCP 管理能力未启用(服务未配置)", null, null, false);
+        }
+        // 与分类器共用归一化:create/delete 等别名 → register/remove(两处必须一致)
+        String action = RiskClassifier.normalizeMcpAction(parsed.datasourceAction());
+        String guard = RiskClassifier.validateMcpAction(action);
+        if (guard != null) {
+            return new ToolOutcome("ERROR: " + guard, null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            if ("list".equals(action)) {
+                List<McpServerService.ServerView> all = mcpServerService.list();
+                if (all.isEmpty()) {
+                    return new ToolOutcome("(暂无 MCP 服务器)。可用 action=register 注册:"
+                            + "{\"action\": \"register\", \"name\": \"名称\", \"url\": \"https://...\"}",
+                            null, null, false);
+                }
+                StringBuilder sb = new StringBuilder("已注册 MCP 服务器:\n");
+                for (McpServerService.ServerView s : all) {
+                    sb.append("id=").append(s.id())
+                            .append(s.enabled() ? "" : " [已停用]")
+                            .append(" ").append(s.name())
+                            .append(" · ").append(s.transport())
+                            .append(" · ").append(s.status())
+                            .append(s.statusDetail() != null ? "(" + Texts.abbreviate(s.statusDetail(), 80) + ")" : "")
+                            .append(" · 工具数 ").append(s.toolCount())
+                            .append('\n');
+                }
+                return new ToolOutcome(sb.toString(), null, null, false);
+            }
+            if ("register".equals(action)) {
+                String rName = a.path("name").asText(null);
+                String rUrl = a.path("url").asText(null);
+                String rTransport = a.path("transport").asText(null);
+                // STDIO(本地进程)注册:command + args + env
+                String rCommand = a.path("command").asText(null);
+                // 推断:给了 command 没给 url/transport → 本地进程形态(模型常省略 transport)
+                if ((rTransport == null || rTransport.isBlank())
+                        && rCommand != null && !rCommand.isBlank()
+                        && (rUrl == null || rUrl.isBlank())) {
+                    rTransport = "STDIO";
+                }
+                List<String> rArgs = new java.util.ArrayList<>();
+                if (a.path("args").isArray()) {
+                    for (JsonNode n : a.path("args")) {
+                        rArgs.add(n.asText(""));
+                    }
+                }
+                String registerGuard = RiskClassifier.validateMcpRegister(rName, rUrl, rTransport, rCommand, rArgs);
+                if (registerGuard != null) {
+                    return new ToolOutcome("ERROR: " + registerGuard, null, null, false);
+                }
+                if (mcpServerService.findByName(rName) != null) {
+                    return new ToolOutcome("ERROR: 服务器名「" + rName.trim() + "」已存在。如需改用 remove 后重新注册,"
+                            + "或用 refresh 重新拉取工具", null, null, false);
+                }
+                // headers/env 从原始 args 取,只传给服务层——值不进步骤/审批/对话记录
+                Map<String, String> headers = new java.util.LinkedHashMap<>();
+                JsonNode h = a.path("headers");
+                if (h.isObject()) {
+                    h.fields().forEachRemaining(e -> headers.put(e.getKey(), e.getValue().asText("")));
+                }
+                Map<String, String> env = new java.util.LinkedHashMap<>();
+                JsonNode envNode = a.path("env");
+                if (envNode.isObject()) {
+                    envNode.fields().forEachRemaining(e -> env.put(e.getKey(), e.getValue().asText("")));
+                }
+                McpServerService.ServerView created = mcpServerService.create(rName, rUrl, rTransport,
+                        headers.isEmpty() ? null : headers,
+                        rCommand, rArgs.isEmpty() ? null : rArgs, env.isEmpty() ? null : env);
+                // 注册后自动测试连接(refresh):对齐 manage_datasource create 后自动 test 的语义;
+                // 连接失败不回滚注册(注册本身成功,失败原因如实报告,用户可稍后重试 refresh)
+                String testResult;
+                try {
+                    List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(created.id());
+                    StringBuilder names = new StringBuilder();
+                    for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
+                        names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
+                    }
+                    testResult = "连接成功,发现 " + toolEntries.size() + " 个工具"
+                            + (toolEntries.isEmpty() ? "" : ": " + names
+                            + (toolEntries.size() > 10 ? " 等" : ""))
+                            + "。工具已挂载(mcp__" + created.name() + "__*),下轮对话可直接调用";
+                } catch (Exception e) {
+                    testResult = "连接测试失败: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200)
+                            + "(注册已保留;可检查地址/鉴权后用 refresh 重试)";
+                }
+                return new ToolOutcome("已注册 MCP 服务器(id=" + created.id() + "): " + created.name()
+                        + " · " + created.transport() + "\n" + testResult, null, null, false);
+            }
+            // refresh / enable / disable / remove:目标 = 名称或数字 id
+            String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+            if (target == null || target.isBlank()) {
+                return new ToolOutcome("ERROR: 缺少目标服务器(target = 名称或 id)。可先用 action=list 查看",
+                        null, null, false);
+            }
+            McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
+            if (server == null) {
+                return new ToolOutcome("ERROR: 找不到 MCP 服务器「" + target + "」。可先用 action=list 查看现有服务器"
+                        + "(服务器名不能猜测)", null, null, false);
+            }
+            String content = switch (action) {
+                case "refresh" -> {
+                    List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
+                    StringBuilder names = new StringBuilder();
+                    for (int i = 0; i < Math.min(toolEntries.size(), 10); i++) {
+                        names.append(i > 0 ? ", " : "").append(toolEntries.get(i).name());
+                    }
+                    yield "已连接「" + server.name() + "」,发现 " + toolEntries.size() + " 个工具"
+                            + (toolEntries.isEmpty() ? "" : ": " + names + (toolEntries.size() > 10 ? " 等" : ""));
+                }
+                case "enable" -> mcpServerService.setEnabled(server.id(), true)
+                        ? "已启用「" + server.name() + "」。工具将在下轮对话挂载(缓存过工具清单则立即可用)"
+                        : "ERROR: 启用失败,服务器可能已被删除";
+                case "disable" -> mcpServerService.setEnabled(server.id(), false)
+                        ? "已停用「" + server.name() + "」。其工具不再挂载"
+                        : "ERROR: 停用失败,服务器可能已被删除";
+                default -> mcpServerService.delete(server.id())
+                        ? "已删除 MCP 服务器「" + server.name() + "」及其连接"
+                        : "ERROR: 删除失败,服务器可能已被删除";
+            };
+            boolean failure = content.startsWith("ERROR:");
+            return new ToolOutcome(content, failure ? null : content, null, false);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            // create/refresh 的参数与连接错误:直接作为可自纠错误回给模型
+            return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 300),
+                    null, null, false);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: MCP 操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** run_command handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    ToolOutcome execRunCommand(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            java.util.function.Consumer<String> liveOutput) {
+        if (terminalService == null) {
+            return new ToolOutcome("ERROR: 终端能力未启用(服务未配置)", null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            String cmd = a.path("command").asText(null);
+            String cwdArg = a.path("cwd").asText(null);
+            Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
+            String shell = a.path("shell").asText(null);
+            TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell, liveOutput);
+            // 非零退出码按失败处理(红色步骤 + ERROR 前缀回填模型):
+            // 与 Claude Code 同语义——"命令跑了但失败了"不是成功结果;
+            // 仍走 bounded():失败预算 10K、成功 30K,且做脱敏
+            boolean failure = r.exitCode() != 0 || r.timedOut() || r.cancelled();
+            String rendered = r.render();
+            return bounded(failure ? "ERROR: " + rendered : rendered, summarizeCommand(r));
+        } catch (IllegalArgumentException e) {
+            // 参数/启动错误:可自纠错误回给模型
+            return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage(), 300), null, null, false);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 命令执行失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
     }
 
     /** 命令结果的一行摘要:exit code + 耗时(供折叠行展示)。 */
