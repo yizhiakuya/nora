@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, X, ZoomIn, ZoomOut } from "lucide-react";
 import { requestJson } from "@/lib/api/client";
 
 /**
@@ -10,6 +11,11 @@ import { requestJson } from "@/lib/api/client";
  * - 多张时左右箭头 / ← → 键切换（单张时隐藏；视频播放中左右键由播放器接管）；
  * - 顶栏给"新窗口打开"与"下载"两个显式出口（需要时才离开页内）；
  * - `kind: "video"` 的条目用原生 <video> 播放（相册视频走压缩流端点）。
+ *
+ * 图片缩放/平移（2026-09-18，全局统一）：
+ * - 滚轮缩放（以光标为锚点）、双击在 1x/2.5x 间切换、工具条 ± 按钮；
+ * - 放大后按住拖拽平移（grabbing 光标）；缩小/切换图片时自动复位；
+ * - 触屏双指捏合（pointer events 双指距离比）。
  *
  * 原片自动缓存（2026-09-17）：打开查看时后台调 `/api/media/warm`——
  * 手机在 Wi-Fi 时后端把**原片**拉入磁盘缓存（与正在看的压缩流互不冲突），
@@ -48,6 +54,132 @@ export function ImageLightbox({
   const current = images[index];
   const hasMultiple = images.length > 1;
   const isVideo = current?.kind === "video";
+
+  // ---------- 图片缩放/平移(2026-09-18,全局统一) ----------
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  /** 缩放倍率(1 = 适应屏幕;0.5-5)。切换图片/关闭时复位。 */
+  const [scale, setScale] = useState(1);
+  /** 平移偏移(px;仅放大后拖拽产生)。 */
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const dragging = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+  /** 触屏双指捏合:两指距离与基准倍率。 */
+  const pinch = useRef<{ dist: number; baseScale: number } | null>(null);
+
+  /** 适配尺寸(px):由自然尺寸与容器尺寸算出「撑满可用空间」的显示大小。 */
+  const [fit, setFit] = useState<{ w: number; h: number } | null>(null);
+
+  const resetView = useCallback(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
+  /** 按容器可用空间计算等比适配尺寸(含放大:小图也撑到合适大小)。 */
+  const recomputeFit = useCallback((el: HTMLImageElement) => {
+    const c = containerRef.current;
+    if (!c || !el.naturalWidth || !el.naturalHeight) return;
+    // 容器内边距:px-4(左右各 16) + pb-6(下 24)
+    const cw = Math.max(80, c.clientWidth - 32);
+    const ch = Math.max(80, c.clientHeight - 24);
+    const s = Math.min(cw / el.naturalWidth, ch / el.naturalHeight);
+    setFit({ w: Math.round(el.naturalWidth * s), h: Math.round(el.naturalHeight * s) });
+  }, []);
+
+  // 窗口/容器尺寸变化时重算适配(特性检测:jsdom 测试环境无 ResizeObserver)
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c || isVideo || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const img = c.querySelector("img[data-main]") as HTMLImageElement | null;
+      if (img && img.complete) recomputeFit(img);
+    });
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, [isVideo, recomputeFit]);
+
+  // 切换图片时复位缩放/平移
+  useEffect(() => {
+    resetView();
+  }, [index, resetView]);
+
+  /** 以锚点(容器内坐标)为中心缩放:保持锚点内容不移动(对齐常见地图/图片预览)。 */
+  const zoomAt = useCallback((nextScale: number, anchorX?: number, anchorY?: number) => {
+    setScale((prev) => {
+      const clamped = Math.max(0.5, Math.min(5, +nextScale.toFixed(2)));
+      if (anchorX != null && anchorY != null) {
+        // 锚点补偿:缩放中心在 (anchorX, anchorY) 时,内容位移 = (1 - next/prev) * (anchor - center - offset)
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) {
+          const cx = anchorX - rect.width / 2 - rect.left;
+          const cy = anchorY - rect.height / 2 - rect.top;
+          setOffset((o) => ({
+            x: o.x + cx * (1 - clamped / prev),
+            y: o.y + cy * (1 - clamped / prev),
+          }));
+        }
+      }
+      return clamped;
+    });
+  }, []);
+
+  /** 滚轮缩放(图片时;视频交给播放器)。 */
+  const onWheel = useCallback((e: ReactWheelEvent) => {
+    if (isVideo) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    zoomAt(scale * factor, e.clientX, e.clientY);
+  }, [isVideo, scale, zoomAt]);
+
+  /** 双击:1x ⇄ 2.5x(以点击点为锚)。 */
+  const onDoubleClick = useCallback((e: ReactMouseEvent) => {
+    if (isVideo) return;
+    e.stopPropagation();
+    if (scale > 1.01) {
+      resetView();
+    } else {
+      zoomAt(2.5, e.clientX, e.clientY);
+    }
+  }, [isVideo, scale, resetView, zoomAt]);
+
+  /** 拖拽平移(放大后):pointer 事件统一鼠标/触屏。 */
+  const onPointerDown = useCallback((e: ReactPointerEvent) => {
+    if (isVideo || scale <= 1.01) return;
+    e.stopPropagation();
+    dragging.current = { startX: e.clientX, startY: e.clientY, baseX: offset.x, baseY: offset.y };
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, [isVideo, scale, offset]);
+
+  const onPointerMove = useCallback((e: ReactPointerEvent) => {
+    if (!dragging.current) return;
+    setOffset({
+      x: dragging.current.baseX + (e.clientX - dragging.current.startX),
+      y: dragging.current.baseY + (e.clientY - dragging.current.startY),
+    });
+  }, []);
+
+  const onPointerUp = useCallback(() => {
+    dragging.current = null;
+  }, []);
+
+  /** 触屏双指捏合。 */
+  const onTouchStart = useCallback((e: ReactTouchEvent) => {
+    if (isVideo || e.touches.length !== 2) return;
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    pinch.current = { dist: Math.hypot(dx, dy), baseScale: scale };
+  }, [isVideo, scale]);
+
+  const onTouchMove = useCallback((e: ReactTouchEvent) => {
+    if (!pinch.current || e.touches.length !== 2) return;
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const ratio = Math.hypot(dx, dy) / pinch.current.dist;
+    zoomAt(pinch.current.baseScale * ratio);
+  }, [zoomAt]);
+
+  const onTouchEnd = useCallback(() => {
+    pinch.current = null;
+  }, []);
 
   /**
    * 原片自动缓存：打开/切换到某媒体时调一次 /api/media/warm。
@@ -191,8 +323,13 @@ export function ImageLightbox({
         </div>
       </div>
 
-      {/* 媒体区：点击遮罩关闭、点击媒体本身不关闭 */}
-      <div className="flex-1 min-h-0 flex items-center justify-center px-4 pb-6 relative">
+      {/* 媒体区：点击遮罩关闭、点击媒体本身不关闭；图片支持滚轮/双击/捏合缩放与拖拽平移 */}
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0 flex items-center justify-center px-4 pb-6 relative overflow-hidden"
+        onWheel={onWheel}
+        onDoubleClick={onDoubleClick}
+      >
         {hasMultiple && (
           <button
             type="button"
@@ -233,11 +370,31 @@ export function ImageLightbox({
           <>
             <img
               key={current.src}
+              data-main="1"
               src={current.src}
               alt={current.alt ?? current.caption ?? "图片"}
-              onLoad={() => setLoaded(true)}
+              onLoad={(e) => {
+                setLoaded(true);
+                recomputeFit(e.currentTarget);
+              }}
               onClick={(e) => e.stopPropagation()}
-              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              draggable={false}
+              style={{
+                width: fit ? `${fit.w}px` : undefined,
+                height: fit ? `${fit.h}px` : undefined,
+                transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                transition: dragging.current ? "none" : "transform 0.15s ease-out",
+              }}
+              className={`max-w-full max-h-full object-contain rounded-lg shadow-2xl select-none ${
+                scale > 1.01 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
+              }`}
             />
             {/* 大图未加载完时，先用缩略图铺底（避免白屏等待） */}
             {!loaded && current.thumb && current.thumb !== current.src && (
@@ -248,6 +405,43 @@ export function ImageLightbox({
                 className="absolute max-w-full max-h-full object-contain rounded-lg shadow-2xl blur-sm"
               />
             )}
+            {/* 缩放工具条(图片时显示;悬浮右下角,不占布局) */}
+            <div
+              className="absolute bottom-4 right-4 flex items-center gap-0.5 bg-black/55 backdrop-blur-md rounded-xl px-1.5 py-1 shadow-lg z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="text-[10px] text-white/60 tabular-nums px-1.5 select-none">
+                {Math.round(scale * 100)}%
+              </span>
+              <button
+                type="button"
+                title="缩小（滚轮/双击也可）"
+                onClick={() => zoomAt(scale / 1.25)}
+                disabled={scale <= 0.5}
+                className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/15 transition-colors cursor-pointer disabled:opacity-30"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                title="放大（滚轮/双击也可）"
+                onClick={() => zoomAt(scale * 1.25)}
+                disabled={scale >= 5}
+                className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/15 transition-colors cursor-pointer disabled:opacity-30"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+              {scale > 1.01 && (
+                <button
+                  type="button"
+                  title="恢复原始大小"
+                  onClick={resetView}
+                  className="px-1.5 py-1 rounded-lg text-[10px] text-white/70 hover:text-white hover:bg-white/15 transition-colors cursor-pointer"
+                >
+                  1:1
+                </button>
+              )}
+            </div>
           </>
         )}
         {hasMultiple && (
