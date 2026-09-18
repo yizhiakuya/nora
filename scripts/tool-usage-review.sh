@@ -23,6 +23,9 @@ echo "=================================================================="
 
 echo
 echo "── 1. 调用量排名(含失败率/耗时)───────────────────────────────────"
+# 口径说明:agent_step 对每个工具调用先落一行 running、终态再落一行——
+# 统计只取终态行(status in completed/failed/declined);tool_name 为空的是
+# RAG 检索等非工具步骤,一并排除。
 $PSQL <<SQL
 SELECT tool_name AS "工具",
        count(*) AS "调用",
@@ -30,7 +33,8 @@ SELECT tool_name AS "工具",
        round(avg(duration_ms)) AS "均耗时ms",
        max(duration_ms) AS "峰值ms"
 FROM schema_agent.agent_step
-WHERE step_type='tool' AND tool_name IS NOT NULL
+WHERE step_type='tool' AND tool_name IS NOT NULL AND tool_name <> ''
+  AND status IN ('completed','failed','declined')
   AND created_at > now() - interval '${DAYS} days'
 GROUP BY tool_name
 ORDER BY count(*) DESC;
@@ -50,7 +54,8 @@ WITH builtin(name) AS (
 ),
 used AS (
   SELECT DISTINCT tool_name FROM schema_agent.agent_step
-  WHERE step_type='tool' AND created_at > now() - interval '${DAYS} days'
+  WHERE step_type='tool' AND status IN ('completed','failed','declined')
+    AND created_at > now() - interval '${DAYS} days'
 )
 SELECT b.name AS "零调用工具", '候选:退役 / 改 lazy / 并入既有工具' AS "动作"
 FROM builtin b LEFT JOIN used u ON u.tool_name = b.name
@@ -77,7 +82,7 @@ LIMIT 10;
 SQL
 
 echo
-echo "── 4. 高耗时工具 Top(均耗时 > 10s)────────────────────────────────"
+echo "── 4. 高耗时工具 Top(均耗时 > 10s;口径:终态行,含审批等待)─────────"
 $PSQL <<SQL
 SELECT tool_name AS "工具",
        count(*) AS "调用",
@@ -85,7 +90,8 @@ SELECT tool_name AS "工具",
        round(max(duration_ms)/1000.0, 1) AS "峰值s",
        '候选:进度反馈 / 取消支持 / 异步化' AS "动作"
 FROM schema_agent.agent_step
-WHERE step_type='tool' AND tool_name IS NOT NULL
+WHERE step_type='tool' AND tool_name IS NOT NULL AND tool_name <> ''
+  AND status IN ('completed','failed','declined')
   AND created_at > now() - interval '${DAYS} days'
 GROUP BY tool_name
 HAVING avg(duration_ms) > 10000
@@ -100,7 +106,8 @@ SELECT session_id AS "会话",
        count(DISTINCT tool_name) AS "不同工具",
        string_agg(DISTINCT tool_name, ', ' ORDER BY tool_name) AS "工具集"
 FROM schema_agent.agent_step
-WHERE step_type='tool' AND tool_name IS NOT NULL
+WHERE step_type='tool' AND tool_name IS NOT NULL AND tool_name <> ''
+  AND status IN ('completed','failed','declined')
   AND created_at > now() - interval '${DAYS} days'
 GROUP BY session_id
 ORDER BY count(*) DESC
@@ -115,6 +122,7 @@ SELECT split_part(tool_name, '__', 2) AS "服务器",
        count(DISTINCT tool_name) AS "用到的工具数"
 FROM schema_agent.agent_step
 WHERE step_type='tool' AND tool_name LIKE 'mcp\_\_%'
+  AND status IN ('completed','failed','declined')
   AND created_at > now() - interval '${DAYS} days'
 GROUP BY 1
 ORDER BY count(*) DESC;
