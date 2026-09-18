@@ -99,7 +99,9 @@ export function McpManager({ listVersion }: { listVersion: number }) {
   };
 
   const connectedCount = servers.filter((s) => s.enabled).length;
-  const toolTotal = servers.reduce((sum, s) => sum + (s.enabled ? s.toolCount : 0), 0);
+  // 挂载工具数只算 eager 服务器(lazy 的工具不占每轮上下文,不算"挂载")
+  const toolTotal = servers.reduce((sum, s) => sum + (s.enabled && s.toolPolicy !== "lazy" ? s.toolCount : 0), 0);
+  const lazyTotal = servers.reduce((sum, s) => sum + (s.enabled && s.toolPolicy === "lazy" ? s.toolCount : 0), 0);
 
   return (
     <div className="space-y-6">
@@ -108,7 +110,7 @@ export function McpManager({ listVersion }: { listVersion: number }) {
         {[
           { label: "已注册服务器", value: servers.length },
           { label: "已启用", value: connectedCount },
-          { label: "挂载工具数", value: toolTotal },
+          { label: lazyTotal > 0 ? `挂载工具数（另有 ${lazyTotal} 个按需）` : "挂载工具数", value: toolTotal },
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl border border-border bg-card dark:bg-card p-4 shadow-sm">
             <div className="text-2xl font-bold text-foreground">{stat.value}</div>
