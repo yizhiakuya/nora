@@ -1,8 +1,8 @@
 import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
-import { ArtifactsBlock } from "./ArtifactsBlock";
-import { parseArtifactsFence, parseLegacyGalleryFence, type ArtifactsData } from "@/lib/artifacts";
+import { ArtifactsBlock } from "./galleries";
+import { parseArtifactsFence, parseLegacyGalleryFence, type ArtifactGallery } from "@/lib/artifacts";
 import { ToolRow } from "./ToolStepRow";
 import { ContextRow } from "./ContextStepRow";
 
@@ -157,10 +157,11 @@ export function AgentProcessBlock({
 
   const toolCount = steps.filter((s) => s.type === "tool").length;
   const summary = toolCount > 0 ? `${toolCount} 次工具调用` : `${steps.length} 个步骤`;
-  // 结果类内容:统一产物画廊(过程折叠后仍展示;旧 nora-gallery 自动转换)
+  // 结果类内容:产物画廊(过程折叠后仍展示;旧 nora-gallery 自动转换)。
+  // 一条消息可能含多条画廊实例(每个工具结果一或多条),展平渲染。
   const galleries = steps
-    .map((s) => parseArtifactsFence(s.result?.content) ?? parseLegacyGalleryFence(s.result?.content))
-    .filter((g): g is ArtifactsData => g !== null);
+    .flatMap((s) => parseArtifactsFence(s.result?.content) ?? parseLegacyGalleryFence(s.result?.content) ?? [])
+    .filter((g): g is ArtifactGallery => g !== null);
 
   return (
     <div className="animate-in fade-in">
@@ -189,7 +190,7 @@ export function AgentProcessBlock({
         galleries.length > 0 && (
           <div className="mt-1.5 space-y-1.5">
             {galleries.map((g, i) => (
-              <ArtifactsBlock key={i} data={g} />
+              <ArtifactsBlock key={i} gallery={g} />
             ))}
           </div>
         )

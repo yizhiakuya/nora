@@ -1,7 +1,7 @@
 import { AlertTriangle, Ban, Check, ChevronDown, Loader2, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
-import { ArtifactsBlock } from "./ArtifactsBlock";
+import { ArtifactsBlock } from "./galleries";
 import { parseArtifactsFence, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, thumbVariant } from "@/lib/mediaCache";
@@ -249,12 +249,14 @@ export function ToolRow({ step }: { step: ChatStep }) {
       </button>
       {/* 批量任务进度卡片:running 期间始终可见(不折叠)——「下载到哪了」的主反馈 */}
       {running && step.progress && <ProgressPanel progress={step.progress} />}
-      {artifacts && (
-        <div className="ml-6 mt-1.5">
-          <ArtifactsBlock data={artifacts} />
+      {artifacts && artifacts.length > 0 && (
+        <div className="ml-6 mt-1.5 space-y-1.5">
+          {artifacts.map((g, i) => (
+            <ArtifactsBlock key={i} gallery={g} />
+          ))}
         </div>
       )}
-      {!artifacts && resultImages.length > 0 && (
+      {!(artifacts && artifacts.length > 0) && resultImages.length > 0 && (
         <div className="ml-6 mt-1.5 flex flex-wrap gap-2 max-w-2xl">
           {resultImages.slice(0, 6).map((img, i) => (
             <button

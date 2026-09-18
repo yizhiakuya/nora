@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useState } from "react";
-import { ArtifactsBlock } from "@/components/chat/ArtifactsBlock";
+import { ArtifactsBlock } from "@/components/chat/galleries";
 import { parseArtifactsJson, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 
@@ -142,13 +142,17 @@ export default function MarkdownContent({
     <div className={className}>
       {segments.map((seg, i) => {
         if (seg.type === "artifacts" || seg.type === "legacy-gallery") {
-          // 统一画廊:新协议直接解析;旧 nora-gallery 转换为统一结构(历史消息兼容)
-          const data = seg.type === "artifacts"
+          // 产物画廊:新协议直接解析(可含多条画廊实例);旧 nora-gallery 转换为
+          // media 画廊(历史消息兼容)。坏数据退回原始围栏文本(不丢内容)。
+          const galleries = seg.type === "artifacts"
             ? parseArtifactsJson(seg.raw)
             : parseLegacyGalleryFence("```nora-gallery\n" + seg.raw + "\n```");
-          // 坏数据退回原始围栏文本（不丢内容）
-          return data ? (
-            <ArtifactsBlock key={i} data={data} />
+          return galleries && galleries.length > 0 ? (
+            <div key={i} className="space-y-1.5">
+              {galleries.map((g, gi) => (
+                <ArtifactsBlock key={gi} gallery={g} />
+              ))}
+            </div>
           ) : (
             <pre key={i} className="whitespace-pre-wrap break-words rounded-md bg-muted/60 px-2 py-1.5 text-[11px] font-mono">
               {seg.raw}

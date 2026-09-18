@@ -1,112 +1,61 @@
 /**
- * 通用产物画廊协议(2026-09-18 v3,多形态)。
+ * 产物画廊协议 v4(2026-09-18,按业务分画廊)。
  *
- * 设计动机:
- * - v1(AI 自写 H5)质量不可控;v2(单一固定布局)表达力不足——不同业务需要
- *   不同样式与字段(相册=缩略图网格、SQL=表格、设置=改前改后对比、任务=时间线);
- * - v3 = **section 类型目录**:一套围栏协议,多种渲染器,AI 按业务选类型。
+ * 设计演进:
+ * - v1:AI 自写 H5——质量不可控,废弃;
+ * - v2/v3:单一通用画廊/单组件多形态——越做越大,一坨 if-else,废弃;
+ * - v4:**每种业务一个画廊**。协议里声明用哪个画廊,前端注册表分发到
+ *   对应的独立组件(见 components/chat/galleries/)。每个画廊自己定义
+ *   字段与样式,互不影响;新增业务 = 加一个小组件 + 注册一行。
  *
- * 围栏(```nora-artifacts):
- *   {
- *     "title": "...", "summary": "...",
- *     "stats": [{"label": "文件", "value": "28"}],
- *     "sections": [ ...按需混用下列类型... ],
- *     "note": "..."
- *   }
+ * 围栏(```nora-artifacts),协议 = 画廊名 + 该画廊自己的数据:
+ *   {"gallery": "media",  ...media 画廊的字段...}
+ *   {"gallery": "files",  ...files 画廊的字段...}
+ *   {"gallery": "table",  ...table 画廊的字段...}
+ *   ...
+ * 未知 gallery 名 → 降级通用列表(不报错,前向兼容)。
  *
- * section 类型目录(渲染器在 ArtifactsBlock;未知类型降级 list,不报错):
- *   media    媒体网格(缩略图/灯箱)         items[{url,thumbUrl,caption,meta,kind}]
- *   files    文件行(点击打开)              items[{name,note,meta,open,kind}]
- *   table    数据表格(SQL/统计)            columns:[{key,label,align?}] + rows:[{key:value}]
- *   diff     改前→改后(设置/配置)          items[{name,before,after,open?}]
- *   timeline 时间线(任务/事件)             items[{name,status,meta,caption?}] status: done|failed|running|pending
- *   keyvalue 键值详情(单对象)              items[{name,meta}] name=键 meta=值
- *   text     长文报告                      text:"Markdown 文本"
- *   list     通用条目(兜底)                items[{name,caption,meta,open}]
+ * 画廊目录(字段定义见各自组件文件):
+ *   media    相册/媒体     items[{url,thumbUrl,fullUrl,caption,meta,kind,name}]
+ *   files    文件变更      items[{name,note,meta,open,kind}]
+ *   table    数据表格      columns[{key,label,align?}] + rows[{key:value}]
+ *   diff     设置变更      items[{name,before,after,caption,meta}]
+ *   timeline 任务执行      items[{name,status,meta,caption}]
+ *   keyvalue 单对象详情    items[{name,meta,open?}]
+ *   text     长文报告      text
+ *   list     通用兜底      items[{name,caption,meta,open}]
  *
- * open 深链前缀(前端路由):
+ * 所有画廊共享的可选头部字段:title(必填)/ summary / stats[{label,value}] / note。
+ *
+ * open 深链前缀(openArtifactLink 统一处理):
  *   workspace:<相对路径>   → 文件页的工作区浏览器定位
  *   file:<数字id>          → 文件页打开文件中心预览
  *   url:<链接>             → 新窗口打开
  *   省略/未知前缀          → 仅展示不可点击(降级安全)
  */
 
-export type ArtifactItemKind = "image" | "video" | "file" | "folder" | "link" | "text";
-
-export interface ArtifactItem {
-  kind?: ArtifactItemKind;
-  /** 展示名(文件名/条目名/键名) */
-  name?: string;
-  /** 媒体地址(http(s) 或 /api/... 相对路径) */
-  url?: string;
-  /** 媒体原图/原片地址(可选;省略用 url) */
-  fullUrl?: string;
-  /** 缩略图地址(可选;媒体网格用) */
-  thumbUrl?: string;
-  /** 单条说明(agent 填写) */
-  caption?: string;
-  /** 元信息(大小/时间/数量/值等,一行) */
-  meta?: string;
-  /** 深链打开指令(见文件头注释);省略=仅展示 */
-  open?: string;
-  /** diff 段:改前 */
-  before?: string;
-  /** diff 段:改后 */
-  after?: string;
-  /** timeline 段:done | failed | running | pending */
-  status?: string;
+/** 一条画廊实例:画廊名 + 该画廊自己的数据(结构由对应组件定义)。 */
+export interface ArtifactGallery {
+  gallery: string;
+  data: Record<string, unknown>;
 }
 
-/** table 段的列定义。 */
-export interface ArtifactColumn {
-  key: string;
-  label: string;
-  align?: "left" | "right";
-}
-
-export interface ArtifactSection {
-  /**
-   * media=媒体网格 / files=文件行 / table=数据表格 / diff=改前后对比 /
-   * timeline=时间线 / keyvalue=键值详情 / text=长文 / list=通用兜底
-   */
-  kind?: "media" | "files" | "table" | "diff" | "timeline" | "keyvalue" | "text" | "list";
+/** 所有画廊共享的头部字段(各组件自行取用)。 */
+export interface GalleryHeaderFields {
   title?: string;
-  items?: ArtifactItem[];
-  /** table 段:列定义(rows 用对象的 key 取值) */
-  columns?: ArtifactColumn[];
-  /** table 段:行数据 */
-  rows?: Array<Record<string, unknown>>;
-  /** text 段:Markdown 正文 */
-  text?: string;
-}
-
-export interface ArtifactStat {
-  label: string;
-  value: string;
-}
-
-export interface ArtifactsData {
-  title: string;
-  /** 一句话摘要(标题下方) */
   summary?: string;
-  /** 统计条(如 文件 28 / 大小 409.7 MB / 耗时 15s) */
-  stats?: ArtifactStat[];
-  /** 分组内容(至少一段) */
-  sections: ArtifactSection[];
-  /** 底部补充说明 */
+  stats?: Array<{ label: string; value: string }>;
   note?: string;
 }
 
+// ---------- 围栏解析 ----------
+
 /**
- * 从文本里提取指定名字的围栏内容(逐行状态机,正确跳过 4+ 反引号包裹的示例块)。
+ * 从文本里提取指定名字的顶层围栏内容(逐行状态机,跳过 4+ 反引号包裹的示例块)。
  *
  * 为什么不用简单正则:技能正文/文档里常用 ````text ... ```` 包裹示例围栏,
  * 简单正则会匹配到内层 3 反引号围栏,把「示例」当「真实数据」渲染。
  * 实测踩过:agent 读技能后,技能里的示例 JSON 被渲染成真画廊。
- *
- * @param content 待扫描文本
- * @param fenceName 围栏名(如 nora-artifacts)
- * @return 第一个**顶层**围栏的内容;无则 null
  */
 function extractTopLevelFence(content: string, fenceName: string): string | null {
   const lines = content.split("\n");
@@ -120,7 +69,6 @@ function extractTopLevelFence(content: string, fenceName: string): string | null
     }
     const len = fenceMatch[1].length;
     if (outerFenceLen > 0) {
-      // 示例块内:仅同长度闭栏才退出(内部一切不解析)
       if (len === outerFenceLen) {
         outerFenceLen = 0;
       }
@@ -131,7 +79,6 @@ function extractTopLevelFence(content: string, fenceName: string): string | null
       continue;
     }
     if (fenceHead.test(line)) {
-      // 目标围栏:收集内容直到闭栏
       const body: string[] = [];
       let closed = false;
       for (let j = i + 1; j < lines.length; j++) {
@@ -147,7 +94,7 @@ function extractTopLevelFence(content: string, fenceName: string): string | null
       }
       continue;
     }
-    // 其他语言的普通围栏:跳过其内容到闭栏(避免内容里的行被误判)
+    // 其他语言的普通围栏:跳过其内容到闭栏
     for (let j = i + 1; j < lines.length; j++) {
       if (/^\s*```\s*$/.test(lines[j])) {
         i = j;
@@ -158,25 +105,53 @@ function extractTopLevelFence(content: string, fenceName: string): string | null
   return null;
 }
 
-/**
- * 从文本里提取 ```nora-artifacts 围栏(无则 null)。
- * 跳过被 4+ 反引号包裹的示例块(见 extractTopLevelFence 注释)。
- */
-export function parseArtifactsFence(content: string | null | undefined): ArtifactsData | null {
+/** 从文本里提取 ```nora-artifacts 围栏(无则 null)。 */
+export function parseArtifactsFence(content: string | null | undefined): ArtifactGallery[] | null {
   if (!content) return null;
   const body = extractTopLevelFence(content, "nora-artifacts");
   return body != null ? parseArtifactsJson(body) : null;
 }
 
+/** 解析围栏 JSON;无效返回 null(调用方降级为普通代码块,不丢内容)。 */
+export function parseArtifactsJson(raw: string): ArtifactGallery[] | null {
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    if (!data || typeof data !== "object") {
+      return null;
+    }
+    // 新协议(v4):{gallery: "...", ...}
+    if (typeof data.gallery === "string" && data.gallery.trim() !== "") {
+      return [{ gallery: data.gallery.trim(), data }];
+    }
+    // 兼容 v2/v3(历史消息):{sections: [{kind, ...}]} → 每段转一条画廊
+    if (Array.isArray(data.sections)) {
+      const out: ArtifactGallery[] = [];
+      (data.sections as Array<Record<string, unknown>>).forEach((s, idx) => {
+        if (!s || typeof s !== "object") return;
+        const kind = typeof s.kind === "string" && s.kind.trim() !== "" ? s.kind.trim() : "list";
+        // 首个 section 承接顶层 summary/stats(旧格式把它们放在顶层)
+        const merged: Record<string, unknown> = { ...s };
+        if (idx === 0) {
+          if (data.summary != null && merged.summary == null) merged.summary = data.summary;
+          if (data.stats != null && merged.stats == null) merged.stats = data.stats;
+        }
+        if (merged.title == null && data.title != null) merged.title = data.title;
+        if (merged.note == null && data.note != null) merged.note = data.note;
+        out.push({ gallery: kind, data: merged });
+      });
+      return out.length > 0 ? out : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * 旧格式兼容(2026-09-18 统一画廊):```nora-gallery 是手机相册 photos_showcase
- * 的早期专属围栏(媒体列表)。统一画廊落地后,前端把它**转换成**统一结构渲染
- * ——组件只留一套,旧围栏(含历史消息)自动升级为原生画廊体验。
- *
- * 映射:items[].url→thumbUrl / fullUrl→url(灯箱用原图);其余字段直传。
- * 同样跳过被 4+ 反引号包裹的示例块(见 extractTopLevelFence)。
+ * 旧格式兼容:```nora-gallery(手机相册 photos_showcase 早期专属围栏)。
+ * 转换为 media 画廊(历史消息/老 App 版本自动升级为原生体验)。
  */
-export function parseLegacyGalleryFence(content: string | null | undefined): ArtifactsData | null {
+export function parseLegacyGalleryFence(content: string | null | undefined): ArtifactGallery[] | null {
   if (!content) return null;
   const body = extractTopLevelFence(content, "nora-gallery");
   if (body == null) return null;
@@ -197,63 +172,29 @@ export function parseLegacyGalleryFence(content: string | null | undefined): Art
     if (!legacy || !Array.isArray(legacy.items) || legacy.items.length === 0) {
       return null;
     }
-    return {
-      title: typeof legacy.title === "string" ? legacy.title : "媒体画廊",
-      summary: legacy.count != null ? `共 ${legacy.count} 项` : undefined,
-      sections: [{
-        kind: "media",
+    return [{
+      gallery: "media",
+      data: {
+        title: typeof legacy.title === "string" ? legacy.title : "媒体画廊",
+        summary: legacy.count != null ? `共 ${legacy.count} 项` : undefined,
         items: legacy.items.map((it) => ({
-          kind: it.type === "video" ? ("video" as const) : ("image" as const),
-          // 统一画廊约定:url=灯箱用(原图优先), thumbUrl=网格用(缩略图)
+          kind: it.type === "video" ? "video" : "image",
+          // media 画廊约定:url=灯箱用(原图优先), thumbUrl=网格用(缩略图)
           url: it.fullUrl ?? it.url ?? "",
           thumbUrl: it.url,
           name: it.filename,
           caption: it.caption ?? it.filename,
           meta: it.takenAt,
         })),
-      }],
-      note: legacy.note,
-    };
+        note: legacy.note,
+      },
+    }];
   } catch {
     return null;
   }
 }
 
-/** 解析围栏 JSON;结构不完整返回 null(调用方降级为普通代码块,不丢内容)。 */
-export function parseArtifactsJson(raw: string): ArtifactsData | null {
-  try {
-    const data = JSON.parse(raw) as ArtifactsData;
-    if (!data || typeof data.title !== "string" || !Array.isArray(data.sections)) {
-      return null;
-    }
-    // 过滤空段;全空则视为无效(避免渲染空壳)。
-    // 各类型的内容载体不同:items(media/files/diff/timeline/keyvalue/list)、
-    // rows(table)、text(text)——任一非空即保留。
-    const sections = data.sections.filter((s) => {
-      if (!s || typeof s !== "object") return false;
-      if (Array.isArray(s.items) && s.items.length > 0) return true;
-      if (Array.isArray(s.rows) && s.rows.length > 0) return true;
-      if (typeof s.text === "string" && s.text.trim() !== "") return true;
-      return false;
-    });
-    if (sections.length === 0) {
-      return null;
-    }
-    return { ...data, sections };
-  } catch {
-    return null;
-  }
-}
-
-/** 条目的展示类型推断(kind 缺省时按 url/扩展名猜)。 */
-export function itemKind(item: ArtifactItem): ArtifactItemKind {
-  if (item.kind) return item.kind;
-  const u = (item.url ?? item.fullUrl ?? "").toLowerCase();
-  if (/\.(mp4|mov|webm|avi|mkv)(\?|$)/.test(u)) return "video";
-  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg|heic)(\?|$)/.test(u)) return "image";
-  if (item.open?.startsWith("file:")) return "file";
-  return "file";
-}
+// ---------- 共享工具 ----------
 
 /** 解析 open 深链 → { scheme, target }。 */
 export function parseOpen(open: string | undefined): { scheme: string; target: string } | null {
@@ -261,4 +202,17 @@ export function parseOpen(open: string | undefined): { scheme: string; target: s
   const i = open.indexOf(":");
   if (i <= 0) return null;
   return { scheme: open.slice(0, i), target: open.slice(i + 1) };
+}
+
+/** 打开深链(workspace:/file:/url:);未知前缀静默忽略。 */
+export function openArtifactLink(open: string | undefined): void {
+  const parsed = parseOpen(open);
+  if (!parsed) return;
+  if (parsed.scheme === "workspace") {
+    window.location.href = `/files?workspace=${encodeURIComponent(parsed.target)}`;
+  } else if (parsed.scheme === "file") {
+    window.location.href = `/files?open=${encodeURIComponent(parsed.target)}`;
+  } else if (parsed.scheme === "url") {
+    window.open(parsed.target, "_blank", "noopener");
+  }
 }
