@@ -295,14 +295,17 @@ class ChatToolsSpec {
         fileTool.put("type", "function");
         ObjectNode fileFn = fileTool.putObject("function");
         fileFn.put("name", "read_file");
-        fileFn.put("description", "工作台文件管理。"
+        fileFn.put("description", "工作台文件管理(**用户上传到文件页的文件**,不是工作区/整机文件系统——那是 manage_workspace)。"
                 + "list 列出全部文件(按文件夹分组展示,可看到用户整理的结构);"
                 + "带 id 读取某个文件的提取文本(支持文档/PDF/代码等);"
                 + "**import 把远程 URL 下载并存成工作台文件**"
-                + "(适合把 MCP 工具返回的图片链接存起来:用户可在「文件」页直接看到)。"
+                + "(适合把 MCP 工具返回的图片链接存起来:用户可在「文件」页直接看到);"
+                + "**rename 改名 / move 移到文件夹 / delete 移入回收站 / folders 列文件夹 / mkdir 建文件夹**"
+                + "(用户说「把上传的 XX 改名/移到 YY/删了/建个文件夹」时用)。"
                 + "用户问\"我的文件里/上传的文档里\"这类问题时使用——"
                 + "注意 RAG 检索只能召回片段,通读全文用此工具。文件名不能猜,必须先 list 拿到 id。"
                 + "示例:{\"action\": \"list\"}、{\"id\": \"3\"}、"
+                + "{\"action\": \"rename\", \"id\": \"3\", \"name\": \"2026合同.pdf\"}、"
                 + "{\"action\": \"import\", \"url\": \"https://.../photo/123/content?t=xxx\", \"filename\": \"photo-123.jpg\"}");
         ObjectNode fileParams = fileFn.putObject("parameters");
         fileParams.put("type", "object");
@@ -316,11 +319,20 @@ class ChatToolsSpec {
         fileFilenameProp.put("description", "import 时可选:保存的文件名(不给则从 URL 推断)");
         ObjectNode fileActionProp = fileProps.putObject("action");
         fileActionProp.put("type", "string");
-        fileActionProp.put("description", "list(列文件)/ read(读内容)/ import(下载 URL 存成文件);省略时:有 id 即 read,无 id 即 list");
-        setEnum(fileActionProp, "list", "read", "import");
+        fileActionProp.put("description", "list(列文件)/ read(读内容)/ import(下载 URL 存成文件)/ "
+                + "rename(改名)/ move(移到文件夹)/ delete(移入回收站)/ folders(列文件夹)/ mkdir(建文件夹);"
+                + "省略时:有 id 即 read,无 id 即 list");
+        setEnum(fileActionProp, "list", "read", "import", "rename", "move", "delete", "folders", "mkdir");
         ObjectNode fileIdProp = fileProps.putObject("id");
         fileIdProp.put("type", "string");
-        fileIdProp.put("description", "read 时:文件 id(list 结果里的数字 id,非文件名)");
+        fileIdProp.put("description", "read/rename/move/delete 时:文件 id(list 结果里的数字 id,非文件名;"
+                + "move/delete 支持逗号分隔多个,如 \"3,4,5\")");
+        ObjectNode fileNameProp = fileProps.putObject("name");
+        fileNameProp.put("type", "string");
+        fileNameProp.put("description", "rename 时:新文件名(含扩展名);mkdir 时:新文件夹名");
+        ObjectNode fileFolderProp = fileProps.putObject("folderId");
+        fileFolderProp.put("type", "integer");
+        fileFolderProp.put("description", "move 时:目标文件夹 id(folders 动作查看;省略/null=移回根目录)");
         ObjectNode fileDescProp = fileProps.putObject("description");
         fileDescProp.put("type", "string");
         fileDescProp.put("description", "一句话描述这次调用要做什么(5-12 个字,祈使句)");
@@ -335,7 +347,8 @@ class ChatToolsSpec {
         wsTool.put("type", "function");
         ObjectNode wsFn = wsTool.putObject("function");
         wsFn.put("name", "manage_workspace");
-        wsFn.put("description", "文件系统读写(工作区是你的家目录,也是你的长期记忆)。"
+        wsFn.put("description", "文件系统读写(**工作区与整机的文件**,不是文件中心——用户上传的文件用 read_file)。"
+                + "工作区是你的家目录,也是你的长期记忆。"
                 + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除;"
                 + "mkdir 建目录;"
                 + "**edit 对已存在文件做精确文本替换**(改一小段用它,不必 read 全文再 write 全文——"

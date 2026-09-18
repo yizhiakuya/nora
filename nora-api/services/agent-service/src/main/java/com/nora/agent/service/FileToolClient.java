@@ -1,5 +1,6 @@
 package com.nora.agent.service;
 
+import java.util.List;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -291,14 +292,132 @@ public class FileToolClient {
         }
     }
 
+    // ---------- 文件中心管理面(2026-09-18 复查补齐:rename/move/delete/folders) ----------
+
+    /** 重命名文件(PUT /{id}/name)。 */
+    public String rename(long fileId, String newName) {
+        try {
+            Envelope<JsonNode> envelope = restClient.put()
+                    .uri("/api/files/{id}/name", fileId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(java.util.Map.of("name", newName))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            return "已重命名为 " + envelope.data().path("name").asText(newName) + "(id=" + fileId + ")";
+        } catch (Exception e) {
+            log.warn("file rename failed for {}: {}", fileId, e.getMessage());
+            return "ERROR: 重命名失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 批量移动文件到文件夹(PUT /move;folderId null=根目录)。
+     *
+     * @param folderId 目标文件夹 id;null=移回根目录
+     */
+    public String move(List<Long> fileIds, Long folderId) {
+        try {
+            java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("ids", fileIds);
+            body.put("folderId", folderId);
+            Envelope<Integer> envelope = restClient.put()
+                    .uri("/api/files/move")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            int moved = envelope.data() == null ? 0 : envelope.data();
+            return "已移动 " + moved + " 个文件到" + (folderId == null ? "根目录" : "文件夹 id=" + folderId);
+        } catch (Exception e) {
+            log.warn("file move failed: {}", e.getMessage());
+            return "ERROR: 移动失败: " + e.getMessage();
+        }
+    }
+
+    /** 软删文件(进回收站;DELETE /api/files?ids=)。 */
+    public String delete(List<Long> fileIds) {
+        try {
+            String ids = fileIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+            Envelope<Void> envelope = restClient.delete()
+                    .uri("/api/files?ids={ids}", ids)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            return "已把 " + fileIds.size() + " 个文件移入回收站(可恢复;彻底删除需在文件页操作)";
+        } catch (Exception e) {
+            log.warn("file delete failed: {}", e.getMessage());
+            return "ERROR: 删除失败: " + e.getMessage();
+        }
+    }
+
+    /** 列出文件夹(id/名称/文件数)。 */
+    public String folders() {
+        try {
+            Envelope<JsonNode> envelope = restClient.get()
+                    .uri("/api/files/folders")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null || !envelope.data().isArray()) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            if (envelope.data().isEmpty()) {
+                return "(尚无文件夹)可用 mkdir 建一个";
+            }
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode n : envelope.data()) {
+                sb.append("id=").append(n.path("id").asLong())
+                        .append(" | ").append(n.path("name").asText("?"))
+                        .append(" | 文件数 ").append(n.path("fileCount").asInt(0))
+                        .append('\n');
+            }
+            return sb.toString().stripTrailing();
+        } catch (Exception e) {
+            log.warn("folder list failed: {}", e.getMessage());
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    /** 新建文件夹(POST /folders)。 */
+    public String mkdir(String folderName) {
+        try {
+            Envelope<JsonNode> envelope = restClient.post()
+                    .uri("/api/files/folders")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(java.util.Map.of("name", folderName))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            return "已创建文件夹「" + envelope.data().path("name").asText(folderName)
+                    + "」id=" + envelope.data().path("id").asLong();
+        } catch (Exception e) {
+            log.warn("folder create failed: {}", e.getMessage());
+            return "ERROR: 创建文件夹失败: " + e.getMessage();
+        }
+    }
+
     /**
      * 人类可读的文件大小:小文件显示 B/KB(带一位小数),大文件显示 MB。
      * 用整数除法会把手里的 164B 显示成 "0KB",让 Agent 误以为落盘为空
      * (实测踩过:模型据此提示“可疑:文件为 0KB”)。
      */
     public static String formatSize(long bytes) {
-        if (bytes < 1024) {
-            return bytes + "B";
+        if (bytes < 1024) {            return bytes + "B";
         }
         if (bytes < 1024 * 1024) {
             return String.format(java.util.Locale.ROOT, "%.1fKB", bytes / 1024.0);

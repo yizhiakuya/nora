@@ -28,6 +28,9 @@ class ChatContextAssembler {
     private final AgentSkillService agentSkillService;
     /** tools spec 提供者(toolsOverheadTokens 动态估算用)。 */
     private final ChatToolsSpec toolsSpecBuilder;
+    /** 环境摘要注入用(可为 null:测试场景)。 */
+    private final DataSourceManageClient dataSourceManageClient;
+    private final ServiceLogClient serviceLogClient;
 
     /** 最近一次 compactForRound 回收的旧图张数(可视化 step 用)。 */
     private int lastRecycledImages;
@@ -39,10 +42,21 @@ class ChatContextAssembler {
                          AgentWorkspaceService agentWorkspaceService,
                          AgentSkillService agentSkillService,
                          ChatToolsSpec toolsSpecBuilder) {
+        this(objectMapper, agentWorkspaceService, agentSkillService, toolsSpecBuilder, null, null);
+    }
+
+    ChatContextAssembler(ObjectMapper objectMapper,
+                         AgentWorkspaceService agentWorkspaceService,
+                         AgentSkillService agentSkillService,
+                         ChatToolsSpec toolsSpecBuilder,
+                         DataSourceManageClient dataSourceManageClient,
+                         ServiceLogClient serviceLogClient) {
         this.objectMapper = objectMapper;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
         this.toolsSpecBuilder = toolsSpecBuilder;
+        this.dataSourceManageClient = dataSourceManageClient;
+        this.serviceLogClient = serviceLogClient;
     }
 
     int lastRecycledImages() {
@@ -532,6 +546,14 @@ class ChatContextAssembler {
                 log.warn("skill catalog inject failed (ignored): {}", e.getMessage());
             }
         }
+        // 环境摘要(2026-09-18 复盘数据驱动):数据源名单 + 纳管源名单——
+        // 消灭「先 list→schema→再查」的探索调用(实测 execute_sql 20.6% 失败
+        // 全是猜库名/schema 前缀,read_service_logs 40% 失败全是猜容器名)。
+        // TTL 缓存:名单变化不频繁,避免每轮打下游服务。
+        String envSummary = environmentSummary();
+        if (envSummary != null && !envSummary.isBlank()) {
+            sb.append('\n').append(envSummary);
+        }
         if (!citations.isEmpty()) {
             sb.append("\n以下是知识库检索到的相关片段：\n");
             for (CitationDto c : citations) {
@@ -546,6 +568,57 @@ class ChatContextAssembler {
     record SystemPromptResult(String text,
                                       AgentWorkspaceService.BootstrapResult workspace,
                                       AgentSkillService.CatalogBundle skills) {
+    }
+
+    // ---------- 环境摘要注入(2026-09-18 复盘数据驱动) ----------
+
+    /** 环境摘要缓存(名单变化不频繁;TTL 90s,避免每轮打下游服务)。 */
+    private volatile String envSummaryCache;
+    private volatile long envSummaryCacheAt;
+
+    /**
+     * 环境摘要:数据源名单(名称+引擎+库)与纳管源名单(名称)。
+     * 注入后模型直接用正确名字写 SQL / 读日志,不再猜。
+     * best-effort:两个来源都失败返回 null。
+     */
+    String environmentSummary() {
+        if (dataSourceManageClient == null && serviceLogClient == null) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        String cached = envSummaryCache;
+        if (cached != null && now - envSummaryCacheAt < 90_000) {
+            return cached;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (dataSourceManageClient != null) {
+            try {
+                String ds = dataSourceManageClient.nameSummary();
+                if (ds != null && !ds.isBlank()) {
+                    sb.append("可用数据源(execute_sql 的 datasource 参数用这里的名字):\n")
+                            .append(ds).append('\n');
+                }
+            } catch (Exception e) {
+                log.debug("datasource summary failed (ignored): {}", e.getMessage());
+            }
+        }
+        if (serviceLogClient != null) {
+            try {
+                List<String> services = serviceLogClient.listServices();
+                if (services != null && !services.isEmpty()) {
+                    sb.append("可读日志的纳管源(read_service_logs 的 service 参数用这里的名字):")
+                            .append(String.join("、", services)).append('\n');
+                }
+            } catch (Exception e) {
+                log.debug("service list failed (ignored): {}", e.getMessage());
+            }
+        }
+        String result = sb.isEmpty() ? null : sb.toString().stripTrailing();
+        if (result != null) {
+            envSummaryCache = result;
+            envSummaryCacheAt = now;
+        }
+        return result;
     }
 
     /**

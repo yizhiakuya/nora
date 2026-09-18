@@ -125,4 +125,20 @@ class WorkspaceRiskClassifierTest {
         RiskClassifier.validateDatasourceAction("schema");
         RiskClassifier.validateDatasourceAction("tables");
     }
+
+    @Test
+    void fileCenterManageActionsTiered() {
+        // 文件中心管理面(2026-09-18 复查补齐):list/read/folders 只读 LOW;
+        // import/rename/move/delete/mkdir 写类 HIGH(delete 是软删可恢复)
+        RiskClassifier.classify("read_file", "{\"action\": \"list\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"read\", \"id\": \"3\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"folders\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"import\", \"url\": \"https://x\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"rename\", \"id\": \"3\", \"name\": \"x.pdf\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"move\", \"id\": \"3\", \"folderId\": 1}");
+        RiskClassifier.classify("read_file", "{\"action\": \"delete\", \"id\": \"3\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"mkdir\", \"name\": \"合同\"}");
+        // 无 action 但有 id = read 语义(默认 LOW)
+        RiskClassifier.classify("read_file", "{\"id\": \"3\"}");
+    }
 }

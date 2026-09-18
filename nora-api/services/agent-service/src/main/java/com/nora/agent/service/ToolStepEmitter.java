@@ -98,6 +98,9 @@ class ToolStepEmitter {
         String title = parsed.description() != null && !parsed.description().isBlank()
                 ? parsed.description() : defaultTitle(name);
         long toolStart = System.currentTimeMillis();
+        // 审批等待时间不计入工具执行耗时(2026-09-18 复盘):批准后重置锚点,
+        // completed 步骤的 duration=纯执行时间;declined 保留全程时长(等的是用户)。
+        long[] execStart = {toolStart};
         log.info("tool call: {} (round={}, args={})", name, roundIndex,
                 Texts.abbreviate(scrubArgsForLog(args), 200));
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
@@ -163,9 +166,11 @@ class ToolStepEmitter {
                             "ERROR: 用户拒绝批准该操作。请说明操作目的,或改用无需写权限的方式回答");
                     return;
                 }
-                // 批准后重新发出 running(用户等待期间 step 可能显示为等待批准态)
+                // 批准后重新发出 running(用户等待期间 step 可能显示为等待批准态),
+                // 并把执行计时锚点重置到此刻——完成态的 duration 只反映真实执行
                 eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                         null, null, "running", name, input, null, roundIndex));
+                execStart[0] = System.currentTimeMillis();
             }
         }
 
@@ -210,7 +215,7 @@ class ToolStepEmitter {
                 countLines(outcome.content()),
                 outcome.truncated(),
                 failure ? outcome.content() : null);
-        finishToolStep(toolStepId, name, title, input, toolStart, result, status, roundIndex, eventConsumer);
+        finishToolStep(toolStepId, name, title, input, execStart[0], result, status, roundIndex, eventConsumer);
         backfillToolMessage(messages, callId, outcome.content(), outcome.images(), llm);
     }
 
@@ -649,6 +654,36 @@ class ToolStepEmitter {
                     risk = "立即触发一次自动任务执行";
                 } else {
                     risk = "对自动任务执行 " + action + " 操作";
+                }
+            }
+            case "read_file" -> {
+                // 文件中心管理动作(2026-09-18 补齐)的审批明细;list/read 是 LOW 不会走到这
+                actionType = "file_manage";
+                JsonNode a = parseArgsSafe(rawArgs);
+                String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().toLowerCase();
+                target = parsed.input().target() == null ? "文件中心" : parsed.input().target();
+                switch (action) {
+                    case "rename" -> {
+                        detail = "文件 id: " + target + "\n新名称: " + a.path("name").asText("?");
+                        risk = "将重命名文件中心里的文件";
+                    }
+                    case "move" -> {
+                        detail = "文件 id: " + target + "\n目标文件夹: "
+                                + (a.path("folderId").isNumber() ? "id=" + a.path("folderId").asLong() : "根目录");
+                        risk = "将移动文件到文件夹";
+                    }
+                    case "delete" -> {
+                        detail = "文件 id: " + target + "\n后果: 移入回收站(可恢复;彻底删除需在文件页操作)";
+                        risk = "删除的文件进入回收站,可在文件页恢复";
+                    }
+                    case "mkdir" -> {
+                        detail = "新文件夹: " + a.path("name").asText("?");
+                        risk = "将新建一个文件夹";
+                    }
+                    default -> {
+                        detail = "操作: " + action;
+                        risk = "对文件中心执行 " + action + " 操作";
+                    }
                 }
             }
             case "manage_workspace" -> {

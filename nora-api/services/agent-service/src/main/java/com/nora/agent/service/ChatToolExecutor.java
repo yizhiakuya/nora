@@ -477,6 +477,13 @@ class ChatToolExecutor {
             return r.startsWith("ERROR:") ? new ToolOutcome(r, null, null, false)
                     : new ToolOutcome(r, r, null, false);
         }
+        // 文件中心管理面(2026-09-18 复查补齐):rename/move/delete/folders/mkdir——
+        // 用户说「把上传的合同改名/移到文件夹/删掉/建个文件夹」时用这些,
+        // 不必让用户去 UI 操作
+        if ("rename".equals(action) || "move".equals(action) || "delete".equals(action)
+                || "folders".equals(action) || "mkdir".equals(action)) {
+            return execFileManage(action, args);
+        }
         if ("list".equals(action) || parsed.input().target() == null) {
             // 无 id = 列出文件让模型挑;显式 action=list 同理
             return bounded(fileToolClient.list(), null);
@@ -511,6 +518,83 @@ class ChatToolExecutor {
         return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
     }
 
+    /**
+     * read_file 管理动作(2026-09-18 复查补齐):rename / move / delete / folders / mkdir。
+     * 参数:id(文件 id,可逗号分隔多个) / name(新文件名或文件夹名) / folderId(目标文件夹,null=根)。
+     */
+    private ToolOutcome execFileManage(String action, String args) {
+        JsonNode a;
+        try {
+            a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 参数不是合法 JSON: " + e.getMessage(), null, null, false);
+        }
+        switch (action) {
+            case "folders" -> {
+                return bounded(fileToolClient.folders(), null);
+            }
+            case "mkdir" -> {
+                String folderName = a.path("name").asText(null);
+                if (folderName == null || folderName.isBlank()) {
+                    return new ToolOutcome("ERROR: mkdir 需要 name 参数(新文件夹名)。"
+                            + "示例:{\"action\": \"mkdir\", \"name\": \"合同\"}", null, null, false);
+                }
+                return bounded(fileToolClient.mkdir(folderName), null);
+            }
+            default -> {
+                // rename / move / delete 都需要文件 id(rename 单个;move/delete 支持逗号分隔多个)
+                List<Long> ids = parseFileIds(a);
+                if (ids.isEmpty()) {
+                    return new ToolOutcome("ERROR: " + action + " 需要 id 参数(文件 id,先 action=list 查看;"
+                            + "move/delete 支持逗号分隔多个 id)。示例:{\"action\": \"" + action + "\", \"id\": \"12\"}",
+                            null, null, false);
+                }
+                if ("rename".equals(action)) {
+                    String newName = a.path("name").asText(null);
+                    if (newName == null || newName.isBlank()) {
+                        return new ToolOutcome("ERROR: rename 需要 name 参数(新文件名,含扩展名)。"
+                                + "示例:{\"action\": \"rename\", \"id\": \"12\", \"name\": \"2026合同.pdf\"}", null, null, false);
+                    }
+                    if (ids.size() > 1) {
+                        return new ToolOutcome("ERROR: rename 一次只能改一个文件(逐个改,或告诉我批量命名规则)",
+                                null, null, false);
+                    }
+                    return bounded(fileToolClient.rename(ids.get(0), newName), null);
+                }
+                if ("move".equals(action)) {
+                    Long folderId = a.path("folderId").isNumber() ? a.path("folderId").asLong() : null;
+                    return bounded(fileToolClient.move(ids, folderId), null);
+                }
+                // delete(软删,进回收站)
+                return bounded(fileToolClient.delete(ids), null);
+            }
+        }
+    }
+
+    /** 解析文件 id 参数:id 可以是数字/数字字符串/逗号分隔字符串。 */
+    private static List<Long> parseFileIds(JsonNode a) {
+        List<Long> out = new java.util.ArrayList<>();
+        JsonNode idNode = a.path("id");
+        if (idNode.isNumber()) {
+            out.add(idNode.asLong());
+        } else if (idNode.isTextual()) {
+            for (String part : idNode.asText("").split("[,\\s]+")) {
+                if (part.matches("\\d+")) {
+                    out.add(Long.parseLong(part));
+                }
+            }
+        } else if (idNode.isArray()) {
+            for (JsonNode n : idNode) {
+                if (n.isNumber()) {
+                    out.add(n.asLong());
+                } else if (n.isTextual() && n.asText("").matches("\\d+")) {
+                    out.add(Long.parseLong(n.asText("")));
+                }
+            }
+        }
+        return out;
+    }
+
     /** manage_workspace handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageWorkspace(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             LiveOutput liveOutput) {
@@ -525,7 +609,13 @@ class ChatToolExecutor {
         }
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            // 参数方言兼容(2026-09-18 复盘数据驱动):模型对「读文件」的第一直觉
+            // 参数名是 filename/file(实测 12 次失败全是 filename)——harness 层吸收
+            // 模型方言,别让用户为参数名教学买单。
             String path = a.path("path").asText(null);
+            if (path == null || path.isBlank()) {
+                path = Texts.firstNonNull(a.path("filename").asText(null), a.path("file").asText(null));
+            }
             // read 图片:文本解码必然失败("Input length = 1"),改走图像通道——
             // 原始字节作为图像附件喂给视觉模型;非视觉模型由 backfillToolMessage
             // 明确告知「看不到」,不静默丢弃、不报解码错误。
@@ -1110,6 +1200,30 @@ class ChatToolExecutor {
                     .append(",失败 ").append(report.failed())
                     .append(",共 ").append(report.total())
                     .append(",耗时 ").append(elapsed / 1000).append("s\n");
+            // 跨目录重复提示(2026-09-18 复查):photos/ 下已出现 11G 冗余
+            // (full-album 是全量超集,month-all 等互相重叠)。列出同级目录的
+            // 文件数,让模型自己发现"这批素材可能已在别的目录"——把去重判断
+            // 交给能看到全局的模型,而不是猜。
+            if (agentWorkspaceService != null && folderLabel.startsWith("photos")) {
+                try {
+                    AgentWorkspaceService.ResolvedTarget photosRoot = agentWorkspaceService.resolveAny("photos");
+                    List<AgentWorkspaceService.FileEntry> siblings =
+                            agentWorkspaceService.listAny(photosRoot.path().toString());
+                    StringBuilder dirs = new StringBuilder();
+                    for (AgentWorkspaceService.FileEntry f : siblings) {
+                        if (f.directory()) {
+                            dirs.append("- photos/").append(f.path()).append("(")
+                                    .append(f.fileCount()).append(" 个文件, ")
+                                    .append(FileToolClient.formatSize(f.size())).append(")\n");
+                        }
+                    }
+                    if (!dirs.isEmpty()) {
+                        sb.append("photos/ 下已有目录(归档前可先比对,避免重复下载):\n").append(dirs);
+                    }
+                } catch (Exception ignored) {
+                    // 概览失败不影响结果报告
+                }
+            }
             if (!report.errors().isEmpty()) {
                 sb.append("失败明细(前 ").append(Math.min(10, report.errors().size())).append(" 条):\n");
                 for (int i = 0; i < Math.min(10, report.errors().size()); i++) {

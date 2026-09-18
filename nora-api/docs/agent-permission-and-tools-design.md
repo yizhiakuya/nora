@@ -46,7 +46,8 @@ needApproval = mode == ASK
 | `execute_sql` | — | LOW | 单条 SELECT/SHOW/EXPLAIN（guardrail 拒绝写与多语句） |
 | `read_service_logs` | — | LOW | 容器日志，最多 100 行，DEBUG 过滤 |
 | `environment_status` | — | LOW | 环境健康快照（全部启用纳管源状态；2026-09-18 新增） |
-| `read_file` | list/read | LOW | 工作台已上传文件 |
+| `read_file` | list/read/folders | LOW | 工作台已上传文件（文件中心） |
+| `read_file` | import/rename/move/delete/mkdir | HIGH | 文件中心管理面（2026-09-18 复查补齐）；delete=软删进回收站可恢复 |
 | `manage_workspace` | list/read | LOW | 含**区外读**（只读无破坏） |
 | `manage_workspace` | write/append **区内** | LOW | 记忆维护须即时落盘（「记住…」不被打断） |
 | `manage_workspace` | **edit 区内** | LOW | 精确替换（2026-09-18 新增；与 write 同分级） |
@@ -102,6 +103,7 @@ needApproval = mode == ASK
 | `service_manage` | manage_service | register 按 kind 显示对应字段；remove 提示不再监控 |
 | `mcp_manage` | manage_mcp | register：**STDIO 显示完整命令行**（装的什么包一眼可见）/ 远程显示 url+header 键名；remove 提示工具立即不可用 |
 | `workspace_file` | manage_workspace | 路径 + 内容预览（截断 200 字；edit 另显示 old→new 替换预览）+ 区外警告 |
+| `file_manage` | read_file 管理动作 | rename 显示新名称；move 显示目标文件夹；delete 提示回收站可恢复；mkdir 显示文件夹名（2026-09-18 新增） |
 | `terminal_command` | run_command | **命令原文完整展示** + cwd + shell + 超时（用户审的就是将执行的） |
 | `knowledge_manage` | manage_knowledge | index 显示 fileId+展示名；remove 显示分块一并删除的后果（2026-09-18 新增） |
 | `automation_manage` | manage_automation | create **完整展示无人值守指令 prompt** + 触发方式 + 「没有审批门」提示；remove/run 显示后果（2026-09-18 新增） |

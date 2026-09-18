@@ -116,6 +116,36 @@ public class DataSourceManageClient {
     }
 
     /**
+     * 数据源名单摘要(2026-09-18 上下文注入用):名称+引擎一行一个——
+     * 注入系统提示后模型不必先 list 探索,直接用正确名字写 SQL。
+     * 失败返回 null(注入是 best-effort,不阻断对话)。
+     */
+    public String nameSummary() {
+        try {
+            Envelope<JsonNode> envelope = restClient.get()
+                    .uri("/api/datasources")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null || !envelope.data().isArray()
+                    || envelope.data().isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode n : envelope.data()) {
+                sb.append("- ").append(n.path("name").asText("?"))
+                        .append("(").append(n.path("engine").asText("?"))
+                        .append(", ").append(n.path("database").asText("?")).append(")\n");
+            }
+            return sb.toString().stripTrailing();
+        } catch (Exception e) {
+            log.debug("datasource name summary failed (ignored): {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 列出连接(密码脱敏)——这段渲染也是编排层给 {@code datasource} 参数
      * 的枚举提示。
      *

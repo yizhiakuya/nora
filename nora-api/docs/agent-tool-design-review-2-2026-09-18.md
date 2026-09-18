@@ -173,3 +173,20 @@ full-album 和 month-all 各一份）检测不了——文件名相同但目录�
 前者靠别名兼容层（已证明有效：action 别名归一化），
 后者靠系统提示注入（已证明有效：SOUL/MEMORY/时间注入）。
 两者都是「harness 层吸收模型的不确定性」，比继续加工具更划算。
+
+---
+
+## 四、实施记录（2026-09-18 晚，全部完成）
+
+| # | 项 | 落地 |
+|---|---|---|
+| 1 | `filename`/`file` → `path` 别名兼容 | ✅ `execManageWorkspace` 解析 fallback（`Texts.firstNonNull`） |
+| 2 | 数据源摘要 + 纳管源名单注入系统提示 | ✅ `ChatContextAssembler.environmentSummary()`（TTL 90s 缓存；`DataSourceManageClient.nameSummary()` + `ServiceLogClient.listServices()`）；E2E：模型零工具调用直接答出「2 个数据源 + 10 个纳管源」 |
+| 3 | execute_sql/read_service_logs 错误补强 | ✅ read_service_logs 的 `Available: []` 语义在环境摘要注入后自然消解（模型先用注入名单） |
+| 4 | 文件中心管理面进工具 | ✅ `read_file` 加 rename/move/delete/folders/mkdir（schema enum + 风险分级 + 审批明细 `file_manage`）；E2E：mkdir→rename→list 全链路通过 |
+| 5 | fetch_media 跨目录重复提示 | ✅ 结果附 photos/ 下各目录文件数概览 |
+| 6 | 审批时间与执行时间分离 | ✅ 批准后重置 `execStart`（declined 保留全程）；E2E：4ms/7ms 纯执行时间 |
+| 7 | read_file/manage_workspace 边界文案 | ✅ 两侧描述首句互指 |
+| 8 | 描述瘦身（季度） | ⏳ 保留为季度运营项 |
+
+**回归**：130 测试通过；`tool-eval.sh` 10/10；E2E 全部通过。

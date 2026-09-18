@@ -43,6 +43,19 @@ final class RiskClassifier {
             // 区外:读仍 LOW(只读无破坏),写/追加 HIGH,删除 CRITICAL(不可逆)
             return classifyWorkspace(argsJson);
         }
+        if ("read_file".equals(toolName)) {
+            // 文件中心(用户上传文件,2026-09-18 补齐管理面):
+            // list/read/folders 只读 LOW;import 写文件(可删可重来)HIGH;
+            // rename/move/mkdir 改组织(可逆)HIGH;delete=软删进回收站(可恢复)HIGH。
+            // 与 manage_workspace 的区内写同级——文件中心没有"区外"概念。
+            String action = extractAction(argsJson);
+            if (action == null || action.isBlank()
+                    || "list".equalsIgnoreCase(action) || "read".equalsIgnoreCase(action)
+                    || "folders".equalsIgnoreCase(action)) {
+                return Risk.LOW;
+            }
+            return Risk.HIGH;
+        }
         if ("execute_write_sql".equals(toolName)) {
             return Risk.HIGH;
         }
