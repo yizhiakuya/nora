@@ -134,7 +134,9 @@ export default function FilesPage() {
         // 父目录里查同名条目:directory=true → 目标是目录(直接进入);否则按文件处理
         const entries = await workspaceApi.listFiles(parentDir);
         if (cancelled) return;
-        const self = entries.find((e) => e.path === wsPath || e.path.endsWith("/" + wsPath) || e.path === wsPath);
+        // path 为相对工作区根的路径(与 wsPath 同基准);endsWith 兜底兼容
+        // 后端可能返回带前缀的形态
+        const self = entries.find((e) => e.path === wsPath || e.path.endsWith("/" + wsPath));
         if (self?.directory) {
           setWorkspaceDir(wsPath);
         } else {

@@ -97,7 +97,19 @@ function splitGalleryFences(text: string): FenceSegment[] {
     const isArtifacts = /^\s*```\s*nora-artifacts\s*$/.test(line);
     const isGallery = /^\s*```\s*nora-gallery\s*$/.test(line);
     if (!isArtifacts && !isGallery) {
-      continue; // 普通代码围栏:交给 Markdown 渲染
+      // 普通代码围栏:跳过其内容到闭栏——围栏内形如 ```nora-artifacts 的行
+      // 只是示例文本,不能当真实画廊渲染(与 artifacts.ts extractTopLevelFence
+      // 同款防护;实测踩过:技能示例被误渲染成真画廊)
+      let closed = false;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (/^\s*```\s*$/.test(lines[j])) {
+          i = j;
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) i = lines.length; // 未闭合:其后全部是代码块内容
+      continue;
     }
     // 收集围栏内容直到闭栏
     const body: string[] = [];

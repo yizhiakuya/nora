@@ -213,6 +213,11 @@ export function openArtifactLink(open: string | undefined): void {
   } else if (parsed.scheme === "file") {
     window.location.href = `/files?open=${encodeURIComponent(parsed.target)}`;
   } else if (parsed.scheme === "url") {
-    window.open(parsed.target, "_blank", "noopener");
+    // 仅允许 http(s):画廊数据来自 agent 输出(可能被工具结果/文件内容影响),
+    // url:javascript:/url:data: 经 window.open 会在新窗口执行脚本
+    // (React 只对 href 属性净化,window.open 不受保护——2026-09-19 审查修复)
+    if (/^https?:\/\//i.test(parsed.target)) {
+      window.open(parsed.target, "_blank", "noopener");
+    }
   }
 }

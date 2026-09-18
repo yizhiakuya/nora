@@ -40,8 +40,13 @@ function formatTakenAt(takenAt?: string): string | undefined {
 }
 
 export function MediaGallery({ data }: { data: Record<string, unknown> }) {
-  const rawItems = Array.isArray(data.items) ? (data.items as MediaItem[]) : [];
-  const items = rawItems.filter((it) => it && (it.url || it.fullUrl));
+  // items 按 data.items 引用缓存:此前每次渲染都重建数组 → 灯箱 images 每次
+  // 重建 → ImageLightbox 预加载 effect 反复解绑重挂(preload 警告刷屏)
+  const items = useMemo(
+    () => (Array.isArray(data.items) ? (data.items as MediaItem[]) : [])
+      .filter((it) => it && (it.url || it.fullUrl)),
+    [data.items],
+  );
   const count = items.length;
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -57,7 +62,8 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
         caption: item.caption,
         alt: item.name ?? "媒体",
         kind: isVideo ? ("video" as const) : ("image" as const),
-        originalSrc: mediaCacheUrl(isVideo ? full.replace(/(\/photo\/\d+\/)video(\?|$)/, "$1content$2") : full),
+        // 下载/新窗口出口:图片同样升级为原图档(与 src 同口径)
+        originalSrc: mediaCacheUrl(isVideo ? full.replace(/(\/photo\/\d+\/)video(\?|$)/, "$1content$2") : originalVariant(full)),
       };
     }),
     [items],

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, TouchEvent as ReactTouchEvent } from "react";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X, ZoomIn, ZoomOut } from "lucide-react";
 import { requestJson } from "@/lib/api/client";
 
@@ -138,12 +138,37 @@ export function ImageLightbox({
   }, []);
 
   /** 滚轮缩放(图片时;视频交给播放器)。 */
-  const onWheel = useCallback((e: ReactWheelEvent) => {
+  const onWheel = useCallback((e: WheelEvent) => {
     if (isVideo) return;
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     zoomAt(scale * factor, e.clientX, e.clientY);
   }, [isVideo, scale, zoomAt]);
+
+  /**
+   * 原生 wheel/touchmove 监听(passive:false,2026-09-19 修复)。
+   *
+   * React 17+ 在根节点以 passive 注册 onWheel/onTouchMove——其中调用
+   * preventDefault 无效,控制台报 "Unable to preventDefault inside passive
+   * event listener invocation";后果:滚轮缩放时页面同时滚动、触屏捏合时
+   * 浏览器自身页面缩放与自定义捏合打架。必须用 addEventListener
+   * {passive:false} 原生挂载。
+   *
+   * 用 ref 转发最新 handler:监听器只挂一次,回调始终读当前渲染的
+   * isVideo/scale/zoomAt(避免反复解绑重绑)。ref 在 effect 里更新
+   * (React 约定:渲染期不写 ref)。
+   */
+  const wheelRef = useRef(onWheel);
+  useEffect(() => {
+    wheelRef.current = onWheel;
+  }, [onWheel]);
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const handler = (e: WheelEvent) => wheelRef.current(e);
+    c.addEventListener("wheel", handler, { passive: false });
+    return () => c.removeEventListener("wheel", handler);
+  }, []);
 
   /** 双击:1x ⇄ 2.5x(以点击点为锚)。 */
   const onDoubleClick = useCallback((e: ReactMouseEvent) => {
@@ -184,7 +209,7 @@ export function ImageLightbox({
     pinch.current = { dist: Math.hypot(dx, dy), baseScale: scale };
   }, [isVideo, scale]);
 
-  const onTouchMove = useCallback((e: ReactTouchEvent) => {
+  const onTouchMove = useCallback((e: TouchEvent) => {
     if (!pinch.current || e.touches.length !== 2) return;
     e.preventDefault();
     const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -195,6 +220,20 @@ export function ImageLightbox({
 
   const onTouchEnd = useCallback(() => {
     pinch.current = null;
+  }, []);
+
+  // touchmove 同样用原生 {passive:false}(见 onWheel 注释:React 的
+  // onTouchMove 是 passive,preventDefault 无效,浏览器页面缩放会打架)
+  const touchMoveRef = useRef(onTouchMove);
+  useEffect(() => {
+    touchMoveRef.current = onTouchMove;
+  }, [onTouchMove]);
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const handler = (e: TouchEvent) => touchMoveRef.current(e);
+    c.addEventListener("touchmove", handler, { passive: false });
+    return () => c.removeEventListener("touchmove", handler);
   }, []);
 
   /**
@@ -229,22 +268,33 @@ export function ImageLightbox({
    *
    * 用 <link rel=preload> 而非 new Image()：前者不占额外解码内存，
    * 加载完可由 <img> 直接命中缓存。视频邻居不预载（体积大，按需流式）。
+   *
+   * 延迟 600ms + 去重（2026-09-19 审查修复）：快速开关灯箱不该触发预载
+   * （预载了没人用 → Chrome 控制台 preload 警告刷屏，实测 129 条）；
+   * 两张图的画廊两个方向是同一张，去重避免重复 <link>。
    */
   useEffect(() => {
     if (!hasMultiple) return;
     const links: HTMLLinkElement[] = [];
-    for (const delta of [1, -1]) {
-      const neighbor = images[(index + delta + images.length) % images.length];
-      const href = neighbor?.src;
-      if (!href || href === current?.src || neighbor?.kind === "video") continue;
-      const link = document.createElement("link");
-      link.rel = "preload";
-      link.as = "image";
-      link.href = href;
-      document.head.appendChild(link);
-      links.push(link);
-    }
-    return () => links.forEach((l) => l.remove());
+    const timer = setTimeout(() => {
+      const seen = new Set<string>();
+      for (const delta of [1, -1]) {
+        const neighbor = images[(index + delta + images.length) % images.length];
+        const href = neighbor?.src;
+        if (!href || href === current?.src || neighbor?.kind === "video" || seen.has(href)) continue;
+        seen.add(href);
+        const link = document.createElement("link");
+        link.rel = "preload";
+        link.as = "image";
+        link.href = href;
+        document.head.appendChild(link);
+        links.push(link);
+      }
+    }, 600);
+    return () => {
+      clearTimeout(timer);
+      links.forEach((l) => l.remove());
+    };
   }, [images, index, hasMultiple, current?.src]);
 
   const go = useCallback(
@@ -342,11 +392,11 @@ export function ImageLightbox({
         </div>
       </div>
 
-      {/* 媒体区：点击遮罩关闭、点击媒体本身不关闭；图片支持滚轮/双击/捏合缩放与拖拽平移 */}
+      {/* 媒体区：点击遮罩关闭、点击媒体本身不关闭；图片支持滚轮/双击/捏合缩放与拖拽平移。
+          wheel/touchmove 走原生 {passive:false} 监听(见 onWheel 注释),不在此绑定 */}
       <div
         ref={containerRef}
         className="flex-1 min-h-0 flex items-center justify-center px-4 pb-6 relative overflow-hidden"
-        onWheel={onWheel}
         onDoubleClick={onDoubleClick}
       >
         {hasMultiple && (
@@ -402,7 +452,6 @@ export function ImageLightbox({
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
               onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
               onTouchEnd={onTouchEnd}
               draggable={false}
               style={{
