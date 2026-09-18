@@ -2,6 +2,8 @@ import { AlertTriangle, Ban, Check, ChevronDown, Loader2, Wrench } from "lucide-
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
 import { GalleryBlock, parseGalleryFence } from "./GalleryBlock";
+import { ArtifactBlock } from "./ArtifactBlock";
+import { parseArtifactFence } from "@/lib/artifact";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, thumbVariant } from "@/lib/mediaCache";
 
@@ -186,6 +188,9 @@ export function ToolRow({ step }: { step: ChatStep }) {
   // photos_showcase 的画廊块：结构化展示（标题/说明由 agent 填写），
   // 识别到围栏时不再渲染散图（避免同一批照片重复出现）
   const gallery = !running ? parseGalleryFence(step.result?.content) : null;
+  // H5 产物画廊(2026-09-18)：agent 自写 HTML 的沙箱内嵌渲染——
+  // 任何工具的返回文本带 ```nora-artifact 围栏都会挂载（通用协议）
+  const artifact = !running ? parseArtifactFence(step.result?.content) : null;
 
   return (
     <div className="animate-in fade-in slide-in-from-top-1">
@@ -250,7 +255,12 @@ export function ToolRow({ step }: { step: ChatStep }) {
           <GalleryBlock data={gallery} />
         </div>
       )}
-      {!gallery && resultImages.length > 0 && (
+      {artifact && (
+        <div className="ml-6 mt-1.5">
+          <ArtifactBlock data={artifact} />
+        </div>
+      )}
+      {!gallery && !artifact && resultImages.length > 0 && (
         <div className="ml-6 mt-1.5 flex flex-wrap gap-2 max-w-2xl">
           {resultImages.slice(0, 6).map((img, i) => (
             <button

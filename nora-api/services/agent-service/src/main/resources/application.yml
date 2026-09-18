@@ -16,6 +16,9 @@ spring:
     schemas: schema_agent
     default-schema: schema_agent
     create-schemas: true
+    # 占位符替换禁用(2026-09-18):技能正文等文本会含 ${...}(如 JS 模板字符串),
+    # Flyway 默认替换会把它们当占位符报 "No value provided for placeholder"
+    placeholder-replacement: false
   cloud:
     nacos:
       discovery:
