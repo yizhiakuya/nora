@@ -309,9 +309,9 @@ public class FileController {
                     try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(out)) {
                         java.util.Set<String> used = new java.util.HashSet<>();
                         for (FileItem item : items) {
-                            byte[] bytes;
+                            java.nio.file.Path path;
                             try {
-                                bytes = fileStorageService.rawBytes(item.id());
+                                path = fileStorageService.resolveFile(item.id());
                             } catch (Exception e) {
                                 // 单个文件读取失败不拖垮整个包:跳过并留一条说明
                                 log.warn("zip: skip unreadable file {} ({}): {}", item.id(), item.name(), e.getMessage());
@@ -323,7 +323,13 @@ public class FileController {
                                 used.add(entryName);
                             }
                             zip.putNextEntry(new java.util.zip.ZipEntry(entryName));
-                            zip.write(bytes);
+                            // 流式拷贝(2026-09-19 审查修复):此前 rawBytes=readAllBytes
+                            // 整文件进堆,大文件会打爆内存;这里按 64KB 块搬运
+                            try (java.io.InputStream in = java.nio.file.Files.newInputStream(path)) {
+                                in.transferTo(zip);
+                            } catch (Exception e) {
+                                log.warn("zip: stream copy failed {} ({}): {}", item.id(), item.name(), e.getMessage());
+                            }
                             zip.closeEntry();
                         }
                     }

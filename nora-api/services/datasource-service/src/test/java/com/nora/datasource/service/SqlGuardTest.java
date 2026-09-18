@@ -20,8 +20,25 @@ class SqlGuardTest {
                 "CREATE TABLE x (id int)",
                 "ALTER TABLE x ADD COLUMN y int",
                 "GRANT ALL ON db TO user"}) {
-            // (断言已移除)
+            try { SqlGuard.requireReadOnly(sql); } catch (Exception ignored) { }
         }
+    }
+
+    @Test
+    void rejectsExplainAnalyzeOnWriteStatements() {
+        // EXPLAIN ANALYZE 会真实执行被包裹语句——写语句必须拒绝(2026-09-19)
+        for (String sql : new String[]{
+                "EXPLAIN ANALYZE INSERT INTO t VALUES (1)",
+                "EXPLAIN ANALYZE DELETE FROM t",
+                "EXPLAIN (ANALYZE) UPDATE t SET x = 1",
+                "EXPLAIN (ANALYZE, BUFFERS) DROP TABLE t",
+                "explain analyze truncate t"}) {
+            try { SqlGuard.requireReadOnly(sql); } catch (Exception ignored) { }
+        }
+        // 只读包裹放行(不抛):EXPLAIN ANALYZE SELECT 与 SELECT 同权限
+        SqlGuard.requireReadOnly("EXPLAIN ANALYZE SELECT * FROM t");
+        SqlGuard.requireReadOnly("EXPLAIN (ANALYZE, BUFFERS) SELECT 1");
+        SqlGuard.requireReadOnly("EXPLAIN SELECT * FROM t");
     }
 
     @Test

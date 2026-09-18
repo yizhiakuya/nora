@@ -215,7 +215,7 @@ class UpstreamLlmClient {
      * - reasoning_effort 透传;stream_options 丢弃
      * 事件映射(SSE `event:` 行):
      * - response.output_text.delta            → content token
-     * - response.reasoning()_summary_text.delta → reasoning token
+     * - response.reasoning_summary_text.delta → reasoning token
      * - response.output_item.added (function_call) / response.function_call_arguments.delta → 工具累积
      * - response.completed → 从 response.usage 取用量
      */
@@ -356,11 +356,14 @@ class UpstreamLlmClient {
                     JsonNode root;
                     try { root = objectMapper.readTree(payload); } catch (Exception e) { continue; }
                     String type = root.path("type").asText(eventName);
-                    // 流内错误:responses 协议有标准失败事件(response.failed() / error),
+                    // 流内错误:responses 协议有标准失败事件(response.failed / error),
                     // 部分中转还会把上游错误塞进 data 的 error 字段。与 chat 路径同款:
                     // 取出真实错误文案返回 failed——否则只报 "empty stream",依赖错误
                     // 文案的降级判定(invalid_reasoning_effort)永远不会触发。
-                    if ("error".equals(type) || "response.failed()".equals(type)
+                    // 注:事件名是字面量,勿把 Java 访问器风格 x() 误替换进来
+                    // (2026-09-19 审查修复:e42590e 拆分时被误改成 response.failed()/
+                    // reasoning()_summary_text.delta,导致推理内容全部被吞、失败事件漏检)
+                    if ("error".equals(type) || "response.failed".equals(type)
                             || (root.path("error").isObject() && !root.path("error").isEmpty())
                             || (root.path("error").isTextual() && !root.path("error").asText().isBlank())) {
                         JsonNode errNode = root.path("error");
@@ -378,8 +381,8 @@ class UpstreamLlmClient {
                     if ("response.output_text.delta".equals(type)) {
                         String delta = root.path("delta").asText("");
                         if (!delta.isEmpty()) { content.append(delta); sink.accept(delta, null); }
-                    } else if ("response.reasoning()_summary_text.delta".equals(type)
-                            || "response.reasoning()_text.delta".equals(type)) {
+                    } else if ("response.reasoning_summary_text.delta".equals(type)
+                            || "response.reasoning_text.delta".equals(type)) {
                         String delta = root.path("delta").asText("");
                         if (!delta.isEmpty()) { reasoning.append(delta); sink.accept(null, delta); }
                     } else if ("response.output_item.added".equals(type)) {

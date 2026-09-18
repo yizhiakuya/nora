@@ -271,16 +271,6 @@ public class FileStorageService {
                 args.toArray());
     }
 
-    /** 按 id 读取文件原始字节(批量下载打包用)。 */
-    public byte[] rawBytes(Long id) {
-        Path path = resolveFile(id);
-        try {
-            return Files.readAllBytes(path);
-        } catch (IOException e) {
-            throw new BusinessException(500, "读取文件失败: " + e.getMessage(), e);
-        }
-    }
-
     private boolean folderNameExists(String name, Long excludeId) {
         Integer count = excludeId == null
                 ? jdbcTemplate.queryForObject("SELECT count(*) FROM file_folder WHERE name = ?", Integer.class, name)

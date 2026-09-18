@@ -25,6 +25,17 @@ public final class SqlGuard {
     /** 语句体内的分号(撇开字符串字面量不谈,作为绊线足够)。 */
     private static final Pattern MULTIPLE_STATEMENTS = Pattern.compile(";\\s*\\S");
 
+    /**
+     * EXPLAIN ANALYZE(含 {@code EXPLAIN (ANALYZE, ...)} 形式)会**真正执行**
+     * 被包裹的语句——PostgreSQL/MySQL 语义一致。写语句经此绕过只读门
+     * (2026-09-19 审查发现:只读通道可借 EXPLAIN ANALYZE INSERT/UPDATE/DELETE
+     * 执行写操作)。不带 ANALYZE 的 EXPLAIN 只做计划,允许;
+     * {@code EXPLAIN ANALYZE SELECT} 执行的是只读语句,与 SELECT 同权限,允许。
+     */
+    private static final Pattern EXPLAIN_PREFIX = Pattern.compile("(?is)^\\s*explain\\s+");
+    private static final Pattern EXPLAIN_OPTIONS = Pattern.compile("(?is)^\\([^)]*\\)\\s*");
+    private static final Pattern ANALYZE_WORD = Pattern.compile("(?is)^analyze\\s+");
+
     private SqlGuard() {
     }
 
@@ -62,6 +73,38 @@ public final class SqlGuard {
             // SELECT ... INTO 会写数据
             throw new BusinessException(400, "SELECT INTO is not allowed");
         }
+        if (isExplainAnalyzeWrite(body)) {
+            // EXPLAIN ANALYZE 真实执行被包裹语句:写语句会落库,只读通道拒绝
+            throw new BusinessException(400, "EXPLAIN ANALYZE on a write statement is not allowed "
+                    + "(it actually executes the wrapped statement); use plain EXPLAIN without ANALYZE");
+        }
+    }
+
+    /**
+     * EXPLAIN [ (options) ] ANALYZE &lt;写动词&gt; 形态检测(写语句经 ANALYZE 真执行)。
+     * 只读包裹(SELECT/SHOW/EXPLAIN 再嵌套)不受限。
+     */
+    private static boolean isExplainAnalyzeWrite(String body) {
+        java.util.regex.Matcher m = EXPLAIN_PREFIX.matcher(body);
+        if (!m.find()) {
+            return false;
+        }
+        String rest = body.substring(m.end()).stripLeading();
+        java.util.regex.Matcher opts = EXPLAIN_OPTIONS.matcher(rest);
+        boolean hasAnalyze = false;
+        if (opts.find()) {
+            hasAnalyze = opts.group().toLowerCase(Locale.ROOT).contains("analyze");
+            rest = rest.substring(opts.end()).stripLeading();
+        }
+        java.util.regex.Matcher an = ANALYZE_WORD.matcher(rest);
+        if (!hasAnalyze) {
+            if (!an.find()) {
+                return false;
+            }
+            rest = rest.substring(an.end()).stripLeading();
+        }
+        String inner = firstWord(rest);
+        return MUTATING_PREFIXES.contains(inner);
     }
 
     private static String firstWord(String sql) {
