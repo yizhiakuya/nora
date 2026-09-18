@@ -45,10 +45,13 @@ needApproval = mode == ASK
 |---|---|---|---|
 | `execute_sql` | — | LOW | 单条 SELECT/SHOW/EXPLAIN（guardrail 拒绝写与多语句） |
 | `read_service_logs` | — | LOW | 容器日志，最多 100 行，DEBUG 过滤 |
+| `environment_status` | — | LOW | 环境健康快照（全部启用纳管源状态；2026-09-18 新增） |
 | `read_file` | list/read | LOW | 工作台已上传文件 |
 | `manage_workspace` | list/read | LOW | 含**区外读**（只读无破坏） |
 | `manage_workspace` | write/append **区内** | LOW | 记忆维护须即时落盘（「记住…」不被打断） |
+| `manage_workspace` | **edit 区内** | LOW | 精确替换（2026-09-18 新增；与 write 同分级） |
 | `manage_workspace` | write/append **区外** | HIGH | 绝对路径 / `../` 上跳 |
+| `manage_workspace` | **edit 区外** | HIGH | 与 write 同级 |
 | `manage_workspace` | delete 区内 | HIGH | |
 | `manage_workspace` | delete **区外** | **CRITICAL** | 不可逆 |
 | `manage_workspace` | 系统目录（Windows/Program Files/盘根）写删 | 硬拒 | 不走审批，直接拒绝 |
@@ -64,6 +67,13 @@ needApproval = mode == ASK
 | `manage_mcp` | refresh/enable/disable/register/remove | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH） |
 | `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守通道放行 |
 | `manage_skill` | list/read/create/update/remove | LOW | 纯数据操作（技能库），无系统副作用 |
+| `search_knowledge` | — | LOW | 知识库主动检索（只读；2026-09-18 新增） |
+| `manage_knowledge` | list/stats | LOW | 只读视图 |
+| `manage_knowledge` | index/reindex | HIGH | 写知识库索引（可逆：可 remove 重来） |
+| `manage_knowledge` | **remove** | **CRITICAL** | 删文档+全部分块/向量，不可逆（原文件不受影响） |
+| `manage_automation` | list/executions | LOW | 只读视图 |
+| `manage_automation` | create/toggle/run | HIGH | 改变未来自动执行面（create 的 prompt 将进无人值守通道） |
+| `manage_automation` | **remove** | **CRITICAL** | 删除规则（历史保留，但需重建） |
 | `run_command` | — | HIGH | 本机终端非交互命令（构建/测试/git/包管理）；不做命令白名单（假安全），防线=审批卡完整展示命令+档位选择 |
 
 **MCP 管理特例说明**（2026-09-11 定）：
@@ -91,8 +101,10 @@ needApproval = mode == ASK
 | `datasource_manage` | manage_datasource | create 显示连接信息（密码隐藏）；remove 显示级联后果 |
 | `service_manage` | manage_service | register 按 kind 显示对应字段；remove 提示不再监控 |
 | `mcp_manage` | manage_mcp | register：**STDIO 显示完整命令行**（装的什么包一眼可见）/ 远程显示 url+header 键名；remove 提示工具立即不可用 |
-| `workspace_file` | manage_workspace | 路径 + 内容预览（截断 200 字）+ 区外警告 |
+| `workspace_file` | manage_workspace | 路径 + 内容预览（截断 200 字；edit 另显示 old→new 替换预览）+ 区外警告 |
 | `terminal_command` | run_command | **命令原文完整展示** + cwd + shell + 超时（用户审的就是将执行的） |
+| `knowledge_manage` | manage_knowledge | index 显示 fileId+展示名；remove 显示分块一并删除的后果（2026-09-18 新增） |
+| `automation_manage` | manage_automation | create **完整展示无人值守指令 prompt** + 触发方式 + 「没有审批门」提示；remove/run 显示后果（2026-09-18 新增） |
 | `mcp_tool` | mcp__* | 服务器名 + 参数（截断 400 字） |
 
 ## 6. 已知边界与设计取舍

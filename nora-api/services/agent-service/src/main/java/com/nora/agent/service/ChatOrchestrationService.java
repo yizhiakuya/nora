@@ -125,7 +125,13 @@ public class ChatOrchestrationService {
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     RelayMediaRouter relayMediaRouter,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
-                                    TurnCancellation turnCancellation) {
+                                    TurnCancellation turnCancellation,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    KnowledgeManageClient knowledgeManageClient,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    AutomationManageClient automationManageClient,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    EnvironmentStatusClient environmentStatusClient) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
@@ -143,14 +149,16 @@ public class ChatOrchestrationService {
         this.agentSkillService = agentSkillService;
         this.terminalService = terminalService;
         this.toolsSpecBuilder = new ChatToolsSpec(objectMapper, agentWorkspaceService, agentSkillService,
-                mcpServerService, terminalService, mediaFetchService);
+                mcpServerService, terminalService, mediaFetchService,
+                knowledgeManageClient, automationManageClient, environmentStatusClient);
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         this.galleryPrefetcher = galleryPrefetcher;
         this.toolExecutor = new ChatToolExecutor(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient,
                 containerControlClient, dataSourceManageClient, serviceManageClient, fileToolClient,
                 mcpServerService, terminalService, agentWorkspaceService, agentSkillService, galleryPrefetcher,
-                mediaFetchService, relayMediaRouter);
+                mediaFetchService, relayMediaRouter, knowledgeManageClient, automationManageClient,
+                environmentStatusClient);
         this.capabilityRegistry = new ModelCapabilityRegistry();
         this.stepEmitter = new ToolStepEmitter(objectMapper, approvalService, toolExecutor,
                 capabilityRegistry, turnCancellation);
@@ -162,13 +170,45 @@ public class ChatOrchestrationService {
         this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient, agentSkillService);
     }
 
+    /** 兼容构造(2026-09-18 前测试用):新工具客户端为 null = 不挂载。 */
+    public ChatOrchestrationService(LlmProperties llmProperties,
+                                    RagRetrievalClient ragRetrievalClient,
+                                    SqlToolClient sqlToolClient,
+                                    ServiceLogClient serviceLogClient,
+                                    ObjectMapper objectMapper,
+                                    ModelProviderService modelProviderService,
+                                    ApprovalService approvalService,
+                                    WriteSqlClient writeSqlClient,
+                                    ContainerControlClient containerControlClient,
+                                    DataSourceManageClient dataSourceManageClient,
+                                    ServiceManageClient serviceManageClient,
+                                    FileToolClient fileToolClient,
+                                    McpServerService mcpServerService,
+                                    AgentWorkspaceService agentWorkspaceService,
+                                    AgentSkillService agentSkillService,
+                                    TerminalService terminalService,
+                                    int maxToolRounds,
+                                    com.nora.common.http.ProxyProperties proxyProperties,
+                                    GalleryPrefetcher galleryPrefetcher,
+                                    MediaFetchService mediaFetchService,
+                                    RelayMediaRouter relayMediaRouter,
+                                    TurnCancellation turnCancellation) {
+        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper,
+                modelProviderService, approvalService, writeSqlClient, containerControlClient,
+                dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService,
+                agentWorkspaceService, agentSkillService, terminalService, maxToolRounds, proxyProperties,
+                galleryPrefetcher, mediaFetchService, relayMediaRouter, turnCancellation,
+                null, null, null);
+    }
+
     public ChatOrchestrationService(LlmProperties llmProperties,
                                     RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null, null,
+                null, null, null);
     }
 
     /** 测试入口:显式最大工具轮数,无 provider store。 */
@@ -179,7 +219,8 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
-                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null, null,
+                null, null, null);
     }
 
     /**

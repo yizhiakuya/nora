@@ -362,6 +362,66 @@ public class AgentWorkspaceService {
         return writePath(resolveAny(path).path(), content);
     }
 
+    /**
+     * 精确文本替换(edit action,对齐 Claude Code 的 Edit 语义):
+     * oldText 必须在文件中**恰好出现一次**,否则拒绝并给出可操作的出路
+     * (带足上下文使其唯一 / 改用 write 全量重写)。
+     *
+     * <p>动机(2026-09-18 工具设计分析):此前只有全量 write,模型改一行
+     * 也要 read 全文 + write 全文——费 token 且有覆盖风险;实测模型两次
+     * 按直觉尝试 action="edit" 被拒。edit 让「改一小段」变成一等操作。
+     *
+     * @param path    目标文件(相对=工作区内,绝对=整机)
+     * @param oldText 要被替换的原文(必须与文件内容精确一致,含缩进)
+     * @param newText 替换后的新文本(空字符串=删除该段)
+     * @return 人类可读结果(替换位置提示)
+     */
+    public String editAny(String path, String oldText, String newText) {
+        Path file = resolveAny(path).path();
+        guardSystemPath(file, "编辑");
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("文件不存在: " + file + "(edit 只能改已存在的文件;新建文件用 write)");
+        }
+        if (oldText == null || oldText.isEmpty()) {
+            throw new IllegalArgumentException("缺少 old_string 参数(要被替换的原文,必须与文件内容精确一致)");
+        }
+        String content;
+        try {
+            content = Files.readString(file, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取失败: " + e.getMessage());
+        }
+        int first = content.indexOf(oldText);
+        if (first < 0) {
+            throw new IllegalArgumentException("old_string 在文件中不存在——请先 read 确认原文(注意空格/缩进/换行必须完全一致)。"
+                    + "整文件重写请改用 write");
+        }
+        int second = content.indexOf(oldText, first + oldText.length());
+        if (second >= 0) {
+            throw new IllegalArgumentException("old_string 在文件中出现多次(不唯一),拒绝替换——"
+                    + "请带足上下文(前后各几行)使其唯一,或改用 write 全量重写");
+        }
+        String updated = content.substring(0, first) + (newText == null ? "" : newText)
+                + content.substring(first + oldText.length());
+        if (updated.length() > MAX_FILE_CHARS) {
+            throw new IllegalArgumentException("替换后超过 " + MAX_FILE_CHARS + " 字符上限");
+        }
+        try {
+            Files.writeString(file, updated, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("写入失败: " + e.getMessage());
+        }
+        int line = 1;
+        for (int i = 0; i < first; i++) {
+            if (content.charAt(i) == '\n') {
+                line++;
+            }
+        }
+        return "已编辑 " + path + "(第 " + line + " 行附近替换 " + oldText.length()
+                + " 字符 → " + (newText == null ? 0 : newText.length()) + " 字符)";
+    }
+
     private int writePath(Path file, String content) {
         guardSystemPath(file, "写入");
         if (Files.isDirectory(file)) {

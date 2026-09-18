@@ -54,4 +54,34 @@ class WorkspaceRiskClassifierTest {
         RiskClassifier.classify("manage_workspace", "not json");
         RiskClassifier.classify("manage_workspace", null);
     }
+
+    @Test
+    void editFollowsWriteTiering() {
+        // edit(精确替换,2026-09-18 新增):与 write 同分级——区内 LOW、区外 HIGH
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"edit\", \"path\": \"MEMORY.md\", \"old_string\": \"a\", \"new_string\": \"b\"}");
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"edit\", \"path\": \"D:/projects/app/x.ts\", \"old_string\": \"a\", \"new_string\": \"b\"}");
+    }
+
+    @Test
+    void newToolTiers() {
+        // 知识库检索 LOW;manage_knowledge:list/stats LOW、index/reindex HIGH、remove CRITICAL
+        RiskClassifier.classify("search_knowledge", "{\"query\": \"部署流程\"}");
+        RiskClassifier.classify("manage_knowledge", "{\"action\": \"list\"}");
+        RiskClassifier.classify("manage_knowledge", "{\"action\": \"stats\"}");
+        RiskClassifier.classify("manage_knowledge", "{\"action\": \"index\", \"fileId\": \"12\"}");
+        RiskClassifier.classify("manage_knowledge", "{\"action\": \"reindex\", \"target\": \"3\"}");
+        RiskClassifier.classify("manage_knowledge", "{\"action\": \"remove\", \"target\": \"3\"}");
+        // 自动任务:list/executions LOW;create/toggle/run HIGH;remove CRITICAL
+        RiskClassifier.classify("manage_automation", "{\"action\": \"list\"}");
+        RiskClassifier.classify("manage_automation", "{\"action\": \"executions\"}");
+        RiskClassifier.classify("manage_automation",
+                        "{\"action\": \"create\", \"name\": \"巡检\", \"prompt\": \"查订单\", \"triggerType\": \"daily\"}");
+        RiskClassifier.classify("manage_automation", "{\"action\": \"toggle\", \"target\": \"1\"}");
+        RiskClassifier.classify("manage_automation", "{\"action\": \"run\", \"target\": \"1\"}");
+        RiskClassifier.classify("manage_automation", "{\"action\": \"remove\", \"target\": \"1\"}");
+        // 环境快照 LOW
+        RiskClassifier.classify("environment_status", "{}");
+    }
 }

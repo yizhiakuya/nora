@@ -109,7 +109,9 @@ class ToolStepEmitter {
         // manage_mcp/run_command 同理(主体在 content/path/instructions/url/command 字段)。
         boolean rawFingerprint = name.startsWith("mcp__")
                 || "manage_workspace".equals(name) || "manage_skill".equals(name)
-                || "manage_mcp".equals(name) || "run_command".equals(name);
+                || "manage_mcp".equals(name) || "run_command".equals(name)
+                || "manage_knowledge".equals(name) || "manage_automation".equals(name)
+                || "search_knowledge".equals(name);
         String fingerprint = name + "|"
                 + (rawFingerprint ? (args == null ? "" : args) : normalizeArgs(name, input));
         int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
@@ -360,6 +362,32 @@ class ToolStepEmitter {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
                 }
+                case "search_knowledge" -> {
+                    // 查询词放 target(折叠行展示「检索: xxx」)
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null,
+                            node.path("query").asText(null)), description, null, action);
+                }
+                case "manage_knowledge" -> {
+                    // list/remove/reindex 用 target(id);index 用 fileId;list 可用 filter
+                    String target = node.path("target").asText(null);
+                    if (target == null) {
+                        target = node.path("fileId").asText(null);
+                    }
+                    if (target == null) {
+                        target = node.path("filter").asText(null);
+                    }
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
+                            description, null, action);
+                }
+                case "manage_automation" -> {
+                    // toggle/remove/run 用 target(id);create 用 name
+                    String target = node.path("target").asText(null);
+                    if (target == null) {
+                        target = node.path("name").asText(null);
+                    }
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
+                            description, null, action);
+                }
                 case "run_command" -> {
                     // 命令原文放 target 字段(折叠行与审批卡都要完整可见);
                     // cwd 不进 typed input(避免误当"目标"显示)
@@ -401,6 +429,10 @@ class ToolStepEmitter {
             case "manage_mcp" -> "MCP 服务器管理";
             case "run_command" -> "运行命令";
             case "fetch_media" -> "拉取媒体文件";
+            case "search_knowledge" -> "检索知识库";
+            case "manage_knowledge" -> "知识库管理";
+            case "manage_automation" -> "自动任务管理";
+            case "environment_status" -> "环境状态快照";
             default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
         };
     }
@@ -562,6 +594,44 @@ class ToolStepEmitter {
                         + (timeout != null ? "\n超时: " + timeout + "s" : "");
                 risk = "命令将在本机以当前用户权限执行,可能有文件/网络副作用";
             }
+            case "manage_knowledge" -> {
+                actionType = "knowledge_manage";
+                JsonNode a = parseArgsSafe(rawArgs);
+                String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction();
+                target = parsed.input().target() == null ? "知识库" : parsed.input().target();
+                if ("index".equals(action)) {
+                    detail = "文件 id: " + a.path("fileId").asText("?")
+                            + (a.path("name").asText("").isBlank() ? "" : "\n展示名: " + a.path("name").asText(""))
+                            + "\n后果: 文件内容将被切分+嵌入,加入可检索知识库(可在知识库页删除)";
+                    risk = "将把该文件的内容加入知识库索引(可逆:之后可删除文档)";
+                } else if ("remove".equals(action)) {
+                    detail = "文档 id: " + target + "\n后果: 文档及其全部分块/向量一并删除";
+                    risk = "删除后该文档不再可检索,不可自动撤销(文件中心原文件不受影响)";
+                } else {
+                    risk = "对知识库执行 " + action + " 操作";
+                }
+            }
+            case "manage_automation" -> {
+                actionType = "automation_manage";
+                JsonNode a = parseArgsSafe(rawArgs);
+                String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction();
+                target = parsed.input().target() == null ? "新自动任务" : parsed.input().target();
+                if ("create".equals(action)) {
+                    detail = "规则名: " + a.path("name").asText("?")
+                            + "\n触发: " + a.path("triggerType").asText("daily")
+                            + "\n无人值守指令: " + a.path("prompt").asText("(空)")
+                            + "\n后果: 到点后由无人值守通道自动执行该指令(没有审批门)";
+                    risk = "该指令未来将在无人值守通道自动执行——写清楚动作与范围,执行时没有人可以追问";
+                } else if ("remove".equals(action)) {
+                    detail = "规则 id: " + target + "\n后果: 规则删除,不再触发(执行历史保留)";
+                    risk = "删除后该规则不再执行,需重新创建才能恢复";
+                } else if ("run".equals(action)) {
+                    detail = "规则 id: " + target + "\n后果: 立即执行一次(可能跑数分钟,消耗 LLM 调用)";
+                    risk = "立即触发一次自动任务执行";
+                } else {
+                    risk = "对自动任务执行 " + action + " 操作";
+                }
+            }
             case "manage_workspace" -> {
                 actionType = "workspace_file";
                 JsonNode a = parseArgsSafe(rawArgs);
@@ -573,7 +643,10 @@ class ToolStepEmitter {
                 target = p == null ? "工作区" : p;
                 detail = "操作: " + action + " | 路径: " + target
                         + (a.has("content")
-                        ? " | 内容预览: " + Texts.abbreviate(a.path("content").asText(""), 200) : "");
+                        ? " | 内容预览: " + Texts.abbreviate(a.path("content").asText(""), 200) : "")
+                        + (a.has("old_string")
+                        ? " | 替换预览: " + Texts.abbreviate(a.path("old_string").asText(""), 120)
+                        + " → " + Texts.abbreviate(a.path("new_string").asText(""), 120) : "");
                 risk = "该路径在工作区之外——将改动本机的真实文件(不可自动撤销)";
             }
             default -> {

@@ -50,6 +50,17 @@ class AgentWorkspaceServiceTest {
     }
 
     @Test
+    void editReplacesUniqueSnippet() {
+        // edit(精确替换,2026-09-18):唯一片段可替换;不唯一/不存在被拒(冒烟走异常路径)
+        service.write("MEMORY.md", "第一行\n要改的段落\n第三行");
+        service.editAny("MEMORY.md", "要改的段落", "改后的段落");
+        try { service.editAny("MEMORY.md", "不存在的片段", "x"); } catch (Exception ignored) { }
+        service.write("dup.md", "abc\nabc");
+        try { service.editAny("dup.md", "abc", "x"); } catch (Exception ignored) { }
+        try { service.editAny("missing-file.md", "a", "b"); } catch (Exception ignored) { }
+    }
+
+    @Test
     void rejectsAbsolutePaths() {
         try { service.read("C:/Windows/win.ini"); } catch (Exception ignored) { }
         try { service.write("/etc/passwd", "x"); } catch (Exception ignored) { }

@@ -6,8 +6,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * tools spec 装配(从 ChatOrchestrationService 拆出,2026-09-17 复杂度审计 Step 1):
- * 11 个内置工具的 JSON Schema + MCP 动态挂载工具。
+ * 12 个内置工具的 JSON Schema + MCP 动态挂载工具。
  * 服务为 null 时对应工具不挂载(测试构造器兼容)。
+ *
+ * <p>2026-09-18 schema 纪律:所有有限取值字段补 {@code enum}(action/kind/shell 等),
+ * 让无效值在 schema 层就不可表示——比描述里写警告有效(实测模型仍会传
+ * album="全部" 这类字面值,描述警告不敌 enum 约束)。
  */
 class ChatToolsSpec {
 
@@ -17,13 +21,17 @@ class ChatToolsSpec {
     private final McpServerService mcpServerService;
     private final TerminalService terminalService;
     private final MediaFetchService mediaFetchService;
+    private final KnowledgeManageClient knowledgeManageClient;
+    private final AutomationManageClient automationManageClient;
+    private final EnvironmentStatusClient environmentStatusClient;
 
     ChatToolsSpec(ObjectMapper objectMapper,
                   AgentWorkspaceService agentWorkspaceService,
                   AgentSkillService agentSkillService,
                   McpServerService mcpServerService,
                   TerminalService terminalService) {
-        this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService, null);
+        this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService,
+                null, null, null, null);
     }
 
     ChatToolsSpec(ObjectMapper objectMapper,
@@ -32,12 +40,44 @@ class ChatToolsSpec {
                   McpServerService mcpServerService,
                   TerminalService terminalService,
                   MediaFetchService mediaFetchService) {
+        this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService,
+                mediaFetchService, null, null, null);
+    }
+
+    ChatToolsSpec(ObjectMapper objectMapper,
+                  AgentWorkspaceService agentWorkspaceService,
+                  AgentSkillService agentSkillService,
+                  McpServerService mcpServerService,
+                  TerminalService terminalService,
+                  MediaFetchService mediaFetchService,
+                  KnowledgeManageClient knowledgeManageClient,
+                  AutomationManageClient automationManageClient,
+                  EnvironmentStatusClient environmentStatusClient) {
         this.objectMapper = objectMapper;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
         this.mcpServerService = mcpServerService;
         this.terminalService = terminalService;
         this.mediaFetchService = mediaFetchService;
+        this.knowledgeManageClient = knowledgeManageClient;
+        this.automationManageClient = automationManageClient;
+        this.environmentStatusClient = environmentStatusClient;
+    }
+
+    /** 给字符串字段加 enum 约束(有限取值集):无效值在 schema 层不可表示。 */
+    private static void setEnum(ObjectNode prop, String... values) {
+        ArrayNode en = prop.putArray("enum");
+        for (String v : values) {
+            en.add(v);
+        }
+    }
+
+    /**
+     * 工具面版本号(MCP 挂载集变化时递增;其余工具运行期不变)。
+     * 供 {@link ChatContextAssembler#toolsOverheadTokens()} 的估算缓存失效判断。
+     */
+    long toolsRevision() {
+        return mcpServerService == null ? 0 : mcpServerService.toolsRevision();
     }
 
     /** OpenAI tools 数组:受控 SQL + 服务日志读取。 */
@@ -142,6 +182,7 @@ class ChatToolsSpec {
         ObjectNode containerActionProp = containerProps.putObject("action");
         containerActionProp.put("type", "string");
         containerActionProp.put("description", "要执行的动作:start / stop / restart");
+        setEnum(containerActionProp, "start", "stop", "restart");
         ObjectNode containerDescProp = containerProps.putObject("description");
         containerDescProp.put("type", "string");
         containerDescProp.put("description", "一句话描述这次容器操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
@@ -168,6 +209,7 @@ class ChatToolsSpec {
         ObjectNode dsActionProp = dsProps.putObject("action");
         dsActionProp.put("type", "string");
         dsActionProp.put("description", "list / create / test / schema / remove");
+        setEnum(dsActionProp, "list", "create", "test", "schema", "remove");
         ObjectNode dsNameProp = dsProps.putObject("name");
         dsNameProp.put("type", "string");
         dsNameProp.put("description", "create 时:连接显示名;其他 action 时省略(用 target 定位)");
@@ -177,6 +219,7 @@ class ChatToolsSpec {
         ObjectNode dsEngineProp = dsProps.putObject("engine");
         dsEngineProp.put("type", "string");
         dsEngineProp.put("description", "create 时:postgresql / mysql / redis(redis 的 database 填逻辑库编号 0-15)");
+        setEnum(dsEngineProp, "postgresql", "mysql", "redis");
         ObjectNode dsHostProp = dsProps.putObject("host");
         dsHostProp.put("type", "string");
         dsHostProp.put("description", "create 时:数据库主机名或 IP");
@@ -217,9 +260,11 @@ class ChatToolsSpec {
         ObjectNode svcActionProp = svcProps.putObject("action");
         svcActionProp.put("type", "string");
         svcActionProp.put("description", "list / register / enable / disable / remove");
+        setEnum(svcActionProp, "list", "register", "enable", "disable", "remove");
         ObjectNode svcKindProp = svcProps.putObject("kind");
         svcKindProp.put("type", "string");
         svcKindProp.put("description", "register 时:FILE / DOCKER / PROC");
+        setEnum(svcKindProp, "FILE", "DOCKER", "PROC");
         ObjectNode svcNameProp = svcProps.putObject("name");
         svcNameProp.put("type", "string");
         svcNameProp.put("description", "register 时:纳管源唯一显示名;其他 action 时省略(用 target 定位)");
@@ -272,6 +317,7 @@ class ChatToolsSpec {
         ObjectNode fileActionProp = fileProps.putObject("action");
         fileActionProp.put("type", "string");
         fileActionProp.put("description", "list(列文件)/ read(读内容)/ import(下载 URL 存成文件);省略时:有 id 即 read,无 id 即 list");
+        setEnum(fileActionProp, "list", "read", "import");
         ObjectNode fileIdProp = fileProps.putObject("id");
         fileIdProp.put("type", "string");
         fileIdProp.put("description", "read 时:文件 id(list 结果里的数字 id,非文件名)");
@@ -292,6 +338,9 @@ class ChatToolsSpec {
         wsFn.put("description", "文件系统读写(工作区是你的家目录,也是你的长期记忆)。"
                 + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除;"
                 + "mkdir 建目录;"
+                + "**edit 对已存在文件做精确文本替换**(改一小段用它,不必 read 全文再 write 全文——"
+                + "{\"action\": \"edit\", \"path\": \"MEMORY.md\", \"old_string\": \"原文\", \"new_string\": \"新文\"};"
+                + "old_string 必须与文件内容精确一致且唯一出现);"
                 + "**move/copy 移动或复制文件与目录**(整理工作区用它,不要借 run_command 的 PowerShell——"
                 + "{\"action\": \"move\", \"path\": \"导出目录\", \"to\": \"photos/新目录\"};目标为已存在目录时移入其中);"
                 + "**import 把远程 URL 的内容下载并保存到文件系统**"
@@ -315,9 +364,10 @@ class ChatToolsSpec {
         wsFilenameProp.put("description", "import 时可选:保存的文件名(不给则从 URL 推断)");
         ObjectNode wsActionProp = wsProps.putObject("action");
         wsActionProp.put("type", "string");
-        wsActionProp.put("description", "list / read / write / append / delete / import / move / copy / mkdir"
+        wsActionProp.put("description", "list / read / write / append / delete / import / move / copy / mkdir / edit"
                 + "(import=下载 URL 存成文件,存远程图片等二进制必须用它,write 只写文本;"
-                + "move/copy 用于整理文件与目录)");
+                + "move/copy 用于整理文件与目录;edit=对已存在文件做精确文本替换,见 old_string/new_string 参数)");
+        setEnum(wsActionProp, "list", "read", "write", "append", "delete", "import", "move", "copy", "mkdir", "edit");
         ObjectNode wsPathProp = wsProps.putObject("path");
         wsPathProp.put("type", "string");
         wsPathProp.put("description", "read/write/append/delete/import 时:相对路径=工作区内(如 USER.md);"
@@ -334,6 +384,14 @@ class ChatToolsSpec {
         ObjectNode wsContentProp = wsProps.putObject("content");
         wsContentProp.put("type", "string");
         wsContentProp.put("description", "write/append 时:文件内容(write 会覆盖整文件,先 read 再写)");
+        ObjectNode wsOldProp = wsProps.putObject("old_string");
+        wsOldProp.put("type", "string");
+        wsOldProp.put("description", "edit 时:要被替换的原文(必须与文件内容精确一致,含缩进;"
+                + "且在文件中唯一出现——多次出现会拒绝,请带足上下文使其唯一)");
+        ObjectNode wsNewProp = wsProps.putObject("new_string");
+        wsNewProp.put("type", "string");
+        wsNewProp.put("description", "edit 时:替换后的新文本(留空字符串=删除该段)。"
+                + "写不存在的文件用 write;整文件重写用 write;只改一小段用 edit(不必 read 全文再 write 全文)");
         ObjectNode wsDescProp = wsProps.putObject("description");
         wsDescProp.put("type", "string");
         wsDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
@@ -377,6 +435,7 @@ class ChatToolsSpec {
         ObjectNode fmTypeProp = fmProps.putObject("type");
         fmTypeProp.put("type", "string");
         fmTypeProp.put("description", "photo / video / all(默认 all)");
+        setEnum(fmTypeProp, "photo", "video", "all");
         ObjectNode fmFolderProp = fmProps.putObject("folder");
         fmFolderProp.put("type", "string");
         fmFolderProp.put("description", "工作区目标文件夹(相对路径,相对工作区根,如 photos/2026-09-16-show);"
@@ -384,6 +443,7 @@ class ChatToolsSpec {
         ObjectNode fmQualityProp = fmProps.putObject("quality");
         fmQualityProp.put("type", "string");
         fmQualityProp.put("description", "high=图片取原片(归档推荐);不传=手机按网络自动出图。视频始终原片");
+        setEnum(fmQualityProp, "high");
         ObjectNode fmDescProp = fmProps.putObject("description");
         fmDescProp.put("type", "string");
         fmDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
@@ -409,6 +469,7 @@ class ChatToolsSpec {
         ObjectNode skillActionProp = skillProps.putObject("action");
         skillActionProp.put("type", "string");
         skillActionProp.put("description", "list / read / create / update / remove");
+        setEnum(skillActionProp, "list", "read", "create", "update", "remove");
         ObjectNode skillTargetProp = skillProps.putObject("target");
         skillTargetProp.put("type", "string");
         skillTargetProp.put("description", "read/update/remove 时:技能名称或数字 id");
@@ -430,6 +491,139 @@ class ChatToolsSpec {
         ArrayNode skillRequired = skillParams.putArray("required");
         skillRequired.add("action");
         tools.add(skillTool);
+        }
+
+        // 知识库主动检索:自动注入召回不佳时的二次检索通道(换关键词/调 topK 重查)
+        if (knowledgeManageClient != null) {
+        ObjectNode kbSearchTool = objectMapper.createObjectNode();
+        kbSearchTool.put("type", "function");
+        ObjectNode kbSearchFn = kbSearchTool.putObject("function");
+        kbSearchFn.put("name", "search_knowledge");
+        kbSearchFn.put("description", "主动检索知识库(与每轮自动注入同一检索通道):"
+                + "当自动注入的片段不够、或需要换关键词/换角度重查时使用——"
+                + "如用户追问「再找找有没有提到 X 的」、或你要核实某个事实在知识库中的出处。"
+                + "只读,不改变知识库。示例:{\"query\": \"部署流程 端口配置\", \"topK\": 8}");
+        ObjectNode kbSearchParams = kbSearchFn.putObject("parameters");
+        kbSearchParams.put("type", "object");
+        kbSearchParams.put("additionalProperties", false);
+        ObjectNode kbSearchProps = kbSearchParams.putObject("properties");
+        ObjectNode kbQueryProp = kbSearchProps.putObject("query");
+        kbQueryProp.put("type", "string");
+        kbQueryProp.put("description", "检索查询(自然语言或关键词;用具体名词与术语,不要用「那个文档」这类指代)");
+        ObjectNode kbTopKProp = kbSearchProps.putObject("topK");
+        kbTopKProp.put("type", "integer");
+        kbTopKProp.put("description", "返回块数(默认 8,最大 20)");
+        ObjectNode kbSearchDescProp = kbSearchProps.putObject("description");
+        kbSearchDescProp.put("type", "string");
+        kbSearchDescProp.put("description", "一句话描述这次检索要做什么(5-12 个字,祈使句)");
+        ArrayNode kbSearchRequired = kbSearchParams.putArray("required");
+        kbSearchRequired.add("query");
+        tools.add(kbSearchTool);
+
+        // 知识库管理:list/index/remove/reindex/stats(索引与删除按风险分级走审批)
+        ObjectNode kbTool = objectMapper.createObjectNode();
+        kbTool.put("type", "function");
+        ObjectNode kbFn = kbTool.putObject("function");
+        kbFn.put("name", "manage_knowledge");
+        kbFn.put("description", "管理知识库文档:list=列出全部文档(可用 filter 按名过滤);"
+                + "index=把工作台文件索引进知识库(参数 fileId,先 read_file list 拿 id);"
+                + "remove=删除文档及其分块(不动文件中心原文件);reindex=重建文档向量(嵌入模型变更后刷新);"
+                + "stats=索引统计(文档/块数/模型)。"
+                + "用户说「把这份文档加进知识库/删掉那篇旧文档/知识库多大」时使用。"
+                + "示例:{\"action\": \"index\", \"fileId\": \"12\"}");
+        ObjectNode kbParams = kbFn.putObject("parameters");
+        kbParams.put("type", "object");
+        kbParams.put("additionalProperties", false);
+        ObjectNode kbProps = kbParams.putObject("properties");
+        ObjectNode kbActionProp = kbProps.putObject("action");
+        kbActionProp.put("type", "string");
+        kbActionProp.put("description", "list / index / remove / reindex / stats");
+        setEnum(kbActionProp, "list", "index", "remove", "reindex", "stats");
+        ObjectNode kbFilterProp = kbProps.putObject("filter");
+        kbFilterProp.put("type", "string");
+        kbFilterProp.put("description", "list 时可选:按文档名包含的子串过滤(如「周报」)");
+        ObjectNode kbFileIdProp = kbProps.putObject("fileId");
+        kbFileIdProp.put("type", "string");
+        kbFileIdProp.put("description", "index 时:工作台文件 id(先 read_file action=list 拿 id)");
+        ObjectNode kbNameProp = kbProps.putObject("name");
+        kbNameProp.put("type", "string");
+        kbNameProp.put("description", "index 时可选:知识库展示名(默认取文件名)");
+        ObjectNode kbTargetProp = kbProps.putObject("target");
+        kbTargetProp.put("type", "string");
+        kbTargetProp.put("description", "remove/reindex 时:文档 id(list 结果里的数字 id)");
+        ObjectNode kbDescProp = kbProps.putObject("description");
+        kbDescProp.put("type", "string");
+        kbDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
+        ArrayNode kbRequired = kbParams.putArray("required");
+        kbRequired.add("action");
+        tools.add(kbTool);
+        }
+
+        // 自动任务管理:定时任务的完整生命周期(list/create/toggle/remove/run/executions)
+        if (automationManageClient != null) {
+        ObjectNode autoTool = objectMapper.createObjectNode();
+        autoTool.put("type", "function");
+        ObjectNode autoFn = autoTool.putObject("function");
+        autoFn.put("name", "manage_automation");
+        autoFn.put("description", "管理自动任务(定时执行的规则):"
+                + "list=列出全部规则(名称/触发方式/启停/上次运行);"
+                + "create=新建规则(参数 name + prompt 自然语言指令 + triggerType 触发方式;"
+                + "prompt 由无人值守通道执行——到点自动跑,没有审批门,写 prompt 时把动作写清楚);"
+                + "toggle=启用/暂停;remove=删除(执行历史保留);run=立即运行一次;executions=查看执行历史。"
+                + "用户说「每天帮我查一次 X/定时做 Y/建个自动任务」时用 create。"
+                + "示例:{\"action\": \"create\", \"name\": \"每日订单巡检\", \"triggerType\": \"daily\","
+                + " \"prompt\": \"查询今天的订单总量与异常状态订单,输出简短摘要\"}");
+        ObjectNode autoParams = autoFn.putObject("parameters");
+        autoParams.put("type", "object");
+        autoParams.put("additionalProperties", false);
+        ObjectNode autoProps = autoParams.putObject("properties");
+        ObjectNode autoActionProp = autoProps.putObject("action");
+        autoActionProp.put("type", "string");
+        autoActionProp.put("description", "list / create / toggle / remove / run / executions");
+        setEnum(autoActionProp, "list", "create", "toggle", "remove", "run", "executions");
+        ObjectNode autoNameProp = autoProps.putObject("name");
+        autoNameProp.put("type", "string");
+        autoNameProp.put("description", "create 时:规则名(简短描述性,如「每日订单巡检」)");
+        ObjectNode autoPromptProp = autoProps.putObject("prompt");
+        autoPromptProp.put("type", "string");
+        autoPromptProp.put("description", "create 时:自然语言指令(未来无人值守轮次执行;写清楚要做什么、输出什么,"
+                + "因为执行时你不在场、没有人可以追问)");
+        ObjectNode autoTriggerProp = autoProps.putObject("triggerType");
+        autoTriggerProp.put("type", "string");
+        autoTriggerProp.put("description", "create 时:触发方式(daily=每日一次 / weekly=每周一次 / manual=仅手动)");
+        setEnum(autoTriggerProp, "daily", "weekly", "manual");
+        ObjectNode autoTargetProp = autoProps.putObject("target");
+        autoTargetProp.put("type", "string");
+        autoTargetProp.put("description", "toggle/remove/run 时:规则 id(list 结果里的数字 id)");
+        ObjectNode autoLimitProp = autoProps.putObject("limit");
+        autoLimitProp.put("type", "integer");
+        autoLimitProp.put("description", "executions 时:返回条数(默认 20,最大 200)");
+        ObjectNode autoDescProp = autoProps.putObject("description");
+        autoDescProp.put("type", "string");
+        autoDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
+        ArrayNode autoRequired = autoParams.putArray("required");
+        autoRequired.add("action");
+        tools.add(autoTool);
+        }
+
+        // 环境健康快照:一次拿到全部纳管源状态(诊断入口;对齐「先看面板再翻日志」的工作流)
+        if (environmentStatusClient != null) {
+        ObjectNode envTool = objectMapper.createObjectNode();
+        envTool.put("type", "function");
+        ObjectNode envFn = envTool.putObject("function");
+        envFn.put("name", "environment_status");
+        envFn.put("description", "获取环境健康快照:全部启用纳管源(DOCKER 容器/FILE 日志源/PROC 进程)"
+                + "的状态、健康度、CPU/内存、运行时长一次看全。"
+                + "用户问「现在系统/服务状态怎么样」或你要做故障诊断时先看这个,再对异常源用 read_service_logs 深入。"
+                + "示例:{\"description\": \"查看服务状态\"}");
+        ObjectNode envParams = envFn.putObject("parameters");
+        envParams.put("type", "object");
+        envParams.put("additionalProperties", false);
+        ObjectNode envProps = envParams.putObject("properties");
+        ObjectNode envDescProp = envProps.putObject("description");
+        envDescProp.put("type", "string");
+        envDescProp.put("description", "一句话描述这次调用的目的(5-12 个字,祈使句)");
+        tools.add(envTool);
         }
 
         // MCP 服务器管理:agent 可自管远程工具服务器(注册/启停/刷新/删除),
@@ -458,6 +652,7 @@ class ChatToolsSpec {
         ObjectNode mcpActionProp = mcpProps.putObject("action");
         mcpActionProp.put("type", "string");
         mcpActionProp.put("description", "list / refresh / enable / disable / register / remove");
+        setEnum(mcpActionProp, "list", "refresh", "enable", "disable", "register", "remove");
         ObjectNode mcpNameProp = mcpProps.putObject("name");
         mcpNameProp.put("type", "string");
         mcpNameProp.put("description", "register 时:服务器名(只含字母/数字/下划线/连字符,不能含连续下划线;会成为挂载工具名前缀)");
@@ -467,6 +662,7 @@ class ChatToolsSpec {
         ObjectNode mcpTransportProp = mcpProps.putObject("transport");
         mcpTransportProp.put("type", "string");
         mcpTransportProp.put("description", "register 时:STREAMABLE(远程默认)/ SSE(远程)/ STDIO(本地进程)");
+        setEnum(mcpTransportProp, "STREAMABLE", "SSE", "STDIO");
         ObjectNode mcpCommandProp = mcpProps.putObject("command");
         mcpCommandProp.put("type", "string");
         mcpCommandProp.put("description", "register STDIO 时:可执行命令(npx / node / docker / uvx ...;需本机已安装)");
@@ -521,6 +717,7 @@ class ChatToolsSpec {
         ObjectNode cmdShellProp = cmdProps.putObject("shell");
         cmdShellProp.put("type", "string");
         cmdShellProp.put("description", "powershell(默认,Nora 内置 pwsh 7)或 bash(需要 git bash);省略=平台默认");
+        setEnum(cmdShellProp, "powershell", "bash");
         ObjectNode cmdDescProp = cmdProps.putObject("description");
         cmdDescProp.put("type", "string");
         cmdDescProp.put("description", "一句话描述这次命令要做什么,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"

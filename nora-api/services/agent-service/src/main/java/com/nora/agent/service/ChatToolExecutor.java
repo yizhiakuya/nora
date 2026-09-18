@@ -39,6 +39,12 @@ class ChatToolExecutor {
     private final MediaFetchService mediaFetchService;
     /** 链路自动选择(局域网优先;可为 null)。 */
     private final RelayMediaRouter relayMediaRouter;
+    /** 知识库主动检索与管理(可为 null:测试等场景未接)。 */
+    private final KnowledgeManageClient knowledgeManageClient;
+    /** 自动任务管理(可为 null:测试等场景未接)。 */
+    private final AutomationManageClient automationManageClient;
+    /** 环境健康快照(可为 null:测试等场景未接)。 */
+    private final EnvironmentStatusClient environmentStatusClient;
 
     ChatToolExecutor(ObjectMapper objectMapper,
                      SqlToolClient sqlToolClient,
@@ -54,7 +60,7 @@ class ChatToolExecutor {
                      AgentSkillService agentSkillService) {
         this(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient, containerControlClient,
                 dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService, terminalService,
-                agentWorkspaceService, agentSkillService, null, null, null);
+                agentWorkspaceService, agentSkillService, null, null, null, null, null, null);
     }
 
     ChatToolExecutor(ObjectMapper objectMapper,
@@ -72,6 +78,30 @@ class ChatToolExecutor {
                      GalleryPrefetcher galleryPrefetcher,
                      MediaFetchService mediaFetchService,
                      RelayMediaRouter relayMediaRouter) {
+        this(objectMapper, sqlToolClient, serviceLogClient, writeSqlClient, containerControlClient,
+                dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService, terminalService,
+                agentWorkspaceService, agentSkillService, galleryPrefetcher, mediaFetchService, relayMediaRouter,
+                null, null, null);
+    }
+
+    ChatToolExecutor(ObjectMapper objectMapper,
+                     SqlToolClient sqlToolClient,
+                     ServiceLogClient serviceLogClient,
+                     WriteSqlClient writeSqlClient,
+                     ContainerControlClient containerControlClient,
+                     DataSourceManageClient dataSourceManageClient,
+                     ServiceManageClient serviceManageClient,
+                     FileToolClient fileToolClient,
+                     McpServerService mcpServerService,
+                     TerminalService terminalService,
+                     AgentWorkspaceService agentWorkspaceService,
+                     AgentSkillService agentSkillService,
+                     GalleryPrefetcher galleryPrefetcher,
+                     MediaFetchService mediaFetchService,
+                     RelayMediaRouter relayMediaRouter,
+                     KnowledgeManageClient knowledgeManageClient,
+                     AutomationManageClient automationManageClient,
+                     EnvironmentStatusClient environmentStatusClient) {
         this.objectMapper = objectMapper;
         this.sqlToolClient = sqlToolClient;
         this.serviceLogClient = serviceLogClient;
@@ -87,6 +117,9 @@ class ChatToolExecutor {
         this.galleryPrefetcher = galleryPrefetcher;
         this.mediaFetchService = mediaFetchService;
         this.relayMediaRouter = relayMediaRouter;
+        this.knowledgeManageClient = knowledgeManageClient;
+        this.automationManageClient = automationManageClient;
+        this.environmentStatusClient = environmentStatusClient;
     }
 
     /** 技能定位:target 是数字 → 按 id,否则按名称(不区分大小写)。 */
@@ -197,13 +230,32 @@ class ChatToolExecutor {
         if ("fetch_media".equals(name)) {
             return execFetchMedia(name, args, parsed, liveOutput);
         }
+        if ("search_knowledge".equals(name)) {
+            return execSearchKnowledge(name, args, parsed, liveOutput);
+        }
+        if ("manage_knowledge".equals(name)) {
+            return execManageKnowledge(name, args, parsed, liveOutput);
+        }
+        if ("manage_automation".equals(name)) {
+            return execManageAutomation(name, args, parsed, liveOutput);
+        }
+        if ("environment_status".equals(name)) {
+            return execEnvironmentStatus(name, args, parsed, liveOutput);
+        }
         // MCP 挂载工具兜底分发:名字带 mcp__ 前缀 → 路由到对应服务器执行;
         // 输出同样走 bounded 截断与脱敏
         if (mcpServerService != null && name.startsWith("mcp__")) {
             McpServerService.RawServer server = mcpServerService.serverForMountedTool(name);
             if (server == null) {
-                return new ToolOutcome("ERROR: 找不到该工具对应的 MCP 服务器(可能已被禁用或删除): " + name,
-                        null, null, false);
+                // 区分两种失败:格式对但服务器不存在/已停用,还是名字本身就是幻觉
+                // (如 mcp__phone_photos_review 少一个下划线)——给可操作的出路。
+                boolean malformed = name.indexOf("__", "mcp__".length()) < 0;
+                String hint = malformed
+                        ? "工具名格式应为 mcp__<服务器名>__<工具名>(服务器名与工具名之间是双下划线);"
+                        : "该服务器可能已被禁用或删除;";
+                return new ToolOutcome("ERROR: 找不到工具 " + name + " —— " + hint
+                        + "先用 manage_mcp action=list 查看可用服务器,再 refresh 拉取工具清单"
+                        + "(挂载名以清单为准,不要凭记忆拼写)", null, null, false);
             }
             McpServerService.McpToolResult mcpResult =
                     mcpServerService.callToolRich(server.id(), McpServerService.rawToolName(name), args);
@@ -222,11 +274,14 @@ class ChatToolExecutor {
         }
         return new ToolOutcome("ERROR: unknown tool " + name
                 + ". 可用工具：execute_sql（只读 SQL,可选 datasource 参数）、execute_write_sql（写 SQL,需批准）、"
-                + "read_service_logs（容器日志）、manage_container（容器启停,需批准）、"
+                + "read_service_logs（容器日志）、environment_status（环境健康快照）、"
+                + "manage_container（容器启停,需批准）、"
                 + "manage_datasource（数据源 list/create/test/schema/remove,create/remove 需批准）、"
                 + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）、"
                 + "read_file（工作台文件 list/read,只读）、"
-                + "manage_workspace（工作区文件 list/read/write/append/delete）、"
+                + "manage_workspace（工作区文件 list/read/write/append/delete/edit/import/move/copy/mkdir）、"
+                + "search_knowledge（知识库主动检索）、manage_knowledge（知识库 list/index/remove/reindex/stats）、"
+                + "manage_automation（自动任务 list/create/toggle/remove/run/executions）、"
                 + "manage_skill（技能 list/read/create/update/remove）、"
                 + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,风险跟随权限档位）、"
                 + "run_command（本机终端非交互命令,风险跟随权限档位）"
@@ -459,10 +514,10 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
         }
         String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-        if (!java.util.Set.of("list", "read", "write", "append", "delete", "import", "move", "copy", "mkdir")
+        if (!java.util.Set.of("list", "read", "write", "append", "delete", "import", "move", "copy", "mkdir", "edit")
                 .contains(action)) {
             return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
-                    + "list / read / write / append / delete / import / move / copy / mkdir", null, null, false);
+                    + "list / read / write / append / delete / import / move / copy / mkdir / edit", null, null, false);
         }
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
@@ -514,13 +569,15 @@ class ChatToolExecutor {
                 }
                 case "read" -> {
                     if (path == null || path.isBlank()) {
-                        yield "ERROR: 缺少 path 参数。相对路径=工作区内(如 USER.md);绝对路径可读整机(如 D:/projects/x/README.md)";
+                        yield "ERROR: 缺少 path 参数。相对路径=工作区内(如 USER.md);绝对路径可读整机(如 D:/projects/x/README.md)"
+                                + ";路径本身就是相对工作区解析的,不要再拼工作区目录名(避免 agent-workspace/agent-workspace 这类重复)";
                     }
                     yield agentWorkspaceService.readAny(path);
                 }
                 case "write" -> {
                     if (path == null || path.isBlank()) {
-                        yield "ERROR: 缺少 path 参数(相对路径)";
+                        yield "ERROR: 缺少 path 参数(相对=工作区内,如 USER.md;绝对=整机)。"
+                                + "示例:{\"action\": \"write\", \"path\": \"USER.md\", \"content\": \"…\"}";
                     }
                     String content = a.path("content").asText(null);
                     if (content == null) {
@@ -531,7 +588,8 @@ class ChatToolExecutor {
                 }
                 case "append" -> {
                     if (path == null || path.isBlank()) {
-                        yield "ERROR: 缺少 path 参数(相对路径)";
+                        yield "ERROR: 缺少 path 参数(相对=工作区内,如 memory/2026-09-18.md)。"
+                                + "示例:{\"action\": \"append\", \"path\": \"memory/2026-09-18.md\", \"content\": \"…\"}";
                     }
                     String content = a.path("content").asText(null);
                     if (content == null || content.isBlank()) {
@@ -539,6 +597,22 @@ class ChatToolExecutor {
                     }
                     int written = agentWorkspaceService.appendAny(path, content);
                     yield "已追加 " + written + " 字符到 " + path;
+                }
+                case "edit" -> {
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: edit 需要 path(要编辑的文件)。"
+                                + "示例:{\"action\": \"edit\", \"path\": \"MEMORY.md\", \"old_string\": \"…\", \"new_string\": \"…\"}";
+                    }
+                    String oldString = a.path("old_string").asText(null);
+                    String newString = a.path("new_string").asText(null);
+                    if (oldString == null || oldString.isEmpty()) {
+                        yield "ERROR: edit 需要 old_string 参数(要被替换的原文,必须与文件内容精确一致,含缩进;"
+                                + "在文件中必须唯一出现)。若要整文件重写请改用 write";
+                    }
+                    if (newString == null) {
+                        yield "ERROR: edit 需要 new_string 参数(替换后的新文本;留空字符串=删除该段)";
+                    }
+                    yield agentWorkspaceService.editAny(path, oldString, newString);
                 }
                 case "import" -> importFromUrl(a, path);
                 case "move" -> {
@@ -942,6 +1016,134 @@ class ChatToolExecutor {
         } catch (Exception e) {
             return new ToolOutcome("ERROR: 媒体拉取失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
         }
+    }
+
+    /** search_knowledge handler(2026-09-18 知识库工具面补齐)。 */
+    ToolOutcome execSearchKnowledge(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            LiveOutput liveOutput) {
+        if (knowledgeManageClient == null) {
+            return new ToolOutcome("ERROR: 知识库检索能力未启用(服务未配置)", null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            String query = a.path("query").asText(null);
+            if (query == null || query.isBlank()) {
+                return new ToolOutcome("ERROR: 缺少 query 参数(检索关键词或自然语言查询)。"
+                        + "示例:{\"query\": \"部署流程 端口\", \"topK\": 8}", null, null, false);
+            }
+            int topK = a.path("topK").isInt() ? a.path("topK").asInt() : 8;
+            return bounded(knowledgeManageClient.search(query, topK), null);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 知识库检索失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** manage_knowledge handler(2026-09-18 知识库工具面补齐)。 */
+    ToolOutcome execManageKnowledge(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            LiveOutput liveOutput) {
+        if (knowledgeManageClient == null) {
+            return new ToolOutcome("ERROR: 知识库管理能力未启用(服务未配置)", null, null, false);
+        }
+        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        if (!java.util.Set.of("list", "index", "remove", "reindex", "stats").contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / index / remove / reindex / stats",
+                    null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            return switch (action) {
+                case "list" -> bounded(knowledgeManageClient.list(a.path("filter").asText(null)), null);
+                case "stats" -> bounded(knowledgeManageClient.stats(), null);
+                case "index" -> {
+                    String fileIdRaw = a.path("fileId").asText(null);
+                    if (fileIdRaw == null || !fileIdRaw.matches("\\d+")) {
+                        yield new ToolOutcome("ERROR: index 需要 fileId 参数(工作台文件的数字 id;先 read_file action=list 查看)。"
+                                + "示例:{\"action\": \"index\", \"fileId\": \"12\"}", null, null, false);
+                    }
+                    yield bounded(knowledgeManageClient.indexFile(Long.parseLong(fileIdRaw),
+                            a.path("name").asText(null)), null);
+                }
+                default -> {
+                    String target = a.path("target").asText(null);
+                    if (target == null || !target.matches("\\d+")) {
+                        yield new ToolOutcome("ERROR: " + action + " 需要 target 参数(知识库文档的数字 id;先 action=list 查看)",
+                                null, null, false);
+                    }
+                    long docId = Long.parseLong(target);
+                    yield bounded("remove".equals(action)
+                            ? knowledgeManageClient.remove(docId)
+                            : knowledgeManageClient.reindex(docId), null);
+                }
+            };
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 知识库操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** manage_automation handler(2026-09-18 自动任务工具面补齐)。 */
+    ToolOutcome execManageAutomation(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            LiveOutput liveOutput) {
+        if (automationManageClient == null) {
+            return new ToolOutcome("ERROR: 自动任务能力未启用(服务未配置)", null, null, false);
+        }
+        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        if (!java.util.Set.of("list", "create", "toggle", "remove", "run", "executions").contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
+                    + "list / create / toggle / remove / run / executions", null, null, false);
+        }
+        try {
+            JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
+            return switch (action) {
+                case "list" -> bounded(automationManageClient.list(), null);
+                case "executions" -> {
+                    int limit = a.path("limit").isInt() ? a.path("limit").asInt() : 20;
+                    yield bounded(automationManageClient.executions(limit), null);
+                }
+                case "create" -> {
+                    String rName = a.path("name").asText(null);
+                    String prompt = a.path("prompt").asText(null);
+                    String trigger = a.path("triggerType").asText("daily");
+                    if (rName == null || rName.isBlank()) {
+                        yield new ToolOutcome("ERROR: create 需要 name 参数(规则名,如「每日订单巡检」)", null, null, false);
+                    }
+                    if (prompt == null || prompt.isBlank()) {
+                        yield new ToolOutcome("ERROR: create 需要 prompt 参数(未来无人值守轮次执行的自然语言指令;"
+                                + "写清楚要做什么、输出什么——执行时没有人在场追问)。"
+                                + "示例:{\"action\": \"create\", \"name\": \"每日订单巡检\", \"triggerType\": \"daily\","
+                                + " \"prompt\": \"查询今天的订单总量与异常订单,输出简短摘要\"}", null, null, false);
+                    }
+                    if (!java.util.Set.of("daily", "weekly", "manual").contains(trigger)) {
+                        yield new ToolOutcome("ERROR: triggerType 只允许 daily / weekly / manual,收到: " + trigger,
+                                null, null, false);
+                    }
+                    yield bounded(automationManageClient.create(rName, trigger, prompt), null);
+                }
+                default -> {
+                    String target = a.path("target").asText(null);
+                    if (target == null || !target.matches("\\d+")) {
+                        yield new ToolOutcome("ERROR: " + action + " 需要 target 参数(规则的数字 id;先 action=list 查看)",
+                                null, null, false);
+                    }
+                    long ruleId = Long.parseLong(target);
+                    yield bounded(switch (action) {
+                        case "toggle" -> automationManageClient.toggle(ruleId);
+                        case "remove" -> automationManageClient.remove(ruleId);
+                        default -> automationManageClient.run(ruleId);
+                    }, null);
+                }
+            };
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 自动任务操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** environment_status handler(2026-09-18 诊断入口)。 */
+    ToolOutcome execEnvironmentStatus(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            LiveOutput liveOutput) {
+        if (environmentStatusClient == null) {
+            return new ToolOutcome("ERROR: 环境状态能力未启用(服务未配置)", null, null, false);
+        }
+        return bounded(environmentStatusClient.statusSummary(), null);
     }
 
     /** MediaFetch 进度 → 步骤事件的结构化 progress(前端进度卡片直接消费)。 */

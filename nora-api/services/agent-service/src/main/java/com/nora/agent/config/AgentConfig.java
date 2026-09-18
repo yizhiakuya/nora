@@ -18,6 +18,7 @@ import com.nora.common.http.ProxyProperties;
         DatasourceServiceProperties.class,
         EnvServiceProperties.class,
         FileServiceProperties.class,
+        AutomationServiceProperties.class,
         ProxyProperties.class})
 public class AgentConfig {
 
@@ -71,6 +72,20 @@ public class AgentConfig {
      */
     @Bean
     public RestClient fileServiceRestClient(FileServiceProperties properties) {
+        return RestClient.builder()
+                .baseUrl(properties.baseUrl())
+                .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())
+                .build();
+    }
+
+    /**
+     * 调用 automation-service(自动任务 CRUD/执行)的 HTTP 客户端。
+     *
+     * @param properties automation-service 设置
+     * @return 绑定 automation-service base URL 的 RestClient
+     */
+    @Bean
+    public RestClient automationServiceRestClient(AutomationServiceProperties properties) {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create())

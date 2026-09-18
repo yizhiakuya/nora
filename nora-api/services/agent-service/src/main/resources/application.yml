@@ -75,6 +75,8 @@ nora:
     base-url: http://localhost:8085
   file:
     base-url: http://localhost:8081
+  automation:
+    base-url: http://localhost:8086
 
 management:
   endpoints:

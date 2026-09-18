@@ -39,6 +39,18 @@ import jakarta.annotation.PreDestroy;
 @Service
 public class McpServerService {
 
+    /**
+     * 工具面版本号:任何改变「挂载工具集」的写操作(create/delete/setEnabled/
+     * refresh/updateRemoteCredentials)自增。tools spec 的 token 估算缓存按此
+     * 失效——否则运行期注册/刷新 MCP 后压缩触发偏晚(2026-09-18 修复)。
+     */
+    private final java.util.concurrent.atomic.AtomicLong toolsRevision = new java.util.concurrent.atomic.AtomicLong();
+
+    /** 当前工具面版本(供 tools spec 估算缓存做失效判断)。 */
+    public long toolsRevision() {
+        return toolsRevision.get();
+    }
+
     private static final Logger log = LoggerFactory.getLogger(McpServerService.class);
 
 
@@ -109,14 +121,19 @@ public class McpServerService {
                     "INSERT INTO mcp_server (name, url, transport, headers) VALUES (?, ?, ?, ?)",
                     name.trim(), url.trim(), t, headers == null || headers.isEmpty() ? null : writeJson(headers));
         }
+        toolsRevision.incrementAndGet();
         return getByName(name.trim());
     }
 
     /** 软删服务器(释放名称)并关闭池化客户端(stdio:杀进程树)。 */
     public boolean delete(long id) {
         clientPool.evictClient(id);
-        return jdbcTemplate.update(
+        boolean deleted = jdbcTemplate.update(
                 "UPDATE mcp_server SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id) > 0;
+        if (deleted) {
+            toolsRevision.incrementAndGet();
+        }
+        return deleted;
     }
 
     /**
@@ -130,6 +147,9 @@ public class McpServerService {
                 url == null || url.isBlank() ? null : url.trim(),
                 headers == null || headers.isEmpty() ? null : writeJson(headers),
                 id);
+        if (updated > 0) {
+            toolsRevision.incrementAndGet(); // tools_cache 被清空 = 挂载面变化
+        }
         return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ? AND deleted_at IS NULL", id) : null;
     }
 
@@ -138,9 +158,13 @@ public class McpServerService {
         if (!enabled) {
             clientPool.evictClient(id);
         }
-        return jdbcTemplate.update("UPDATE mcp_server SET status='untested', status_detail=NULL WHERE id = ? AND deleted_at IS NULL",
+        boolean ok = jdbcTemplate.update("UPDATE mcp_server SET status='untested', status_detail=NULL WHERE id = ? AND deleted_at IS NULL",
                 id) >= 0
                 && jdbcTemplate.update("UPDATE mcp_server SET enabled = ? WHERE id = ? AND deleted_at IS NULL", enabled, id) > 0;
+        if (ok) {
+            toolsRevision.incrementAndGet();
+        }
+        return ok;
     }
 
     /**
@@ -221,6 +245,7 @@ public class McpServerService {
         }
         jdbcTemplate.update("UPDATE mcp_server SET status='connected', status_detail=NULL, tools_cache=? WHERE id = ?",
                 cache.toString(), id);
+        toolsRevision.incrementAndGet(); // 工具清单快照更新 = 挂载面变化
         return entries;
     }
 

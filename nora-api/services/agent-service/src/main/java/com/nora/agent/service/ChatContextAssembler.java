@@ -261,8 +261,10 @@ class ChatContextAssembler {
      */
     static final int PER_REQUEST_OVERHEAD_TOKENS = 1_800;
 
-    /** tools spec 序列化缓存的长度(每进程一次:工具集在运行期不变)。 */
+    /** tools spec 序列化缓存的长度(按工具面版本失效:MCP 注册/刷新/启停后重算)。 */
     private volatile int toolsSpecTokensCache = -1;
+    /** 缓存对应的工具面版本(见 {@link ChatToolsSpec#toolsRevision()})。 */
+    private volatile long toolsSpecRevisionCache = -1;
 
     /**
      * tools spec 的 token 估算(按实际序列化长度)。
@@ -272,11 +274,13 @@ class ChatContextAssembler {
      * ≈ 9K tokens,即 **≈7-8 字符/token**——JSON 键名/语法高度重复,
      * tokenizer 打包效率远高于普通文本。若沿用消息体的 CJK 感知估算
      * (≈20K)会过估 2 倍,导致压缩过早触发(实测 ratio 0.47)。
-     * 取 /7 略偏保守(宁可略早压缩)。工具集运行期不变,首次计算后缓存。
+     * 取 /7 略偏保守(宁可略早压缩)。工具集按版本缓存——MCP 变更后
+     * 重算,否则运行期注册服务器后估算偏小、压缩触发偏晚(2026-09-18 修复)。
      */
     int toolsOverheadTokens() {
+        long revision = toolsSpecBuilder.toolsRevision();
         int cached = toolsSpecTokensCache;
-        if (cached >= 0) return cached;
+        if (cached >= 0 && toolsSpecRevisionCache == revision) return cached;
         int tokens;
         try {
             String json = objectMapper.writeValueAsString(toolsSpecBuilder.build());
@@ -286,6 +290,7 @@ class ChatContextAssembler {
             tokens = PER_REQUEST_OVERHEAD_TOKENS;
         }
         toolsSpecTokensCache = tokens;
+        toolsSpecRevisionCache = revision;
         return tokens;
     }
 

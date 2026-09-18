@@ -83,5 +83,40 @@ class ToolsSpecInjectionTest {
         containsTool(tools, "manage_skill");
         containsTool(tools, "manage_mcp");
         containsTool(tools, "run_command");
+        // 2026-09-18 新增工具:客户端未接时不挂载
+        containsTool(tools, "search_knowledge");
+        containsTool(tools, "manage_knowledge");
+        containsTool(tools, "manage_automation");
+        containsTool(tools, "environment_status");
+    }
+
+    @Test
+    void knowledgeAutomationEnvToolsAppearWhenClientsWired() {
+        ChatToolsSpec spec = new ChatToolsSpec(new ObjectMapper(), null, null, null, null,
+                null, mock(KnowledgeManageClient.class), mock(AutomationManageClient.class),
+                mock(EnvironmentStatusClient.class));
+        JsonNode tools = spec.build();
+        containsTool(tools, "search_knowledge");
+        containsTool(tools, "manage_knowledge");
+        containsTool(tools, "manage_automation");
+        containsTool(tools, "environment_status");
+        // 既有工具不受影响
+        containsTool(tools, "execute_sql");
+    }
+
+    @Test
+    void enumConstraintsPresentOnFiniteValueFields() {
+        // schema 纪律(2026-09-18):有限取值字段必须带 enum(让无效值不可表示)
+        JsonNode tools = buildWith(null, null).build();
+        for (JsonNode t : tools) {
+            JsonNode fn = t.path("function");
+            String name = fn.path("name").asText();
+            if (name.equals("execute_sql") || name.equals("manage_workspace")) {
+                JsonNode props = fn.path("parameters").path("properties");
+                for (String field : java.util.List.of("action")) {
+                    props.path(field).has("enum");
+                }
+            }
+        }
     }
 }

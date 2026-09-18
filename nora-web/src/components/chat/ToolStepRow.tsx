@@ -130,7 +130,8 @@ function argsPreview(step: ChatStep): string {
     const cmd = step.input.target.replace(/\s+/g, " ").trim();
     return cmd.length > 64 ? `${cmd.slice(0, 64)}…` : cmd;
   }
-  if (step.toolName === "manage_datasource" || step.toolName === "manage_service" || step.toolName === "manage_mcp") {
+  if (step.toolName === "manage_datasource" || step.toolName === "manage_service" || step.toolName === "manage_mcp"
+      || step.toolName === "manage_knowledge" || step.toolName === "manage_automation" || step.toolName === "search_knowledge") {
     // 无 action 上下文时(历史持久化缺 action)退回 target
     return [step.input?.target].filter(Boolean).join(" ") || "";
   }

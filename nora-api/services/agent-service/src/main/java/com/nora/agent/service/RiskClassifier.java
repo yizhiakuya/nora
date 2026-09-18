@@ -88,6 +88,38 @@ final class RiskClassifier {
             // 真正的防线是审批卡完整展示命令 + 用户档位选择。
             return Risk.HIGH;
         }
+        if ("search_knowledge".equals(toolName)) {
+            // 知识库主动检索:只读,无副作用
+            return Risk.LOW;
+        }
+        if ("manage_knowledge".equals(toolName)) {
+            // list/stats 只读 LOW;index 写知识库(可逆:可 remove 重来)HIGH;
+            // remove 删文档+分块不可逆 CRITICAL;reindex 重建向量(可重跑)HIGH
+            String action = extractAction(argsJson);
+            if ("list".equalsIgnoreCase(action) || "stats".equalsIgnoreCase(action)) {
+                return Risk.LOW;
+            }
+            if ("remove".equalsIgnoreCase(action)) {
+                return Risk.CRITICAL;
+            }
+            return Risk.HIGH;
+        }
+        if ("manage_automation".equals(toolName)) {
+            // list/executions 只读 LOW;create/toggle/run 改变未来自动执行面 HIGH;
+            // remove 删除规则(历史保留)可重建,但属破坏性操作——CRITICAL
+            String action = extractAction(argsJson);
+            if ("list".equalsIgnoreCase(action) || "executions".equalsIgnoreCase(action)) {
+                return Risk.LOW;
+            }
+            if ("remove".equalsIgnoreCase(action)) {
+                return Risk.CRITICAL;
+            }
+            return Risk.HIGH;
+        }
+        if ("environment_status".equals(toolName)) {
+            // 环境健康快照:只读,无副作用
+            return Risk.LOW;
+        }
         if ("fetch_media".equals(toolName)) {
             // 批量媒体拉取:有出站请求 + 落盘,但目标在**工作区内**
             // (与 manage_workspace import 同语义:区内落盘 LOW,不打断
@@ -120,7 +152,8 @@ final class RiskClassifier {
             }
             boolean knownAction = "write".equals(action) || "append".equals(action)
                     || "delete".equals(action) || "import".equals(action)
-                    || "move".equals(action) || "copy".equals(action) || "mkdir".equals(action);
+                    || "move".equals(action) || "copy".equals(action) || "mkdir".equals(action)
+                    || "edit".equals(action);
             if (!knownAction) {
                 return Risk.HIGH; // 参数坏/action 未知:保守按 HIGH
             }
