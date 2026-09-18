@@ -37,10 +37,11 @@ public class GalleryPrefetcher {
 
     private static final Logger log = LoggerFactory.getLogger(GalleryPrefetcher.class);
 
-    /** 新协议(统一画廊,见 nora-web lib/artifacts.ts)。 */
-    private static final Pattern ARTIFACTS_FENCE = Pattern.compile("```nora-artifacts\\s*\\n([\\s\\S]*?)```");
+    /** 新协议(统一画廊,见 nora-web lib/artifacts.ts)。锚定行首:与前端协议一致,
+     *  防止 JSON 字符串内容里的 ``` 字样被误匹配。 */
+    private static final Pattern ARTIFACTS_FENCE = Pattern.compile("(?m)^```nora-artifacts\\s*\\n([\\s\\S]*?)```");
     /** 旧格式兼容(手机相册 photos_showcase 早期围栏)。 */
-    private static final Pattern LEGACY_FENCE = Pattern.compile("```nora-gallery\\s*\\n([\\s\\S]*?)```");
+    private static final Pattern LEGACY_FENCE = Pattern.compile("(?m)^```nora-gallery\\s*\\n([\\s\\S]*?)```");
 
     private final ObjectMapper objectMapper;
     private final MediaCacheService mediaCacheService;
