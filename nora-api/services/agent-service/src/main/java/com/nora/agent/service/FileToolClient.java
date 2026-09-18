@@ -120,6 +120,49 @@ public class FileToolClient {
     }
 
     /**
+     * 按名查找文件中心的文件 id(2026-09-18 路径路由用):
+     * 精确名优先,其次不区分大小写;多个同名时取最新(id 最大)。
+     *
+     * @return 文件 id;无匹配或服务不可达时 null
+     */
+    public Long findIdByName(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        String wanted = name.trim();
+        // 兼容模型写 "@center/名" 或 "名" 两种形态
+        if (wanted.startsWith("@center/")) {
+            wanted = wanted.substring("@center/".length());
+        }
+        try {
+            Envelope<JsonNode> envelope = restClient.get()
+                    .uri("/api/files")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null || !envelope.data().isArray()) {
+                return null;
+            }
+            Long exact = null;
+            Long caseInsensitive = null;
+            for (JsonNode n : envelope.data()) {
+                String fname = n.path("name").asText("");
+                long id = n.path("id").asLong(-1);
+                if (fname.equals(wanted)) {
+                    exact = Math.max(exact == null ? -1 : exact, id);
+                } else if (fname.equalsIgnoreCase(wanted)) {
+                    caseInsensitive = Math.max(caseInsensitive == null ? -1 : caseInsensitive, id);
+                }
+            }
+            return exact != null ? exact : caseInsensitive;
+        } catch (Exception e) {
+            log.debug("file find by name failed for {}: {}", wanted, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 读取文件的提取文本(Tika 预览)。截到 12K 字符头+尾,让模型同时看到
      * 开头(文档)与结尾(结论/日志)。
      *

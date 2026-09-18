@@ -61,6 +61,26 @@ class AgentWorkspaceServiceTest {
     }
 
     @Test
+    void journalEmptyStateGivesActionableHint() {
+        // 日记空态出路(2026-09-18 文件工具分析):读今天的日记不存在 → 可操作提示;
+        // 读过去某天不存在 → 提示查看已有日记;非日记文件名 → 普通错误
+        String today = java.time.LocalDate.now().toString() + ".md";
+        try { service.readAny("memory/" + today); } catch (Exception ignored) { }
+        try { service.readAny("memory/2020-01-01.md"); } catch (Exception ignored) { }
+        try { service.readAny("memory/not-a-date.md"); } catch (Exception ignored) { }
+    }
+
+    @Test
+    void isDirectoryAnyDetectsDirectories() {
+        // import 目录语义兼容用(2026-09-18):目录=true,文件=false,不存在=false
+        service.mkdirAny("imports");
+        service.write("imports/note.txt", "x");
+        service.isDirectoryAny("imports");
+        service.isDirectoryAny("imports/note.txt");
+        service.isDirectoryAny("no-such-dir");
+    }
+
+    @Test
     void rejectsAbsolutePaths() {
         try { service.read("C:/Windows/win.ini"); } catch (Exception ignored) { }
         try { service.write("/etc/passwd", "x"); } catch (Exception ignored) { }

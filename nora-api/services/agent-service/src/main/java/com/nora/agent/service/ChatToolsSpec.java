@@ -325,7 +325,9 @@ class ChatToolsSpec {
         setEnum(fileActionProp, "list", "read", "import", "rename", "move", "delete", "folders", "mkdir");
         ObjectNode fileIdProp = fileProps.putObject("id");
         fileIdProp.put("type", "string");
-        fileIdProp.put("description", "read/rename/move/delete 时:文件 id(list 结果里的数字 id,非文件名;"
+        fileIdProp.put("description", "read/rename/move/delete 时:文件 id(list 结果里的数字 id;"
+                + "**read 也接受路径/文件名**(如 MEMORY.md 或 photos/x.jpg 或 @center/报告.pdf——"
+                + "会自动路由到文件中心或工作区,无需先查 id);"
                 + "move/delete 支持逗号分隔多个,如 \"3,4,5\")");
         ObjectNode fileNameProp = fileProps.putObject("name");
         fileNameProp.put("type", "string");

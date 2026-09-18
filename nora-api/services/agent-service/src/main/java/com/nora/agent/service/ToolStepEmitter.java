@@ -336,7 +336,15 @@ class ToolStepEmitter {
                             description, null, action);
                 }
                 case "read_file" -> {
+                    // 寻址参数:数字 id 为主;模型常写 path(路径路由,2026-09-18
+                    // 文件工具分析)或 filename 别名——都提取到 target 交给执行层路由
                     String target = node.path("id").asText(null);
+                    if (target == null || target.isBlank()) {
+                        target = node.path("path").asText(null);
+                    }
+                    if (target == null || target.isBlank()) {
+                        target = node.path("filename").asText(null);
+                    }
                     Integer limit = node.has("limit") && node.get("limit").isNumber()
                             ? node.get("limit").asInt() : null;
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, limit, target),

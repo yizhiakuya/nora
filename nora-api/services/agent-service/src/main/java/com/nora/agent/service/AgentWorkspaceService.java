@@ -336,6 +336,19 @@ public class AgentWorkspaceService {
 
     private String readPath(Path file) {
         if (!Files.isRegularFile(file)) {
+            // 日记空态出路(2026-09-18 文件工具分析):memory/YYYY-MM-DD.md 读不到时,
+            // 若文件名恰是今天(模型想读"今天的日记"但还没写),给可操作提示而非干巴巴的
+            // 「文件不存在」(实测踩过:模型读当天日记失败后不知道下一步做什么)。
+            String fileName = file.getFileName() == null ? "" : file.getFileName().toString();
+            if (fileName.matches("\\d{4}-\\d{2}-\\d{2}\\.md")) {
+                String today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ISO_DATE) + ".md";
+                if (fileName.equals(today)) {
+                    throw new IllegalArgumentException("文件不存在: " + file
+                            + "(今天的日记还没有创建——可用 append 动作写入 " + fileName + " 记录今天的观察/进度)");
+                }
+                throw new IllegalArgumentException("文件不存在: " + file
+                        + "(该日期的日记不存在;可用 list dir=memory 查看已有哪些日记)");
+            }
             throw new IllegalArgumentException("文件不存在: " + file);
         }
         try {
@@ -486,6 +499,15 @@ public class AgentWorkspaceService {
     public boolean existsAny(String path) {
         try {
             return Files.exists(resolveAny(path).path());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 目标是否为已存在的目录(import 目录语义兼容用,2026-09-18)。 */
+    public boolean isDirectoryAny(String path) {
+        try {
+            return Files.isDirectory(resolveAny(path).path());
         } catch (Exception e) {
             return false;
         }

@@ -500,8 +500,12 @@ class ChatToolExecutor {
         }
         String target = parsed.input().target();
         if (!target.matches("\\d+")) {
-            return new ToolOutcome("ERROR: id 必须是数字(先用 action=list 查看可用文件)"
-                    + ",不能按文件名猜测。当前收到: " + target, null, null, false);
+            // 路径路由(2026-09-18 文件工具设计分析):模型常把「读文件」的心智
+            // 模型合并——对文件中心写工作区路径(id="MEMORY.md")或对工作区文件
+            // 用 read_file。这里把「非数字 target」路由到正确的通道,而不是报错:
+            //   @center/名 或纯文件名 → 先按名查文件中心,命中即读文件中心
+            //   其余(含 / 的路径、工作区文件) → 转 manage_workspace.readAny
+            return routeReadByPath(target);
         }
         long fileId = Long.parseLong(target);
         FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
@@ -526,6 +530,90 @@ class ChatToolExecutor {
             }
         }
         return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
+    }
+
+    /**
+     * read_file 非数字 target 的路径路由(2026-09-18 文件工具设计分析):
+     * 模型对「读文件」有单一心智模型,但 Nora 有两个寻址域(文件中心=数字 id,
+     * 工作区/整机=路径)。与其报错教学,不如按形态路由到正确通道:
+     *
+     * <ul>
+     *   <li>{@code @center/名} → 明确走文件中心按名查找;</li>
+     *   <li>纯文件名(无路径分隔符)→ 先试文件中心按名查(命中即读);未命中
+     *       转工作区(模型多半想读 MEMORY.md 这类工作区文件);</li>
+     *   <li>含 {@code /} 或绝对路径 → 直接转 manage_workspace.readAny。</li>
+     * </ul>
+     *
+     * 图片文件同样走图像通道(复用 execManageWorkspace 的 read 分支能力)。
+     */
+    private ToolOutcome routeReadByPath(String target) {
+        String t = target.trim();
+        boolean explicitCenter = t.startsWith("@center/");
+        boolean hasSeparator = t.contains("/") || t.contains("\\");
+        // 1) 显式 @center/ 或纯文件名:先试文件中心
+        if (explicitCenter || !hasSeparator) {
+            Long fileId = fileToolClient.findIdByName(t);
+            if (fileId != null) {
+                FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
+                if (!info.failed()) {
+                    if (info.hasText()) {
+                        return bounded("(文件中心 id=" + fileId + ")\n" + fileToolClient.renderPreview(info), null);
+                    }
+                    // 无文本:复用图像通道逻辑(与数字 id 路径一致)
+                    JsonNode meta = fileToolClient.meta(fileId);
+                    String mime = meta == null ? null : meta.path("mimeType").asText(null);
+                    if (mime != null && mime.startsWith("image/")) {
+                        FileToolClient.RawFile raw = fileToolClient.raw(fileId);
+                        if (raw != null && raw.bytes().length > 0) {
+                            String b64 = java.util.Base64.getEncoder().encodeToString(raw.bytes());
+                            String desc = "图片文件 " + info.name() + "(" + FileToolClient.formatSize(raw.bytes().length)
+                                    + ", " + mime + "),原始字节已作为图像附件返回;直接描述你看到的内容";
+                            return new ToolOutcome(desc, "图片", null, false,
+                                    List.of(new McpServerService.McpToolResult.ImageBlock(mime, b64)));
+                        }
+                    }
+                    return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
+                }
+            }
+            if (explicitCenter) {
+                return new ToolOutcome("ERROR: 文件中心没有名为「" + t + "」的文件(用 action=list 查看全部文件)",
+                        null, null, false);
+            }
+        }
+        // 2) 其余(含路径分隔符、或文件中心未命中的纯文件名)→ 工作区/整机读
+        if (agentWorkspaceService == null) {
+            return new ToolOutcome("ERROR: 文件中心没有「" + t + "」,且工作区能力未启用(服务未配置)",
+                    null, null, false);
+        }
+        try {
+            // 复用工作区 read 的完整能力(图片图像通道/文本读取/截断)
+            return execManageWorkspaceRead(t);
+        } catch (Exception e) {
+            return new ToolOutcome("ERROR: 读取失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
+        }
+    }
+
+    /** 工作区 read 的轻量封装(供路径路由复用;不含 manage_workspace 的 action 校验开销)。 */
+    private ToolOutcome execManageWorkspaceRead(String path) {
+        String imgMime = AgentWorkspaceService.imageMime(path);
+        if (imgMime != null) {
+            try {
+                byte[] bytes = agentWorkspaceService.readBytesAny(path);
+                String b64 = java.util.Base64.getEncoder().encodeToString(bytes);
+                return new ToolOutcome(
+                        "图片文件 " + path + "(" + FileToolClient.formatSize(bytes.length)
+                                + ", " + imgMime + "),原始字节已作为图像附件返回;直接描述你看到的内容",
+                        "图片", null, false,
+                        List.of(new McpServerService.McpToolResult.ImageBlock(imgMime, b64)));
+            } catch (IllegalArgumentException e) {
+                return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+            }
+        }
+        try {
+            return bounded("(工作区文件 " + path + ")\n" + agentWorkspaceService.readAny(path), null);
+        } catch (IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+        }
     }
 
     /**
@@ -741,7 +829,8 @@ class ChatToolExecutor {
                 case "mkdir" -> {
                     // 建目录(write/move 会自动建父目录,但空目录需要显式创建)
                     if (path == null || path.isBlank()) {
-                        yield "ERROR: mkdir 需要 path 参数(要创建的目录路径)";
+                        yield "ERROR: mkdir 需要 path 参数(要创建的目录路径)。"
+                                + "示例:{\"action\": \"mkdir\", \"path\": \"photos/2026-09-18\"}";
                     }
                     yield agentWorkspaceService.mkdirAny(path);
                 }
@@ -1664,6 +1753,15 @@ class ChatToolExecutor {
                 name = inferFilename(url);
             }
             target = "imports/" + name;
+        } else if (target.endsWith("/") || target.endsWith("\\")
+                || (agentWorkspaceService != null && agentWorkspaceService.isDirectoryAny(target))) {
+            // 目录语义兼容(2026-09-18 文件工具分析):模型写 path="imports/" 或
+            // 已存在的目录(想把文件存进去),自动补文件名——比报「目标是目录」可操作
+            String name = a.path("filename").asText(null);
+            if (name == null || name.isBlank()) {
+                name = inferFilename(url);
+            }
+            target = target.replaceAll("[/\\\\]+$", "") + "/" + name;
         }
         try {
             byte[] body = downloadBounded(url, AgentWorkspaceService.MAX_BINARY_BYTES);
