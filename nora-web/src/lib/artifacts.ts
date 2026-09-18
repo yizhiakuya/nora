@@ -1,31 +1,28 @@
 /**
- * 通用产物画廊协议(2026-09-18 v2,对齐手机 MCP 画廊的原生体验)。
+ * 通用产物画廊协议(2026-09-18 v3,多形态)。
  *
- * 设计动机(用户反馈 v1 H5 方案的问题):
- * - AI 手写 HTML 质量不可控、风格不统一、没有 Nora 原生交互(灯箱/打开文件);
- * - 手机相册画廊(```nora-gallery)的「结构化数据 + 原生组件渲染」体验才是目标。
+ * 设计动机:
+ * - v1(AI 自写 H5)质量不可控;v2(单一固定布局)表达力不足——不同业务需要
+ *   不同样式与字段(相册=缩略图网格、SQL=表格、设置=改前改后对比、任务=时间线);
+ * - v3 = **section 类型目录**:一套围栏协议,多种渲染器,AI 按业务选类型。
  *
- * 本协议把那条路线通用化:AI 只声明**产出了什么**(JSON),前端用原生组件渲染
- * ——媒体走 ImageLightbox 灯箱、文件点击打开文件页/工作区,风格与 Nora 一体。
- *
- * 围栏:
- *   ```nora-artifacts
+ * 围栏(```nora-artifacts):
  *   {
- *     "title": "相册整理完成",
- *     "summary": "28 个视频归档到 photos/2026-09-16-show",
- *     "stats": [{"label": "文件", "value": "28"}, {"label": "大小", "value": "409.7 MB"}],
- *     "sections": [
- *       {"kind": "media", "title": "已归档", "items": [
- *         {"kind": "image", "url": "https://... 或 /api/workspace/file/raw?path=...",
- *          "fullUrl": "可选原图", "caption": "VID_xxx", "meta": "412 MB"}
- *       ]},
- *       {"kind": "files", "title": "变更", "items": [
- *         {"kind": "file", "name": "MEMORY.md", "note": "已更新", "open": "workspace:MEMORY.md"}
- *       ]}
- *     ],
- *     "note": "源目录已清空"
+ *     "title": "...", "summary": "...",
+ *     "stats": [{"label": "文件", "value": "28"}],
+ *     "sections": [ ...按需混用下列类型... ],
+ *     "note": "..."
  *   }
- *   ```
+ *
+ * section 类型目录(渲染器在 ArtifactsBlock;未知类型降级 list,不报错):
+ *   media    媒体网格(缩略图/灯箱)         items[{url,thumbUrl,caption,meta,kind}]
+ *   files    文件行(点击打开)              items[{name,note,meta,open,kind}]
+ *   table    数据表格(SQL/统计)            columns:[{key,label,align?}] + rows:[{key:value}]
+ *   diff     改前→改后(设置/配置)          items[{name,before,after,open?}]
+ *   timeline 时间线(任务/事件)             items[{name,status,meta,caption?}] status: done|failed|running|pending
+ *   keyvalue 键值详情(单对象)              items[{name,meta}] name=键 meta=值
+ *   text     长文报告                      text:"Markdown 文本"
+ *   list     通用条目(兜底)                items[{name,caption,meta,open}]
  *
  * open 深链前缀(前端路由):
  *   workspace:<相对路径>   → 文件页的工作区浏览器定位
@@ -38,7 +35,7 @@ export type ArtifactItemKind = "image" | "video" | "file" | "folder" | "link" | 
 
 export interface ArtifactItem {
   kind?: ArtifactItemKind;
-  /** 展示名(文件名/条目名) */
+  /** 展示名(文件名/条目名/键名) */
   name?: string;
   /** 媒体地址(http(s) 或 /api/... 相对路径) */
   url?: string;
@@ -48,17 +45,39 @@ export interface ArtifactItem {
   thumbUrl?: string;
   /** 单条说明(agent 填写) */
   caption?: string;
-  /** 元信息(大小/时间/数量等,一行) */
+  /** 元信息(大小/时间/数量/值等,一行) */
   meta?: string;
   /** 深链打开指令(见文件头注释);省略=仅展示 */
   open?: string;
+  /** diff 段:改前 */
+  before?: string;
+  /** diff 段:改后 */
+  after?: string;
+  /** timeline 段:done | failed | running | pending */
+  status?: string;
+}
+
+/** table 段的列定义。 */
+export interface ArtifactColumn {
+  key: string;
+  label: string;
+  align?: "left" | "right";
 }
 
 export interface ArtifactSection {
-  /** media=媒体网格(灯箱) / files=文件列表(点击打开) / list=通用条目列表 */
-  kind?: "media" | "files" | "list";
+  /**
+   * media=媒体网格 / files=文件行 / table=数据表格 / diff=改前后对比 /
+   * timeline=时间线 / keyvalue=键值详情 / text=长文 / list=通用兜底
+   */
+  kind?: "media" | "files" | "table" | "diff" | "timeline" | "keyvalue" | "text" | "list";
   title?: string;
-  items: ArtifactItem[];
+  items?: ArtifactItem[];
+  /** table 段:列定义(rows 用对象的 key 取值) */
+  columns?: ArtifactColumn[];
+  /** table 段:行数据 */
+  rows?: Array<Record<string, unknown>>;
+  /** text 段:Markdown 正文 */
+  text?: string;
 }
 
 export interface ArtifactStat {
@@ -207,8 +226,16 @@ export function parseArtifactsJson(raw: string): ArtifactsData | null {
     if (!data || typeof data.title !== "string" || !Array.isArray(data.sections)) {
       return null;
     }
-    // 过滤空段;全空则视为无效(避免渲染空壳)
-    const sections = data.sections.filter((s) => s && Array.isArray(s.items) && s.items.length > 0);
+    // 过滤空段;全空则视为无效(避免渲染空壳)。
+    // 各类型的内容载体不同:items(media/files/diff/timeline/keyvalue/list)、
+    // rows(table)、text(text)——任一非空即保留。
+    const sections = data.sections.filter((s) => {
+      if (!s || typeof s !== "object") return false;
+      if (Array.isArray(s.items) && s.items.length > 0) return true;
+      if (Array.isArray(s.rows) && s.rows.length > 0) return true;
+      if (typeof s.text === "string" && s.text.trim() !== "") return true;
+      return false;
+    });
     if (sections.length === 0) {
       return null;
     }
