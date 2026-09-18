@@ -291,6 +291,9 @@ class ChatToolsSpec {
         wsFn.put("name", "manage_workspace");
         wsFn.put("description", "文件系统读写(工作区是你的家目录,也是你的长期记忆)。"
                 + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除;"
+                + "mkdir 建目录;"
+                + "**move/copy 移动或复制文件与目录**(整理工作区用它,不要借 run_command 的 PowerShell——"
+                + "{\"action\": \"move\", \"path\": \"导出目录\", \"to\": \"photos/新目录\"};目标为已存在目录时移入其中);"
                 + "**import 把远程 URL 的内容下载并保存到文件系统**"
                 + "(如把 MCP 工具返回的图片链接存到工作区:"
                 + "{\"action\": \"import\", \"url\": \"https://.../photo/123/content?t=xxx\", \"path\": \"album/photo-123.jpg\"})。"
@@ -312,13 +315,19 @@ class ChatToolsSpec {
         wsFilenameProp.put("description", "import 时可选:保存的文件名(不给则从 URL 推断)");
         ObjectNode wsActionProp = wsProps.putObject("action");
         wsActionProp.put("type", "string");
-        wsActionProp.put("description", "list / read / write / append / delete / import(下载 URL 存成文件;"
-                + "存远程图片等二进制必须用 import,write 只写文本)");
+        wsActionProp.put("description", "list / read / write / append / delete / import / move / copy / mkdir"
+                + "(import=下载 URL 存成文件,存远程图片等二进制必须用它,write 只写文本;"
+                + "move/copy 用于整理文件与目录)");
         ObjectNode wsPathProp = wsProps.putObject("path");
         wsPathProp.put("type", "string");
         wsPathProp.put("description", "read/write/append/delete/import 时:相对路径=工作区内(如 USER.md);"
                 + "绝对路径=整机(如 D:/projects/x/README.md;写/删前会被要求确认)。"
                 + "import 不给 path 时默认存到工作区 imports/ 目录");
+        ObjectNode wsToProp = wsProps.putObject("to");
+        wsToProp.put("type", "string");
+        wsToProp.put("description", "move/copy 时:目标路径(相对=工作区内)。目标为已存在目录时,源会移入/复制进该目录;"
+                + "目标已存在(非目录)时拒绝,不覆盖。**支持通配符**:path 可写 "
+                + "\"photos/week-videos/VID_20260916_*.mp4\"(在父目录内匹配,批量移动/复制到 to 目录,一次调用完成)");
         ObjectNode wsDirProp = wsProps.putObject("dir");
         wsDirProp.put("type", "string");
         wsDirProp.put("description", "list 时:目录(相对=工作区内;绝对=整机;省略=工作区根目录)");

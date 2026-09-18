@@ -459,9 +459,10 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
         }
         String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-        if (!java.util.Set.of("list", "read", "write", "append", "delete", "import").contains(action)) {
-            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / read / write / append / delete / import",
-                    null, null, false);
+        if (!java.util.Set.of("list", "read", "write", "append", "delete", "import", "move", "copy", "mkdir")
+                .contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
+                    + "list / read / write / append / delete / import / move / copy / mkdir", null, null, false);
         }
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
@@ -499,9 +500,15 @@ class ChatToolExecutor {
                     }
                     StringBuilder sb = new StringBuilder("工作区文件(" + path + " 相对根目录):\n");
                     for (AgentWorkspaceService.FileEntry f : entries) {
-                        sb.append(f.directory() ? "[目录] " : "").append(f.path())
-                                .append(f.directory() ? "" : " (" + f.size() + "B, " + f.modifiedAt() + ")")
-                                .append('\n');
+                        sb.append(f.directory() ? "[目录] " : "").append(f.path());
+                        if (f.directory()) {
+                            // 目录带摘要(文件数+总大小):模型判断"素材在不在"不必再跑 PowerShell 数
+                            sb.append(" (").append(f.fileCount()).append(" 个文件, ")
+                                    .append(FileToolClient.formatSize(f.size())).append(")");
+                        } else {
+                            sb.append(" (").append(f.size()).append("B, ").append(f.modifiedAt()).append(")");
+                        }
+                        sb.append('\n');
                     }
                     yield sb.toString();
                 }
@@ -534,6 +541,34 @@ class ChatToolExecutor {
                     yield "已追加 " + written + " 字符到 " + path;
                 }
                 case "import" -> importFromUrl(a, path);
+                case "move" -> {
+                    // 源/目标:path 是源,to 是目标(与 write 的 path 语义一致)
+                    String to = a.path("to").asText(null);
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: move 需要 path(源路径)与 to(目标路径);移动不覆盖已存在的目标";
+                    }
+                    if (to == null || to.isBlank()) {
+                        yield "ERROR: move 需要 to 参数(目标路径;目标为已存在目录时移入该目录)";
+                    }
+                    yield agentWorkspaceService.moveAny(path, to);
+                }
+                case "mkdir" -> {
+                    // 建目录(write/move 会自动建父目录,但空目录需要显式创建)
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: mkdir 需要 path 参数(要创建的目录路径)";
+                    }
+                    yield agentWorkspaceService.mkdirAny(path);
+                }
+                case "copy" -> {
+                    String to = a.path("to").asText(null);
+                    if (path == null || path.isBlank()) {
+                        yield "ERROR: copy 需要 path(源路径)与 to(目标路径);复制不覆盖已存在的目标";
+                    }
+                    if (to == null || to.isBlank()) {
+                        yield "ERROR: copy 需要 to 参数(目标路径;目标为已存在目录时复制进该目录)";
+                    }
+                    yield agentWorkspaceService.copyAny(path, to);
+                }
                 default -> {
                     if (path == null || path.isBlank()) {
                         yield "ERROR: 缺少 path 参数;删除不可恢复,请先向用户确认";

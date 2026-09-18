@@ -119,7 +119,8 @@ final class RiskClassifier {
                 return Risk.LOW; // 读操作无副作用(含区外读)
             }
             boolean knownAction = "write".equals(action) || "append".equals(action)
-                    || "delete".equals(action) || "import".equals(action);
+                    || "delete".equals(action) || "import".equals(action)
+                    || "move".equals(action) || "copy".equals(action) || "mkdir".equals(action);
             if (!knownAction) {
                 return Risk.HIGH; // 参数坏/action 未知:保守按 HIGH
             }
@@ -130,6 +131,14 @@ final class RiskClassifier {
             boolean outside = isOutsideWorkspace(target);
             if ("delete".equals(action)) {
                 return outside ? Risk.CRITICAL : Risk.HIGH;
+            }
+            // move:区外目标(源或目的地)会改整机文件,跟随审批档位;
+            // 区内=LOW(整理工作区自己的文件,与 write 同级)。
+            // copy:读操作+区内写,源永远只读;区外目标=HIGH,其余 LOW。
+            if ("move".equals(action) || "copy".equals(action)) {
+                String to = extractStringField(argsJson, "to");
+                boolean toOutside = isOutsideWorkspace(to);
+                return outside || toOutside ? Risk.HIGH : Risk.LOW;
             }
             // import:从远程 URL 下载并落盘(有出站请求 + 写文件)。
             // 区内落盘=LOW(与区内 write 同级:用户请求把相册存进工作区时不应被打断);

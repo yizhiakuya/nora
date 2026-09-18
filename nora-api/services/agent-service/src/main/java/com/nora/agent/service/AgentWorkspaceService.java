@@ -242,7 +242,9 @@ public class AgentWorkspaceService {
 
     // ---------- 文件操作 ----------
 
-    public record FileEntry(String path, boolean directory, long size, String modifiedAt) {
+    public record FileEntry(String path, boolean directory, long size, String modifiedAt,
+                            /** 目录时=递归文件数;文件时=0。 */
+                            long fileCount) {
     }
 
     /** 路径展示:区内→相对工作区,区外→绝对。 */
@@ -276,14 +278,25 @@ public class AgentWorkspaceService {
                     .limit(MAX_LIST_ENTRIES)
                     .forEach(p -> {
                         try {
+                            boolean isDir = Files.isDirectory(p);
+                            // 目录带递归摘要(文件数+总大小):模型判断"这批素材在不在"
+                            // 不必再跑 PowerShell 数文件(实测:确认导出结果时 4 个
+                            // run_command 全是 Get-ChildItem + Measure-Object)
+                            long fileCount = 0;
+                            long totalBytes = 0;
+                            if (isDir) {
+                                fileCount = countEntries(p);
+                                totalBytes = dirTotalBytes(p);
+                            }
                             entries.add(new FileEntry(
                                     displayPath(p),
-                                    Files.isDirectory(p),
-                                    Files.isDirectory(p) ? 0 : Files.size(p),
+                                    isDir,
+                                    isDir ? totalBytes : Files.size(p),
                                     Files.getLastModifiedTime(p).toInstant()
                                             .atZone(java.time.ZoneId.systemDefault())
                                             .toLocalDateTime()
-                                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))));
+                                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")),
+                                    isDir ? fileCount : 0));
                         } catch (IOException ignored) {
                         }
                     });
@@ -291,6 +304,24 @@ public class AgentWorkspaceService {
             throw new IllegalArgumentException("目录列举失败: " + e.getMessage());
         }
         return entries;
+    }
+
+    /** 目录递归总字节(上限保护,避免超大目录卡顿)。 */
+    private static long dirTotalBytes(Path dir) {
+        try (Stream<Path> stream = Files.walk(dir)) {
+            return stream.filter(Files::isRegularFile).limit(100_000)
+                    .mapToLong(AgentWorkspaceService::sizeOrZero).sum();
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
+    private static long sizeOrZero(Path p) {
+        try {
+            return Files.size(p);
+        } catch (IOException e) {
+            return 0;
+        }
     }
 
     /** 读取文本文件(限长;二进制拒绝)。 */
@@ -589,6 +620,195 @@ public class AgentWorkspaceService {
     static boolean notGitInternal(Path p) {
         String s = p.toString().replace('\\', '/');
         return !s.contains("/.git/") && !s.endsWith("/.git");
+    }
+
+    /**
+     * 移动文件或目录(agent 工具用;区外写由审批把门)。
+     *
+     * <p>为什么需要:此前只有 write/append/delete,整理类任务(把导出的
+     * 文件夹搬进 photos/、重命名目录)只能上 run_command PowerShell——
+     * 实测一轮「搞个文件夹放进去」跑了 7 个 run_command,一半是 Move-Item
+     * 和它的验证。文件系统的基础动作应该在文件工具里,不是借终端。
+     *
+     * @param source      源路径(相对=工作区内,绝对=整机)
+     * @param destination 目标路径;已存在时拒绝(移动是整理不是覆盖)
+     * @return 人类可读摘要(源 → 目标;目录含条目数)
+     */
+    public String moveAny(String source, String destination) {
+        return moveOrCopy(source, destination, false);
+    }
+
+    /**
+     * 复制文件或目录(agent 工具用)。
+     *
+     * <p>语义:文件→目标可以是文件路径或目录;目录→递归复制。
+     * 目标已存在时拒绝(避免意外覆盖;要覆盖先删)。
+     */
+    public String copyAny(String source, String destination) {
+        return moveOrCopy(source, destination, true);
+    }
+
+    private String moveOrCopy(String source, String destination, boolean copy) {
+        if (source == null || source.isBlank() || destination == null || destination.isBlank()) {
+            throw new IllegalArgumentException("需要 source 与 destination 两个路径参数");
+        }
+        // 通配符(如 photos/week-videos/VID_20260916_*.mp4):在父目录内展开后逐个操作。
+        // 为什么需要:从混合目录里挑一批文件(按文件名日期前缀)是整理任务的高频形态,
+        // 没有通配符就得逐个文件调 N 次工具(实测「挑出某天的 28 段视频」场景)。
+        if (source.contains("*") || source.contains("?")) {
+            return moveOrCopyGlob(source, destination, copy);
+        }
+        Path src = resolveAny(source).path();
+        Path dst = resolveAny(destination).path();
+        guardSystemPath(dst, copy ? "复制" : "移动");
+        guardSystemPath(src, copy ? "读取" : "移动");
+        if (!Files.exists(src)) {
+            throw new IllegalArgumentException("源不存在: " + src);
+        }
+        if (src.equals(root)) {
+            throw new IllegalArgumentException("不能操作工作区根目录");
+        }
+        // 目标在源目录内部:移动/复制进自己会无限递归,直接拒绝
+        if (Files.isDirectory(src) && dst.startsWith(src)) {
+            throw new IllegalArgumentException("目标不能位于源目录内部: " + dst);
+        }
+        boolean srcIsDir = Files.isDirectory(src);
+        // 目标是已存在目录 → 追加源文件名(移动/复制进目录的自然语义)
+        if (Files.isDirectory(dst)) {
+            dst = dst.resolve(src.getFileName());
+        }
+        if (Files.exists(dst)) {
+            throw new IllegalArgumentException("目标已存在(移动/复制不覆盖): " + dst
+                    + " —— 如需替换请先删除目标");
+        }
+        try {
+            Files.createDirectories(dst.getParent());
+            if (copy) {
+                if (srcIsDir) {
+                    copyDirRecursive(src, dst);
+                } else {
+                    Files.copy(src, dst);
+                }
+            } else {
+                Files.move(src, dst);
+            }
+            long entries = srcIsDir ? countEntries(dst) : 0;
+            String what = srcIsDir ? "目录(" + entries + " 个条目)" : FileToolClient.formatSize(fileSizeOrZero(dst));
+            return "已" + (copy ? "复制" : "移动") + ": " + displayPath(src) + " → " + displayPath(dst) + " [" + what + "]";
+        } catch (IOException e) {
+            throw new IllegalArgumentException((copy ? "复制" : "移动") + "失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 通配符形态的移动/复制:pattern 在父目录内展开(仅 depth 1),
+     * 匹配到的每个条目逐个移入/复制到目标目录(目标必须不存在或为目录)。
+     */
+    private String moveOrCopyGlob(String pattern, String destination, boolean copy) {
+        String cleaned = pattern.trim().replace('\\', '/');
+        int slash = cleaned.lastIndexOf('/');
+        String parentPart = slash < 0 ? "" : cleaned.substring(0, slash);
+        String nameGlob = slash < 0 ? cleaned : cleaned.substring(slash + 1);
+        Path parent = parentPart.isBlank() ? root : resolveAny(parentPart).path();
+        if (!Files.isDirectory(parent)) {
+            throw new IllegalArgumentException("通配符的父目录不存在: " + parent);
+        }
+        Path dstDir = resolveAny(destination).path();
+        guardSystemPath(dstDir, copy ? "复制" : "移动");
+        if (Files.exists(dstDir) && !Files.isDirectory(dstDir)) {
+            throw new IllegalArgumentException("通配符移动/复制的目标必须是目录: " + dstDir);
+        }
+        java.nio.file.PathMatcher matcher;
+        try {
+            matcher = java.nio.file.FileSystems.getDefault().getPathMatcher("glob:" + nameGlob);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("通配符不合法: " + nameGlob);
+        }
+        List<Path> matched = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(parent, 1)) {
+            stream.filter(p -> !p.equals(parent))
+                    .filter(AgentWorkspaceService::notGitInternal)
+                    .filter(p -> matcher.matches(p.getFileName()))
+                    .forEach(matched::add);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("目录扫描失败: " + e.getMessage());
+        }
+        if (matched.isEmpty()) {
+            throw new IllegalArgumentException("没有匹配「" + pattern + "」的文件或目录(父目录: "
+                    + displayPath(parent) + ")");
+        }
+        try {
+            Files.createDirectories(dstDir);
+            int moved = 0;
+            long bytes = 0;
+            for (Path p : matched) {
+                Path target = dstDir.resolve(p.getFileName());
+                if (Files.exists(target)) {
+                    throw new IllegalArgumentException("目标已存在,已中止(前面 " + moved
+                            + " 个已处理): " + displayPath(target));
+                }
+                if (copy) {
+                    if (Files.isDirectory(p)) {
+                        copyDirRecursive(p, target);
+                    } else {
+                        Files.copy(p, target);
+                    }
+                    bytes += Files.isRegularFile(p) ? fileSizeOrZero(p) : 0;
+                } else {
+                    Files.move(p, target);
+                }
+                moved++;
+            }
+            return "已" + (copy ? "复制" : "移动") + " " + moved + " 项(匹配「" + pattern + "」)"
+                    + (bytes > 0 ? ",合计 " + FileToolClient.formatSize(bytes) : "")
+                    + " → " + displayPath(dstDir);
+        } catch (IOException e) {
+            throw new IllegalArgumentException((copy ? "复制" : "移动") + "失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 创建目录(含父级;已存在时为幂等成功)。区外由审批把门。
+     *
+     * @param path 目标目录路径
+     * @return 人类可读摘要
+     */
+    public String mkdirAny(String path) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalArgumentException("需要 path 参数(要创建的目录路径)");
+        }
+        Path dir = resolveAny(path).path();
+        guardSystemPath(dir, "创建");
+        try {
+            boolean existed = Files.isDirectory(dir);
+            Files.createDirectories(dir);
+            return existed ? "目录已存在: " + displayPath(dir) : "已创建目录: " + displayPath(dir);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("创建目录失败: " + e.getMessage());
+        }
+    }
+
+    /** 递归复制目录。 */
+    private static void copyDirRecursive(Path src, Path dst) throws IOException {
+        try (Stream<Path> stream = Files.walk(src)) {
+            for (Path p : (Iterable<Path>) stream::iterator) {
+                Path target = dst.resolve(src.relativize(p));
+                if (Files.isDirectory(p)) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.copy(p, target);
+                }
+            }
+        }
+    }
+
+    /** 统计目录内文件数(递归,上限计数防超大树卡顿)。 */
+    private static long countEntries(Path dir) {
+        try (Stream<Path> stream = Files.walk(dir)) {
+            return stream.filter(Files::isRegularFile).limit(100_000).count();
+        } catch (IOException e) {
+            return 0;
+        }
     }
 
     private long fileSizeOrZero(Path file) {
