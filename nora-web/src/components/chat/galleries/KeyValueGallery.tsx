@@ -28,7 +28,6 @@ export function KeyValueGallery({ data }: { data: Record<string, unknown> }) {
       summary={data.summary as string | undefined}
       stats={data.stats as Array<{ label: string; value: string }> | undefined}
       note={data.note as string | undefined}
-      actions={data.actions as Array<{ label: string; prompt: string }> | undefined}
     >
       <SectionLabel icon={KeyRound} label={(data.sectionTitle as string) || "详情"} />
       <div className="rounded-md border border-border/60 overflow-hidden">

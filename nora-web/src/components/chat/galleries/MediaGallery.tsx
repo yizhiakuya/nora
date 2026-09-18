@@ -1,10 +1,9 @@
 'use client';
 
 import { useMemo, useState } from "react";
-import { Images, Play, Sparkles } from "lucide-react";
+import { Images, Play } from "lucide-react";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
-import { prefillChatInput } from "@/lib/artifacts";
 
 /**
  * media 画廊:相册/媒体展示(**恢复原版设计**,2026-09-18 用户要求)。
@@ -124,22 +123,6 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
       {typeof data.note === "string" && data.note !== "" && (
         <div className="px-3 py-2 border-t border-border/70 text-[11px] text-muted-foreground leading-relaxed">
           {data.note}
-        </div>
-      )}
-      {Array.isArray(data.actions) && (data.actions as unknown[]).length > 0 && (
-        <div className="px-3 py-2 border-t border-border/70 flex flex-wrap gap-1.5">
-          {(data.actions as Array<{ label: string; prompt: string }>).slice(0, 3).map((a, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => prefillChatInput(a.prompt)}
-              title={`填入输入框:${a.prompt}`}
-              className="inline-flex items-center gap-1 rounded-md border border-blue-200 dark:border-blue-900/60 bg-blue-50/60 dark:bg-blue-950/30 px-2 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100/70 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3" />
-              {a.label}
-            </button>
-          ))}
         </div>
       )}
       {lightboxIndex !== null && (

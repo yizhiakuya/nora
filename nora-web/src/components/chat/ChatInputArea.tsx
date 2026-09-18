@@ -236,22 +236,6 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [input]);
 
-  // 画廊建议操作(2026-09-18):画廊卡片的「建议操作」按钮 dispatch 本事件,
-  // 把指令预填进输入框(不自动发送——用户可改后发,也可直接回车)。
-  // 用自定义事件桥接:画廊组件不需要知道输入框在哪(解耦)。
-  useEffect(() => {
-    const onPrefill = (e: Event) => {
-      const detail = (e as CustomEvent<{ text?: string }>).detail;
-      const text = detail?.text;
-      if (typeof text === "string" && text.trim() !== "") {
-        setInput(text);
-        requestAnimationFrame(() => textareaRef.current?.focus());
-      }
-    };
-    window.addEventListener("nora:prefill-input", onPrefill);
-    return () => window.removeEventListener("nora:prefill-input", onPrefill);
-  }, [setInput]);
-
   return (
     <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
       <div className="max-w-3xl mx-auto pointer-events-auto">

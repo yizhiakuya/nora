@@ -20,7 +20,6 @@ export function TextGallery({ data }: { data: Record<string, unknown> }) {
       summary={data.summary as string | undefined}
       stats={data.stats as Array<{ label: string; value: string }> | undefined}
       note={data.note as string | undefined}
-      actions={data.actions as Array<{ label: string; prompt: string }> | undefined}
     >
       <SectionLabel icon={FileText} label={(data.sectionTitle as string) || "报告"} />
       <div className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-[11px] text-foreground leading-relaxed whitespace-pre-wrap break-words">
