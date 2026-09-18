@@ -110,13 +110,17 @@ class ToolStepEmitter {
         // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
         // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill/
         // manage_mcp/run_command 同理(主体在 content/path/instructions/url/command 字段)。
+        // fetch_media(2026-09-19 修复):真实区分维度是 from/to/type/folder,
+        // typed input 只含 folder——同一目录分批拉不同时间范围(常见批量场景)
+        // 会被误判重复而熔断,改用原始 args 指纹。
         boolean rawFingerprint = name.startsWith("mcp__")
                 || "manage_workspace".equals(name) || "manage_skill".equals(name)
                 || "manage_mcp".equals(name) || "run_command".equals(name)
                 || "manage_knowledge".equals(name) || "manage_automation".equals(name)
-                || "search_knowledge".equals(name);
+                || "search_knowledge".equals(name) || "fetch_media".equals(name);
         String fingerprint = name + "|"
-                + (rawFingerprint ? (args == null ? "" : args) : normalizeArgs(name, input));
+                + (rawFingerprint ? (args == null ? "" : args)
+                        : normalizeArgs(name, input, parsed.datasourceAction()));
         int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
         if (repeats > LOOP_BLOCK_THRESHOLD) {
             String error = "重复调用已阻断：同样的参数已连续执行 " + (repeats - 1)
@@ -455,7 +459,7 @@ class ToolStepEmitter {
     }
 
     /** 循环检测用的稳定字符串:参数中有意义的部分。 */
-    private String normalizeArgs(String name, ChatStepDto.StepInput input) {
+    private String normalizeArgs(String name, ChatStepDto.StepInput input, String action) {
         if ("execute_sql".equals(name) || "execute_write_sql".equals(name)) {
             return (input.sql() == null ? "" : input.sql().trim().toLowerCase())
                     + "@" + (input.target() == null ? "" : input.target().toLowerCase());
@@ -463,7 +467,10 @@ class ToolStepEmitter {
         if ("read_service_logs".equals(name)) return (input.service() == null ? "" : input.service()) + "#" + input.limit();
         if ("manage_container".equals(name)) return input.service() == null ? "" : input.service();
         if ("manage_datasource".equals(name) || "manage_service".equals(name)) {
-            return (input.target() == null ? "?" : input.target().toLowerCase());
+            // action 进指纹(2026-09-19 修复):同一 target 上 list→schema→test
+            // 是不同动作,此前共用指纹会被误判重复调用而熔断
+            return (action == null ? "?" : action.toLowerCase()) + "@"
+                    + (input.target() == null ? "?" : input.target().toLowerCase());
         }
         if ("read_file".equals(name)) {
             return input.target() == null ? "?" : input.target();
@@ -709,7 +716,16 @@ class ToolStepEmitter {
                         + (a.has("old_string")
                         ? " | 替换预览: " + Texts.abbreviate(a.path("old_string").asText(""), 120)
                         + " → " + Texts.abbreviate(a.path("new_string").asText(""), 120) : "");
-                risk = "该路径在工作区之外——将改动本机的真实文件(不可自动撤销)";
+                // 风险文案按真实判定区分(2026-09-19 修复):此前一律硬编码
+                // "在工作区之外"——相对路径(区内 LOW 风险)也被这样展示,误导用户;
+                // 区内/区外分别给准确描述(move/copy 需看 to 字段)
+                String to = a.path("to").asText(null);
+                boolean outside = RiskClassifier.isOutsideWorkspace(p)
+                        || ("move".equals(action) || "copy".equals(action))
+                        && RiskClassifier.isOutsideWorkspace(to);
+                risk = outside
+                        ? "该路径在工作区之外——将改动本机的真实文件(不可自动撤销)"
+                        : "工作区内文件操作(可回退)";
             }
             default -> {
                 if (toolName.startsWith("mcp__")) {

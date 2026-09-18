@@ -241,7 +241,7 @@ public class McpServerService {
             // 失败即驱逐池中客户端(可能是 initialize 成功但 listTools 抖动的
             // 半死连接):与 callTool 的自愈语义一致,下次 refresh 用全新连接
             clientPool.evictClient(id);
-            String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+            String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
             log.warn("mcp tools/list failed for server {} ({}): {}", id, server.name(), shorten(msg));
             jdbcTemplate.update("UPDATE mcp_server SET status='error', status_detail=? WHERE id = ?",
                     shorten(msg), id);
@@ -306,7 +306,7 @@ public class McpServerService {
                                 ? Map.of()
                                 : objectMapper.readValue(argsJson, Map.class))));
             } catch (Exception e) {
-                String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+                String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
                 log.warn("mcp callTool failed after reconnect: server={} tool={}: {}", server.name(), toolName, shorten(msg));
                 return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
             }
@@ -532,6 +532,31 @@ public class McpServerService {
 
     private static String shorten(String message) {
         return message.length() <= 300 ? message : message.substring(0, 300) + "…";
+    }
+
+    /**
+     * 连接类错误的友好化(2026-09-19):SDK 的 "Client failed to initialize by
+     * explicit API call" 对用户零信息量——手机/中继离线时就是这个消息。
+     * 映射为可操作提示;非连接类错误原样保留(不掩盖真实原因)。
+     */
+    static String friendlyConnectError(String message) {
+        if (message == null || message.isBlank()) {
+            return "连接失败(无错误详情)";
+        }
+        if (message.contains("Client failed to initialize by explicit API call")) {
+            return "无法建立连接——远程 MCP 服务器不可达(手机/中继离线,或地址与鉴权头失效)。"
+                    + "请检查设备在线状态,稍后在 MCP 页「测试连接并刷新」重试";
+        }
+        if (message.contains("ConnectException") || message.contains("Connection refused")) {
+            return "连接被拒绝——目标地址/端口未监听(服务未启动?)。原始错误: " + shorten(message);
+        }
+        if (message.contains("UnknownHostException")) {
+            return "域名解析失败——地址拼写或 DNS 问题。原始错误: " + shorten(message);
+        }
+        if (message.contains("timed out") || message.contains("HttpTimeoutException")) {
+            return "连接超时——目标不可达或网络不稳,稍后重试。原始错误: " + shorten(message);
+        }
+        return message;
     }
 
     private static final String VIEW_SELECT =

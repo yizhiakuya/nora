@@ -1290,6 +1290,15 @@ class ChatToolExecutor {
                 return new ToolOutcome("(范围内没有可导出的媒体——确认时间范围/相册名是否正确;"
                         + "可用 albums_list 查看相册名,photos_stats 看总数)", "0 条媒体", 0, false);
             }
+            if (report.total() == 0 && report.failed() > 0) {
+                // 清单阶段失败(如手机离线):没有开始任何下载——输出必须是错误,
+                // 而不是「已拉取到 …:成功 0,失败 1,共 0」这种自相矛盾的"成功"文案
+                // (2026-09-19 修复:模型看到"已拉取到"会误以为任务完成)
+                String detail = report.errors().isEmpty() ? "" : "(" + report.errors().get(0) + ")";
+                return new ToolOutcome("ERROR: 拉取媒体清单失败,未开始下载 " + detail
+                        + "\n下一步:确认手机 App 在线(MCP 服务器状态),或在 MCP 页刷新连接后重试。",
+                        "清单失败", 0, false);
+            }
             StringBuilder sb = new StringBuilder();
             // 落地位置必须给**解析后的真实路径**(相对工作区 + 绝对):
             // 只回显 folder 参数时模型无法确认文件到底在哪,只能再跑 PowerShell
@@ -1321,7 +1330,9 @@ class ChatToolExecutor {
                     StringBuilder dirs = new StringBuilder();
                     for (AgentWorkspaceService.FileEntry f : siblings) {
                         if (f.directory()) {
-                            dirs.append("- photos/").append(f.path()).append("(")
+                            // f.path() 已是相对工作区根的完整路径(photos/xxx)——直接展示,
+                            // 不要再拼 "photos/" 前缀(实测踩过:显示成 photos/photos/xxx)
+                            dirs.append("- ").append(f.path()).append("(")
                                     .append(f.fileCount()).append(" 个文件, ")
                                     .append(FileToolClient.formatSize(f.size())).append(")\n");
                         }

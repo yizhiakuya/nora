@@ -205,7 +205,7 @@ final class RiskClassifier {
     }
 
     /** 简单判定:绝对路径或含 ../ 上跳 = 工作区外。 */
-    private static boolean isOutsideWorkspace(String path) {
+    static boolean isOutsideWorkspace(String path) {
         if (path == null || path.isBlank()) {
             return false;
         }
