@@ -222,12 +222,34 @@ public class MediaFetchService {
     }
 
     /**
-     * 优先 photos_export(批量清单,500/页自动翻页);工具不存在(老版本 App)返回 null。
+     * 清单获取:优先 photos_search(urls=original)(0.3.23 起的新协议,500/页自动翻页);
+     * 老版本 App 无该参数形态时回退 photos_export 旧工具名。全部失败返回 null。
      * 翻页期间按页上报 listing 进度(用户能看到"正在获取清单 n 条")。
      */
     private ListResult listViaExport(McpServerService.RawServer server,
                                      String from, String to, String album, String type,
                                      ProgressCallback progress) {
+        // 首选新协议;老 App(0.3.22 及以前)photos_search 不认 urls 参数——
+        // 但参数被忽略时返回的是 preview 形态(无 url 字段),检测到后自动换旧工具名
+        ListResult viaSearch = listViaExportTool(server, from, to, album, type, progress,
+                "photos_search", true);
+        if (viaSearch != null) {
+            return viaSearch;
+        }
+        // 回退:旧工具名 photos_export(新 App 里是兼容别名,老 App 里是原生工具)
+        return listViaExportTool(server, from, to, album, type, progress,
+                "photos_export", false);
+    }
+
+    /**
+     * 用指定工具名拉清单。
+     *
+     * @param originalMode true=传 urls=original(新协议);false=不传(旧工具名自带原片语义)
+     */
+    private ListResult listViaExportTool(McpServerService.RawServer server,
+                                         String from, String to, String album, String type,
+                                         ProgressCallback progress,
+                                         String toolName, boolean originalMode) {
         List<MediaEntry> out = new ArrayList<>();
         String hint = null;
         int offset = 0;
@@ -248,12 +270,16 @@ public class MediaFetchService {
                 if (type != null && !type.isBlank()) {
                     args.put("type", type);
                 }
+                if (originalMode) {
+                    args.put("urls", "original");
+                }
                 args.put("limit", pageSize);
                 args.put("offset", offset);
                 McpServerService.McpToolResult result =
-                        mcpServerService.callToolRich(server.id(), "photos_export", args.toString());
+                        mcpServerService.callToolRich(server.id(), toolName, args.toString());
                 if (result.isError()) {
-                    // 老版本 App 无此工具(首个请求即失败)→ 回退;翻页中途失败则交付已取部分
+                    // 工具不存在(老版本 App 无该工具)→ 返回 null 走下一档回退;
+                    // 翻页中途失败则交付已取部分
                     return offset == 0 ? null : new ListResult(out, null);
                 }
                 JsonNode root = objectMapper.readTree(result.text());
@@ -270,6 +296,12 @@ public class MediaFetchService {
                         }
                     }
                 }
+                // 新协议首选路径但一条 url 都没拿到(老 App 忽略了 urls 参数,
+                // 返回的是 preview 形态)→ 返回 null 触发旧工具名回退
+                if (originalMode && offset == 0 && out.isEmpty() && count > 0) {
+                    log.info("photos_search 无 url 字段(疑似老版本 App),回退 photos_export 工具名");
+                    return null;
+                }
                 if (progress != null) {
                     progress.onProgress(FetchProgress.listing(out.size()));
                 }
@@ -278,12 +310,12 @@ public class MediaFetchService {
                 }
                 offset += count;
             } catch (Exception e) {
-                log.warn("photos_export 翻页失败(offset={}): {}", offset, e.getMessage());
+                log.warn("{} 翻页失败(offset={}): {}", toolName, offset, e.getMessage());
                 return offset == 0 ? null : new ListResult(out, null);
             }
         }
         if (offset >= 5000) {
-            log.warn("photos_export 清单超过 5000 条,已截断(offset 上限)");
+            log.warn("{} 清单超过 5000 条,已截断(offset 上限)", toolName);
         }
         return new ListResult(out, hint);
     }
