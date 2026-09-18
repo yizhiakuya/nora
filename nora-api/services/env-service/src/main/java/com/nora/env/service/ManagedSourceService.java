@@ -129,7 +129,13 @@ public class ManagedSourceService {
     /**
      * 读取 FILE 源日志文件末尾 N 行(RandomAccessFile 从尾部回扫,零依赖)。
      * 文件不存在/不可读时抛 IOException 由调用方转 ERROR 文案。
+     *
+     * <p>字节上限(2026-09-19 审查修复):目标段超 {@value #MAX_TAIL_BYTES}
+     * 字节时只读文件末尾这段——否则「文件总行数 &lt; maxLines」或存在超长行时
+     * 会从文件头全量读入(GB 级日志一次分配 GB 数组,OOM)。
      */
+    private static final long MAX_TAIL_BYTES = 4L * 1024 * 1024;
+
     public List<String> tailFile(String path, int maxLines) throws IOException {
         Deque<String> lines = new java.util.ArrayDeque<>(maxLines);
         try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
@@ -143,11 +149,12 @@ public class ManagedSourceService {
                     newlines++;
                 }
             }
-            if (newlines <= maxLines && pos == 0) {
-                raf.seek(0);
-            } else {
-                raf.seek(pos + 1);
+            long start = (newlines <= maxLines && pos == 0) ? 0 : pos + 1;
+            // 字节上限:目标段过长时从末尾截(读的是"末尾 N 行",截头不伤语义)
+            if (raf.length() - start > MAX_TAIL_BYTES) {
+                start = raf.length() - MAX_TAIL_BYTES;
             }
+            raf.seek(start);
             // 一次读出目标段,按行拆(尾部多读的一行是下一轮增量的锚点,无害)
             byte[] buf = new byte[(int) (raf.length() - raf.getFilePointer())];
             raf.readFully(buf);
