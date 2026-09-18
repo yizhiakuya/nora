@@ -360,7 +360,7 @@ class ChatToolsSpec {
         fmFromProp.put("description", "起始时间(ISO 8601,如 2026-08-17),含;不传=不限");
         ObjectNode fmToProp = fmProps.putObject("to");
         fmToProp.put("type", "string");
-        fmToProp.put("description", "结束时间(ISO 8601),含;不传=不限");
+        fmToProp.put("description", "结束时间(ISO 8601),含。**传纯日期(如 2026-09-16)= 含当天一整天**(不是当天 0 点);不传=不限");
         ObjectNode fmAlbumProp = fmProps.putObject("album");
         fmAlbumProp.put("type", "string");
         fmAlbumProp.put("description", "相册名(以 albums_list 返回的真实名称为准,如 Camera/Screenshots);不传=全部相册。"
@@ -370,7 +370,8 @@ class ChatToolsSpec {
         fmTypeProp.put("description", "photo / video / all(默认 all)");
         ObjectNode fmFolderProp = fmProps.putObject("folder");
         fmFolderProp.put("type", "string");
-        fmFolderProp.put("description", "工作区目标文件夹(相对路径,如 photos/2026-08);不传=imports/");
+        fmFolderProp.put("description", "工作区目标文件夹(相对路径,相对工作区根,如 photos/2026-09-16-show);"
+                + "媒体归档**建议放 photos/ 下**(先 list photos 看已有目录避免重复);不传=imports/");
         ObjectNode fmQualityProp = fmProps.putObject("quality");
         fmQualityProp.put("type", "string");
         fmQualityProp.put("description", "high=图片取原片(归档推荐);不传=手机按网络自动出图。视频始终原片");

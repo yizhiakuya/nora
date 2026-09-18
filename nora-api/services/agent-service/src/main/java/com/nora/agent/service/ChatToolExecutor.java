@@ -876,8 +876,20 @@ class ChatToolExecutor {
                         + "可用 albums_list 查看相册名,photos_stats 看总数)", "0 条媒体", 0, false);
             }
             StringBuilder sb = new StringBuilder();
-            sb.append("已拉取到 ").append(folder == null || folder.isBlank() ? "imports" : folder)
-                    .append(":成功 ").append(report.downloaded())
+            // 落地位置必须给**解析后的真实路径**(相对工作区 + 绝对):
+            // 只回显 folder 参数时模型无法确认文件到底在哪,只能再跑 PowerShell
+            // 验证(实测:一轮任务里 4 个 run_command 全是为确认落点)。
+            String folderLabel = (folder == null || folder.isBlank()) ? "imports" : folder.trim();
+            sb.append("已拉取到 ").append(folderLabel);
+            if (agentWorkspaceService != null) {
+                try {
+                    AgentWorkspaceService.ResolvedTarget resolved = agentWorkspaceService.resolveAny(folderLabel);
+                    sb.append("(绝对路径: ").append(resolved.path().toString().replace('\\', '/')).append(')');
+                } catch (Exception ignored) {
+                    // 路径解析失败不影响结果报告
+                }
+            }
+            sb.append(":成功 ").append(report.downloaded())
                     .append(",跳过(已存在)").append(report.skipped())
                     .append(",失败 ").append(report.failed())
                     .append(",共 ").append(report.total())

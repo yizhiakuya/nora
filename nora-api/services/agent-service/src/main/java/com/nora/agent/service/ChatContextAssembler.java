@@ -500,6 +500,9 @@ class ChatContextAssembler {
      */
     SystemPromptResult systemPromptWith(List<CitationDto> citations) {
         StringBuilder sb = new StringBuilder(SYSTEM_PROMPT);
+        // 当前时间:必须注入——模型训练知识过期,不注入就只能 run_command Get-Date
+        // 现挖(实测:每轮"看昨天拍的视频"都要先跑一条 PowerShell 查日期)
+        sb.append("\n当前时间:").append(currentTimeLine()).append("。\n");
         AgentWorkspaceService.BootstrapResult workspaceBootstrap = null;
         AgentSkillService.CatalogBundle skillCatalog = null;
         // 全局记忆:跨会话事实/偏好,约束每轮回答
@@ -538,6 +541,19 @@ class ChatContextAssembler {
     record SystemPromptResult(String text,
                                       AgentWorkspaceService.BootstrapResult workspace,
                                       AgentSkillService.CatalogBundle skills) {
+    }
+
+    /**
+     * 当前时间行:2026-09-18 周五 11:50(Asia/Shanghai)。
+     *
+     * <p>「昨天/今天/最近」类请求全靠它——不注入的话模型只能现跑命令查,
+     * 而查回来的日期在下一轮又忘了(上下文里的工具结果会被压缩回收)。
+     */
+    static String currentTimeLine() {
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now();
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern(
+                "yyyy-MM-dd EEEE HH:mm", java.util.Locale.CHINA);
+        return now.format(fmt) + "(" + java.time.ZoneId.systemDefault() + ")";
     }
 
     /**
