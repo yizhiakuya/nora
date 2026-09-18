@@ -41,7 +41,10 @@ export function formatChatRefs(refs: ChatRef[]): string {
         case "skill":
           return `[引用技能] ${r.name} (skill_id=${r.id}) —— 该技能指令已注入,请遵循其指令执行本任务`;
         case "mcp":
-          return `[引用MCP服务器] ${r.name} (server_id=${r.id}) —— 用户要求优先使用该服务器提供的工具(mcp__${r.name}__*)处理本请求`;
+          // 中性文案:后端 MessageRefResolver.resolveMcp 会按服务器 tool_policy
+          // (eager 挂载名 / lazy tools+call)生成具体指引——前端不硬编码挂载名,
+          // 否则 lazy 服务器(工具未挂载)的引用行会误导模型
+          return `[引用MCP服务器] ${r.name} (server_id=${r.id}) —— 用户要求优先使用该服务器提供的工具处理本请求`;
       }
     })
     .join("\n");
