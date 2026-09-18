@@ -27,7 +27,7 @@ export function ImagePreview({ preview }: { preview: FilePreview }) {
           alt="图片预览"
           onClick={() => setLightboxOpen(true)}
           style={{ transform: `scale(${scale})`, transformOrigin: "center" }}
-          className="max-w-full max-h-full object-contain rounded-md shadow-2xl cursor-zoom-in transition-transform duration-150 animate-in fade-in"
+          className="max-w-full max-h-full object-contain cursor-zoom-in transition-transform duration-150 animate-in fade-in"
         />
         {/* 悬浮工具条(不占布局空间) */}
         <div className="absolute bottom-4 right-4 flex items-center gap-0.5 bg-black/55 backdrop-blur-md rounded-xl px-1.5 py-1 shadow-lg">

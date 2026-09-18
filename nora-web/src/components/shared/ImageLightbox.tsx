@@ -377,7 +377,7 @@ export function ImageLightbox({
             preload="metadata"
             onClick={(e) => e.stopPropagation()}
             onLoadedMetadata={() => setLoaded(true)}
-            className="max-w-full max-h-full rounded-lg shadow-2xl bg-black"
+            className="max-w-full max-h-full bg-black"
           >
             您的浏览器不支持视频播放。
           </video>

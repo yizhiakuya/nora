@@ -4,15 +4,23 @@ import { useState } from "react";
 import { ArtifactsBlock } from "@/components/chat/galleries";
 import { parseArtifactsJson, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
+import { mediaCacheUrl, originalVariant, thumbVariant } from "@/lib/mediaCache";
 
 /**
  * Markdown 正文里的图片：点击页内灯箱放大（不再跳外部标签页）。
  * 单张图也给灯箱——行为一致（点击放大、Esc 关闭）。
+ *
+ * 灯箱大图取原图档（/thumb → /content，2026-09-18）：正文里贴的常是
+ * 相册缩略图链接，全屏看缩略图必模糊；缩略图只做占位。
  */
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const [open, setOpen] = useState(false);
   if (!src) return null;
-  const images: LightboxImage[] = [{ src, alt }];
+  const images: LightboxImage[] = [{
+    src: mediaCacheUrl(originalVariant(src)),
+    thumb: mediaCacheUrl(thumbVariant(src)),
+    alt,
+  }];
   return (
     <>
       <img

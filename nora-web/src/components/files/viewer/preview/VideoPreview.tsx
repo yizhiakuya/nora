@@ -15,7 +15,7 @@ export function VideoPreview({ preview }: { preview: FilePreview }) {
         autoPlay
         muted
         preload="metadata"
-        className="max-w-full max-h-full rounded-md shadow-2xl bg-black animate-in fade-in"
+        className="max-w-full max-h-full bg-black animate-in fade-in"
       >
         您的浏览器不支持视频播放。
       </video>
