@@ -4,7 +4,7 @@ import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
 import { parseArtifactsFence, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
-import { mediaCacheUrl, thumbVariant } from "@/lib/mediaCache";
+import { mediaCacheUrl, thumbVariant, originalVariant } from "@/lib/mediaCache";
 
 /**
  * 工具步骤行(2026-09-17 从 AgentThoughtBlock 拆出):单行 chip(名称 +
@@ -282,7 +282,9 @@ export function ToolRow({ step }: { step: ChatStep }) {
       {lightboxIndex !== null && (
         <ImageLightbox
           images={resultImages.map((img) => ({
-            src: mediaCacheUrl(img.url),
+            // 大图取原图档(/thumb 升级为 /content——缩略图全屏放大必模糊);
+            // 缩略图只做占位/网格
+            src: mediaCacheUrl(originalVariant(img.url)),
             thumb: mediaCacheUrl(thumbVariant(img.url)),
             alt: img.alt,
           }))}

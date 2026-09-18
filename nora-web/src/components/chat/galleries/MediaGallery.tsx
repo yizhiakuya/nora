@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Images, Play } from "lucide-react";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
-import { mediaCacheUrl, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
+import { mediaCacheUrl, originalVariant, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
 
 /**
  * media 画廊:相册/媒体展示(**恢复原版设计**,2026-09-18 用户要求)。
@@ -50,8 +50,9 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
       const isVideo = item.kind === "video";
       const full = item.fullUrl ?? item.url ?? "";
       return {
-        // 视频走压缩流端点(/video,手机端按网络档位转码);图片走原图(content)
-        src: mediaCacheUrl(isVideo ? videoStreamVariant(full) : full),
+        // 视频走压缩流端点(/video,手机端按网络档位转码);图片走原图
+        // (originalVariant:/thumb 升级为 /content——灯箱全屏看缩略图必模糊)
+        src: mediaCacheUrl(isVideo ? videoStreamVariant(full) : originalVariant(full)),
         thumb: mediaCacheUrl(item.thumbUrl ?? item.url ?? full),
         caption: item.caption,
         alt: item.name ?? "媒体",

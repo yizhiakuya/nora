@@ -84,6 +84,21 @@ export function ImageLightbox({
     setFit({ w: Math.round(el.naturalWidth * s), h: Math.round(el.naturalHeight * s) });
   }, []);
 
+  /**
+   * 加载后重算(等布局稳定)。
+   *
+   * 为什么延迟:onLoad 触发时,fit 尚未设置 → img 还是 natural 尺寸或 0,
+   * 容器 flex 布局可能还在中间态(实测踩过:1280x2772 的图只算出 405x420,
+   * 应撑满 ~878 高)。rAF + setTimeout(0) 双保险让浏览器完成一轮布局后再测。
+   */
+  const recomputeFitSoon = useCallback((el: HTMLImageElement) => {
+    requestAnimationFrame(() => {
+      recomputeFit(el);
+      // 再补一帧(容器含异步内容时首帧可能仍不稳)
+      setTimeout(() => recomputeFit(el), 50);
+    });
+  }, [recomputeFit]);
+
   // 窗口/容器尺寸变化时重算适配(特性检测:jsdom 测试环境无 ResizeObserver)
   useEffect(() => {
     const c = containerRef.current;
@@ -375,7 +390,7 @@ export function ImageLightbox({
               alt={current.alt ?? current.caption ?? "图片"}
               onLoad={(e) => {
                 setLoaded(true);
-                recomputeFit(e.currentTarget);
+                recomputeFitSoon(e.currentTarget);
               }}
               onClick={(e) => e.stopPropagation()}
               onPointerDown={onPointerDown}
@@ -392,17 +407,17 @@ export function ImageLightbox({
                 transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
                 transition: dragging.current ? "none" : "transform 0.15s ease-out",
               }}
-              className={`max-w-full max-h-full object-contain rounded-lg shadow-2xl select-none ${
+              className={`max-w-full max-h-full object-contain select-none ${
                 scale > 1.01 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
               }`}
             />
-            {/* 大图未加载完时，先用缩略图铺底（避免白屏等待） */}
+            {/* 大图未加载完时，先用缩略图铺底（避免白屏等待）；加载完成即移除 */}
             {!loaded && current.thumb && current.thumb !== current.src && (
               <img
                 src={current.thumb}
                 alt=""
                 aria-hidden
-                className="absolute max-w-full max-h-full object-contain rounded-lg shadow-2xl blur-sm"
+                className="absolute max-w-full max-h-full object-contain blur-sm"
               />
             )}
             {/* 缩放工具条(图片时显示;悬浮右下角,不占布局) */}

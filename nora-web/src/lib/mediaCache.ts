@@ -35,3 +35,15 @@ export function thumbVariant(url: string): string {
 export function videoStreamVariant(url: string): string {
   return url.replace(/(\/photo\/\d+\/)content(\?|$)/, "$1video$2");
 }
+
+/**
+ * 原图变体(2026-09-18):/thumb → /content 反向升级——灯箱/全屏查看用。
+ *
+ * 为什么需要:工具结果的 markdown 图片链接常是缩略图 URL(/thumb,512px),
+ * 灯箱直接加载会在全屏放大下模糊(实测踩过:用户反馈「分辨率太小」)。
+ * 灯箱的大图应始终取原图档,缩略图只做网格/占位。
+ * 非相册地址(无 /thumb 形态)原样返回。
+ */
+export function originalVariant(url: string): string {
+  return url.replace(/\/thumb(\?|$)/, "/content$1");
+}
