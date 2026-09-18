@@ -38,6 +38,10 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
  * 把文本按 ```nora-artifacts / ```nora-gallery(旧格式)围栏切成片段：
  * 围栏内是结构化画廊数据，统一由 ArtifactsBlock 原生渲染（旧格式自动转换）。
  *
+ * 逐行状态机(而非简单正则):必须跳过被 4+ 反引号包裹的示例块——技能正文/
+ * 文档里常用 ````text ... ```` 包裹示例围栏,简单正则会误匹配内层围栏,
+ * 把示例数据当真实画廊渲染(实测踩过:技能里的示例 JSON 被渲染成画廊)。
+ *
  * 不走 react-markdown 的 components.code 覆盖：那样画廊会被外层 <pre>
  * 包住（代码块样式），切分后画廊直接是块级元素，样式干净。
  */
@@ -48,15 +52,66 @@ type FenceSegment =
 
 function splitGalleryFences(text: string): FenceSegment[] {
   const out: FenceSegment[] = [];
-  const re = /```(nora-gallery|nora-artifacts)\s*\n([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push({ type: "md", text: text.slice(last, m.index) });
-    out.push({ type: m[1] === "nora-artifacts" ? "artifacts" : "legacy-gallery", raw: m[2] });
-    last = m.index + m[0].length;
+  const lines = text.split("\n");
+  let outerFenceLen = 0; // >0 = 在 4+ 反引号的示例块内
+  let mdStart = 0; // 当前 md 片段起始行
+  let mdBuf: string[] = [];
+
+  const flushMd = (upToLine: number) => {
+    // 收集 mdStart..upToLine-1 的行为 md 片段
+    if (upToLine > mdStart) {
+      mdBuf.push(...lines.slice(mdStart, upToLine));
+    }
+    if (mdBuf.length > 0) {
+      const t = mdBuf.join("\n");
+      if (t.trim()) out.push({ type: "md", text: t });
+      mdBuf = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fenceMatch = line.match(/^\s*(`{3,})/);
+    if (!fenceMatch) {
+      continue;
+    }
+    const len = fenceMatch[1].length;
+    if (outerFenceLen > 0) {
+      if (len === outerFenceLen) {
+        outerFenceLen = 0;
+      }
+      continue;
+    }
+    if (len > 3) {
+      outerFenceLen = len;
+      continue;
+    }
+    const isArtifacts = /^\s*```\s*nora-artifacts\s*$/.test(line);
+    const isGallery = /^\s*```\s*nora-gallery\s*$/.test(line);
+    if (!isArtifacts && !isGallery) {
+      continue; // 普通代码围栏:交给 Markdown 渲染
+    }
+    // 收集围栏内容直到闭栏
+    const body: string[] = [];
+    let closed = false;
+    let endLine = i;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^\s*```\s*$/.test(lines[j])) {
+        closed = true;
+        endLine = j;
+        break;
+      }
+      body.push(lines[j]);
+    }
+    if (!closed) {
+      continue;
+    }
+    flushMd(i);
+    out.push({ type: isArtifacts ? "artifacts" : "legacy-gallery", raw: body.join("\n") });
+    mdStart = endLine + 1;
+    i = endLine;
   }
-  if (last < text.length) out.push({ type: "md", text: text.slice(last) });
+  flushMd(lines.length);
   return out;
 }
 

@@ -78,11 +78,75 @@ export interface ArtifactsData {
   note?: string;
 }
 
-/** 从文本里提取 ```nora-artifacts 围栏(无则 null)。 */
+/**
+ * 从文本里提取指定名字的围栏内容(逐行状态机,正确跳过 4+ 反引号包裹的示例块)。
+ *
+ * 为什么不用简单正则:技能正文/文档里常用 ````text ... ```` 包裹示例围栏,
+ * 简单正则会匹配到内层 3 反引号围栏,把「示例」当「真实数据」渲染。
+ * 实测踩过:agent 读技能后,技能里的示例 JSON 被渲染成真画廊。
+ *
+ * @param content 待扫描文本
+ * @param fenceName 围栏名(如 nora-artifacts)
+ * @return 第一个**顶层**围栏的内容;无则 null
+ */
+function extractTopLevelFence(content: string, fenceName: string): string | null {
+  const lines = content.split("\n");
+  let outerFenceLen = 0; // >0 = 在 4+ 反引号的示例块内
+  const fenceHead = new RegExp("^\\s*```\\s*" + fenceName + "\\s*$");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fenceMatch = line.match(/^\s*(`{3,})/);
+    if (!fenceMatch) {
+      continue;
+    }
+    const len = fenceMatch[1].length;
+    if (outerFenceLen > 0) {
+      // 示例块内:仅同长度闭栏才退出(内部一切不解析)
+      if (len === outerFenceLen) {
+        outerFenceLen = 0;
+      }
+      continue;
+    }
+    if (len > 3) {
+      outerFenceLen = len;
+      continue;
+    }
+    if (fenceHead.test(line)) {
+      // 目标围栏:收集内容直到闭栏
+      const body: string[] = [];
+      let closed = false;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (/^\s*```\s*$/.test(lines[j])) {
+          closed = true;
+          i = j;
+          break;
+        }
+        body.push(lines[j]);
+      }
+      if (closed) {
+        return body.join("\n");
+      }
+      continue;
+    }
+    // 其他语言的普通围栏:跳过其内容到闭栏(避免内容里的行被误判)
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^\s*```\s*$/.test(lines[j])) {
+        i = j;
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 从文本里提取 ```nora-artifacts 围栏(无则 null)。
+ * 跳过被 4+ 反引号包裹的示例块(见 extractTopLevelFence 注释)。
+ */
 export function parseArtifactsFence(content: string | null | undefined): ArtifactsData | null {
   if (!content) return null;
-  const m = content.match(/```nora-artifacts\s*\n([\s\S]*?)```/);
-  return m ? parseArtifactsJson(m[1]) : null;
+  const body = extractTopLevelFence(content, "nora-artifacts");
+  return body != null ? parseArtifactsJson(body) : null;
 }
 
 /**
@@ -91,13 +155,14 @@ export function parseArtifactsFence(content: string | null | undefined): Artifac
  * ——组件只留一套,旧围栏(含历史消息)自动升级为原生画廊体验。
  *
  * 映射:items[].url→thumbUrl / fullUrl→url(灯箱用原图);其余字段直传。
+ * 同样跳过被 4+ 反引号包裹的示例块(见 extractTopLevelFence)。
  */
 export function parseLegacyGalleryFence(content: string | null | undefined): ArtifactsData | null {
   if (!content) return null;
-  const m = content.match(/```nora-gallery\s*\n([\s\S]*?)```/);
-  if (!m) return null;
+  const body = extractTopLevelFence(content, "nora-gallery");
+  if (body == null) return null;
   try {
-    const legacy = JSON.parse(m[1]) as {
+    const legacy = JSON.parse(body) as {
       title?: string;
       count?: number;
       items?: Array<{
