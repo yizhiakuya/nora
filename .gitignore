@@ -44,3 +44,6 @@ archive/
 
 # 服务运行数据（媒体缓存等；cwd 在仓库根启动 agent-service 时落在这里）
 data/
+
+# 手机端项目(独立 git 仓库,有自己的远程;2026-09-18 从 D:/claude 迁入)
+phone-album-mcp/

@@ -1,9 +1,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useState } from "react";
-import { GalleryBlock, parseGalleryJson } from "@/components/chat/GalleryBlock";
 import { ArtifactsBlock } from "@/components/chat/ArtifactsBlock";
-import { parseArtifactsJson } from "@/lib/artifacts";
+import { parseArtifactsJson, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 
 /**
@@ -36,16 +35,16 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
 }
 
 /**
- * 把文本按 ```nora-gallery / ```nora-artifact 围栏切成片段：围栏内是结构化
- * 数据（画廊卡片 / H5 产物沙箱），其余按 Markdown 渲染。
+ * 把文本按 ```nora-artifacts / ```nora-gallery(旧格式)围栏切成片段：
+ * 围栏内是结构化画廊数据，统一由 ArtifactsBlock 原生渲染（旧格式自动转换）。
  *
  * 不走 react-markdown 的 components.code 覆盖：那样画廊会被外层 <pre>
  * 包住（代码块样式），切分后画廊直接是块级元素，样式干净。
  */
 type FenceSegment =
   | { type: "md"; text: string }
-  | { type: "gallery"; raw: string }
-  | { type: "artifacts"; raw: string };
+  | { type: "artifacts"; raw: string }
+  | { type: "legacy-gallery"; raw: string };
 
 function splitGalleryFences(text: string): FenceSegment[] {
   const out: FenceSegment[] = [];
@@ -54,7 +53,7 @@ function splitGalleryFences(text: string): FenceSegment[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push({ type: "md", text: text.slice(last, m.index) });
-    out.push({ type: m[1] === "nora-artifacts" ? "artifacts" : "gallery", raw: m[2] });
+    out.push({ type: m[1] === "nora-artifacts" ? "artifacts" : "legacy-gallery", raw: m[2] });
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push({ type: "md", text: text.slice(last) });
@@ -87,19 +86,11 @@ export default function MarkdownContent({
   return (
     <div className={className}>
       {segments.map((seg, i) => {
-        if (seg.type === "gallery") {
-          const data = parseGalleryJson(seg.raw);
-          // 坏数据退回原始围栏文本（不丢内容）
-          return data ? (
-            <GalleryBlock key={i} data={data} />
-          ) : (
-            <pre key={i} className="whitespace-pre-wrap break-words rounded-md bg-muted/60 px-2 py-1.5 text-[11px] font-mono">
-              {seg.raw}
-            </pre>
-          );
-        }
-        if (seg.type === "artifacts") {
-          const data = parseArtifactsJson(seg.raw);
+        if (seg.type === "artifacts" || seg.type === "legacy-gallery") {
+          // 统一画廊:新协议直接解析;旧 nora-gallery 转换为统一结构(历史消息兼容)
+          const data = seg.type === "artifacts"
+            ? parseArtifactsJson(seg.raw)
+            : parseLegacyGalleryFence("```nora-gallery\n" + seg.raw + "\n```");
           // 坏数据退回原始围栏文本（不丢内容）
           return data ? (
             <ArtifactsBlock key={i} data={data} />

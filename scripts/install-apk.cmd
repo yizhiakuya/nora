@@ -1,7 +1,7 @@
 @echo off
 setlocal
 set "ADB=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
-set "APK=D:\claude\phone-album-mcp\android-app\app\build\outputs\apk\debug\app-debug.apk"
+set "APK=D:\claude\Nora\phone-album-mcp\android-app\app\build\outputs\apk\debug\app-debug.apk"
 echo === install (replace, keep data) ===
 %ADB% install -r "%APK%"
 echo.

@@ -85,6 +85,56 @@ export function parseArtifactsFence(content: string | null | undefined): Artifac
   return m ? parseArtifactsJson(m[1]) : null;
 }
 
+/**
+ * 旧格式兼容(2026-09-18 统一画廊):```nora-gallery 是手机相册 photos_showcase
+ * 的早期专属围栏(媒体列表)。统一画廊落地后,前端把它**转换成**统一结构渲染
+ * ——组件只留一套,旧围栏(含历史消息)自动升级为原生画廊体验。
+ *
+ * 映射:items[].url→thumbUrl / fullUrl→url(灯箱用原图);其余字段直传。
+ */
+export function parseLegacyGalleryFence(content: string | null | undefined): ArtifactsData | null {
+  if (!content) return null;
+  const m = content.match(/```nora-gallery\s*\n([\s\S]*?)```/);
+  if (!m) return null;
+  try {
+    const legacy = JSON.parse(m[1]) as {
+      title?: string;
+      count?: number;
+      items?: Array<{
+        url?: string;
+        fullUrl?: string;
+        filename?: string;
+        caption?: string;
+        takenAt?: string;
+        type?: string;
+      }>;
+      note?: string;
+    };
+    if (!legacy || !Array.isArray(legacy.items) || legacy.items.length === 0) {
+      return null;
+    }
+    return {
+      title: typeof legacy.title === "string" ? legacy.title : "媒体画廊",
+      summary: legacy.count != null ? `共 ${legacy.count} 项` : undefined,
+      sections: [{
+        kind: "media",
+        items: legacy.items.map((it) => ({
+          kind: it.type === "video" ? ("video" as const) : ("image" as const),
+          // 统一画廊约定:url=灯箱用(原图优先), thumbUrl=网格用(缩略图)
+          url: it.fullUrl ?? it.url ?? "",
+          thumbUrl: it.url,
+          name: it.filename,
+          caption: it.caption ?? it.filename,
+          meta: it.takenAt,
+        })),
+      }],
+      note: legacy.note,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 解析围栏 JSON;结构不完整返回 null(调用方降级为普通代码块,不丢内容)。 */
 export function parseArtifactsJson(raw: string): ArtifactsData | null {
   try {

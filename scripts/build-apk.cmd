@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d D:\claude\phone-album-mcp\android-app
+cd /d D:\claude\Nora\phone-album-mcp\android-app
 call gradlew.bat :app:assembleDebug --console=plain
 if errorlevel 1 (
   echo BUILD FAILED

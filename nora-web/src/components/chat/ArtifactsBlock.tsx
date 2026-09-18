@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Play, FileText, Folder, Link2, ExternalLink, Images, FileCheck2, ListTree } from "lucide-react";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
@@ -19,9 +18,14 @@ import {
  * 设计:AI 只声明「产出了什么」(```nora-artifacts JSON),前端用 Nora 原生
  * 组件渲染:媒体走 ImageLightbox 灯箱(同手机画廊)、文件点击打开文件页/工作区。
  * 风格与工作台一体,AI 不碰样式——解决 v1(H5 自写页面)质量不可控的问题。
+ *
+ * 旧 ```nora-gallery 围栏由解析层转换为同一结构(历史消息兼容,组件只留一套)。
+ *
+ * 跳转用 window.location(非 SPA navigate):目标是文件页且携带查询参数
+ * (?workspace=/?open=),整页导航语义最直白,也避免组件在 Router 外
+ * (单元测试/独立预览)时的 hook 依赖。
  */
 export function ArtifactsBlock({ data }: { data: ArtifactsData }) {
-  const navigate = useNavigate();
   /** 当前打开的媒体条目(跨 section 汇总;null=关闭) */
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -57,9 +61,9 @@ export function ArtifactsBlock({ data }: { data: ArtifactsData }) {
     const parsed = parseOpen(item.open);
     if (!parsed) return;
     if (parsed.scheme === "workspace") {
-      navigate(`/files?workspace=${encodeURIComponent(parsed.target)}`);
+      window.location.href = `/files?workspace=${encodeURIComponent(parsed.target)}`;
     } else if (parsed.scheme === "file") {
-      navigate(`/files?open=${encodeURIComponent(parsed.target)}`);
+      window.location.href = `/files?open=${encodeURIComponent(parsed.target)}`;
     } else if (parsed.scheme === "url") {
       window.open(parsed.target, "_blank", "noopener");
     }

@@ -1,7 +1,8 @@
 import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
-import { GalleryBlock, parseGalleryFence, type GalleryData } from "./GalleryBlock";
+import { ArtifactsBlock } from "./ArtifactsBlock";
+import { parseArtifactsFence, parseLegacyGalleryFence, type ArtifactsData } from "@/lib/artifacts";
 import { ToolRow } from "./ToolStepRow";
 import { ContextRow } from "./ContextStepRow";
 
@@ -156,10 +157,10 @@ export function AgentProcessBlock({
 
   const toolCount = steps.filter((s) => s.type === "tool").length;
   const summary = toolCount > 0 ? `${toolCount} 次工具调用` : `${steps.length} 个步骤`;
-  // 结果类内容：photos_showcase 的画廊卡片（过程折叠后仍展示）
+  // 结果类内容:统一产物画廊(过程折叠后仍展示;旧 nora-gallery 自动转换)
   const galleries = steps
-    .map((s) => parseGalleryFence(s.result?.content))
-    .filter((g): g is GalleryData => g !== null);
+    .map((s) => parseArtifactsFence(s.result?.content) ?? parseLegacyGalleryFence(s.result?.content))
+    .filter((g): g is ArtifactsData => g !== null);
 
   return (
     <div className="animate-in fade-in">
@@ -188,7 +189,7 @@ export function AgentProcessBlock({
         galleries.length > 0 && (
           <div className="mt-1.5 space-y-1.5">
             {galleries.map((g, i) => (
-              <GalleryBlock key={i} data={g} />
+              <ArtifactsBlock key={i} data={g} />
             ))}
           </div>
         )

@@ -1,9 +1,8 @@
 import { AlertTriangle, Ban, Check, ChevronDown, Loader2, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
-import { GalleryBlock, parseGalleryFence } from "./GalleryBlock";
 import { ArtifactsBlock } from "./ArtifactsBlock";
-import { parseArtifactsFence } from "@/lib/artifacts";
+import { parseArtifactsFence, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, thumbVariant } from "@/lib/mediaCache";
 
@@ -185,12 +184,12 @@ export function ToolRow({ step }: { step: ChatStep }) {
   const resultImages = !running && step.toolName?.startsWith("mcp__")
     ? extractResultImages(step.result?.content)
     : [];
-  // photos_showcase 的画廊块：结构化展示（标题/说明由 agent 填写），
-  // 识别到围栏时不再渲染散图（避免同一批照片重复出现）
-  const gallery = !running ? parseGalleryFence(step.result?.content) : null;
-  // H5 产物画廊(2026-09-18)：agent 自写 HTML 的沙箱内嵌渲染——
-  // 任何工具的返回文本带 ```nora-artifact 围栏都会挂载（通用协议）
-  const artifacts = !running ? parseArtifactsFence(step.result?.content) : null;
+  // 统一产物画廊(2026-09-18):任何工具结果带 ```nora-artifacts 围栏(或旧
+  // ```nora-gallery,自动转换)都渲染为原生画廊卡片——识别到围栏时不再渲染
+  // 散图(避免同一批媒体重复出现)
+  const artifacts = !running
+    ? (parseArtifactsFence(step.result?.content) ?? parseLegacyGalleryFence(step.result?.content))
+    : null;
 
   return (
     <div className="animate-in fade-in slide-in-from-top-1">
@@ -250,17 +249,12 @@ export function ToolRow({ step }: { step: ChatStep }) {
       </button>
       {/* 批量任务进度卡片:running 期间始终可见(不折叠)——「下载到哪了」的主反馈 */}
       {running && step.progress && <ProgressPanel progress={step.progress} />}
-      {gallery && (
-        <div className="ml-6 mt-1.5">
-          <GalleryBlock data={gallery} />
-        </div>
-      )}
       {artifacts && (
         <div className="ml-6 mt-1.5">
           <ArtifactsBlock data={artifacts} />
         </div>
       )}
-      {!gallery && !artifacts && resultImages.length > 0 && (
+      {!artifacts && resultImages.length > 0 && (
         <div className="ml-6 mt-1.5 flex flex-wrap gap-2 max-w-2xl">
           {resultImages.slice(0, 6).map((img, i) => (
             <button
