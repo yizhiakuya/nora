@@ -32,5 +32,11 @@ const REGISTRY: Record<string, ComponentType<{ data: Record<string, unknown> }>>
 /** 渲染一条画廊实例(按 gallery 名查注册表;未知降级 list)。 */
 export function ArtifactsBlock({ gallery }: { gallery: ArtifactGallery }) {
   const Component = REGISTRY[gallery.gallery] ?? ListGallery;
-  return <Component data={gallery.data} />;
+  // data-nora-gallery:画廊内的图片由组件自己控制样式,globals.css 据此
+  // 把「Markdown 正文图片」规则(420px 限高/白边框)排除在外(实测踩过)
+  return (
+    <div data-nora-gallery>
+      <Component data={gallery.data} />
+    </div>
+  );
 }

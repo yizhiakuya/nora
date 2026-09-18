@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X, ZoomIn, ZoomOut } from "lucide-react";
 import { requestJson } from "@/lib/api/client";
@@ -288,7 +289,10 @@ export function ImageLightbox({
 
   if (!current) return null;
 
-  return (
+  // 挂到 document.body:灯箱是全局覆盖层,必须脱离聊天内容的样式域——
+  // 此前嵌在 .chat-markdown 子树里,被其 img 规则(420px 限高/白边框/圆角)
+  // 命中,全屏图显示不全、周围一圈白框(实测踩过)。
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -473,6 +477,7 @@ export function ImageLightbox({
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

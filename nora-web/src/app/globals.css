@@ -213,14 +213,25 @@
   font-size: 0.8125rem;
 }
 
-/* 回答里的图片（如相册工具附的 Markdown 链接）：限高限宽，防撑爆布局 */
-.chat-markdown img {
+/* 回答里的图片（如相册工具附的 Markdown 链接）：限高限宽，防撑爆布局。
+   灯箱主图([data-main],且已 portal 到 body)排除在外。 */
+.chat-markdown img:not([data-main]) {
   max-width: min(100%, 420px);
   max-height: 420px;
   border-radius: 0.5rem;
   border: 1px solid hsl(var(--border));
   margin: 0.4em 0;
   object-fit: contain;
+}
+
+/* 画廊卡片内的图片由画廊组件自己控制（网格缩略图/角标等），
+   不受上面"正文图片"规则影响(实测踩过:白边框/限高漏进画廊与灯箱) */
+.chat-markdown [data-nora-gallery] img {
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
 }
 
 .chat-markdown code:not(pre code) {
