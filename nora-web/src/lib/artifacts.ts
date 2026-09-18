@@ -25,7 +25,8 @@
  *   text     长文报告      text
  *   list     通用兜底      items[{name,caption,meta,open}]
  *
- * 所有画廊共享的可选头部字段:title(必填)/ summary / stats[{label,value}] / note。
+ * 所有画廊共享的可选头部字段:title(必填)/ summary / stats[{label,value}] / note;
+ * 可选底部 actions:[{label, prompt}]——建议操作按钮(点击预填进输入框,用户确认发送)。
  *
  * open 深链前缀(openArtifactLink 统一处理):
  *   workspace:<相对路径>   → 文件页的工作区浏览器定位
@@ -215,4 +216,13 @@ export function openArtifactLink(open: string | undefined): void {
   } else if (parsed.scheme === "url") {
     window.open(parsed.target, "_blank", "noopener");
   }
+}
+
+/**
+ * 建议操作(2026-09-18):画廊底部可放 1-3 个快捷操作按钮(如「删掉空目录」),
+ * 点击把指令**预填**进对话输入框(不自动发送——用户可改后发)。
+ * 用自定义事件桥接(ChatInputArea 监听),画廊组件与输入框解耦。
+ */
+export function prefillChatInput(text: string): void {
+  window.dispatchEvent(new CustomEvent("nora:prefill-input", { detail: { text } }));
 }

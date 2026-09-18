@@ -37,6 +37,7 @@ export function TimelineGallery({ data }: { data: Record<string, unknown> }) {
       summary={data.summary as string | undefined}
       stats={data.stats as Array<{ label: string; value: string }> | undefined}
       note={data.note as string | undefined}
+      actions={data.actions as Array<{ label: string; prompt: string }> | undefined}
     >
       <SectionLabel icon={ListChecks} label={(data.sectionTitle as string) || "执行过程"} count={items.length} />
       <div className="relative pl-4 space-y-2 before:absolute before:left-[5px] before:top-1 before:bottom-1 before:w-px before:bg-border">

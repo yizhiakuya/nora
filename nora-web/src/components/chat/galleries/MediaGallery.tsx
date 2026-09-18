@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState } from "react";
-import { Images, Play } from "lucide-react";
+import { Images, Play, Sparkles } from "lucide-react";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
+import { prefillChatInput } from "@/lib/artifacts";
 
 /**
  * media 画廊:相册/媒体展示(**恢复原版设计**,2026-09-18 用户要求)。
@@ -74,6 +75,20 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
           点击查看
         </span>
       </div>
+      {/* 摘要/统计(可选;2026-09-18:原版视觉不变,但 AI 写的数据不浪费) */}
+      {typeof data.summary === "string" && data.summary !== "" && (
+        <div className="px-3 pt-2 text-[11px] text-muted-foreground leading-relaxed">{data.summary}</div>
+      )}
+      {Array.isArray(data.stats) && (data.stats as unknown[]).length > 0 && (
+        <div className="flex flex-wrap gap-2 px-3 pt-2">
+          {(data.stats as Array<{ label: string; value: string }>).map((s, i) => (
+            <div key={i} className="rounded-lg border border-border/70 bg-muted/30 px-2.5 py-1.5 min-w-[4.5rem]">
+              <div className="text-sm font-bold text-foreground tabular-nums leading-tight">{s.value}</div>
+              <div className="text-[10px] text-muted-foreground">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-1.5 p-2 max-h-96 overflow-auto custom-scroll">
         {items.map((item, idx) => {
           const when = formatTakenAt(item.meta ?? item.takenAt);
@@ -109,6 +124,22 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
       {typeof data.note === "string" && data.note !== "" && (
         <div className="px-3 py-2 border-t border-border/70 text-[11px] text-muted-foreground leading-relaxed">
           {data.note}
+        </div>
+      )}
+      {Array.isArray(data.actions) && (data.actions as unknown[]).length > 0 && (
+        <div className="px-3 py-2 border-t border-border/70 flex flex-wrap gap-1.5">
+          {(data.actions as Array<{ label: string; prompt: string }>).slice(0, 3).map((a, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => prefillChatInput(a.prompt)}
+              title={`填入输入框:${a.prompt}`}
+              className="inline-flex items-center gap-1 rounded-md border border-blue-200 dark:border-blue-900/60 bg-blue-50/60 dark:bg-blue-950/30 px-2 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100/70 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3 h-3" />
+              {a.label}
+            </button>
+          ))}
         </div>
       )}
       {lightboxIndex !== null && (

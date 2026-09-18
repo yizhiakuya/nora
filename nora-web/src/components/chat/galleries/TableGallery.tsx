@@ -30,6 +30,7 @@ export function TableGallery({ data }: { data: Record<string, unknown> }) {
       summary={data.summary as string | undefined}
       stats={data.stats as Array<{ label: string; value: string }> | undefined}
       note={data.note as string | undefined}
+      actions={data.actions as Array<{ label: string; prompt: string }> | undefined}
     >
       <SectionLabel icon={Table2} label={(data.sectionTitle as string) || "数据"} count={rows.length} />
       <div className="overflow-x-auto custom-scroll rounded-md border border-border/60">

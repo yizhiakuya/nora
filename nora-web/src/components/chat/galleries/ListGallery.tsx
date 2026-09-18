@@ -29,6 +29,7 @@ export function ListGallery({ data }: { data: Record<string, unknown> }) {
       summary={data.summary as string | undefined}
       stats={data.stats as Array<{ label: string; value: string }> | undefined}
       note={data.note as string | undefined}
+      actions={data.actions as Array<{ label: string; prompt: string }> | undefined}
     >
       <SectionLabel icon={ListTree} label={(data.sectionTitle as string) || "条目"} count={items.length} />
       <div className="space-y-1">
