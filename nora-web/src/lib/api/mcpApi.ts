@@ -17,6 +17,8 @@ export interface McpServer {
   status: "connected" | "error" | "untested";
   statusDetail: string | null;
   toolCount: number;
+  /** 工具加载策略:eager=工具直接挂载(每轮注入) / lazy=按需(agent 经 tools/call 使用,省上下文) */
+  toolPolicy: "eager" | "lazy";
 }
 
 export interface McpToolInfo {
@@ -78,6 +80,15 @@ export async function setMcpServerEnabled(id: number, enabled: boolean): Promise
   await requestJson(`/mcp/servers/${id}/enabled`, {
     method: "PUT",
     body: JSON.stringify({ enabled }),
+  });
+}
+
+/** 设置工具加载策略(2026-09-18 P2-9):lazy=不挂载,按需经 agent tools/call 使用。 */
+export async function setMcpServerToolPolicy(id: number, toolPolicy: "eager" | "lazy"): Promise<void> {
+  if (!USE_BACKEND) return;
+  await requestJson(`/mcp/servers/${id}/tool-policy`, {
+    method: "PUT",
+    body: JSON.stringify({ toolPolicy }),
   });
 }
 

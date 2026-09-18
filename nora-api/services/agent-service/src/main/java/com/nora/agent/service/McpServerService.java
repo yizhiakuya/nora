@@ -70,7 +70,7 @@ public class McpServerService {
     /** 列出服务器(机密脱敏、不含工具缓存载荷;排除软删)。 */
     public List<ServerView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache FROM mcp_server WHERE deleted_at IS NULL ORDER BY id",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache, tool_policy FROM mcp_server WHERE deleted_at IS NULL ORDER BY id",
                 (rs, i) -> viewOf(rs));
     }
 
@@ -189,7 +189,7 @@ public class McpServerService {
     /** 取一条原始行(机密未脱敏——仅内部使用;排除软删)。 */
     public RawServer rawById(long id) {
         List<RawServer> rows = jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled, tool_policy FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
                 (rs, i) -> rawOf(rs),
                 id);
         return rows.isEmpty() ? null : rows.get(0);
@@ -198,8 +198,28 @@ public class McpServerService {
     /** 列出启用服务器的原始行(内部:连接建立用;排除软删)。 */
     public List<RawServer> rawEnabled() {
         return jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY id",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled, tool_policy FROM mcp_server WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY id",
                 (rs, i) -> rawOf(rs));
+    }
+
+    /**
+     * 设置工具加载策略(2026-09-18 P2-9):
+     * eager=工具直接挂载(每轮注入 tools spec);lazy=按需(不挂载,
+     * agent 经 manage_mcp action=tools/call 使用)。
+     *
+     * @return 是否更新到行;非法策略抛 IllegalArgumentException
+     */
+    public boolean setToolPolicy(long id, String policy) {
+        String p = policy == null ? "" : policy.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"eager".equals(p) && !"lazy".equals(p)) {
+            throw new IllegalArgumentException("toolPolicy 只支持 eager / lazy,收到: " + policy);
+        }
+        boolean ok = jdbcTemplate.update(
+                "UPDATE mcp_server SET tool_policy = ? WHERE id = ? AND deleted_at IS NULL", p, id) > 0;
+        if (ok) {
+            toolsRevision.incrementAndGet(); // 挂载面变化:tools spec 估算缓存失效
+        }
+        return ok;
     }
 
     // ---------- 连接 + 工具 ----------
@@ -327,6 +347,12 @@ public class McpServerService {
     public List<MountedTool> mountedTools() {
         List<MountedTool> out = new ArrayList<>();
         for (RawServer server : rawEnabled()) {
+            // lazy 策略(2026-09-18 P2-9):不挂载为独立工具——其工具经
+            // manage_mcp action=tools(查清单)/ action=call(按名调用)使用,
+            // 把固定上下文成本从「全部工具」降到「服务器一行」。
+            if ("lazy".equalsIgnoreCase(server.toolPolicy())) {
+                continue;
+            }
             String cache = jdbcTemplate.queryForObject(
                     "SELECT COALESCE(tools_cache, '') FROM mcp_server WHERE id = ? AND deleted_at IS NULL", String.class, server.id());
             if (cache == null || cache.isBlank()) {
@@ -397,7 +423,7 @@ public class McpServerService {
             return null;
         }
         List<RawServer> rows = jdbcTemplate.query(
-                "SELECT id, name, url, transport, headers, command, args, env, enabled FROM mcp_server WHERE name = ? AND enabled = TRUE AND deleted_at IS NULL",
+                "SELECT id, name, url, transport, headers, command, args, env, enabled, tool_policy FROM mcp_server WHERE name = ? AND enabled = TRUE AND deleted_at IS NULL",
                 (rs, i) -> rawOf(rs),
                 serverName);
         return rows.isEmpty() ? null : rows.get(0);
@@ -509,7 +535,7 @@ public class McpServerService {
     }
 
     private static final String VIEW_SELECT =
-            "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache FROM mcp_server";
+            "SELECT id, name, url, transport, headers, command, args, env, enabled, status, status_detail, tools_cache, tool_policy FROM mcp_server";
 
     private ServerView getByName(String name) {
         return queryOne(VIEW_SELECT + " WHERE name = ? AND deleted_at IS NULL", name);
@@ -539,7 +565,8 @@ public class McpServerService {
                 rs.getBoolean("enabled"),
                 rs.getString("status"),
                 rs.getString("status_detail"),
-                toolCount(rs.getString("tools_cache")));
+                toolCount(rs.getString("tools_cache")),
+                rs.getString("tool_policy"));
     }
 
     private RawServer rawOf(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -552,7 +579,8 @@ public class McpServerService {
                 rs.getString("command"),
                 rs.getString("args"),
                 rs.getString("env"),
-                rs.getBoolean("enabled"));
+                rs.getBoolean("enabled"),
+                rs.getString("tool_policy"));
     }
 
     // ---------- 记录类型 ----------
@@ -570,7 +598,17 @@ public class McpServerService {
             boolean enabled,
             String status,
             String statusDetail,
-            int toolCount) {
+            int toolCount,
+            /** eager=工具直接挂载 / lazy=按需(manage_mcp action=tools|call)。 */
+            String toolPolicy) {
+
+        /** 兼容构造(2026-09-18 前调用点):缺省 eager。 */
+        public ServerView(long id, String name, String url, String transport, String command, String args,
+                          String maskedHeaders, String maskedEnv, boolean enabled, String status,
+                          String statusDetail, int toolCount) {
+            this(id, name, url, transport, command, args, maskedHeaders, maskedEnv, enabled, status,
+                    statusDetail, toolCount, "eager");
+        }
     }
 
     /** 连接建立用的原始行(机密未脱敏;绝不离开本服务)。 */
@@ -583,7 +621,8 @@ public class McpServerService {
             String command,
             String args,
             String env,
-            boolean enabled) {
+            boolean enabled,
+            String toolPolicy) {
     }
 
     /** 缓存中的一个工具快照。 */

@@ -167,7 +167,8 @@ public class ChatOrchestrationService {
         this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
         this.contextAssembler = new ChatContextAssembler(objectMapper, agentWorkspaceService,
                 agentSkillService, toolsSpecBuilder);
-        this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient, agentSkillService);
+        this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient, agentSkillService,
+                mcpServerService);
     }
 
     /** 兼容构造(2026-09-18 前测试用):新工具客户端为 null = 不挂载。 */

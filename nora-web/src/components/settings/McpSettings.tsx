@@ -9,6 +9,7 @@ import {
   fetchMcpServers,
   deleteMcpServer,
   setMcpServerEnabled,
+  setMcpServerToolPolicy,
   refreshMcpServer,
   type McpServer,
 } from "@/lib/api/mcpApi";
@@ -78,6 +79,15 @@ export function McpManager({ listVersion }: { listVersion: number }) {
     withBusy(s.id, async () => {
       await setMcpServerEnabled(s.id, enabled);
       toast.success(enabled ? `「${s.name}」已启用` : `「${s.name}」已停用,其工具不再挂载给 Agent`);
+    });
+
+  const handleToolPolicy = (s: McpServer) =>
+    withBusy(s.id, async () => {
+      const next = s.toolPolicy === "lazy" ? "eager" : "lazy";
+      await setMcpServerToolPolicy(s.id, next);
+      toast.success(next === "lazy"
+        ? `「${s.name}」工具改为按需加载:不再占用每轮上下文,Agent 需要时自行检索调用`
+        : `「${s.name}」工具已恢复直接挂载(mcp__${s.name}__*)`);
     });
 
   const handleDelete = (s: McpServer) => {
@@ -164,6 +174,21 @@ export function McpManager({ listVersion }: { listVersion: number }) {
                       </span>
                     </button>
                     <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void handleToolPolicy(s)}
+                        title={s.toolPolicy === "lazy"
+                          ? "按需加载:工具不占用每轮上下文,Agent 需要时自行检索调用。点击恢复直接挂载"
+                          : "直接挂载:工具随每轮请求注入(mcp__服务器名__工具名)。点击改为按需加载省上下文"}
+                        className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap ${
+                          s.toolPolicy === "lazy"
+                            ? "border-amber-300 dark:border-amber-800 text-amber-600 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {s.toolPolicy === "lazy" ? "按需加载" : "直接挂载"}
+                      </button>
                       <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground whitespace-nowrap" disabled={busy} onClick={() => void handleRefresh(s)}>
                         {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} 测试连接
                       </Button>

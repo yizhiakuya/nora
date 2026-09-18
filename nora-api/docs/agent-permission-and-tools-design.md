@@ -63,8 +63,8 @@ needApproval = mode == ASK
 | `manage_service` | list | LOW | |
 | `manage_service` | enable/disable | HIGH | |
 | `manage_service` | register/remove | **CRITICAL** | PROC 注册=宿主机命令纳入守护；删除不可逆 |
-| `manage_mcp` | list | LOW | 视图已脱敏 |
-| `manage_mcp` | refresh/enable/disable/register/remove | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH） |
+| `manage_mcp` | list / **tools** | LOW | 视图已脱敏；tools 读缓存快照不触发远端（2026-09-18 P2-9） |
+| `manage_mcp` | refresh/enable/disable/register/remove/setPolicy/**call** | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH）。**call**=按名调用 lazy 服务器工具（与 mcp__* 挂载同语义）；**setPolicy** 改变挂载面（eager/lazy） |
 | `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守通道放行 |
 | `manage_skill` | list/read/create/update/remove | LOW | 纯数据操作（技能库），无系统副作用 |
 | `search_knowledge` | — | LOW | 知识库主动检索（只读；2026-09-18 新增） |
@@ -106,6 +106,22 @@ needApproval = mode == ASK
 | `knowledge_manage` | manage_knowledge | index 显示 fileId+展示名；remove 显示分块一并删除的后果（2026-09-18 新增） |
 | `automation_manage` | manage_automation | create **完整展示无人值守指令 prompt** + 触发方式 + 「没有审批门」提示；remove/run 显示后果（2026-09-18 新增） |
 | `mcp_tool` | mcp__* | 服务器名 + 参数（截断 400 字） |
+| `mcp_manage`(call) | manage_mcp action=call | 服务器 + 工具名 + 参数（截断 400 字；2026-09-18 P2-9） |
+| `mcp_manage`(setPolicy) | manage_mcp action=setPolicy | 服务器 + 目标策略 + 挂载面影响 |
+
+## 6.5 MCP 工具延迟加载（2026-09-18 P2-9）
+
+**问题**：76 工具（12 内置 + 64 挂载）≈9K tokens 每轮固定成本；github 44 工具 30 天仅用 3 个。
+
+**方案**（服务器级 `tool_policy`，迁移 V17）：
+- `eager`（默认，现状）：tools_cache 工具全部挂载 `mcp__<server>__<tool>`；
+- `lazy`：不挂载；agent 经 `manage_mcp action=tools target=X`（读缓存快照）查清单、`action=call target=X tool=Y arguments={}` 按名调用。
+
+**对齐**：MCP Client Best Practices 的「渐进披露 + 单一稳定 call_tool 元工具」——工具数组不随会话增删，不破坏 prompt 缓存（lazy 服务器的工具从不进入 tools spec）。
+
+**切换**：设置页 MCP 卡片「直接挂载/按需加载」按钮（`PUT /api/mcp/servers/{id}/tool-policy`），或 agent `manage_mcp action=setPolicy`。lazy 服务器的 `[引用MCP服务器]` 消息引用注入的是 tools/call 指引而非不存在的挂载名。
+
+**风险**：`tools`=LOW（只读快照）；`call`=HIGH（与挂载工具同语义）；`setPolicy`=HIGH（改变挂载面）。
 
 ## 6. 已知边界与设计取舍
 

@@ -83,6 +83,23 @@ public class McpServerController {
     }
 
     /**
+     * 设置工具加载策略(2026-09-18 P2-9):
+     * eager=工具直接挂载(每轮注入 tools spec);lazy=按需(不挂载,
+     * agent 经 manage_mcp action=tools/call 使用,省固定上下文成本)。
+     */
+    @PutMapping("/{id}/tool-policy")
+    public ApiResponse<Void> setToolPolicy(@PathVariable long id, @RequestBody ToolPolicyRequest request) {
+        try {
+            if (!mcpServerService.setToolPolicy(id, request.toolPolicy())) {
+                throw new BusinessException(404, "mcp server not found: " + id);
+            }
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(400, e.getMessage());
+        }
+        return ApiResponse.ok();
+    }
+
+    /**
      * 连接(initialize)并拉 tools/list,把工具清单快照进 tools_cache
      * ——连通性测试与挂载数据源二合一。
      */
@@ -118,6 +135,10 @@ public class McpServerController {
     }
 
     public record EnabledRequest(Boolean enabled) {
+    }
+
+    /** PUT /{id}/tool-policy 请求体。 */
+    public record ToolPolicyRequest(String toolPolicy) {
     }
 
     public record ToolInfo(String name, String description) {

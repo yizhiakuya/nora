@@ -48,12 +48,20 @@ class MessageRefResolver {
     private final FileToolClient fileToolClient;
     private final RagRetrievalClient ragRetrievalClient;
     private final AgentSkillService agentSkillService;
+    /** MCP 服务器查找(引用注入时区分 eager/lazy 策略;可为 null = 测试场景)。 */
+    private final McpServerService mcpServerService;
 
     MessageRefResolver(FileToolClient fileToolClient, RagRetrievalClient ragRetrievalClient,
                        AgentSkillService agentSkillService) {
+        this(fileToolClient, ragRetrievalClient, agentSkillService, null);
+    }
+
+    MessageRefResolver(FileToolClient fileToolClient, RagRetrievalClient ragRetrievalClient,
+                       AgentSkillService agentSkillService, McpServerService mcpServerService) {
         this.fileToolClient = fileToolClient;
         this.ragRetrievalClient = ragRetrievalClient;
         this.agentSkillService = agentSkillService;
+        this.mcpServerService = mcpServerService;
     }
 
     /** 一条待注入引用(file/doc/skill/mcp 的实体 id)。 */
@@ -179,6 +187,29 @@ class MessageRefResolver {
      * 工具本体已在 toolsSpec 中挂载(mcp__server__*),这里只做优先级声明(不重复注入 schema)。
      */
     private List<CitationDto> resolveMcp(Ref ref) {
+        // lazy 策略的服务器工具未挂载:注入按需使用指引(tools/call),而不是
+        // 指向不存在的 mcp__ 挂载名(2026-09-18 P2-9)
+        boolean lazy = false;
+        if (mcpServerService != null) {
+            try {
+                List<McpServerService.ServerView> all = mcpServerService.list();
+                for (McpServerService.ServerView s : all) {
+                    if (s.id() == ref.id()) {
+                        lazy = "lazy".equalsIgnoreCase(s.toolPolicy());
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("mcp policy lookup failed for ref {}: {}", ref.id(), e.getMessage());
+            }
+        }
+        if (lazy) {
+            return List.of(new CitationDto(ref.id(), ref.name(), "text", 0, 1.0,
+                    "【用户指定的 MCP 服务器】用户要求优先使用「" + ref.name()
+                            + "」提供的工具处理本请求。该服务器的工具为按需加载:先用 manage_mcp action=tools target=\""
+                            + ref.name() + "\" 查看工具清单,再用 manage_mcp action=call target=\"" + ref.name()
+                            + "\" tool=<工具名> 调用;若确实不适用,再考虑其他工具并说明原因。"));
+        }
         return List.of(new CitationDto(ref.id(), ref.name(), "text", 0, 1.0,
                 "【用户指定的 MCP 服务器】用户要求优先使用「" + ref.name()
                         + "」提供的工具(mcp__" + ref.name() + "__*)处理本请求;若这些工具确实不适用,再考虑其他工具并说明原因。"));

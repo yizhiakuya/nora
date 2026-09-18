@@ -154,7 +154,7 @@
 
 ## 五、改进路线图（建议）
 
-> **实施状态（2026-09-18 当日）**：P0 全部完成；P1 的 ⑤⑥⑦⑧ 全部完成；P2 的 ⑨⑩⑪ 待排期。
+> **实施状态（2026-09-18 当日）**：P0 全部完成；P1 的 ⑤⑥⑦⑧ 全部完成；P2 的 ⑨（MCP 延迟加载）完成，⑩⑪ 待排期。
 
 ### P0（schema 纪律，改动小收益大）✅ 已完成
 1. ~~**ChatToolsSpec 全面补 enum**~~ ✅：action（全部 manage_*）、kind、engine、shell、quality、type、transport 等全部有限值字段已加 `"enum"`（此前 0 个）；
@@ -168,8 +168,8 @@
 7. ~~新增 `search_knowledge` + `manage_knowledge`~~ ✅：主动二次检索（LOW）+ list/index/remove/reindex/stats（list/stats LOW；index/reindex HIGH；remove CRITICAL）；
 8. ~~新增 `environment_status`~~ ✅：全部启用纳管源的健康快照（LOW），诊断入口对齐「先看面板再翻日志」。
 
-### P2（结构性）⏳ 待排期
-9. **MCP 工具延迟加载**（先做服务器级：默认只注入内置 + 标注「高频」的服务器工具；或实现 harness 级 tool_search 模拟层）；
+### P2（结构性）
+9. ~~**MCP 工具延迟加载**~~ ✅（2026-09-18）：服务器级 `tool_policy`（V17 迁移）——eager=工具直接挂载（现状）/ lazy=不挂载，agent 经 `manage_mcp action=tools`（读缓存快照查清单）与 `action=call`（按名调用）使用；设置页 MCP 卡片可切换（`PUT /{id}/tool-policy`）；lazy 服务器工具不进 tools spec（省每轮固定成本），对齐 MCP Client Best Practices「渐进披露 + 单一稳定 call_tool 元工具」（数组不变，不破 prompt 缓存）；`[引用MCP服务器]` 注入按策略区分文案。风险：tools=LOW / call=HIGH / setPolicy=HIGH；
 10. **工具使用数据驱动迭代**：agent_step 已有 tool_name/status/duration_ms——按季度复盘「零调用工具」（候选退役/延迟加载）、「高失败工具」（schema/描述改进）、「高轮次任务」（候选一等工具，fetch_media 模式复制）；
 11. 建立**工具评测集**（对齐四层评测）：每工具 ≥3 用例（正例/不该调用/错误恢复），用真实任务而非沙箱。
 

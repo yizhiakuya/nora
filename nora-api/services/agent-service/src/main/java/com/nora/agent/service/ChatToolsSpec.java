@@ -638,7 +638,12 @@ class ChatToolsSpec {
         mcpFn.put("description", "管理 MCP(Model Context Protocol)工具服务器(远程或本地进程):"
                 + "list=列出已注册服务器(名称/状态/工具数);"
                 + "refresh=测试连接并拉取工具清单(拉取成功后其工具挂载为 mcp__<服务器名>__<工具名>,你即可调用);"
-                + "enable/disable=启用或停用;register=注册新服务器;remove=删除注册。"
+                + "enable/disable=启用或停用;register=注册新服务器;remove=删除注册;"
+                + "tools=查看某服务器的工具清单(读缓存快照,不触发远端;lazy 服务器的工具从这里发现);"
+                + "call=按名调用工具(参数 target=服务器、tool=工具名、arguments=参数对象/JSON 字符串;"
+                + "lazy 服务器用它调用,eager 服务器等价于挂载调用);"
+                + "setPolicy=设置工具加载策略(target + toolPolicy=eager/lazy;lazy=不挂载为独立工具、"
+                + "经 tools/call 按需使用,省每轮上下文)。"
                 + "register 两种形态:①远程——提供 url(可选 transport=STREAMABLE/SSE);"
                 + "②本地进程(STDIO)——提供 command 与 args,如 command=npx, args=[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"D:/docs\"],"
                 + "或 Docker 方式 command=docker, args=[\"run\",\"-i\",\"--rm\",\"镜像名\"];本地方式需本机已装对应运行时。"
@@ -651,8 +656,18 @@ class ChatToolsSpec {
         ObjectNode mcpProps = mcpParams.putObject("properties");
         ObjectNode mcpActionProp = mcpProps.putObject("action");
         mcpActionProp.put("type", "string");
-        mcpActionProp.put("description", "list / refresh / enable / disable / register / remove");
-        setEnum(mcpActionProp, "list", "refresh", "enable", "disable", "register", "remove");
+        mcpActionProp.put("description", "list / refresh / enable / disable / register / remove / tools / call / setPolicy");
+        setEnum(mcpActionProp, "list", "refresh", "enable", "disable", "register", "remove", "tools", "call", "setPolicy");
+        ObjectNode mcpToolNameProp = mcpProps.putObject("tool");
+        mcpToolNameProp.put("type", "string");
+        mcpToolNameProp.put("description", "call 时:要调用的工具名(以 action=tools 清单为准,不要猜测)");
+        ObjectNode mcpArgumentsProp = mcpProps.putObject("arguments");
+        mcpArgumentsProp.put("type", "object");
+        mcpArgumentsProp.put("description", "call 时:工具参数对象(如 {\"query\": \"x\"};无参数省略)");
+        ObjectNode mcpPolicyProp = mcpProps.putObject("toolPolicy");
+        mcpPolicyProp.put("type", "string");
+        mcpPolicyProp.put("description", "setPolicy 时:eager=工具直接挂载(默认)/ lazy=按需(不占每轮上下文,tools/call 使用)");
+        setEnum(mcpPolicyProp, "eager", "lazy");
         ObjectNode mcpNameProp = mcpProps.putObject("name");
         mcpNameProp.put("type", "string");
         mcpNameProp.put("description", "register 时:服务器名(只含字母/数字/下划线/连字符,不能含连续下划线;会成为挂载工具名前缀)");

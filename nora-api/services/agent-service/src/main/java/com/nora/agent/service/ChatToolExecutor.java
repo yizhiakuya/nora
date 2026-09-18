@@ -759,6 +759,12 @@ class ChatToolExecutor {
             if ("list".equals(action)) {
                 return mcpListResult();
             }
+            if ("tools".equals(action)) {
+                return mcpToolsResult(a);
+            }
+            if ("call".equals(action)) {
+                return mcpCallResult(a);
+            }
             if ("register".equals(action)) {
                 return mcpRegisterResult(a);
             }
@@ -789,9 +795,94 @@ class ChatToolExecutor {
                     .append(" · ").append(s.status())
                     .append(s.statusDetail() != null ? "(" + Texts.abbreviate(s.statusDetail(), 80) + ")" : "")
                     .append(" · 工具数 ").append(s.toolCount())
+                    .append("lazy".equalsIgnoreCase(s.toolPolicy()) ? " · lazy(按需)" : "")
                     .append('\n');
         }
         return new ToolOutcome(sb.toString(), null, null, false);
+    }
+
+    /** manage_mcp action=tools:某服务器的工具清单(读缓存快照,不触发远端)。 */
+    private ToolOutcome mcpToolsResult(JsonNode a) {
+        String target = Texts.firstNonNull(a.path("target").asText(null),
+                Texts.firstNonNull(a.path("name").asText(null), a.path("server").asText(null)));
+        if (target == null || target.isBlank()) {
+            return new ToolOutcome("ERROR: tools 需要 target 参数(服务器名或 id)。可先用 action=list 查看",
+                    null, null, false);
+        }
+        McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
+        if (server == null) {
+            return new ToolOutcome("ERROR: 找不到 MCP 服务器 \"" + target + "\"。可用服务器:\n"
+                    + mcpServerService.list(), null, null, false);
+        }
+        List<McpServerService.ToolEntry> entries = mcpServerService.cachedTools(server.id());
+        if (entries == null || entries.isEmpty()) {
+            return new ToolOutcome("(服务器「" + server.name() + "」还没有工具清单快照——"
+                    + "先用 action=refresh target=" + server.name() + " 拉取)", null, null, false);
+        }
+        StringBuilder sb = new StringBuilder("服务器「").append(server.name()).append("」的工具清单(共 ")
+                .append(entries.size()).append(" 个;lazy 服务器用 action=call 按名调用):\n");
+        for (McpServerService.ToolEntry t : entries) {
+            sb.append("- ").append(t.name());
+            String desc = t.description() == null ? "" : t.description();
+            if (!desc.isBlank()) {
+                sb.append(": ").append(Texts.abbreviate(desc, 160));
+            }
+            sb.append('\n');
+        }
+        return bounded(sb.toString(), "工具清单 " + entries.size() + " 个");
+    }
+
+    /**
+     * manage_mcp action=call:按名调用工具(lazy 服务器的使用通道;eager 服务器
+     * 也可用,等价于 mcp__&lt;server&gt;__&lt;tool&gt; 挂载调用)。
+     * 参数:target=服务器, tool=工具名, arguments=工具参数 JSON 字符串或对象。
+     */
+    private ToolOutcome mcpCallResult(JsonNode a) {
+        String target = Texts.firstNonNull(a.path("target").asText(null), a.path("server").asText(null));
+        String tool = Texts.firstNonNull(a.path("tool").asText(null), a.path("toolName").asText(null));
+        if (target == null || target.isBlank() || tool == null || tool.isBlank()) {
+            return new ToolOutcome("ERROR: call 需要 target(服务器名或 id)与 tool(工具名)。"
+                    + "示例:{\"action\": \"call\", \"target\": \"github\", \"tool\": \"get_me\", \"arguments\": \"{}\"}",
+                    null, null, false);
+        }
+        McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
+        if (server == null) {
+            return new ToolOutcome("ERROR: 找不到 MCP 服务器 \"" + target + "\"。可用服务器:\n"
+                    + mcpServerService.list(), null, null, false);
+        }
+        if (!server.enabled()) {
+            return new ToolOutcome("ERROR: 服务器「" + server.name() + "」已停用——先 action=enable target="
+                    + server.name(), null, null, false);
+        }
+        // arguments 兼容三种形态:对象(直接透传)/JSON 字符串/省略(空对象)
+        JsonNode argsNode = a.path("arguments");
+        String argsJson;
+        if (argsNode.isMissingNode() || argsNode.isNull()) {
+            argsJson = "{}";
+        } else if (argsNode.isObject()) {
+            argsJson = argsNode.toString();
+        } else if (argsNode.isTextual()) {
+            String raw = argsNode.asText("");
+            // 字符串形态必须是合法 JSON 对象(模型常把 arguments 写成 JSON 字符串)
+            try {
+                JsonNode parsed = objectMapper.readTree(raw.isBlank() ? "{}" : raw);
+                argsJson = parsed.isObject() ? parsed.toString() : "{}";
+            } catch (Exception e) {
+                return new ToolOutcome("ERROR: arguments 不是合法 JSON: " + Texts.abbreviate(raw, 120)
+                        + "。示例:{\"action\": \"call\", \"target\": \"github\", \"tool\": \"get_me\", \"arguments\": \"{}\"}",
+                        null, null, false);
+            }
+        } else {
+            return new ToolOutcome("ERROR: arguments 必须是对象或 JSON 字符串", null, null, false);
+        }
+        McpServerService.McpToolResult mcpResult = mcpServerService.callToolRich(server.id(), tool.trim(), argsJson);
+        if (galleryPrefetcher != null && !mcpResult.isError()) {
+            galleryPrefetcher.prefetchFromToolResult(mcpResult.text());
+        }
+        ToolOutcome outcome = bounded(mcpResult.text(), "MCP " + server.name() + "." + tool.trim() + " 执行完成");
+        return mcpResult.images().isEmpty() ? outcome
+                : new ToolOutcome(outcome.content(), outcome.summary(), outcome.rowCount(),
+                        outcome.truncated(), mcpResult.images());
     }
 
     /** manage_mcp action=register:注册 + 自动测试连接(失败不回滚注册)。 */
@@ -868,9 +959,12 @@ class ChatToolExecutor {
         String content = switch (action) {
             case "refresh" -> {
                 List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
+                boolean lazy = "lazy".equalsIgnoreCase(server.toolPolicy());
                 yield "已连接「" + server.name() + "」,发现 " + toolEntries.size() + " 个工具"
                         + (toolEntries.isEmpty() ? "" : ": " + formatToolNames(toolEntries)
-                        + (toolEntries.size() > 10 ? " 等" : ""));
+                        + (toolEntries.size() > 10 ? " 等" : ""))
+                        + (lazy ? "(lazy 策略:用 action=tools 查清单、action=call 调用)"
+                                : "(已挂载为 mcp__" + server.name() + "__*,下轮可直接调用)");
             }
             case "enable" -> mcpServerService.setEnabled(server.id(), true)
                     ? "已启用「" + server.name() + "」。工具将在下轮对话挂载(缓存过工具清单则立即可用)"
@@ -878,6 +972,15 @@ class ChatToolExecutor {
             case "disable" -> mcpServerService.setEnabled(server.id(), false)
                     ? "已停用「" + server.name() + "」。其工具不再挂载"
                     : "ERROR: 停用失败,服务器可能已被删除";
+            case "setpolicy" -> {
+                String policy = a.path("toolPolicy").asText(null);
+                boolean ok = mcpServerService.setToolPolicy(server.id(), policy);
+                yield ok ? "已把「" + server.name() + "」的工具加载策略设为 " + policy
+                        + ("lazy".equalsIgnoreCase(policy)
+                        ? "(其工具不再挂载;用 action=tools 查清单、action=call 调用,省每轮上下文)"
+                        : "(其工具重新挂载为 mcp__" + server.name() + "__*,下轮可直接调用)")
+                        : "ERROR: 策略更新失败,服务器可能已被删除";
+            }
             default -> mcpServerService.delete(server.id())
                     ? "已删除 MCP 服务器「" + server.name() + "」及其连接"
                     : "ERROR: 删除失败,服务器可能已被删除";

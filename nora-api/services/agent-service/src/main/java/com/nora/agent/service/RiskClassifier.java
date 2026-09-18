@@ -75,12 +75,16 @@ final class RiskClassifier {
             return Risk.HIGH;
         }
         if ("manage_mcp".equals(toolName)) {
-            // MCP 服务器管理:list 只读 LOW(视图已脱敏);其余动作
-            // (register/remove/refresh/enable/disable)改变 Agent 的工具挂载面,
+            // MCP 服务器管理:list/tools 只读 LOW(视图已脱敏;tools 读缓存快照不触发远端);
+            // call 是「按名调用 lazy 服务器工具」——与 mcp__* 挂载工具同语义,一律 HIGH;
+            // 其余动作(register/remove/refresh/enable/disable)改变 Agent 的工具挂载面,
             // 统一 HIGH——跟随全局权限档位(ASK 全问 / ASSIST 询问 / FULL 自动),
             // 不做单独的强制审批;别名归一化与执行层共用,保证判定一致
             String action = normalizeMcpAction(extractAction(argsJson));
-            return "list".equals(action) ? Risk.LOW : Risk.HIGH;
+            if ("list".equals(action) || "tools".equals(action)) {
+                return Risk.LOW;
+            }
+            return Risk.HIGH;
         }
         if ("run_command".equals(toolName)) {
             // 本机终端:一律 HIGH(跟随全局档位——ASK 全问 / ASSIST 询问 / FULL 自动)。
@@ -294,11 +298,12 @@ final class RiskClassifier {
     /** manage_mcp 动作白名单。 */
     static String validateMcpAction(String action) {
         if (action == null || action.isBlank()) {
-            return "拒绝执行：缺少 action 参数。可用值:list / refresh / enable / disable / register / remove";
+            return "拒绝执行：缺少 action 参数。可用值:list / refresh / enable / disable / register / remove / tools / call / setPolicy";
         }
         String normalized = normalizeMcpAction(action);
-        if (!Set.of("list", "refresh", "enable", "disable", "register", "remove").contains(normalized)) {
-            return "拒绝执行「" + action + "」：action 只允许 list / refresh / enable / disable / register / remove";
+        if (!Set.of("list", "refresh", "enable", "disable", "register", "remove", "tools", "call", "setpolicy").contains(normalized)) {
+            return "拒绝执行「" + action + "」：action 只允许 "
+                    + "list / refresh / enable / disable / register / remove / tools(查工具清单) / call(按名调用工具) / setPolicy(设置加载策略)";
         }
         return null;
     }
@@ -308,6 +313,7 @@ final class RiskClassifier {
      * create/delete/add/unregister——统一映射到 register/remove。
      * 分类器与执行分发必须共用此函数,保持判定一致
      * (create 不能一处按未知处理、另一处按 register 真执行)。
+     * 输出一律小写(调用方按小写比较)。
      */
     static String normalizeMcpAction(String action) {
         if (action == null) {
@@ -317,6 +323,9 @@ final class RiskClassifier {
         return switch (a) {
             case "create", "add", "install" -> "register";
             case "delete", "unregister", "uninstall" -> "remove";
+            case "invoke" -> "call";
+            case "get_tools", "describe", "schema" -> "tools";
+            case "set_policy", "policy" -> "setpolicy";
             default -> a;
         };
     }

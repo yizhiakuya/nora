@@ -354,10 +354,14 @@ class ToolStepEmitter {
                             description, null, action);
                 }
                 case "manage_skill", "manage_mcp" -> {
-                    // read/update/remove 用 target(名称或 id);create/register 用 name
+                    // read/update/remove 用 target(名称或 id);create/register 用 name;
+                    // call(P2-9)展示「服务器.工具名」;tools 展示服务器名
                     String target = node.path("target").asText(null);
                     if (target == null) {
                         target = node.path("name").asText(null);
+                    }
+                    if ("call".equalsIgnoreCase(action) && target != null && !node.path("tool").asText("").isBlank()) {
+                        target = target + "." + node.path("tool").asText("");
                     }
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
@@ -574,6 +578,19 @@ class ToolStepEmitter {
                     target = parsed.input().target() == null ? "?" : parsed.input().target();
                     detail = "MCP 服务器: " + target + "\n后果: 注册记录与连接一并删除";
                     risk = "删除后其工具立即不可用,需重新注册才能恢复";
+                } else if ("call".equals(action)) {
+                    // 按名调用外部工具:与 mcp_tool 同语义——服务器+工具名+参数可见
+                    target = a.path("target").asText("?");
+                    detail = "服务器: " + target + "\n工具: " + a.path("tool").asText("?")
+                            + "\n参数: " + Texts.abbreviate(a.path("arguments").toString(), 400);
+                    risk = "调用外部 MCP 服务器提供的工具,能力未知,执行前需确认";
+                } else if ("setpolicy".equals(action)) {
+                    target = a.path("target").asText("?");
+                    detail = "服务器: " + target + "\n策略: " + a.path("toolPolicy").asText("?")
+                            + (("lazy".equalsIgnoreCase(a.path("toolPolicy").asText("")))
+                            ? "\n后果: 其工具不再挂载(改用 tools/call 按需调用,省每轮上下文)"
+                            : "\n后果: 其工具重新挂载为独立工具(每轮注入)");
+                    risk = "改变 Agent 的工具挂载面";
                 } else {
                     target = parsed.input().target() == null ? "?" : parsed.input().target();
                     risk = "对 MCP 服务器执行 " + action + " 操作";
