@@ -2,8 +2,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useState } from "react";
 import { GalleryBlock, parseGalleryJson } from "@/components/chat/GalleryBlock";
-import { ArtifactBlock } from "@/components/chat/ArtifactBlock";
-import { parseArtifactJson } from "@/lib/artifact";
+import { ArtifactsBlock } from "@/components/chat/ArtifactsBlock";
+import { parseArtifactsJson } from "@/lib/artifacts";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 
 /**
@@ -45,16 +45,16 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
 type FenceSegment =
   | { type: "md"; text: string }
   | { type: "gallery"; raw: string }
-  | { type: "artifact"; raw: string };
+  | { type: "artifacts"; raw: string };
 
 function splitGalleryFences(text: string): FenceSegment[] {
   const out: FenceSegment[] = [];
-  const re = /```(nora-gallery|nora-artifact)\s*\n([\s\S]*?)```/g;
+  const re = /```(nora-gallery|nora-artifacts)\s*\n([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push({ type: "md", text: text.slice(last, m.index) });
-    out.push({ type: m[1] === "nora-artifact" ? "artifact" : "gallery", raw: m[2] });
+    out.push({ type: m[1] === "nora-artifacts" ? "artifacts" : "gallery", raw: m[2] });
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push({ type: "md", text: text.slice(last) });
@@ -98,11 +98,11 @@ export default function MarkdownContent({
             </pre>
           );
         }
-        if (seg.type === "artifact") {
-          const data = parseArtifactJson(seg.raw);
+        if (seg.type === "artifacts") {
+          const data = parseArtifactsJson(seg.raw);
           // 坏数据退回原始围栏文本（不丢内容）
           return data ? (
-            <ArtifactBlock key={i} data={data} />
+            <ArtifactsBlock key={i} data={data} />
           ) : (
             <pre key={i} className="whitespace-pre-wrap break-words rounded-md bg-muted/60 px-2 py-1.5 text-[11px] font-mono">
               {seg.raw}

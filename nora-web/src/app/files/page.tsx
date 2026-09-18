@@ -121,6 +121,34 @@ export default function FilesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 深链:?workspace=<相对路径>(产物画廊「打开」按钮)→ 进入工作区浏览器定位。
+  // 目标是目录 → 直接进入;目标是文件 → 进入其所在目录(2026-09-18)。
+  useEffect(() => {
+    const wsPath = new URLSearchParams(window.location.search).get("workspace");
+    if (wsPath == null) return;
+    let cancelled = false;
+    (async () => {
+      const { workspaceApi } = await import("@/lib/services/workspaceApi");
+      const parentDir = wsPath.includes("/") ? wsPath.slice(0, wsPath.lastIndexOf("/")) : "";
+      try {
+        // 父目录里查同名条目:directory=true → 目标是目录(直接进入);否则按文件处理
+        const entries = await workspaceApi.listFiles(parentDir);
+        if (cancelled) return;
+        const self = entries.find((e) => e.path === wsPath || e.path.endsWith("/" + wsPath) || e.path === wsPath);
+        if (self?.directory) {
+          setWorkspaceDir(wsPath);
+        } else {
+          setWorkspaceDir(parentDir);
+        }
+      } catch {
+        // 查询失败退化为「按文件处理」(进父目录)
+        if (!cancelled) setWorkspaceDir(parentDir);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** 当前视图中的文件(根视图=无归属文件;文件夹内=该文件夹文件)。 */
   const inRootView = workspaceDir === null && !mediaCacheOpen && !trashOpen && currentFolder === null;
   const viewFiles = currentFolder === null
