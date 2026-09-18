@@ -352,7 +352,7 @@ class ChatToolsSpec {
         ObjectNode fmFn = fmTool.putObject("function");
         fmFn.put("name", "fetch_media");
         fmFn.put("description", "批量拉取媒体文件到工作区(从已注册的媒体 MCP 服务器,如手机相册):"
-                + "自动调 photos_export/photos_search 拿清单,并发下载到指定文件夹,链路自动选优(在家走局域网)。"
+                + "自动调手机 photos_search(urls=original) 拿清单,并发下载到指定文件夹,链路自动选优(在家走局域网)。"
                 + "**「把最近一个月的相册整理出来」「把这批照片存到工作区」这类批量任务必须用本工具一次完成**——"
                 + "不要用 run_command 逐个 URL 下载(几百个文件要几百轮,且远端防护可能封 IP)。"
                 + "文件落在工作区指定 folder 下(用户可在「文件」页的「Agent 工作区」里浏览);已存在的文件自动跳过,可安全重跑续传。"
