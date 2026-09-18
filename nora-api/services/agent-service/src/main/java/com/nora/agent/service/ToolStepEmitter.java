@@ -543,13 +543,13 @@ class ToolStepEmitter {
                 JsonNode a = parseArgsSafe(rawArgs);
                 if ("register".equals(action)) {
                     // 与执行层同一推断:有 command 无 url → STDIO(模型常省略 transport)
+                    // 且与执行层同一方言归一化(http→STREAMABLE 等)
                     String transport = a.path("transport").asText("");
                     if (transport.isBlank() && !a.path("command").asText("").isBlank()
                             && a.path("url").asText("").isBlank()) {
                         transport = "STDIO";
-                    } else if (transport.isBlank()) {
-                        transport = "STREAMABLE";
                     }
+                    transport = RiskClassifier.normalizeMcpTransport(transport);
                     target = a.path("name").asText("新 MCP 服务器");
                     JsonNode headers = a.path("headers");
                     StringBuilder headerKeys = new StringBuilder();

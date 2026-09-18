@@ -280,7 +280,8 @@ final class RiskClassifier {
         }
         String normalized = action.trim().toLowerCase(Locale.ROOT);
         if (!Set.of("start", "stop", "restart").contains(normalized)) {
-            return "拒绝执行「" + action + "」：action 只允许 start / stop / restart";
+            return "拒绝执行「" + action + "」：action 只允许 start / stop / restart"
+                    + "(查看状态/详情请用 environment_status 或 read_service_logs)";
         }
         return null;
     }
@@ -382,6 +383,20 @@ final class RiskClassifier {
      * manage_mcp register 参数校验:名称规则与设置页注册一致(挂载名约束);
      * transport=STDIO 时需 command(本地进程),否则需 url(远程端点)。
      */
+    /** manage_mcp register 的 transport 别名归一化(2026-09-18:实测模型写 http)。 */
+    static String normalizeMcpTransport(String transport) {
+        if (transport == null || transport.isBlank()) {
+            return "STREAMABLE";
+        }
+        String t = transport.trim().toUpperCase(Locale.ROOT);
+        return switch (t) {
+            case "HTTP", "HTTP-STREAM", "STREAMABLE-HTTP", "HTTP_STREAMABLE" -> "STREAMABLE";
+            case "SSE-HTTP", "EVENT-STREAM" -> "SSE";
+            case "LOCAL", "PROCESS", "COMMAND", "NPX" -> "STDIO";
+            default -> t;
+        };
+    }
+
     static String validateMcpRegister(String name, String url, String transport, String command, List<String> args) {
         if (name == null || name.isBlank()) {
             return "拒绝执行：缺少 name 参数(MCP 服务器名称)";
@@ -390,7 +405,7 @@ final class RiskClassifier {
             return "拒绝执行：服务器名只能包含字母、数字、下划线、连字符,且不能含连续下划线"
                     + "(挂载工具名 mcp__<server>__<tool> 的约束)";
         }
-        String t = transport == null || transport.isBlank() ? "STREAMABLE" : transport.trim().toUpperCase(Locale.ROOT);
+        String t = normalizeMcpTransport(transport);
         if (!Set.of("STREAMABLE", "SSE", "STDIO").contains(t)) {
             return "拒绝执行：transport 只支持 STREAMABLE / SSE / STDIO(当前:" + transport + ")";
         }

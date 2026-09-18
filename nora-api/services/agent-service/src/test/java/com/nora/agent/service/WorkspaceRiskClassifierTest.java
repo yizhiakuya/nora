@@ -141,4 +141,19 @@ class WorkspaceRiskClassifierTest {
         // 无 action 但有 id = read 语义(默认 LOW)
         RiskClassifier.classify("read_file", "{\"id\": \"3\"}");
     }
+
+    @Test
+    void transportAliasesNormalized() {
+        // 复盘数据驱动(2026-09-18):模型写 transport="http" 被拒——
+        // 归一化到 STREAMABLE;分类器/执行层/审批明细三处共用
+        RiskClassifier.normalizeMcpTransport("http");
+        RiskClassifier.normalizeMcpTransport("HTTP");
+        RiskClassifier.normalizeMcpTransport("sse");
+        RiskClassifier.normalizeMcpTransport("local");
+        RiskClassifier.normalizeMcpTransport(null);
+        RiskClassifier.normalizeMcpTransport("");
+        // 归一化后校验通过(http 不再被拒)
+        RiskClassifier.validateMcpRegister("weather", "https://x/mcp", "http", null, null);
+        RiskClassifier.validateMcpRegister("weather", "https://x/mcp", "STREAMABLE", null, null);
+    }
 }

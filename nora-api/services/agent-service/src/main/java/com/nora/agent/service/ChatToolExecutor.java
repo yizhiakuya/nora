@@ -471,6 +471,16 @@ class ChatToolExecutor {
     ToolOutcome execReadFile(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             LiveOutput liveOutput) {
         String action = parsed.datasourceAction() == null ? "list" : parsed.datasourceAction().trim().toLowerCase();
+        // action 白名单(2026-09-18):非空且未知的 action 报错而不是静默 fallback 到
+        // read/list——静默 fallback 会把「模型写错 action」变成「奇怪的成功」,
+        // 掩盖问题且误导后续轮次。省略 action 时保留兼容:有 id 即 read,无 id 即 list。
+        if (parsed.datasourceAction() != null && !parsed.datasourceAction().isBlank()
+                && !java.util.Set.of("list", "read", "import", "rename", "move", "delete", "folders", "mkdir")
+                .contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
+                    + "list / read / import / rename / move / delete / folders / mkdir"
+                    + "(文件中心;工作区/整机文件用 manage_workspace)", null, null, false);
+        }
         // import: 把远程 URL 下载并存成工作台文件(用户可见可管理)
         if ("import".equals(action)) {
             String r = importToWorkbenchFile(args);
@@ -571,10 +581,13 @@ class ChatToolExecutor {
         }
     }
 
-    /** 解析文件 id 参数:id 可以是数字/数字字符串/逗号分隔字符串。 */
+    /** 解析文件 id 参数:id / target 可以是数字/数字字符串/逗号分隔字符串(模型方言兼容)。 */
     private static List<Long> parseFileIds(JsonNode a) {
         List<Long> out = new java.util.ArrayList<>();
         JsonNode idNode = a.path("id");
+        if (idNode.isMissingNode() || idNode.isNull()) {
+            idNode = a.path("target"); // 模型常把 id 写进 target(与其他 manage_* 工具一致)
+        }
         if (idNode.isNumber()) {
             out.add(idNode.asLong());
         } else if (idNode.isTextual()) {
@@ -602,6 +615,11 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
         }
         String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        // 方言归一化(2026-09-18:实测模型写 download——语义即 import):
+        // save/fetch 等同类词一并归位
+        if ("download".equals(action) || "save".equals(action) || "fetch".equals(action)) {
+            action = "import";
+        }
         if (!java.util.Set.of("list", "read", "write", "append", "delete", "import", "move", "copy", "mkdir", "edit")
                 .contains(action)) {
             return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
@@ -992,6 +1010,8 @@ class ChatToolExecutor {
                 && (rUrl == null || rUrl.isBlank())) {
             rTransport = "STDIO";
         }
+        // 方言归一化(2026-09-18:实测模型写 transport="http"):与分类器共用
+        rTransport = RiskClassifier.normalizeMcpTransport(rTransport);
         List<String> rArgs = new java.util.ArrayList<>();
         if (a.path("args").isArray()) {
             for (JsonNode n : a.path("args")) {

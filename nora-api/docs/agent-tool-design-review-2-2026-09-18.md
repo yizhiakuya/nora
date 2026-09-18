@@ -190,3 +190,12 @@ full-album 和 month-all 各一份）检测不了——文件名相同但目录�
 | 8 | 描述瘦身（季度） | ⏳ 保留为季度运营项 |
 
 **回归**：130 测试通过；`tool-eval.sh` 10/10；E2E 全部通过。
+
+### 追加轮（同日,白名单拒绝类失败挖掘）
+
+用「拒绝执行」类失败做第二轮挖掘,补齐的方言兼容:
+- `normalizeMcpTransport`(实测模型写 `transport="http"`→归一化 STREAMABLE;local→STDIO 等),分类器/执行层/审批明细三处共用;E2E 验证 `http` 注册成功;
+- manage_workspace 的 `download`/`save`/`fetch`→`import` 别名;
+- read_file 管理动作的 id 接受 `target` 别名(与其他 manage_* 工具一致);
+- read_file 未知 action 改为显式报错(此前静默 fallback 到 read/list,把模型错误变成"奇怪的成功");
+- manage_container 拒绝消息补出路提示(「查看状态用 environment_status/read_service_logs」,实测模型写 `inspect` 被拒)。
