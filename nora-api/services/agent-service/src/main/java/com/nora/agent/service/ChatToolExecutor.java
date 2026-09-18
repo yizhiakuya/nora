@@ -354,7 +354,10 @@ class ChatToolExecutor {
     /** manage_datasource handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageDatasource(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             LiveOutput liveOutput) {
-        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        // 与分类器同一归一化:add→create / delete→remove 等别名(复盘数据驱动,
+        // 实测模型写 add/delete 被拒);schema 在工具 spec 里不宣传但白名单放行
+        // (只读,模型从 list 结果推断时可用)
+        String action = RiskClassifier.normalizeDatasourceAction(parsed.datasourceAction());
         String guard = RiskClassifier.validateDatasourceAction(action);
         if (guard != null) {
             return new ToolOutcome("ERROR: " + guard, null, null, false);
@@ -412,7 +415,8 @@ class ChatToolExecutor {
     /** manage_service handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
     ToolOutcome execManageService(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             LiveOutput liveOutput) {
-        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
+        // 与分类器同一归一化(add→register / delete→remove / stop→disable 等)
+        String action = RiskClassifier.normalizeServiceAction(parsed.datasourceAction());
         String guard = RiskClassifier.validateServiceAction(action);
         if (guard != null) {
             return new ToolOutcome("ERROR: " + guard, null, null, false);

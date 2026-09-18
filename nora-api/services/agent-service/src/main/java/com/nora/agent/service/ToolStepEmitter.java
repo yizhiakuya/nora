@@ -487,7 +487,8 @@ class ToolStepEmitter {
             }
             case "manage_datasource" -> {
                 actionType = "datasource_manage";
-                String action = parsed.datasourceAction();
+                // 与分类器/执行层同一归一化:别名 add→create / delete→remove 等按目标语义展示明细
+                String action = RiskClassifier.normalizeDatasourceAction(parsed.datasourceAction());
                 target = parsed.input().target() == null ? "新数据源" : parsed.input().target();
                 JsonNode a = parseArgsSafe(rawArgs);
                 if ("remove".equals(action)) {
@@ -507,7 +508,8 @@ class ToolStepEmitter {
             }
             case "manage_service" -> {
                 actionType = "service_manage";
-                String action = parsed.datasourceAction();
+                // 与分类器/执行层同一归一化(add→register / delete→remove 等)
+                String action = RiskClassifier.normalizeServiceAction(parsed.datasourceAction());
                 target = parsed.input().target() == null ? "新纳管源" : parsed.input().target();
                 JsonNode a = parseArgsSafe(rawArgs);
                 if ("register".equals(action)) {

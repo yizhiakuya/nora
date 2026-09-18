@@ -51,25 +51,26 @@ final class RiskClassifier {
         }
         if ("manage_datasource".equals(toolName)) {
             // list/test/schema 只读自动(HIGH 之外的连接探测无副作用);
-            // create 改数据源清单,HIGH;remove 删连接+级联历史,CRITICAL
-            String action = extractAction(argsJson);
-            if ("remove".equalsIgnoreCase(action)) {
+            // create 改数据源清单,HIGH;remove 删连接+级联历史,CRITICAL。
+            // 别名归一化(执行层共用):add→create / delete→remove 等
+            String action = normalizeDatasourceAction(extractAction(argsJson));
+            if ("remove".equals(action)) {
                 return Risk.CRITICAL;
             }
-            if ("create".equalsIgnoreCase(action)) {
+            if ("create".equals(action)) {
                 return Risk.HIGH;
             }
-            return "list".equalsIgnoreCase(action) || "test".equalsIgnoreCase(action)
-                    || "schema".equalsIgnoreCase(action) ? Risk.LOW : Risk.HIGH;
+            return "list".equals(action) || "test".equals(action)
+                    || "schema".equals(action) ? Risk.LOW : Risk.HIGH;
         }
         if ("manage_service".equals(toolName)) {
             // register/remove CRITICAL:PROC 注册=宿主机命令纳入守护,删除不可逆;
-            // list 只读 LOW;enable/disable 可逆,HIGH
-            String action = extractAction(argsJson);
-            if ("register".equalsIgnoreCase(action) || "remove".equalsIgnoreCase(action)) {
+            // list 只读 LOW;enable/disable 可逆,HIGH。别名归一化(执行层共用)
+            String action = normalizeServiceAction(extractAction(argsJson));
+            if ("register".equals(action) || "remove".equals(action)) {
                 return Risk.CRITICAL;
             }
-            if ("list".equalsIgnoreCase(action)) {
+            if ("list".equals(action)) {
                 return Risk.LOW;
             }
             return Risk.HIGH;
@@ -276,11 +277,30 @@ final class RiskClassifier {
         if (action == null || action.isBlank()) {
             return "拒绝执行：缺少 action 参数。可用值:list / create / test / remove";
         }
-        String normalized = action.trim().toLowerCase(Locale.ROOT);
-        if (!Set.of("list", "create", "test", "remove").contains(normalized)) {
-            return "拒绝执行「" + action + "」：action 只允许 list / create / test / remove";
+        String normalized = normalizeDatasourceAction(action);
+        if (!Set.of("list", "create", "test", "remove", "schema").contains(normalized)) {
+            return "拒绝执行「" + action + "」：action 只允许 list / create / test / remove(查看表结构用 schema)";
         }
         return null;
+    }
+
+    /**
+     * manage_datasource action 别名归一化(2026-09-18 工具复盘数据驱动):
+     * 实测模型写 add/delete(受通用 CRUD 词汇影响)被拒——与 manage_mcp 同款
+     * 归一化,分类器/执行层/审批明细共用。输出小写。
+     */
+    static String normalizeDatasourceAction(String action) {
+        if (action == null) {
+            return "";
+        }
+        String a = action.trim().toLowerCase(Locale.ROOT);
+        return switch (a) {
+            case "add", "new" -> "create";
+            case "delete", "drop", "rm" -> "remove";
+            case "check", "ping" -> "test";
+            case "tables", "describe", "structure" -> "schema";
+            default -> a;
+        };
     }
 
     /** manage_service 动作白名单。 */
@@ -288,11 +308,26 @@ final class RiskClassifier {
         if (action == null || action.isBlank()) {
             return "拒绝执行：缺少 action 参数。可用值:list / register / enable / disable / remove";
         }
-        String normalized = action.trim().toLowerCase(Locale.ROOT);
+        String normalized = normalizeServiceAction(action);
         if (!Set.of("list", "register", "enable", "disable", "remove").contains(normalized)) {
             return "拒绝执行「" + action + "」：action 只允许 list / register / enable / disable / remove";
         }
         return null;
+    }
+
+    /** manage_service action 别名归一化(同上,输出小写)。 */
+    static String normalizeServiceAction(String action) {
+        if (action == null) {
+            return "";
+        }
+        String a = action.trim().toLowerCase(Locale.ROOT);
+        return switch (a) {
+            case "add", "new" -> "register";
+            case "delete", "unregister" -> "remove";
+            case "pause", "stop" -> "disable";
+            case "resume", "start" -> "enable";
+            default -> a;
+        };
     }
 
     /** manage_mcp 动作白名单。 */

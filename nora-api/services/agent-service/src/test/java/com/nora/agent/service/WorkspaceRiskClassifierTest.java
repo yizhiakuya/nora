@@ -104,4 +104,25 @@ class WorkspaceRiskClassifierTest {
         RiskClassifier.validateMcpAction("setPolicy");
         RiskClassifier.validateMcpAction("drop");
     }
+
+    @Test
+    void datasourceServiceAliasesNormalized() {
+        // 复盘数据驱动(2026-09-18):模型写 add/delete 被拒——归一化到 create/remove,
+        // 分类器/执行层/审批明细三处共用(与 manage_mcp 同款)
+        RiskClassifier.normalizeDatasourceAction("add");
+        RiskClassifier.normalizeDatasourceAction("delete");
+        RiskClassifier.normalizeDatasourceAction("tables");
+        RiskClassifier.normalizeServiceAction("add");
+        RiskClassifier.normalizeServiceAction("delete");
+        RiskClassifier.normalizeServiceAction("pause");
+        RiskClassifier.normalizeServiceAction("resume");
+        // 别名与目标动作同档:add→create=HIGH、delete→remove=CRITICAL
+        RiskClassifier.classify("manage_datasource", "{\"action\": \"add\", \"engine\": \"postgresql\"}");
+        RiskClassifier.classify("manage_datasource", "{\"action\": \"delete\", \"target\": \"old-db\"}");
+        RiskClassifier.classify("manage_service", "{\"action\": \"add\", \"kind\": \"PROC\", \"command\": \"x\"}");
+        RiskClassifier.classify("manage_service", "{\"action\": \"delete\", \"target\": \"3\"}");
+        // schema 白名单放行(此前 validateDatasourceAction 不含 schema,分支不可达)
+        RiskClassifier.validateDatasourceAction("schema");
+        RiskClassifier.validateDatasourceAction("tables");
+    }
 }
