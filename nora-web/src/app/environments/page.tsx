@@ -10,51 +10,33 @@ import { AddSourceModal } from "@/components/environments/AddSourceModal";
 import { EmptyState } from "@/components/ui/custom/States";
 import { Container } from "lucide-react";
 import { useServices } from "@/hooks/useServices";
-import { useNotifications } from "@/hooks/useNotifications";
 import { USE_BACKEND } from "@/lib/api/client";
-import { environmentApi } from "@/lib/services/environmentApi";
 
 const TABS = ["服务", "日志"] as const;
-
-/** 本会话已见过的最新守护事件时间(ISO);增量拉取去重用 */
-let lastEventTime: string | null = null;
 
 export default function EnvironmentsPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("服务");
   const [addOpen, setAddOpen] = useState(false);
   const services = useServices((s) => s.services);
   const syncFromBackend = useServices((s) => s.syncFromBackend);
-  const addNotification = useNotifications((s) => s.addNotification);
   // 后端首次同步未完成前不渲染空态,避免「暂无纳管服务」闪现;
   // persist 已有上次服务列表时直接渲染(stale-while-revalidate:同步原地刷新),
   // 不再让骨架屏卡住首屏等慢同步
   const [loaded, setLoaded] = useState(!USE_BACKEND || services.length > 0);
 
   // 后端模式:进入页面拉一次真实容器/纳管源列表,之后 30s 轮询保持状态新鲜
-  // (容器/进程在外部挂掉、PROC 崩溃自愈,卡片与 Header 指标实时联动);
-  // 顺带增量拉 PROC 守护事件(死亡/自愈/启动失败)进通知中心
+  // (容器/进程在外部挂掉、PROC 崩溃自愈,卡片与 Header 指标实时联动)。
+  // PROC 守护事件的通知已上移全局 NotificationWatcher(2026-09-19)——
+  // 此前只在打开本页时才产生通知,其他页面收不到;这里不再重复触发。
   useEffect(() => {
     if (!USE_BACKEND) return;
     const poll = async () => {
       await syncFromBackend().finally(() => setLoaded(true));
-      try {
-        const events = await environmentApi.procEvents(lastEventTime ?? undefined);
-        for (const ev of events) {
-          if (ev.type === "died" || ev.type === "start_failed") {
-            addNotification(
-              ev.type === "died" ? "托管进程自动恢复" : "托管进程启动失败",
-              `${ev.name}:${ev.detail}`,
-              "svcError"
-            );
-          }
-          lastEventTime = ev.time;
-        }
-      } catch { /* 事件拉取失败不打断轮询 */ }
     };
     void poll();
     const timer = setInterval(() => { void poll(); }, 30_000);
     return () => clearInterval(timer);
-  }, [syncFromBackend, addNotification]);
+  }, [syncFromBackend]);
 
   return (
     <>

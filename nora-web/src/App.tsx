@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
+import { NotificationWatcher } from "@/components/layout/NotificationWatcher";
 import { useBackendHealth } from "@/hooks/useBackendHealth";
 import { installGlobalErrorReporting } from "@/lib/errorReporter";
 import { GlobalRouteError, reportRenderError } from "@/app/error";
@@ -51,6 +52,8 @@ function RouteShell({ children }: { children: React.ReactNode }) {
   }
   return (
     <div className="h-screen flex overflow-hidden text-gray-800 dark:text-gray-100 bg-background dark:bg-background">
+      {/* 全局后台事件观察器:自动任务执行/PROC 守护事件在任何页面都能进通知中心 */}
+      <NotificationWatcher />
       <Sidebar />
       <main className="flex-1 flex flex-col overflow-hidden bg-background relative">
         {children}

@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +13,7 @@ import { usePreferences } from "@/hooks/usePreferences";
 export function NotificationBell() {
   const notifications = useNotifications((s) => s.notifications);
   const markAllRead = useNotifications((s) => s.markAllRead);
+  const clearAll = useNotifications((s) => s.clearAll);
   const inApp = usePreferences((s) => s.notifications.inApp);
   const unread = notifications.filter((n) => !n.read).length;
 
@@ -35,13 +36,24 @@ export function NotificationBell() {
       <DropdownMenuContent align="end" className="w-80 rounded-xl shadow-lg border-border p-0">
         <div className="bg-muted px-4 py-3 border-b border-border flex items-center justify-between rounded-t-xl">
           <span className="text-xs font-bold text-foreground">系统通知{unread > 0 ? ` (${unread} 未读)` : ""}</span>
-          <button
-            type="button"
-            onClick={markAllRead}
-            className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer inline-flex items-center gap-1"
-          >
-            <CheckCheck className="w-3 h-3" /> 全部已读
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={markAllRead}
+              className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer inline-flex items-center gap-1"
+            >
+              <CheckCheck className="w-3 h-3" /> 全部已读
+            </button>
+            {notifications.length > 0 && (
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline cursor-pointer inline-flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3" /> 清空
+              </button>
+            )}
+          </div>
         </div>
         <div className="max-h-[300px] overflow-y-auto custom-scroll">
           {notifications.length === 0 ? (

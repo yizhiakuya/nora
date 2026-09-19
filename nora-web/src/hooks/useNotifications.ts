@@ -26,6 +26,8 @@ interface NotificationsState {
   notifications: AppNotification[];
   addNotification: (title: string, detail: string, event?: NotificationEvent) => void;
   markAllRead: () => void;
+  /** 清空全部通知(通知中心「清空」按钮)。 */
+  clearAll: () => void;
 }
 
 /**
@@ -42,6 +44,17 @@ export const useNotifications = create<NotificationsState>()(
           // 「通知偏好 → 事件开关」联动：被关闭的事件不再进入通知中心。
           const enabled = usePreferences.getState().notifications.events;
           if (event !== "general" && enabled[event] === false) return state;
+          // 浏览器通知通道(2026-09-19 补全):开关开启且已授权时发系统级通知。
+          // fire-and-forget——未授权/不支持时静默(站内通知不受影响)。
+          if (usePreferences.getState().notifications.browser) {
+            try {
+              if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+                new Notification(title, { body: detail, tag: `nora-${event}` });
+              }
+            } catch {
+              /* 系统通知失败不影响站内通知 */
+            }
+          }
           return {
             notifications: [
               { id: Date.now(), title, detail, time: now(), read: false, event },
@@ -51,6 +64,7 @@ export const useNotifications = create<NotificationsState>()(
         }),
       markAllRead: () =>
         set((state) => ({ notifications: state.notifications.map((n) => ({ ...n, read: true })) })),
+      clearAll: () => set({ notifications: [] }),
     }),
     { name: "notifications", version: 1,
       // v0 存过假种子通知,升级后清空,只留真实事件产生的通知

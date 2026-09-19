@@ -79,9 +79,26 @@ export function NotificationSettings() {
             </div>
             <Switch
               checked={notifications.browser}
-              onCheckedChange={(v) => {
+              onCheckedChange={async (v) => {
+                if (v) {
+                  // 开启时真实申请系统通知权限(2026-09-19 补全:此前是假开关);
+                  // 授权失败/不支持时回退为关闭,如实告知用户
+                  if (typeof Notification === "undefined") {
+                    toast.error("当前浏览器不支持系统通知,已保持关闭");
+                    return;
+                  }
+                  if (Notification.permission === "denied") {
+                    toast.error("系统通知权限已被拒绝,请在浏览器设置中允许后重试");
+                    return;
+                  }
+                  const perm = Notification.permission === "granted"
+                    ? "granted" : await Notification.requestPermission();
+                  if (perm !== "granted") {
+                    toast.error("未获得系统通知权限,已保持关闭");
+                    return;
+                  }
+                }
                 setNotifications({ browser: v });
-                if (v) toast.info("演示环境不申请系统通知权限");
               }}
             />
           </div>
