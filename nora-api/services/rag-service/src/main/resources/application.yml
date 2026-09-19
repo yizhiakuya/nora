@@ -22,6 +22,12 @@ spring:
         enabled: true
 
 nora:
+  notification:
+    # Kafka 事件总线(2026-09-19):通知事件发布——notification-service 消费落库,
+    # 前端通知中心展示。Kafka 不可达时发布静默降级,不影响本服务主业务。
+    enabled: true
+    bootstrap-servers: localhost:9092
+    source: rag-service
   timezone: Asia/Shanghai
   # Redis(平台组件):嵌入结果内容寻址缓存,重复文本不再重复调 provider。
   # 禁用或不可达时直连 provider,不影响功能。

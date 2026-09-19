@@ -49,5 +49,14 @@
             <artifactId>lettuce-core</artifactId>
             <scope>provided</scope>
         </dependency>
+
+        <!-- Kafka 客户端:共享 NotificationPublisher 门面编译用(2026-09-19 通知事件总线);
+             运行时由作为 producer 的服务自带(provided 不传递)——未引入 kafka-clients
+             的服务自动装配条件不满足、发布门面不会被加载 -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

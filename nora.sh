@@ -11,8 +11,8 @@
 set -u
 ROOT=/d/claude/Nora/nora-api
 LOGDIR=/d/claude/Nora/nora-api
-PORTS=(gateway:8080 file:8081 rag:8082 agent:8083 datasource:8084 env:8085 automation:8086)
-ALL=(gateway file rag agent datasource env automation)
+PORTS=(gateway:8080 file:8081 rag:8082 agent:8083 datasource:8084 env:8085 automation:8086 notification:8087)
+ALL=(gateway file rag agent datasource env automation notification)
 SHARED_MODULES=common/nora-common,common/nora-security,api/rag-api,api/file-api,api/datasource-api,api/env-api,api/automation-api,api/agent-api
 
 port_of() { echo "${PORTS[@]}" | tr ' ' '\n' | grep "^$1:" | cut -d: -f2; }
@@ -111,7 +111,7 @@ shared_stale() {
 # 基础设施容器检查(缺失则拉起;nacos 等端口就绪)
 check_infra() {
   local c st i
-  for c in nora-postgres nora-redis nora-nacos; do
+  for c in nora-postgres nora-redis nora-nacos nora-kafka; do
     st=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null)
     if [ "$st" != "running" ]; then
       echo "基础设施 $c 未运行(状态:${st:-不存在}),启动中 ..."
@@ -121,7 +121,7 @@ check_infra() {
       fi
     fi
   done
-  echo "基础设施 OK: nora-postgres / nora-redis / nora-nacos"
+  echo "基础设施 OK: nora-postgres / nora-redis / nora-nacos / nora-kafka"
 }
 
 cmd_restart_one() {

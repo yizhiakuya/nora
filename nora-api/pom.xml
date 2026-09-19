@@ -156,6 +156,7 @@
                 <module>services/datasource-service</module>
                 <module>services/env-service</module>
                 <module>services/automation-service</module>
+                <module>services/notification-service</module>
             </modules>
         </profile>
     </profiles>

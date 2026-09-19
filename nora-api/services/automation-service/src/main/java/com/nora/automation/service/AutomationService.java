@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nora.common.exception.BusinessException;
+import com.nora.common.notification.NotificationPublisher;
 
 /**
  * 自动化规则的 CRUD + 执行({@code schema_automation})。
@@ -20,14 +21,25 @@ public class AutomationService {
     private final JdbcTemplate jdbcTemplate;
     private final ActionExecutor actionExecutor;
     private final ObjectMapper objectMapper;
+    /** 通知事件发布(可空:测试构造不接;Kafka 不可达时静默降级) */
+    private final NotificationPublisher notificationPublisher;
     /** 正在执行中的规则 ID:agent 动作可跑数分钟,防止调度/手动重复触发同一规则 */
     private final Set<Long> runningRules = ConcurrentHashMap.newKeySet();
 
     public AutomationService(JdbcTemplate jdbcTemplate, ActionExecutor actionExecutor,
                              ObjectMapper objectMapper) {
+        this(jdbcTemplate, actionExecutor, objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AutomationService(JdbcTemplate jdbcTemplate, ActionExecutor actionExecutor,
+                             ObjectMapper objectMapper,
+                             @org.springframework.beans.factory.annotation.Autowired(required = false)
+                             NotificationPublisher notificationPublisher) {
         this.jdbcTemplate = jdbcTemplate;
         this.actionExecutor = actionExecutor;
         this.objectMapper = objectMapper;
+        this.notificationPublisher = notificationPublisher;
     }
 
     /** 列出规则,最新在前(前端 AutomationRule[])。 */
@@ -121,6 +133,16 @@ public class AutomationService {
             jdbcTemplate.update(
                     "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ? AND deleted_at IS NULL",
                     ok ? "active" : "error", rule.id());
+            // 通知事件(Kafka,2026-09-19):自动任务执行完成/失败——用户在任何页面
+            // 都能从通知中心看到(此前只有页面级轮询,切页就丢)。发布失败静默,
+            // 不影响执行记录落库。
+            if (notificationPublisher != null) {
+                notificationPublisher.publish(
+                        ok ? "taskDone" : "taskFail",
+                        ok ? "任务执行完成" : "任务执行失败",
+                        "自动任务「" + rule.name() + "」" + (ok ? "执行成功" : "执行失败")
+                                + ",耗时 " + String.format("%.1fs", duration / 1000.0) + "。");
+            }
             return latestExecution(rule.id());
         } finally {
             runningRules.remove(rule.id());

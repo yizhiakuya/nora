@@ -21,6 +21,12 @@ spring:
         enabled: true
 
 nora:
+  notification:
+    # Kafka 事件总线(2026-09-19):通知事件发布——notification-service 消费落库,
+    # 前端通知中心展示。Kafka 不可达时发布静默降级,不影响本服务主业务。
+    enabled: true
+    bootstrap-servers: localhost:9092
+    source: automation-service
   timezone: Asia/Shanghai
   datasource:
     base-url: http://localhost:8084

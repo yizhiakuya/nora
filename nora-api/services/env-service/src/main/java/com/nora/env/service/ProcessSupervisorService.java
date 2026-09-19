@@ -19,6 +19,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
+
+import com.nora.common.notification.NotificationPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -55,6 +57,9 @@ public class ProcessSupervisorService {
     private final Map<Long, Long> memoryCache = new ConcurrentHashMap<>();
     /** 正在采样的 sourceId(单飞防抖) */
     private final Set<Long> sampling = ConcurrentHashMap.newKeySet();
+    /** 通知事件发布(可空:测试构造不接;Kafka 不可达时静默降级,2026-09-19) */
+    private final NotificationPublisher notificationPublisher;
+
     /** 内存采样线程(tasklist 慢,后台跑;与 15s 定时采样共用) */
     private final ExecutorService memoryExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "proc-memory-sampler");
@@ -64,8 +69,17 @@ public class ProcessSupervisorService {
 
     public ProcessSupervisorService(JdbcTemplate jdbcTemplate,
                                     @Value("${nora.proc.log-dir:logs/proc}") String logDir) {
+        this(jdbcTemplate, logDir, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProcessSupervisorService(JdbcTemplate jdbcTemplate,
+                                    @Value("${nora.proc.log-dir:logs/proc}") String logDir,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    NotificationPublisher notificationPublisher) {
         this.jdbcTemplate = jdbcTemplate;
         this.logDir = Path.of(logDir);
+        this.notificationPublisher = notificationPublisher;
     }
 
     /** 一条 PROC 源的运行时快照(供 /services 合并)。 */
@@ -304,6 +318,14 @@ public class ProcessSupervisorService {
         events.addLast(ev);
         while (events.size() > MAX_EVENTS) {
             events.pollFirst();
+        }
+        // 通知事件(Kafka,2026-09-19):进程死亡/拉起失败——用户在任何页面都能
+        // 从通知中心看到。发布失败静默,不影响守护主流程。
+        if (notificationPublisher != null) {
+            notificationPublisher.publish(
+                    "svcError",
+                    "died".equals(type) ? "托管进程自动恢复" : "托管进程启动失败",
+                    name + ":" + detail);
         }
         log.warn("PROC[{}] {} event={}: {}", id, name, type, detail);
     }

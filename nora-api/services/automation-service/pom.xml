@@ -41,6 +41,12 @@
             <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
         </dependency>
 
+        <!-- Kafka 客户端:共享 NotificationPublisher 门面(通知事件总线 producer,2026-09-19) -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+        </dependency>
+
         <!-- Internal modules -->
         <dependency>
             <groupId>com.nora</groupId>

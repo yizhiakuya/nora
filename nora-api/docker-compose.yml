@@ -44,6 +44,35 @@ services:
       retries: 12
     profiles: ["dev-basic", "dev-all"]
 
+  # Kafka(KRaft 单节点,2026-09-19 通知服务事件总线):
+  # 无 ZooKeeper,broker+controller 合一;内存限 512M(与 N100/开发机共存)。
+  # 业务服务作为 producer 发事件,notification-service 作为 consumer 落库。
+  # 降级语义:Kafka 挂了只丢通知,不影响任何主业务(发送方静默失败)。
+  kafka:
+    image: apache/kafka:3.7.1
+    container_name: nora-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 8s
+      retries: 12
+    profiles: ["dev-basic", "dev-all"]
+
   rocketmq-namesrv:
     image: apache/rocketmq:5.1.4
     container_name: nora-rocketmq-namesrv

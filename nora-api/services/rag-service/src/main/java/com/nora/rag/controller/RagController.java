@@ -20,6 +20,7 @@ import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.nora.common.exception.BusinessException;
+import com.nora.common.notification.NotificationPublisher;
 import com.nora.common.response.ApiResponse;
 import com.nora.rag.api.RetrievalResult;
 import com.nora.rag.service.IndexingService;
@@ -40,15 +41,28 @@ public class RagController {
     private final KnowledgeDocService knowledgeDocService;
     private final IndexingService indexingService;
     private final RestClient fileServiceRestClient;
+    /** 通知事件发布(可空:测试构造不接;Kafka 不可达时静默降级,2026-09-19) */
+    private final NotificationPublisher notificationPublisher;
 
     public RagController(RetrievalService retrievalService,
                          KnowledgeDocService knowledgeDocService,
                          IndexingService indexingService,
                          RestClient fileServiceRestClient) {
+        this(retrievalService, knowledgeDocService, indexingService, fileServiceRestClient, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RagController(RetrievalService retrievalService,
+                         KnowledgeDocService knowledgeDocService,
+                         IndexingService indexingService,
+                         RestClient fileServiceRestClient,
+                         @org.springframework.beans.factory.annotation.Autowired(required = false)
+                         NotificationPublisher notificationPublisher) {
         this.retrievalService = retrievalService;
         this.knowledgeDocService = knowledgeDocService;
         this.indexingService = indexingService;
         this.fileServiceRestClient = fileServiceRestClient;
+        this.notificationPublisher = notificationPublisher;
     }
 
     @GetMapping("/health")
@@ -95,6 +109,13 @@ public class RagController {
         }
 
         notifyFileIndexed(request.fileId());
+
+        // 通知事件(Kafka,2026-09-19):文档索引入库完成——用户在任何页面都能
+        // 从通知中心看到。发布失败静默,不影响索引主流程。
+        if (notificationPublisher != null) {
+            notificationPublisher.publish("indexed", "文档索引入库",
+                    "「" + name + "」已完成清洗与向量化,AI 现在可以检索其内容。");
+        }
 
         KnowledgeDocService.KnowledgeDocView doc = knowledgeDocService.getDoc(docId);
         return ApiResponse.ok(doc);

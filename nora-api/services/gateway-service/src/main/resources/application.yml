@@ -64,6 +64,10 @@ spring:
           uri: lb://env-service
           predicates:
             - Path=/api/environment/**
+        - id: notifications
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/notifications/**
 
 management:
   endpoints:

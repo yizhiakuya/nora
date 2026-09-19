@@ -1,0 +1,41 @@
+server:
+  port: 8087
+
+spring:
+  jackson:
+    time-zone: Asia/Shanghai
+  application:
+    name: notification-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_notification
+    username: nora
+    password: nora
+  flyway:
+    enabled: true
+    schemas: schema_notification
+    default-schema: schema_notification
+    create-schemas: true
+  cloud:
+    nacos:
+      discovery:
+        enabled: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      # 消费组与 topic 在 @KafkaListener 里声明;这里只放公共配置
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: manual  # 手动 ack(NotificationConsumer 落库成功后提交 offset)
+
+nora:
+  timezone: Asia/Shanghai
+  notification:
+    topic: nora.notifications
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
