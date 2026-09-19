@@ -64,11 +64,6 @@
             <artifactId>nora-common</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-            <groupId>com.nora</groupId>
-            <artifactId>env-api</artifactId>
-            <version>${project.version}</version>
-        </dependency>
 
         <!-- Test -->
         <dependency>

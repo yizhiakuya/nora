@@ -15,7 +15,7 @@
     <packaging>jar</packaging>
 
     <name>nora :: api :: rag-api</name>
-    <description>Dubbo contract for rag-service: retrieval search and index statistics (pure JDK, no runtime dependencies).</description>
+    <description>Shared DTO contract for rag-service: retrieval result DTOs (pure JDK, no runtime dependencies). 服务间经 REST 调用(2026-09-19 正名)</description>
 
     <dependencies>
         <dependency>

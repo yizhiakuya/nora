@@ -53,11 +53,6 @@
             <artifactId>nora-common</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-            <groupId>com.nora</groupId>
-            <artifactId>automation-api</artifactId>
-            <version>${project.version}</version>
-        </dependency>
 
         <!-- Persistence -->
         <dependency>

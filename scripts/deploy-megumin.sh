@@ -7,7 +7,7 @@ BASE=/opt/nora
 case "${1:-}" in
 infra)
   mkdir -p $BASE/jars $BASE/logs $BASE/data/files $BASE/agent-workspace /var/www/nora
-  docker rm -f nora-postgres nora-redis nora-nacos 2>/dev/null || true
+  docker rm -f nora-postgres nora-redis nora-nacos nora-kafka 2>/dev/null || true
   docker run -d --name nora-postgres --restart unless-stopped \
     -e POSTGRES_DB=nora -e POSTGRES_USER=nora -e POSTGRES_PASSWORD=nora \
     -p 15435:5432 -v nora-pgdata:/var/lib/postgresql/data pgvector/pgvector:pg16
@@ -16,9 +16,32 @@ infra)
     -e MODE=standalone -e JVM_XMS=256m -e JVM_XMX=512m -e JVM_XMN=128m \
     -p 8848:8848 -p 9848:9848 -p 9849:9849 \
     -v nora-nacos-data:/home/nacos/data nacos/nacos-server:v2.5.1
+  # Kafka(KRaft 单节点,2026-09-19 通知事件总线):业务服务 producer → notification-service consumer。
+  # 内存限 512M(N100 与全服务共存);advertised 用 localhost——同机部署各服务直连。
+  docker run -d --name nora-kafka --restart unless-stopped \
+    -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller \
+    -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+    -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+    -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+    -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+    -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+    -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+    -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+    -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+    -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+    -e KAFKA_HEAP_OPTS="-Xmx512m -Xms256m" \
+    -p 9092:9092 -v nora-kafka-data:/var/lib/kafka/data apache/kafka:3.7.1
   echo "等待 postgres ..."
   for i in $(seq 1 90); do docker exec nora-postgres pg_isready -U nora -d nora >/dev/null 2>&1 && break; sleep 2; done
   docker exec nora-postgres pg_isready -U nora -d nora
+  echo "等待 kafka ..."
+  for i in $(seq 1 60); do
+    docker exec nora-kafka /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 && break
+    sleep 3
+  done
+  # 通知 topic(幂等:已存在时 create 报 TopicExistsException,忽略)
+  docker exec nora-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    --create --topic nora.notifications --partitions 1 --replication-factor 1 2>/dev/null || true
   echo "OK-infra"
   ;;
 restore)
@@ -69,20 +92,24 @@ units)
   mkunit datasource 384m "SPRING_DATASOURCE_URL=$DB?currentSchema=schema_datasource"  "$DBU" "$DBP"
   mkunit env        384m "SPRING_DATASOURCE_URL=$DB?currentSchema=schema_env"         "$DBU" "$DBP"
   mkunit automation 384m "SPRING_DATASOURCE_URL=$DB?currentSchema=schema_automation"  "$DBU" "$DBP"
+  # 通知中心(2026-09-19):消费 Kafka 事件落库;producer 侧(rag/env/automation)
+  # 同样需要 kafka 地址——下面给三个 producer 服务补 SPRING_KAFKA_BOOTSTRAP_SERVERS
+  # (本机部署 localhost:9092 即默认值,仅显式化以防将来改端口)
+  mkunit notification 384m "SPRING_DATASOURCE_URL=$DB?currentSchema=schema_notification" "$DBU" "$DBP"
 
   systemctl daemon-reload
-  systemctl enable --now nora-gateway nora-file nora-rag nora-agent nora-datasource nora-env nora-automation >/dev/null
+  systemctl enable --now nora-gateway nora-file nora-rag nora-agent nora-datasource nora-env nora-automation nora-notification >/dev/null
   echo "等待服务健康 ..."
   ok=1
   for i in $(seq 1 60); do
     ok=1
-    for p in 8080 8081 8082 8083 8084 8085 8086; do
+    for p in 8080 8081 8082 8083 8084 8085 8086 8087; do
       [ "$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 3 http://localhost:$p/actuator/health)" = "200" ] || ok=0
     done
     [ $ok -eq 1 ] && break
     sleep 3
   done
-  for p in 8080 8081 8082 8083 8084 8085 8086; do
+  for p in 8080 8081 8082 8083 8084 8085 8086 8087; do
     printf "port %s: %s\n" $p "$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 3 http://localhost:$p/actuator/health)"
   done
   echo "OK-units ok=$ok"

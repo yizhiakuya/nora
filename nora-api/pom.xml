@@ -28,9 +28,6 @@
         <module>api/rag-api</module>
         <module>api/file-api</module>
         <module>api/datasource-api</module>
-        <module>api/env-api</module>
-        <module>api/automation-api</module>
-        <module>api/agent-api</module>
     </modules>
 
     <properties>

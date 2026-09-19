@@ -4,6 +4,19 @@
 > 日期：2026-09-04 · 前端基线：`18ffa9c`  
 > 前置文档：[nora-api-initiation-2026-09-04.md](nora-api-initiation-2026-09-04.md)（保留作为领域需求反推与 API 契约来源）
 
+> **实现现状注记（2026-09-19,由实机审计得出）**——本设计稿部分选型在实现中走了更简路线,以实际为准:
+>
+> | 设计稿 | 实际实现 | 原因 |
+> |--------|---------|------|
+> | Dubbo 内部 RPC | **RestClient + envelope 直连**(localhost:808x);`api/` 模块只承载共享 DTO,6 个 `*Service` 接口零引用已删除 | 单机部署 RPC 框架是复杂度负债;信封错误处理+traceId 透传已覆盖需求 |
+> | RocketMQ 异步事件 | **Kafka**(KRaft 单节点,2026-09-19 通知服务上线) | 1 容器 vs 2 容器;生态最通用 |
+> | Sentinel 熔断限流 | 未引入 | 单用户量级无流量治理需求 |
+> | Nacos 配置中心 | 未用(本地 yml + 环境变量 + app_setting 表) | 同上 |
+> | Docker/K8s 部署 | systemd + java -jar(`scripts/deploy-megumin.sh`) | 单机生产,够用且简单 |
+> | 6 服务 | **8 服务**(+automation, +notification) | 业务演进 |
+>
+> 服务发现(Nacos)与网关(Gateway `lb://`)按设计落地。
+
 ---
 
 ## 0. 变更摘要

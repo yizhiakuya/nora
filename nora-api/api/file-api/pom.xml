@@ -15,7 +15,7 @@
     <packaging>jar</packaging>
 
     <name>nora :: api :: file-api</name>
-    <description>Dubbo API contract and DTOs for file-service. Pure JDK, no Spring, no main class.</description>
+    <description>Shared DTO contract for file-service: FileItem/FilePreview DTOs (pure JDK, no Spring). 服务间经 REST 调用(2026-09-19 正名)</description>
 
     <dependencies>
         <dependency>

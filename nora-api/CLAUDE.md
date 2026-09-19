@@ -11,7 +11,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **端点**:`GET/POST /api/files`(list 支持 ids/folderId)、`POST /upload`(可选 folderId)、`DELETE ?ids=`(软删)、`GET /{id}/preview|raw`(raw 支持 Range)、`POST /{id}/index`(RAG 索引,回调 `/{id}/indexed`)、`PUT /{id}/name`(重命名)、`PUT /move`(批量移动, folderId null=根)、`GET /download?ids=`(**zip 打包流式下载**,中文名 RFC 5987)、`GET/POST /folders`、`PUT/DELETE /folders/{id}`
 - **前端**:文件页=统一文件系统视图——「Agent 工作区」「媒体缓存」与用户文件夹并列显示(FileTable folderRows);用户文件夹可进入(面包屑)、重命名、删除;文件行操作:预览/下载/重命名/移动到…/删除(菜单);批量:下载(zip)/移动/删除;上传目标跟随当前文件夹
 - **媒体缓存 → 文件中心流转**:`POST /api/media/cached/{key}/save`(agent-service 侧,服务端直传 file-service)把派生缓存转为正式资产——用户可见的"保存到文件中心"按钮在媒体缓存页
-- **跨服务约定**:其他服务读文件元数据走 `FileService.getById`(Dubbo)或 REST;`FileItem` record 带 `folderId`,构造点增删参数要同步 api/file-api 测试与 file-service 测试
+- **跨服务约定**:其他服务读文件元数据走 REST(file-service `GET /api/files?ids=`);`api/file-api` 模块只承载共享 DTO(`FileItem` record 带 `folderId`,构造点增删参数要同步 api/file-api 测试与 file-service 测试)。**Dubbo 未接线**(2026-09-19 审计):6 个 `*Service` 死接口已删,api 模块正名为共享 DTO 契约;服务间调用一律 RestClient + envelope
 
 ## notification-service(通知中心,2026-09-19)
 

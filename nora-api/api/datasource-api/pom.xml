@@ -14,7 +14,7 @@
     <artifactId>datasource-api</artifactId>
     <packaging>jar</packaging>
     <name>nora :: api :: datasource-api</name>
-    <description>Dubbo contract for datasource-service: DatasourceService interface + schema/query DTOs (pure JDK, no Spring)</description>
+    <description>Shared DTO contract for datasource-service: schema/query DTOs (pure JDK, no Spring). 服务间经 REST 调用(2026-09-19 正名)</description>
 
     <dependencies>
         <!-- version managed by spring-boot-dependencies BOM imported in nora-parent -->
