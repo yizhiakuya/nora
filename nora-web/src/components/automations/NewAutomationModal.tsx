@@ -27,6 +27,7 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
   const [trigger, setTrigger] = useState<string>("manual");
   const [action, setAction] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -34,10 +35,11 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
       setTrigger("manual");
       setAction("");
       setError(null);
+      setSubmitting(false);
     }
   }, [isOpen]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name.trim()) {
       setError("任务名称不能为空");
       return;
@@ -46,8 +48,15 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
       setError("执行动作不能为空");
       return;
     }
+    setSubmitting(true);
     const triggerLabel = TRIGGER_OPTIONS.find((t) => t.value === trigger)?.label ?? "手动触发";
-    addRule(name.trim(), triggerLabel, action.trim());
+    const saved = await addRule(name.trim(), triggerLabel, action.trim());
+    setSubmitting(false);
+    if (!saved) {
+      // 后端失败:留在弹窗里让用户改后重试,不关窗、不报"创建成功"(2026-09-19 修假成功)
+      setError("创建失败,请检查后端服务后重试");
+      return;
+    }
     toast.success(`自动任务「${name.trim()}」已创建`);
     onClose();
   };
@@ -59,9 +68,9 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
       title="新建自动任务"
       footer={
         <>
-          <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSubmit}>
-            创建任务
+          <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>取消</Button>
+          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "创建中…" : "创建任务"}
           </Button>
         </>
       }

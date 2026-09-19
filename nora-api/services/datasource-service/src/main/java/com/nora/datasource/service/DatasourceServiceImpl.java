@@ -188,6 +188,13 @@ public class DatasourceServiceImpl {
     /**
      * 执行受控只读语句:最多 {@value #MAX_ROWS} 行,单元格值渲染为字符串,
      * 执行落 query_history。
+     *
+     * <p>安全(2026-09-19 加固):连接以**数据库级只读**打开(见
+     * {@link JdbcConnections#open(JdbcConnections.Params, boolean)})——
+     * 写操作在服务端被直接拒绝,包括「EXPLAIN ANALYZE 包裹写 CTE」这类
+     * {@link SqlGuard} 语句解析难以穷尽的绕过(实测 PG:写 CTE 的 EXPLAIN
+     * ANALYZE 在只读事务下报 cannot execute ... in a read-only transaction)。
+     * 语句检查仍保留作第一道防线与更友好的错误提示。
      */
     public QueryResult executeReadOnly(long id, String sql) {
         if (isRedis(id)) {
@@ -196,7 +203,7 @@ public class DatasourceServiceImpl {
         SqlGuard.requireReadOnly(sql);
         JdbcConnections.Params params = params(id);
         long start = System.currentTimeMillis();
-        try (Connection conn = JdbcConnections.open(params);
+        try (Connection conn = JdbcConnections.open(params, true);
              Statement stmt = conn.createStatement()) {
             stmt.setMaxRows(MAX_ROWS);
             stmt.setQueryTimeout(30);
@@ -225,6 +232,13 @@ public class DatasourceServiceImpl {
             }
         } catch (SQLException e) {
             saveHistory(id, sql, System.currentTimeMillis() - start, 0, "error");
+            // 25006 = read_only_sql_transaction:语句被数据库只读边界拦下
+            // (如 EXPLAIN ANALYZE 包裹写 CTE——语句解析识别不出,数据库能识别)。
+            // 给可操作提示而不是笼统 502。
+            if ("25006".equals(e.getSQLState())) {
+                throw new BusinessException(400, "该语句试图执行写操作,已被数据库只读约束拒绝"
+                        + "(只读通道仅执行 SELECT/SHOW/EXPLAIN;写操作请用受控写通道)");
+            }
             throw new BusinessException(502, "query failed: " + shorten(e.getMessage()));
         } catch (Exception e) {
             saveHistory(id, sql, System.currentTimeMillis() - start, 0, "error");

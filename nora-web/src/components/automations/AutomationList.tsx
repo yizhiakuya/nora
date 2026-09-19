@@ -24,8 +24,13 @@ export function AutomationList() {
 
   const runNow = (rule: AutomationRule) => {
     toast.loading(`「${rule.name}」执行中…`, { id: `run-${rule.id}` });
-    void Promise.resolve(markRun(rule.id)).then(() => {
-      toast.success(`「${rule.name}」已触发`, { id: `run-${rule.id}` });
+    // 等真实执行结果(2026-09-19 修假成功):后端失败/未保存的乐观条目都不再报"已触发"
+    void markRun(rule.id).then((ok) => {
+      if (ok) {
+        toast.success(`「${rule.name}」已触发`, { id: `run-${rule.id}` });
+      } else {
+        toast.error(`「${rule.name}」执行未成功`, { id: `run-${rule.id}` });
+      }
     });
   };
 

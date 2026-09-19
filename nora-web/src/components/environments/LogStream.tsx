@@ -113,7 +113,7 @@ export function LogStream() {
     }
   };
 
-  const createFixTask = () => {
+  const createFixTask = async () => {
     if (taskCreated || !selected) return;
     // Phase 4.4:诊断结论 → 可执行的修复任务。prompt 携带真实出错日志,
     // agent 运行时经工具循环(read_service_logs 等)真查日志给出分析,
@@ -122,7 +122,11 @@ export function LogStream() {
       `自动化修复诊断:${selected.service} 服务出现以下 ERROR 日志:\n` +
       `${selected.time} ${selected.message}\n` +
       `请读取该服务最近日志定位根因,结合知识库(项目文档)给出修复建议;只分析,不要执行任何修改操作。`;
-    addRule(`修复任务:${selected.service} 异常诊断`, "手动触发", prompt);
+    const saved = await addRule(`修复任务:${selected.service} 异常诊断`, "手动触发", prompt);
+    if (!saved) {
+      // 创建失败:store 已 toast 人话错误;不置"已创建"态,用户可重试(2026-09-19 修假成功)
+      return;
+    }
     setTaskCreated(true);
     toast.success("修复任务已创建,到「自动任务」页运行");
   };

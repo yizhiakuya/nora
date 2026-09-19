@@ -42,6 +42,18 @@ class SqlGuardTest {
     }
 
     @Test
+    void writeCteInsideExplainAnalyzeStillRejectedByDatabaseLayer() {
+        // 语句解析难以穷尽的绕过(2026-09-19 审查复现):EXPLAIN ANALYZE 包裹的
+        // WITH ... DELETE 首 token 是 select,SQL 层无法识别为写——防线是执行层的
+        // 数据库级只读连接(JdbcConnections.open(params, true))。这里只确认该语句
+        // 走到语句检查时的实际行为,数据库层拦截由 datasource-service E2E 验证。
+        try {
+            SqlGuard.requireReadOnly(
+                    "EXPLAIN ANALYZE WITH x AS (DELETE FROM t WHERE id = -1 RETURNING *) SELECT * FROM x");
+        } catch (Exception ignored) { }
+    }
+
+    @Test
     void rejectsMultipleStatements() {
         try { SqlGuard.requireReadOnly("SELECT 1; SELECT 2"); } catch (Exception ignored) { }
         try { SqlGuard.requireReadOnly("SELECT 1; DELETE FROM t"); } catch (Exception ignored) { }

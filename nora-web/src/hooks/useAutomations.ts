@@ -1,18 +1,27 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { toast } from "sonner";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 import { useNotifications } from "./useNotifications";
 import { automationsApi } from "@/lib/services/automationsApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { humanizeError } from "@/lib/errorMessages";
+
+/** 错误 → 人话(优先按结构化分类;网关 JSON/网络异常走启发式兜底)。 */
+function friendly(e: unknown): string {
+  return humanizeError(e).message;
+}
 
 interface AutomationsState {
   rules: AutomationRule[];
   executions: ExecutionRecord[];
   /** 后端模式:拉取服务端规则与执行历史 */
   syncFromBackend: () => Promise<void>;
-  addRule: (name: string, trigger: string, action: string) => AutomationRule;
+  /** 创建规则;后端模式失败返回 null(已提示,绝不产生"未创建却成功"的幽灵条目) */
+  addRule: (name: string, trigger: string, action: string) => Promise<AutomationRule | null>;
   toggleRule: (id: number) => void;
-  markRun: (id: number) => Promise<void>;
+  /** 立即运行;返回是否真实执行成功(后端模式等待服务器结果) */
+  markRun: (id: number) => Promise<boolean>;
   retryExecution: (id: number) => void;
 }
 
@@ -50,17 +59,19 @@ export const useAutomations = create<AutomationsState>()(
             automationsApi.listRules(),
             automationsApi.listExecutions(),
           ]);
-          if (rules.length > 0) set({ rules });
-          if (executions.length > 0) set({ executions });
+          // 服务端是权威数据源:空数组同样覆盖本地缓存(此前 length>0 才覆盖,
+          // 服务端清空后界面会继续展示旧数据)
+          set({ rules, executions });
         } catch {
           /* 后端不可用时沿用本地缓存 */
         }
       },
-      addRule: (name, trigger, action) => {
+      addRule: async (name, trigger, action) => {
         const isSqlAction = looksLikeSql(action);
         if (USE_BACKEND) {
-          // 后端模式:SQL 动作走 sql 分支;其余(NL 指令)走 agent 分支,
-          // 由 agent-service 执行(RAG + 工具循环),不再落回本地 mock
+          // 后端模式:等服务器真实结果再落状态(2026-09-19 修假成功)。
+          // 此前先插乐观条目、失败也保留,且弹窗立即提示"创建成功"——
+          // 后端失败时用户看到一条从未存在的规则,点运行还会走本地假执行。
           const optimistic: AutomationRule = {
             id: Date.now(),
             name,
@@ -71,20 +82,23 @@ export const useAutomations = create<AutomationsState>()(
             status: "active",
           };
           set((state) => ({ rules: [optimistic, ...state.rules] }));
-          automationsApi
-            .createRule(
+          try {
+            const saved = await automationsApi.createRule(
               isSqlAction
                 ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action }
                 : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action },
-            )
-            .then((saved) => {
-              set((state) => ({
-                rules: state.rules.map((r) => (r.id === optimistic.id ? saved : r)),
-              }));
-            })
-            .catch(() => { /* 保留乐观条目 */ });
-          useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
-          return optimistic;
+            );
+            set((state) => ({
+              rules: state.rules.map((r) => (r.id === optimistic.id ? saved : r)),
+            }));
+            useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
+            return saved;
+          } catch (e) {
+            // 失败:回滚乐观条目 + 明确报错,不产生幽灵规则
+            set((state) => ({ rules: state.rules.filter((r) => r.id !== optimistic.id) }));
+            toast.error(`创建自动任务失败：${friendly(e)}`);
+            return null;
+          }
         }
         // Mock 模式:本地行为
         const rule: AutomationRule = {
@@ -115,8 +129,15 @@ export const useAutomations = create<AutomationsState>()(
       },
       markRun: async (id) => {
         const rule = get().rules.find((r) => r.id === id);
-        if (!rule) return;
-        if (USE_BACKEND && id < 1e12) {
+        if (!rule) return false;
+        if (USE_BACKEND) {
+          if (id >= 1e12) {
+            // 乐观条目(尚未拿到服务端 id):此前会落入本地假执行分支,
+            // 生成固定"1.2s / success"记录——后端失败也能"执行成功"(2026-09-19 修)。
+            // 现在明确拒绝,等创建结果落定后再运行。
+            toast.error(`「${rule.name}」尚未保存成功，无法运行；请稍后重试或重新创建`);
+            return false;
+          }
           try {
             const exec = await automationsApi.runRule(id);
             useNotifications.getState().addNotification(
@@ -128,17 +149,17 @@ export const useAutomations = create<AutomationsState>()(
               rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
               executions: [exec, ...state.executions].slice(0, 50),
             }));
-            return;
+            return exec.status === "success";
           } catch (e) {
             useNotifications.getState().addNotification(
               "任务执行失败",
-              `自动任务「${rule.name}」执行失败：${(e as Error).message}`,
+              `自动任务「${rule.name}」执行失败：${friendly(e)}`,
               "taskDone"
             );
-            return;
+            return false;
           }
         }
-        // Mock 模式
+        // Mock 模式:本地模拟(仅 USE_BACKEND=false 时可达)
         useNotifications.getState().addNotification(
           "任务执行完成",
           `自动任务「${rule.name}」已成功触发，耗时 1.2s。`,
@@ -156,6 +177,7 @@ export const useAutomations = create<AutomationsState>()(
           rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
           executions: [newExec, ...state.executions].slice(0, 50),
         }));
+        return true;
       },
       retryExecution: (id) => {
         // 真实重试(2026-09-19 去假功能):此前只本地改状态 + 假动画,
@@ -178,9 +200,9 @@ export const useAutomations = create<AutomationsState>()(
               executions: [fresh, ...state.executions].slice(0, 50),
             }));
           })
-          .catch((e: Error) => {
+          .catch((e: unknown) => {
             useNotifications.getState().addNotification(
-              "任务执行失败", `自动任务「${exec.ruleName}」重试失败:${e.message}`, "taskFail");
+              "任务执行失败", `自动任务「${exec.ruleName}」重试失败:${friendly(e)}`, "taskFail");
           });
       },
     }),

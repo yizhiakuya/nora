@@ -131,13 +131,16 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
     }, 800);
   };
 
-  const saveAsAutomation = () => {
-    addRule(
+  const saveAsAutomation = async () => {
+    const saved = await addRule(
       isRedis ? "定时执行 Redis 命令" : "定时执行查询：订单状态分布",
       "每日 09:00",
       sql.trim() || AI_SUGGEST,
     );
-    toast.success("已保存为自动任务（每日 09:00 执行），到「自动任务」页查看");
+    if (saved) {
+      toast.success("已保存为自动任务（每日 09:00 执行），到「自动任务」页查看");
+    }
+    // 失败:store 已 toast 人话错误(2026-09-19 修假成功),这里不再重复提示
   };
 
   /** 让 AI 生成 SQL:跳到对话页预填(真实 agent 可读 schema 后写 SQL,不再本地假生成) */
