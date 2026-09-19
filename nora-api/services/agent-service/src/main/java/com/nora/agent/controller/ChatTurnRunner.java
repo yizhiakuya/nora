@@ -263,8 +263,12 @@ class ChatTurnRunner {
                             // durationMs 一并落库:done 事件下发的整轮耗时若只活在事件里,
                             // 刷新/切会话后前端从历史重建消息就丢了,「查看工作过程 · Ns」
                             // 的总计时会消失(实测用户反馈)。与 done 同源,不另算。
+                            // promptTokens/contextWindow 同理(2026-09-19):上下文指示器
+                            // 刷新后靠它们显示真实值,否则回退字符估算严重低估。
                             chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations,
-                                    durationMs);
+                                    durationMs,
+                                    turn != null ? turn.promptTokens() : null,
+                                    turn != null ? turn.contextWindow() : null);
                         } catch (Exception e) {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());

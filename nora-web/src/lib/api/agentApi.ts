@@ -432,6 +432,10 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     sources?: Citation[];
     /** 整轮耗时(ms):assistant 消息落库字段,折叠行「查看工作过程 · Ns」用 */
     durationMs?: number | null;
+    /** 当轮 prompt token 估算(done 同源落库);旧数据为 null */
+    promptTokens?: number | null;
+    /** 当轮生效上下文窗口(落库);旧数据为 null */
+    contextWindow?: number | null;
     createdAt?: string;
   }>;
   return (stored ?? []).map((m, i) => ({
@@ -443,13 +447,15 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     sources: normalizeSources(m.sources),
     // 整轮耗时来自落库字段(与 done 事件同源)。此前只在流式期间有,刷新/切会话
     // 后从历史重建消息就丢了——「查看工作过程 · N 次工具调用 · Xs」的总计时消失。
-    // 旧数据无该字段(undefined/null)→ 保持 undefined,折叠行不显示秒数。
+    // promptTokens/contextWindow 同理(2026-09-19):上下文指示器刷新后显示真实值,
+    // 否则回退字符估算严重低估(用户反馈「上下文不准」)。
+    // 旧数据无这些字段(undefined/null)→ 保持 undefined,折叠行不显示秒数。
     turnMetrics: m.durationMs != null
       ? {
           durationMs: m.durationMs,
           usage: null,
-          contextWindow: null,
-          promptTokens: null,
+          contextWindow: m.contextWindow ?? null,
+          promptTokens: m.promptTokens ?? null,
           ttftMs: null,
         }
       : undefined,

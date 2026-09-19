@@ -17,15 +17,36 @@ interface ChatConversationProps {
 }
 
 /**
+ * CJK 感知 token 估算(与后端 ContextBudget.estimateTokens 同口径):
+ * 中文≈1 token/字、ASCII≈4 字符/token、其余≈1/2。此前一律 ÷4,中文输入
+ * 被低估约 4 倍(2026-09-19 用户反馈「上下文不准」的一环)。
+ */
+function estimateTokensCjk(text: string): number {
+  if (!text) return 0;
+  let cjk = 0, ascii = 0, other = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (
+      (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3400 && c <= 0x4dbf) ||
+      (c >= 0x3040 && c <= 0x30ff) || (c >= 0xac00 && c <= 0xd7af) ||
+      (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef)
+    ) cjk++;
+    else if (c < 0x80) ascii++;
+    else other++;
+  }
+  return cjk + Math.floor(other / 2) + Math.floor(ascii / 4) + 4;
+}
+
+/**
  * 上下文用量:三级来源——① 最后一条 assistant 轮的服务端 prompt 估算
- * (done.contextWindow/promptTokens,与后端裁剪同一套 CJK 感知口径)加本轮
- * 输入;② 逐轮累计服务端真实 usage(全部轮都有时);③ 字符估算(÷4)兜底。
- * 不混计:前一级可用就完全不用后一级。
+ * (done.contextWindow/promptTokens,与后端裁剪同一套 CJK 感知口径;落库字段
+ * 让刷新后仍可读)加本轮输入;② 逐轮累计服务端真实 usage(全部轮都有时);
+ * ③ CJK 感知字符估算兜底(旧数据)。不混计:前一级可用就完全不用后一级。
  */
 function estimateContextTokens(messages: ChatMessage[], input: string): number {
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
   if (lastAssistant?.turnMetrics?.promptTokens != null) {
-    return lastAssistant.turnMetrics.promptTokens + Math.ceil(input.length / 4);
+    return lastAssistant.turnMetrics.promptTokens + estimateTokensCjk(input);
   }
   const allMeasured = messages
     .filter((m) => m.role === "assistant")
@@ -37,9 +58,9 @@ function estimateContextTokens(messages: ChatMessage[], input: string): number {
     const userChars = messages
       .filter((m) => m.role === "user")
       .reduce((sum, m) => sum + m.content.length, 0);
-    return assistantTokens + Math.ceil(userChars / 4) + Math.ceil(input.length / 4);
+    return assistantTokens + Math.ceil(userChars / 4) + estimateTokensCjk(input);
   }
-  return messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0) + Math.ceil(input.length / 4);
+  return messages.reduce((sum, m) => sum + estimateTokensCjk(m.content), 0) + estimateTokensCjk(input);
 }
 
 /** 上下文窗口:服务端 done 下发的生效窗口 > 默认 128k */

@@ -102,17 +102,29 @@ public class ChatStoreService {
      */
     public void saveMessage(String sessionId, String role, String content,
                             List<ChatStepDto> steps, List<CitationDto> sources, Long durationMs) {
+        saveMessage(sessionId, role, content, steps, sources, durationMs, null, null);
+    }
+
+    /**
+     * 完整保存(2026-09-19 上下文计量落库):{@code promptTokens}/{@code contextWindow}
+     * 与 done 事件同源——此前只活在 SSE 事件里,刷新后前端上下文指示器回退到
+     * 「字符数÷4」估算,中文场景严重低估(实测真实 7.6k 显示成 1k,用户反馈
+     * 「上下文不准」)。非 assistant 消息/旧数据传 null。
+     */
+    public void saveMessage(String sessionId, String role, String content,
+                            List<ChatStepDto> steps, List<CitationDto> sources, Long durationMs,
+                            Integer promptTokens, Long contextWindow) {
         jdbcTemplate.update(
-                "INSERT INTO chat_message (id, session_id, role, content, steps, sources, duration_ms) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO chat_message (id, session_id, role, content, steps, sources, duration_ms, prompt_tokens, context_window) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 UUID.randomUUID().toString(), sessionId, role, content,
-                toJson(steps), toJson(sources), durationMs);
+                toJson(steps), toJson(sources), durationMs, promptTokens, contextWindow);
     }
 
     /** 按时间序加载会话的全部消息(排除软删行)。 */
     public List<StoredMessage> loadMessages(String sessionId) {
         List<StoredMessage> loaded = jdbcTemplate.query(
-                "SELECT role, content, steps, sources, duration_ms, created_at FROM chat_message "
+                "SELECT role, content, steps, sources, duration_ms, prompt_tokens, context_window, created_at FROM chat_message "
                         + "WHERE session_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
                 (rs, rowNum) -> new StoredMessage(
                         rs.getString("role"),
@@ -120,6 +132,8 @@ public class ChatStoreService {
                         fromJson(rs.getString("steps"), STEP_LIST),
                         fromJson(rs.getString("sources"), SOURCE_LIST),
                         rs.getObject("duration_ms", Long.class),
+                        rs.getObject("prompt_tokens", Integer.class),
+                        rs.getObject("context_window", Long.class),
                         rs.getObject("created_at", java.time.LocalDateTime.class)),
                 sessionId);
         // steps 按 (id → 状态) 追加式存储(running 先行、终态覆盖),恢复时合并去重,
@@ -131,7 +145,8 @@ public class ChatStoreService {
             // 新行写入侧已按轮计时,直接保留。
             loaded.set(i, new StoredMessage(loaded.get(i).role(), loaded.get(i).content(),
                     mergeSteps(steps, loaded.get(i).durationMs() == null), loaded.get(i).sources(),
-                    loaded.get(i).durationMs(), loaded.get(i).createdAt()));
+                    loaded.get(i).durationMs(), loaded.get(i).promptTokens(),
+                    loaded.get(i).contextWindow(), loaded.get(i).createdAt()));
         }
         return loaded;
     }
@@ -355,12 +370,22 @@ public class ChatStoreService {
             List<CitationDto> sources,
             /** 整轮耗时(ms);assistant 消息才有,旧数据/用户消息为 null。 */
             Long durationMs,
+            /** 当轮请求的完整 prompt token 估算(done 同源);旧数据为 null。 */
+            Integer promptTokens,
+            /** 当轮生效的上下文窗口;旧数据为 null。 */
+            Long contextWindow,
             java.time.LocalDateTime createdAt
     ) {
 
         /** 兼容构造:无 DB 时间戳的内存消息。 */
         public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources) {
-            this(role, content, steps, sources, null, null);
+            this(role, content, steps, sources, null, null, null, null);
+        }
+
+        /** 兼容构造:仅耗时(既有测试/调用方)。 */
+        public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources,
+                             Long durationMs, java.time.LocalDateTime createdAt) {
+            this(role, content, steps, sources, durationMs, null, null, createdAt);
         }
     }
 }
