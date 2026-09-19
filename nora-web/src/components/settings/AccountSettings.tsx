@@ -22,12 +22,17 @@ export function AccountSettings() {
     schedule(() => setSaved(false), 2000);
   };
 
-  const initials = account.name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  // 空身份(未设置)的展示(2026-09-19 去假数据):通用称谓 + 占位首字母
+  const displayName = account.name.trim() || "未设置昵称";
+  const displayEmail = account.email.trim() || "未设置邮箱(可选)";
+  const initials = account.name.trim()
+    ? account.name
+        .split(/\s+/)
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "N";
 
   return (
     <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
@@ -35,8 +40,8 @@ export function AccountSettings() {
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold flex items-center justify-center shadow-sm shrink-0">{initials}</div>
           <div>
-            <div className="text-sm font-bold text-foreground">{account.name}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">{account.email} · 自部署</div>
+            <div className="text-sm font-bold text-foreground">{displayName}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{displayEmail} · 自部署</div>
           </div>
         </div>
 
@@ -45,11 +50,11 @@ export function AccountSettings() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">昵称</label>
-            <Input value={account.name} onChange={(e) => setAccount({ name: e.target.value })} className="h-10" />
+            <Input value={account.name} placeholder="你的名字(用于侧栏展示)" onChange={(e) => setAccount({ name: e.target.value })} className="h-10" />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">邮箱</label>
-            <Input value={account.email} onChange={(e) => setAccount({ email: e.target.value })} className="h-10" />
+            <Input value={account.email} placeholder="你的邮箱(可选)" onChange={(e) => setAccount({ email: e.target.value })} className="h-10" />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-foreground">时区</label>

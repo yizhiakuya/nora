@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
+import { usePreferences } from "@/hooks/usePreferences";
 import { Search, CloudUpload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,12 @@ import { RecentFilesTable } from "@/components/home/RecentFilesTable";
 import { HomeSidePanel } from "@/components/home/HomeSidePanel";
 
 export default function Home() {
+  // 问候语(2026-09-19 去假数据):按时段 + 用户昵称(未设置则通用问候,
+  // 此前写死"早上好,Nora!"——夜里也显示早上好,名字也不是用户的)
+  const accountName = usePreferences((s) => s.account.name);
+  const hour = new Date().getHours();
+  const greeting = hour < 6 ? "夜深了" : hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
+  const greetLine = accountName.trim() ? `${greeting}，${accountName.trim()}！` : `${greeting}！`;
   const [isCmdKOpen, setIsCmdKOpen] = useState(false);
   const upload = useSimulatedUpload();
 
@@ -68,7 +75,7 @@ export default function Home() {
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="flex items-center justify-between mb-2 animate-in fade-in slide-in-from-bottom-2">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-foreground">早上好，Nora！</h1>
+              <h1 className="text-xl sm:text-2xl font-bold text-foreground">{greetLine}</h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">管理文件、查数据库、控制环境——AI 都能帮你。</p>
             </div>
           </div>
