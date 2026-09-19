@@ -69,20 +69,32 @@ public class TerminalService {
     private final String pwshOverride;
     /** 内置 pwsh 归档路径(可配 nora.agent.pwsh-bundle);null/空=禁用内置。 */
     private final Path pwshBundle;
+    /**
+     * 应用设置存储(可空:测试不接)——用于读取用户自定义环境变量,
+     * 执行命令时注入子进程(2026-09-19 设置页「环境变量」真实落地)。
+     */
+    private final AppSettingStore appSettingStore;
 
     @Autowired
     public TerminalService(
             @Value("${nora.agent.workspace:" + AgentWorkspaceService.DEFAULT_ROOT + "}") String workspacePath,
             @Value("${nora.agent.powershell:}") String pwshOverride,
-            @Value("${nora.agent.pwsh-bundle:" + DEFAULT_PWSH_BUNDLE + "}") String pwshBundle) {
+            @Value("${nora.agent.pwsh-bundle:" + DEFAULT_PWSH_BUNDLE + "}") String pwshBundle,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) AppSettingStore appSettingStore) {
         this.workspaceRoot = Path.of(workspacePath).toAbsolutePath().normalize();
         this.pwshOverride = pwshOverride;
         this.pwshBundle = (pwshBundle == null || pwshBundle.isBlank()) ? null : Path.of(pwshBundle).toAbsolutePath().normalize();
+        this.appSettingStore = appSettingStore;
+    }
+
+    /** 便捷构造:无 appSettingStore(测试/旧调用方)。 */
+    public TerminalService(String workspacePath, String pwshOverride, String pwshBundle) {
+        this(workspacePath, pwshOverride, pwshBundle, null);
     }
 
     /** 便捷构造器(测试用):工作区 + 默认内置 pwsh,无显式覆盖。 */
     public TerminalService(String workspacePath) {
-        this(workspacePath, "", DEFAULT_PWSH_BUNDLE);
+        this(workspacePath, "", DEFAULT_PWSH_BUNDLE, null);
     }
 
     /** 一次命令执行的结果。 */
@@ -149,6 +161,17 @@ public class TerminalService {
             ProcessBuilder pb = new ProcessBuilder(argv)
                     .directory(cwd.toFile())
                     .redirectErrorStream(true);
+            // 用户自定义环境变量注入(2026-09-19 设置页「环境变量」真实落地):
+            // 设置页存的凭据(GH_TOKEN 等)在命令执行时可用;读取失败静默
+            // (命令执行本身不因设置存储故障而失败)
+            if (appSettingStore != null) {
+                try {
+                    com.nora.agent.controller.EnvVarsController.resolveForExecution(appSettingStore)
+                            .forEach(pb.environment()::put);
+                } catch (Exception ignored) {
+                    // 设置读取失败:不注入,继续执行
+                }
+            }
             process = pb.start();
         } catch (Exception e) {
             throw new IllegalArgumentException("命令启动失败(" + shellName + "): " + e.getMessage()

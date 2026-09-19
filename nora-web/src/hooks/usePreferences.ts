@@ -1,7 +1,5 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { EnvVar } from "@/types";
-import { PipelineRule } from "@/types";
 
 export interface AccountPrefs {
   name: string;
@@ -17,8 +15,7 @@ export interface NotificationPrefs {
 }
 
 export interface KnowledgeAIPrefs {
-  embedding: string;
-  chunkSize: string;
+  /** 上传后自动入库(真实消费:files 页上传完成回调)。 */
   autoIndex: boolean;
 }
 
@@ -26,14 +23,9 @@ interface PreferencesState {
   account: AccountPrefs;
   notifications: NotificationPrefs;
   knowledgeAI: KnowledgeAIPrefs;
-  envVars: EnvVar[];
-  cleaningRules: PipelineRule[];
   setAccount: (patch: Partial<AccountPrefs>) => void;
   setNotifications: (patch: Partial<NotificationPrefs>) => void;
   setKnowledgeAI: (patch: Partial<KnowledgeAIPrefs>) => void;
-  addEnvVar: (v: EnvVar) => void;
-  removeEnvVar: (key: string) => void;
-  toggleRule: (id: number) => void;
 }
 
 const DEFAULT_ACCOUNT: AccountPrefs = {
@@ -50,13 +42,13 @@ const DEFAULT_NOTIFICATIONS: NotificationPrefs = {
 };
 
 const DEFAULT_KNOWLEDGE_AI: KnowledgeAIPrefs = {
-  embedding: "text-embedding-3-small (1536维)",
-  chunkSize: "512 token（推荐）",
   autoIndex: true,
 };
 
 /**
- * 设置中心的持久化偏好（账号 / 通知 / 知识库与 AI / 环境变量 / 清洗规则）。
+ * 设置中心的持久化偏好（账号 / 通知 / 知识库与 AI）。
+ * 注:环境变量(2026-09-19)已移至服务端 app_setting(跨浏览器一致);
+ * 清洗规则随死功能 tab 一并移除(后端无清洗逻辑)。
  * 统一收口，替代各组件内的 useState「假保存」：刷新后仍保留。
  */
 export const usePreferences = create<PreferencesState>()(
@@ -65,22 +57,11 @@ export const usePreferences = create<PreferencesState>()(
       account: DEFAULT_ACCOUNT,
       notifications: DEFAULT_NOTIFICATIONS,
       knowledgeAI: DEFAULT_KNOWLEDGE_AI,
-      envVars: [],
-      cleaningRules: [],
       setAccount: (patch) => set((s) => ({ account: { ...s.account, ...patch } })),
       setNotifications: (patch) =>
         set((s) => ({ notifications: { ...s.notifications, ...patch } })),
       setKnowledgeAI: (patch) =>
         set((s) => ({ knowledgeAI: { ...s.knowledgeAI, ...patch } })),
-      addEnvVar: (v) => set((s) => ({ envVars: [...s.envVars, v] })),
-      removeEnvVar: (key) =>
-        set((s) => ({ envVars: s.envVars.filter((e) => e.key !== key) })),
-      toggleRule: (id) =>
-        set((s) => ({
-          cleaningRules: s.cleaningRules.map((r) =>
-            r.id === id ? { ...r, enabled: !r.enabled } : r
-          ),
-        })),
     }),
     { name: "user-preferences" }
   )

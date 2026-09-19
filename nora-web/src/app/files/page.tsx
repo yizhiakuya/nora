@@ -22,6 +22,7 @@ import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
+import { usePreferences } from "@/hooks/usePreferences";
 import { filesApi, humanSize, type BackendFolder } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
 
@@ -295,6 +296,18 @@ export default function FilesPage() {
       addRecent(uploadedFile.name, uploadedFile.type);
       addNotification("上传完成", `「${uploadedFile.name}」已保存到文件中心，可在列表中查看。`);
       refreshFolders();
+      // 上传后自动入库(2026-09-19 接线):「设置 → 知识库与 AI」的开关
+      // 此前存了没人消费——现在真正生效(仅对可提取文本的文件有意义,
+      // 后端对无文本文件返回 422 时静默跳过,不打断上传流程)
+      if (usePreferences.getState().knowledgeAI.autoIndex) {
+        void indexFileFromBackend(uploadedFile.id, uploadedFile.name)
+          .then(() => {
+            markIndexed(uploadedFile.id);
+            addNotification("文件索引入库",
+              `「${uploadedFile.name}」已自动加入知识库(可在设置中关闭自动索引)。`, "indexed");
+          })
+          .catch(() => { /* 无文本/未配置嵌入:静默(手动索引入口仍在) */ });
+      }
       return;
     }
     const defaultName = `上传文档_${Date.now().toString().slice(-4)}.pdf`;

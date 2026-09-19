@@ -5,7 +5,7 @@ interface KnowledgeTabsProps {
   onChange: (tab: string) => void;
 }
 
-const TABS = ["文档库", "检索测试", "索引状态", "清洗规则"];
+const TABS = ["文档库", "检索测试", "索引状态"];
 
 export function KnowledgeTabs({ active, onChange }: KnowledgeTabsProps) {
   return (

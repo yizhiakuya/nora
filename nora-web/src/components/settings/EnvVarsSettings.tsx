@@ -1,19 +1,30 @@
 'use client';
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Eye, EyeOff, Copy, Check, KeyRound, Braces } from "lucide-react";
+import { Plus, Trash2, Copy, Check, KeyRound, Braces } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { EnvVar } from "@/types";
-import { usePreferences } from "@/hooks/usePreferences";
+import { requestJson, USE_BACKEND } from "@/lib/api/client";
+
+/**
+ * 自定义环境变量(2026-09-19 真实落地):存 agent-service app_setting 表
+ * (跨浏览器一致),run_command 执行时注入子进程环境——「设置后 AI 能用到」
+ * 从空头承诺变为真实行为。secret 值读取时打码(服务端只回前 3+后 3)。
+ *
+ * Mock 模式(USE_BACKEND=false):纯本地状态,仅 UI 演示。
+ */
+interface EnvVar {
+  key: string;
+  value: string;
+  secret: boolean;
+  note?: string;
+}
 
 export function EnvVarsSettings() {
-  const vars = usePreferences((s) => s.envVars);
-  const addEnvVar = usePreferences((s) => s.addEnvVar);
-  const removeEnvVar = usePreferences((s) => s.removeEnvVar);
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [vars, setVars] = useState<EnvVar[]>([]);
+  const [loading, setLoading] = useState(USE_BACKEND);
   const [copied, setCopied] = useState<string | null>(null);
 
   const [newKey, setNewKey] = useState("");
@@ -21,9 +32,45 @@ export function EnvVarsSettings() {
   const [newNote, setNewNote] = useState("");
   const [newSecret, setNewSecret] = useState(true);
 
-  const mask = (v: string) => (v.length <= 6 ? "••••" : `${v.slice(0, 3)}••••••${v.slice(-3)}`);
+  const load = useCallback(async () => {
+    if (!USE_BACKEND) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const rows = await requestJson<EnvVar[]>("/chat/settings/env-vars");
+      setVars(rows);
+    } catch {
+      toast.error("读取环境变量失败(后端不可用?)");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const handleAdd = () => {
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** 全量保存到服务端(前端是唯一编辑器,全量语义最直白)。 */
+  const persist = useCallback(async (next: EnvVar[]) => {
+    const prev = vars;
+    setVars(next);
+    if (!USE_BACKEND) return;
+    try {
+      const rows = await requestJson<EnvVar[]>("/chat/settings/env-vars", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vars: next }),
+      });
+      setVars(rows); // 服务端回读(secret 已打码)
+    } catch (e) {
+      setVars(prev); // 失败回滚
+      toast.error(`保存失败:${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  }, [vars]);
+
+  const handleAdd = async () => {
     const key = newKey.trim().toUpperCase();
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
       toast.error("变量名需为大写字母/数字/下划线，且以字母开头");
@@ -34,22 +81,32 @@ export function EnvVarsSettings() {
       return;
     }
     if (vars.some((v) => v.key === key)) {
-      toast.error(`「${key}」已存在，请直接编辑或先删除`);
+      toast.error(`「${key}」已存在，请先删除再添加`);
       return;
     }
-    addEnvVar({ key, value: newValue.trim(), secret: newSecret, note: newNote.trim() || undefined });
-    setNewKey(""); setNewValue(""); setNewNote(""); setNewSecret(true);
-    toast.success(`变量「${key}」已添加`);
+    try {
+      await persist([...vars, { key, value: newValue.trim(), secret: newSecret, note: newNote.trim() || undefined }]);
+      setNewKey(""); setNewValue(""); setNewNote(""); setNewSecret(true);
+      toast.success(`变量「${key}」已保存,AI 执行命令时可用`);
+    } catch {
+      /* persist 已 toast */
+    }
   };
 
-  const remove = (key: string) => {
-    removeEnvVar(key);
-    toast.success(`变量「${key}」已删除`);
+  const remove = async (key: string) => {
+    try {
+      await persist(vars.filter((v) => v.key !== key));
+      toast.success(`变量「${key}」已删除`);
+    } catch {
+      /* persist 已 toast */
+    }
   };
 
   const copy = async (v: EnvVar) => {
     try {
-      await navigator.clipboard.writeText(v.secret && !revealed[v.key] ? mask(v.value) : v.value);
+      // 服务端读取时 secret 已打码——复制到的是打码值(真值仅在服务端,
+      // 用于命令注入;想核对真值可在添加时确认)
+      await navigator.clipboard.writeText(v.value);
       setCopied(v.key);
       setTimeout(() => setCopied(null), 1200);
     } catch {
@@ -66,7 +123,9 @@ export function EnvVarsSettings() {
             <label className="text-sm font-bold text-foreground">自定义凭据与环境变量</label>
           </div>
           <p className="text-xs text-muted-foreground">
-            存放你自己的令牌与密钥（GitHub Token、模型 Key、Webhook 等），供自定义技能与自动任务引用。
+            存放你自己的令牌与密钥（GitHub Token、模型 Key、Webhook 等）。保存到服务端(跨浏览器一致),
+            <span className="text-foreground font-medium">AI 通过 run_command 执行命令时自动注入为环境变量</span>
+            ——例如存了 <code className="font-mono">GH_TOKEN</code>,命令里可直接用 <code className="font-mono">$env:GH_TOKEN</code> 引用。
           </p>
         </div>
 
@@ -111,9 +170,11 @@ export function EnvVarsSettings() {
 
         {/* List */}
         <div>
-          <div className="text-sm font-medium text-foreground mb-3">已保存的变量 ({vars.length})</div>
+          <div className="text-sm font-medium text-foreground mb-3">
+            已保存的变量 ({vars.length}){loading && <span className="text-xs text-muted-foreground ml-2">加载中…</span>}
+          </div>
           <div className="border border-border rounded-lg overflow-hidden">
-            {vars.length === 0 ? (
+            {vars.length === 0 && !loading ? (
               <div className="py-10 text-center text-xs text-muted-foreground bg-background/30">还没有自定义变量</div>
             ) : (
               <div className="divide-y divide-border">
@@ -125,14 +186,9 @@ export function EnvVarsSettings() {
                     </div>
                     <div className="flex-1 min-w-0 flex items-center gap-2">
                       <div className="flex-1 px-3 py-1.5 rounded-md bg-muted/50 border border-border text-xs font-mono text-muted-foreground truncate">
-                        {v.secret && !revealed[v.key] ? mask(v.value) : v.value}
+                        {v.value}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {v.secret && (
-                          <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground" title={revealed[v.key] ? "隐藏" : "显示"} onClick={() => setRevealed((p) => ({ ...p, [v.key]: !p[v.key] }))}>
-                            {revealed[v.key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                          </Button>
-                        )}
                         <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground" title="复制" onClick={() => copy(v)}>
                           {copied === v.key ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                         </Button>
@@ -152,8 +208,10 @@ export function EnvVarsSettings() {
       <div className="bg-muted/30 px-6 py-3 border-t border-border flex items-start gap-2">
         <Braces className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          引用方式：在自定义技能与自动任务配置中写 <code className="font-mono text-foreground">{"{{GH_TOKEN}}"}</code>，
-          执行时自动替换为真实值；标记为密钥的变量对 AI 脱敏，不会出现在对话上下文中。
+          变量存于服务端(app_setting 表),AI 执行 <code className="font-mono text-foreground">run_command</code> 时
+          自动注入为子进程环境变量(PowerShell 用 <code className="font-mono text-foreground">$env:KEY</code>、
+          bash 用 <code className="font-mono text-foreground">$KEY</code> 引用);
+          标记为密钥的变量读取时打码,不会出现在对话上下文中。
         </p>
       </div>
     </div>

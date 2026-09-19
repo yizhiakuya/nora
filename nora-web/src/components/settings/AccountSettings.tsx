@@ -37,7 +37,6 @@ export function AccountSettings() {
           <div>
             <div className="text-sm font-bold text-foreground">{account.name}</div>
             <div className="text-xs text-muted-foreground mt-0.5">{account.email} · 自部署</div>
-            <button type="button" className="text-xs text-primary hover:underline mt-1 cursor-pointer" onClick={() => toast.info("头像上传为演示功能")}>更换头像</button>
           </div>
         </div>
 

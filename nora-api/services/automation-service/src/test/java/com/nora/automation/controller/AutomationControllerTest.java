@@ -44,7 +44,7 @@ class AutomationControllerTest {
     @Test
     void runDelegatesToService() {
         AutomationService.ExecutionView view = new AutomationService.ExecutionView(
-                9L, "巡检", 120L, "success", "3 rows", null);
+                9L, 1L, "巡检", 120L, "success", "3 rows", null);
         when(service.runNow(1L)).thenReturn(view);
 
         controller.run(1L);

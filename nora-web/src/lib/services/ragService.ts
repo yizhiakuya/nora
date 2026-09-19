@@ -109,8 +109,11 @@ export function computeIndexStats(docs: KnowledgeDoc[]): IndexStats {
   return {
     totalDocs,
     totalChunks,
-    vectorDim: 1536,
-    model: "text-embedding-3-small",
+    // 后端未接时不知道真实嵌入配置——不编造(此前硬编码 text-embedding-3-small
+    // 与后端实际 jina-embeddings-v3 不符,2026-09-19 去假数据);真实值在
+    // USE_BACKEND 时由 fetchIndexStats 覆盖
+    vectorDim: 0,
+    model: "—",
     lastUpdate,
     pendingDocs,
     vectorReady: indexedDocs > 0,

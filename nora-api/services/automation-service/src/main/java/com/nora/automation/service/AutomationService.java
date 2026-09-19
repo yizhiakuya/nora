@@ -152,11 +152,12 @@ public class AutomationService {
     /** 全部规则的最新执行(前端 ExecutionRecord[])。 */
     public List<ExecutionView> listExecutions(int limit) {
         return jdbcTemplate.query(
-                "SELECT e.id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
+                "SELECT e.id, e.rule_id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
                         + "FROM execution_record e JOIN automation_rule r ON r.id = e.rule_id "
                         + "ORDER BY e.started_at DESC, e.id DESC LIMIT ?",
                 (rs, rowNum) -> new ExecutionView(
                         rs.getLong("id"),
+                        rs.getLong("rule_id"),
                         rs.getString("rule_name"),
                         rs.getObject("duration_ms") == null ? null : rs.getLong("duration_ms"),
                         rs.getString("status"),
@@ -214,11 +215,12 @@ public class AutomationService {
 
     private ExecutionView latestExecution(long ruleId) {
         List<ExecutionView> rows = jdbcTemplate.query(
-                "SELECT e.id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
+                "SELECT e.id, e.rule_id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
                         + "FROM execution_record e JOIN automation_rule r ON r.id = e.rule_id "
                         + "WHERE e.rule_id = ? ORDER BY e.started_at DESC, e.id DESC LIMIT 1",
                 (rs, rowNum) -> new ExecutionView(
                         rs.getLong("id"),
+                        rs.getLong("rule_id"),
                         rs.getString("rule_name"),
                         rs.getObject("duration_ms") == null ? null : rs.getLong("duration_ms"),
                         rs.getString("status"),
@@ -250,9 +252,10 @@ public class AutomationService {
             java.sql.Timestamp lastRunAt) {
     }
 
-    /** 前端消费的执行行。 */
+    /** 前端消费的执行行(ruleId 供「重试」定位规则)。 */
     public record ExecutionView(
             long id,
+            long ruleId,
             String ruleName,
             Long durationMs,
             String status,

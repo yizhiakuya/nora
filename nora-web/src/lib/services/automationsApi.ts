@@ -16,6 +16,7 @@ export interface BackendRule {
 /** 后端 execution_record 行 */
 export interface BackendExecution {
   id: number;
+  ruleId?: number;
   ruleName: string;
   durationMs: number | null;
   status: string;
@@ -60,6 +61,7 @@ function describeAction(actionJson: string): string {
 function toExecution(e: BackendExecution): ExecutionRecord {
   return {
     id: e.id,
+    ruleId: e.ruleId,
     ruleName: e.ruleName,
     time: formatTime(e.startedAt),
     duration: e.durationMs != null ? `${(e.durationMs / 1000).toFixed(1)}s` : "—",

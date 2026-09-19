@@ -11,7 +11,8 @@ const ACTIONS = [
     iconBg: "bg-blue-600 dark:bg-blue-500",
     gradient: "from-blue-50 dark:from-blue-950/30 to-indigo-50 dark:to-indigo-950/30",
     hoverBorder: "hover:border-blue-200 dark:hover:border-blue-800",
-    href: "/chat",
+    // 点击跳到对话页并预填指令(此前只跳转,用户到了还得自己打字)
+    href: "/chat?prompt=" + encodeURIComponent("请帮我总结一份文档:先列出文件中心里可选的文档,我选好后再读取内容并提取核心观点和行动项。"),
   },
   {
     label: "巡检数据分析",
@@ -20,7 +21,7 @@ const ACTIONS = [
     iconBg: "bg-purple-600 dark:bg-purple-500",
     gradient: "from-purple-50 dark:from-purple-950/30 to-fuchsia-50 dark:to-fuchsia-950/30",
     hoverBorder: "hover:border-purple-200 dark:hover:border-purple-800",
-    href: "/chat",
+    href: "/chat?prompt=" + encodeURIComponent("帮我做一次巡检数据分析:先看数据源里有哪些库表,列出可分析的巡检/日志数据,我选好后查询并生成趋势结论。"),
   },
 ];
 

@@ -1,12 +1,10 @@
 'use client';
 
 import { useState } from "react";
-import { toast } from "sonner";
 import { RotateCw, CheckCircle2, XCircle, Loader2, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ExecutionRecord } from "@/types";
 import { useAutomations } from "@/hooks/useAutomations";
-import { useNotifications } from "@/hooks/useNotifications";
 
 const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; cls: string; label: string }> = {
   success: { icon: CheckCircle2, cls: "text-green-600 dark:text-green-400", label: "成功" },
@@ -18,20 +16,15 @@ export function ExecutionHistory() {
   const [retrying, setRetrying] = useState<number | null>(null);
   const records = useAutomations((s) => s.executions);
   const retryExecution = useAutomations((s) => s.retryExecution);
-  const addNotification = useNotifications((s) => s.addNotification);
 
   const retry = (record: ExecutionRecord) => {
+    // 真实重试(2026-09-19 去假功能):等待态只覆盖真实请求时长,不再用
+    // 800ms 假动画 + 硬编码"重试成功 1.4s"文案;结果由 store 的真实回调
+    // 决定(成功/失败各有通知)。
     setRetrying(record.id);
-    setTimeout(() => {
-      setRetrying(null);
-      retryExecution(record.id);
-      addNotification(
-        "任务执行完成",
-        `自动任务「${record.ruleName}」重试成功，耗时 1.4s。`,
-        "taskDone"
-      );
-      toast.success(`「${record.ruleName}」重试成功`);
-    }, 800);
+    retryExecution(record.id);
+    // 重试是异步的:短时间内清等待态(真实结果通过执行历史刷新呈现)
+    setTimeout(() => setRetrying(null), 3000);
   };
 
   return (

@@ -90,15 +90,6 @@ export interface IndexStats {
   vectorReady: boolean;
 }
 
-/** 清洗规则 */
-export interface PipelineRule {
-  id: number;
-  name: string;
-  description: string;
-  enabled: boolean;
-  category: "格式" | "去噪" | "分块" | "安全" | "质量";
-}
-
 /** 对话引用来源 */
 export interface Citation {
   docName: string;
@@ -227,6 +218,8 @@ export interface AutomationRule {
 /** 自动任务执行记录 */
 export interface ExecutionRecord {
   id: number;
+  /** 所属规则 id(后端返回;「重试」按它重新触发) */
+  ruleId?: number;
   ruleName: string;
   time: string;
   duration: string;

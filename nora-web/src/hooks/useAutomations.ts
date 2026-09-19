@@ -158,13 +158,30 @@ export const useAutomations = create<AutomationsState>()(
         }));
       },
       retryExecution: (id) => {
-        set((state) => ({
-          executions: state.executions.map((e) =>
-            e.id === id
-              ? { ...e, status: "success", time: getTime(), duration: "1.4s", detail: `${e.detail} → 重试成功` }
-              : e
-          ),
-        }));
+        // 真实重试(2026-09-19 去假功能):此前只本地改状态 + 假动画,
+        // 从未真正重跑。现在按执行记录定位规则,真调后端 run 端点,
+        // 完成后拉一次执行历史刷新(与手动「立即运行」同一条链路)。
+        const exec = get().executions.find((e) => e.id === id);
+        if (!exec || !USE_BACKEND || !exec.ruleId) {
+          // Mock 模式/旧数据无 ruleId:本地提示(不假装成功)
+          useNotifications.getState().addNotification(
+            "无法重试", `「${exec?.ruleName ?? "?"}」缺少规则信息,请到自动任务页手动运行。`, "taskDone");
+          return;
+        }
+        void automationsApi.runRule(exec.ruleId)
+          .then((fresh) => {
+            useNotifications.getState().addNotification(
+              "任务执行完成",
+              `自动任务「${exec.ruleName}」重试${fresh.status === "success" ? "成功" : "失败"},耗时 ${fresh.duration}。`,
+              "taskDone");
+            set((state) => ({
+              executions: [fresh, ...state.executions].slice(0, 50),
+            }));
+          })
+          .catch((e: Error) => {
+            useNotifications.getState().addNotification(
+              "任务执行失败", `自动任务「${exec.ruleName}」重试失败:${e.message}`, "taskFail");
+          });
       },
     }),
     { name: "automations" }
