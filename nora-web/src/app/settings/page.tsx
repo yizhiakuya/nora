@@ -5,13 +5,12 @@ import { Header } from "@/components/layout/Header";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
 import { ModelSettings } from "@/components/settings/ModelSettings";
 import { KnowledgeAISettings } from "@/components/settings/KnowledgeAISettings";
-import { AccountSettings } from "@/components/settings/AccountSettings";
 import { SecuritySettings } from "@/components/settings/SecuritySettings";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 import { EnvVarsSettings } from "@/components/settings/EnvVarsSettings";
 import { NetworkSettings } from "@/components/settings/NetworkSettings";
 
-const TABS = ["通用", "模型管理", "知识库与 AI", "环境变量", "网络", "账号", "安全", "通知"];
+const TABS = ["通用", "模型管理", "知识库与 AI", "环境变量", "网络", "安全", "通知"];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("通用");
@@ -19,7 +18,7 @@ export default function SettingsPage() {
   // 支持 /settings?tab=模型管理 深链（替代原独立页路由）
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get("tab");
-    const valid = ["通用", "模型管理", "知识库与 AI", "环境变量", "网络", "账号", "安全", "通知"];
+    const valid = ["通用", "模型管理", "知识库与 AI", "环境变量", "网络", "安全", "通知"];
     if (tab && valid.includes(tab)) setActiveTab(tab);
   }, []);
 
@@ -39,7 +38,7 @@ export default function SettingsPage() {
             {/* Header & Description */}
             <div>
               <h1 className="text-2xl font-bold text-foreground mb-1.5">设置中心</h1>
-              <p className="text-sm text-muted-foreground">管理您的账号、模型接入、凭据与本地安全偏好。</p>
+              <p className="text-sm text-muted-foreground">管理模型接入、凭据与本地安全偏好。</p>
             </div>
 
             {/* Pill-style Tabs */}
@@ -68,7 +67,6 @@ export default function SettingsPage() {
               {activeTab === "知识库与 AI" && <KnowledgeAISettings />}
               {activeTab === "环境变量" && <EnvVarsSettings />}
               {activeTab === "网络" && <NetworkSettings />}
-              {activeTab === "账号" && <AccountSettings />}
               {activeTab === "安全" && <SecuritySettings />}
               {activeTab === "通知" && <NotificationSettings />}
             </div>

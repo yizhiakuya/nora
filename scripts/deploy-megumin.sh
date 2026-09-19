@@ -85,7 +85,10 @@ units)
   DBU='SPRING_DATASOURCE_USERNAME=nora'
   DBP='SPRING_DATASOURCE_PASSWORD=nora'
 
-  mkunit gateway    384m
+  # 令牌登录(2026-09-19):生产必配——值从 megumin 的 $BASE/.env.local 读取
+  # (NORA_AUTH_TOKEN=xxx 一行);未配置=免登录(仅限纯内网,公网暴露务必配)
+  AUTH_TOKEN=$(grep -E '^NORA_AUTH_TOKEN=' "$BASE/.env.local" 2>/dev/null | head -1 | cut -d= -f2-)
+  mkunit gateway    384m ${AUTH_TOKEN:+"NORA_AUTH_TOKEN=$AUTH_TOKEN"}
   mkunit file       640m "SPRING_DATASOURCE_URL=$DB?currentSchema=schema_file"       "$DBU" "$DBP"
   mkunit rag        512m "SPRING_DATASOURCE_URL=$DB"                                  "$DBU" "$DBP" NORA_REDIS_PORT=16379
   mkunit agent      768m "SPRING_DATASOURCE_URL=$DB?currentSchema=schema_agent"       "$DBU" "$DBP" NORA_REDIS_PORT=16379 NORA_AGENT_WORKSPACE=$BASE/agent-workspace

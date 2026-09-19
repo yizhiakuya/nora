@@ -1,4 +1,5 @@
 import { randomId } from "@/lib/utils";
+import { authHeaders, handleUnauthorized } from "@/lib/auth";
 import { cached, invalidateForPath } from "./requestCache";
 
 export const API_BASE = "/api";
@@ -206,10 +207,17 @@ async function doRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       "Content-Type": "application/json",
       "X-Nora-Trace-Id": BROWSER_TRACE_ID,
+      ...authHeaders(),
       ...(init?.headers ?? {}),
     },
     signal: init?.signal ?? defaultTimeoutSignal(),
   });
+
+  // 令牌失效/未登录:清令牌跳登录页(带原地址回跳);错误照常抛出,
+  // 调用方 catch 不会看到白屏
+  if (response.status === 401) {
+    handleUnauthorized();
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");

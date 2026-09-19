@@ -1,3 +1,5 @@
+import { withAuthToken } from "@/lib/auth";
+
 /**
  * 媒体 URL 的缓存代理(2026-09-17):远程媒体(相册等经隧道拉取)统一
  * 换成后端缓存端点 /api/media/cache?url=...,后端磁盘缓存一次拉取长期复用。
@@ -10,10 +12,11 @@
  * 仅对 http(s) 远程地址生效;本地/相对路径(如 /api/files/... )原样返回。
  */
 
-/** 后端缓存端点(经网关;相对路径使浏览器直接走当前 host)。 */
+/** 后端缓存端点(经网关;相对路径使浏览器直接走当前 host)。
+ *  媒体 src(img/video 标签)无法带 header:令牌走 ?token=。 */
 export function mediaCacheUrl(url: string): string {
   if (!/^https?:\/\//i.test(url)) return url;
-  return `/api/media/cache?url=${encodeURIComponent(url)}`;
+  return withAuthToken(`/api/media/cache?url=${encodeURIComponent(url)}`);
 }
 
 /**

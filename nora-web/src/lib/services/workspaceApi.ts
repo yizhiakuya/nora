@@ -1,4 +1,5 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { withAuthToken } from "@/lib/auth";
 
 /** 工作区文件条目(后端相对路径)。 */
 export interface WorkspaceEntry {
@@ -41,7 +42,8 @@ export const workspaceApi = {
   },
   /** 图片等二进制文件的预览 URL(原始字节端点,浏览器直接渲染)。 */
   rawUrl(path: string): string {
-    return `/api/workspace/file/raw?path=${encodeURIComponent(path)}`;
+    // 图片 src 无法带 header:令牌走 ?token=
+    return withAuthToken(`/api/workspace/file/raw?path=${encodeURIComponent(path)}`);
   },
   async writeFile(path: string, content: string): Promise<void> {
     await requestJson<{ path: string; content: string }>("/workspace/file", {

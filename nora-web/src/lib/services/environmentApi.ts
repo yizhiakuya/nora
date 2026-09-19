@@ -1,4 +1,5 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { authHeaders, withAuthToken } from "@/lib/auth";
 import type { ServiceInstance } from "@/types";
 
 /** 后端纳管源列表行(/environment/services 返回,FILE/DOCKER/PROC 合一) */
@@ -151,8 +152,8 @@ export function subscribeSourceLogs(
       onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
       try {
         const response = await fetch(
-          `/api/environment/sources/${sourceId}/logs/stream?tail=100`,
-          { signal: controller.signal }
+          withAuthToken(`/api/environment/sources/${sourceId}/logs/stream?tail=100`),
+          { headers: authHeaders(), signal: controller.signal }
         );
         if (!response.ok || !response.body) {
           throw new Error(`HTTP ${response.status}`);

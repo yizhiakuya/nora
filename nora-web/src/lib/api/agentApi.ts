@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, PermissionMode } from "./chatApi";
 import { emitSessionTitle } from "./sessionTitleEvents";
 import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
+import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
 import { cached, invalidateForPath } from "./requestCache";
@@ -143,10 +144,11 @@ export async function resolveApproval(
     `${API_BASE}/chat/approvals/${encodeURIComponent(approvalToken)}?sessionId=${encodeURIComponent(sessionId)}`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ approved }),
     }
   );
+  if (response.status === 401) handleUnauthorized();
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(text || `审批请求失败(HTTP ${response.status})`);
@@ -164,7 +166,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     try {
       response = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           content: message,
           model,
@@ -183,6 +185,9 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
       throw new Error("Cannot connect to agent-service", { cause: error });
     }
 
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
       throw new Error(text || `Agent API HTTP ${response.status}`);
@@ -356,7 +361,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
 /** POST /chat/sessions/{id}/cancel → 中断进行中的轮次(上游 LLM 调用一并中止) */
 export async function cancelTurnOnBackend(sessionId: string): Promise<void> {
   try {
-    await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
+    await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", headers: authHeaders() });
   } catch {
     /* 网络失败时前端 abort 已断流,后端轮次自然结束即可 */
   }
@@ -379,7 +384,7 @@ export async function fetchSessions(force = false): Promise<
 async function fetchSessionsUncached(): Promise<
   { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string }[]
 > {
-  const res = await fetch(`${API_BASE}/chat/sessions`, { signal: defaultTimeoutSignal() });
+  const res = await fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
   const body = await res.json();
   const list = (body?.data ?? body) as Array<{
@@ -423,7 +428,7 @@ export async function fetchSessionMessages(sessionId: string, force = false): Pr
 }
 
 async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMessage[]> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { signal: defaultTimeoutSignal() });
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessionMessages failed: ${res.status}`);
   const stored = (await res.json()) as Array<{
     role: "user" | "assistant";
@@ -464,7 +469,7 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
 
 /** DELETE /chat/sessions/{id} → 删除会话及消息 */
 export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", signal: defaultTimeoutSignal() });
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`deleteSession failed: ${res.status}`);
   // 写后失效：会话列表与历史缓存都要清（删掉的会话不该继续出现在缓存里）
   invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
@@ -476,7 +481,7 @@ export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
  * 服务端 LLM 上下文才不会残留已被 UI 丢弃的消息。
  */
 export async function truncateMessagesFrom(sessionId: string, index: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${index}`, { method: "DELETE", signal: defaultTimeoutSignal() });
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${index}`, { method: "DELETE", headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`truncateMessagesFrom failed: ${res.status}`);
   // 写后失效：截断改变了历史，缓存必须清（否则「编辑重发」后仍看到旧分支）
   invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
@@ -484,7 +489,7 @@ export async function truncateMessagesFrom(sessionId: string, index: number): Pr
 
 /** GET /chat/sessions/{id}/turn/live → 会话是否有进行中轮次及其已缓冲事件 */
 export async function fetchLiveTurn(sessionId: string): Promise<LiveTurnInfo> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/live`, { signal: defaultTimeoutSignal() });
+  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/live`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchLiveTurn failed: ${res.status}`);
   const envelope = await res.json() as { code: number; data: LiveTurnInfo; message: string };
   return envelope.data ?? { running: false };
@@ -525,7 +530,8 @@ export function attachLiveTurnStream(
   }
 ): () => void {
   // EventSource 只支持 GET,SSE 端点恰好是 GET;token 无需鉴权(本地单用户部署)
-  const es = new EventSource(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/stream`);
+  // EventSource 无法自定义 header:令牌走 ?token=(服务端 filter 支持两种通道)
+  const es = new EventSource(withAuthToken(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/stream`));
   es.addEventListener("step", (e) => {
     const p = safeParse<StepPayload>((e as MessageEvent).data);
     if (p) handlers.onStep?.(p);
@@ -588,7 +594,7 @@ export async function fetchAgentSettings(): Promise<{
   model?: string | null;
   reasoningLevel?: string | null;
 }> {
-  const res = await fetch(`${API_BASE}/chat/settings`, { signal: defaultTimeoutSignal() });
+  const res = await fetch(`${API_BASE}/chat/settings`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchAgentSettings failed: ${res.status}`);
   const body = await res.json();
   return (body?.data ?? body) ?? {};
@@ -602,7 +608,7 @@ export async function saveAgentSettings(patch: {
 }): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/settings`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(patch),
     signal: defaultTimeoutSignal(),
   });

@@ -7,6 +7,7 @@
  */
 import { browserTraceId } from "@/lib/api/client";
 import { USE_BACKEND } from "@/lib/api/client";
+import { authHeaders } from "@/lib/auth";
 
 const DEDUP_WINDOW_MS = 10_000;
 const recent = new Map<string, number>();
@@ -39,7 +40,7 @@ export function reportToBackend(payload: FrontendLogPayload): void {
   try {
     void fetch("/api/log/frontend", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Nora-Trace-Id": browserTraceId() },
+      headers: { "Content-Type": "application/json", "X-Nora-Trace-Id": browserTraceId(), ...authHeaders() },
       body: JSON.stringify({
         level: payload.level ?? "error",
         event: payload.event,

@@ -21,6 +21,7 @@ import DataSourcesPage from "@/app/data-sources/page";
 import EnvironmentsPage from "@/app/environments/page";
 import AutomationsPage from "@/app/automations/page";
 import SettingsPage from "@/app/settings/page";
+import LoginPage from "@/app/login/page";
 
 const TITLES: Record<string, string> = {
   "/": "首页",
@@ -32,6 +33,7 @@ const TITLES: Record<string, string> = {
   "/environments": "环境控制台",
   "/automations": "自动任务",
   "/settings": "设置中心",
+  "/login": "登录",
 };
 
 function RouteShell({ children }: { children: React.ReactNode }) {
@@ -93,6 +95,8 @@ export default function App() {
       <Route path="/environments" element={<Page><EnvironmentsPage /></Page>} />
       <Route path="/automations" element={<Page><AutomationsPage /></Page>} />
       <Route path="/settings" element={<Page><SettingsPage /></Page>} />
+      {/* 令牌登录页(2026-09-19):独立全屏,无侧栏/无健康探测壳 */}
+      <Route path="/login" element={<LoginPage />} />
       {/* 兼容旧路由 → 重定向 */}
       <Route path="/models" element={<Navigate to="/settings?tab=模型管理" replace />} />
       <Route path="/env-vars" element={<Navigate to="/settings?tab=环境变量" replace />} />

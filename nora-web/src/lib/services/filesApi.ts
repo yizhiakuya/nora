@@ -1,5 +1,6 @@
 import { FileItem, FilePreview, FilePreviewKind } from "@/types";
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { authHeaders, withAuthToken } from "@/lib/auth";
 import { FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
 
 /** 后端 file-service 响应的 FileItem(camelCase) */
@@ -103,7 +104,8 @@ interface BackendFilePreview {
  */
 function toPreview(p: BackendFilePreview, id: number, name: string): FilePreview {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  const rawUrl = `/api/files/${id}/raw`;
+  // 图片/视频 src 无法带 header:令牌走 ?token=
+  const rawUrl = withAuthToken(`/api/files/${id}/raw`);
 
   // PDF:浏览器内置查看器(iframe 直连 raw;保留版式/翻页/缩放/打印)
   if (ext === "pdf") {
@@ -193,7 +195,7 @@ function parseDelimitedTable(text: string, ext: string): { columns: string[]; ro
 }
 
 async function requestRaw<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, { ...init, signal: init?.signal ?? defaultTimeoutSignal() });
+  const response = await fetch(`/api${path}`, { ...init, headers: { ...authHeaders(), ...(init?.headers ?? {}) }, signal: init?.signal ?? defaultTimeoutSignal() });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(text || `HTTP ${response.status}`);
@@ -292,7 +294,8 @@ export const filesApi = {
 
   /** 批量下载 URL(浏览器直接打开触发下载;单文件出原文件,多文件打 zip)。 */
   downloadUrl(ids: number[]): string {
-    return `/api/files/download?ids=${ids.join(",")}`;
+    // 浏览器直接导航下载(window.open)无法带 header:令牌走 ?token=
+    return withAuthToken(`/api/files/download?ids=${ids.join(",")}`);
   },
 
   // ---------- 回收站 ----------

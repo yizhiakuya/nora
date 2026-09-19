@@ -3,23 +3,19 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Home, Folder, MessageSquare, Zap, BookOpen, Server, Plug,
-  Database, ListCheck, Settings, ChevronDown, ChevronsUpDown,
-  User, Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
+  Database, ListCheck, Settings,
+Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
 import { useSidebarStore } from "@/hooks/useSidebar";
-import { usePreferences } from "@/hooks/usePreferences";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { deleteSessionOnBackend } from "@/lib/api/agentApi";
 import { relativeTime } from "@/lib/relativeTime";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
@@ -43,8 +39,6 @@ export function Sidebar() {
   const navigate = useNavigate();
 
   const { isOpen, setIsOpen, isCollapsed, toggleCollapsed } = useSidebarStore();
-  const accountName = usePreferences((s) => s.account.name);
-  const accountEmail = usePreferences((s) => s.account.email);
 
   // Chat sessions
   const sessions = useChatSessions((s) => s.sessions);
@@ -82,17 +76,6 @@ export function Sidebar() {
     void syncSessions();
   }, [syncSessions]);
 
-  // 空身份(未设置):显示通用称谓与占位首字母(2026-09-19 去假数据)
-  const displayName = accountName.trim() || "我";
-  const displayEmail = accountEmail.trim() || "本地工作台 · 未设置邮箱";
-  const initials = accountName.trim()
-    ? accountName
-        .split(/\s+/)
-        .map((part) => part[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase()
-    : "N";
 
   useEffect(() => { setIsOpen(false); }, [pathname, setIsOpen]);
 
@@ -106,27 +89,15 @@ export function Sidebar() {
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className={cn("pt-4 pb-2 shrink-0 flex items-center gap-1", collapsed ? "flex-col gap-1.5 px-2" : "px-3 justify-between")}>
               {!collapsed ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                      <div className="p-2.5 flex-1 flex items-center justify-between hover:bg-muted rounded-xl cursor-pointer transition-colors border border-transparent hover:border-border group min-w-0">
-                      <div className="flex items-center gap-3 min-w-0">
-                          <img src="/logo-mark.png" alt="AI 工作台" width={32} height={32} className="w-8 h-8 rounded-lg shrink-0" />
-                          <div className="flex flex-col text-left min-w-0">
-                          <span className="text-foreground font-bold text-sm truncate">Nora 的个人空间</span>
-                          <span className="text-[10px] text-muted-foreground truncate">自部署版</span>
-                          </div>
-                      </div>
-                      <ChevronsUpDown className="w-3 h-3 text-muted-foreground/60 group-hover:text-foreground shrink-0" />
-                      </div>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-56 rounded-xl border-border shadow-lg" align="start">
-                      <DropdownMenuLabel className="text-xs text-muted-foreground">工作区</DropdownMenuLabel>
-                      <DropdownMenuItem className="flex items-center justify-between cursor-pointer rounded-lg"><div className="flex items-center gap-2"><img src="/logo-mark.png" alt="" width={24} height={24} className="w-6 h-6 rounded" /><span className="text-sm font-medium">Nora 的个人空间</span></div><Check className="w-4 h-4 text-blue-600 dark:text-blue-400" /></DropdownMenuItem>
-                      <DropdownMenuItem className="flex items-center gap-2 cursor-pointer rounded-lg opacity-70" onClick={() => toast.info('正在切换至 Team Alpha 工作区...')}><div className="w-6 h-6 bg-gray-200 dark:bg-gray-800 rounded flex items-center justify-center text-muted-foreground text-[10px] font-bold">T</div><span className="text-sm">Team Alpha</span></DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-sm text-blue-600 dark:text-blue-400 cursor-pointer rounded-lg font-medium justify-center py-2" onClick={() => toast.success('正在创建新工作区...')}>创建新工作区</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                /* 静态品牌区(2026-09-19 去假功能):此前是假工作区切换器
+                   (Team Alpha 假切换/假"创建新工作区")——单用户单工作台,无此功能 */
+                <div className="p-2.5 flex-1 flex items-center gap-3 min-w-0">
+                  <img src="/logo-mark.png" alt="AI 工作台" width={32} height={32} className="w-8 h-8 rounded-lg shrink-0" />
+                  <div className="flex flex-col text-left min-w-0">
+                    <span className="text-foreground font-bold text-sm truncate">Nora 的个人空间</span>
+                    <span className="text-[10px] text-muted-foreground truncate">自部署版</span>
+                  </div>
+                </div>
               ) : (
                 <img src="/logo-mark.png" alt="AI 工作台" width={28} height={28} className="w-7 h-7 rounded-lg shrink-0" title="Nora 的个人空间" />
               )}
@@ -208,9 +179,6 @@ export function Sidebar() {
         </div>
         <div className={cn("border-t border-border shrink-0", collapsed ? "p-2" : "p-3 sm:p-4")}>
           <Link to="/settings" title={collapsed ? "设置中心" : undefined} className={cn("flex items-center rounded-lg text-sm font-medium transition-colors mb-2", collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5", pathname.startsWith("/settings") ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Settings className={cn("w-4 h-4 shrink-0", pathname.startsWith("/settings") ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")} />{!collapsed && "设置中心"}</Link>
-          {!collapsed ? (
-            <DropdownMenu><DropdownMenuTrigger asChild><div className="flex items-center justify-between p-2 hover:bg-muted rounded-xl cursor-pointer transition-colors border border-transparent hover:border-border min-w-0"><div className="flex items-center gap-3 min-w-0"><div className="w-8 h-8 rounded-full shadow-sm shrink-0 bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">{initials}</div><div className="flex flex-col text-left min-w-0"><span className="text-foreground font-bold text-xs truncate">{displayName}</span><span className="text-[10px] text-muted-foreground truncate">开发者</span></div></div><ChevronDown className="w-3 h-3 text-muted-foreground/60 shrink-0" /></div></DropdownMenuTrigger><DropdownMenuContent className="w-56 mb-2 rounded-xl shadow-xl border-border" align="start"><DropdownMenuLabel className="font-normal"><div className="flex flex-col space-y-1"><p className="text-sm font-medium leading-none">{displayName}</p><p className="text-xs leading-none text-muted-foreground">{displayEmail}</p></div></DropdownMenuLabel><DropdownMenuSeparator /><DropdownMenuGroup><DropdownMenuItem className="cursor-pointer py-2 rounded-lg" onClick={() => navigate('/settings')}><User className="mr-2 h-4 w-4 text-muted-foreground" /><span>个人资料</span></DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>
-          ) : (<div className="flex justify-center" title={accountName.trim() ? `${displayName} · 开发者` : displayName}><div className="w-8 h-8 rounded-full shadow-sm bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">{initials}</div></div>)}
         </div>
       </aside>
     </>

@@ -78,3 +78,7 @@ management:
 # 全局统一时区(nora-common TimeZoneConfig 消费;JVM 默认时区)
 nora:
   timezone: Asia/Shanghai
+  auth:
+    # 令牌登录(2026-09-19):配了即全 API 需 Bearer token/登录;
+    # 空=免登录(本地开发/纯内网)。生产在 megumin 的 .env.local 里配。
+    token: ${NORA_AUTH_TOKEN:}
