@@ -2,7 +2,7 @@
 
 ## 服务与端口
 
-gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(8085) / automation
+gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(8085) / automation(8086) / notification(8087)
 
 ## file-service(文件中心=统一文件系统入口,2026-09-17)
 
@@ -12,6 +12,14 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **前端**:文件页=统一文件系统视图——「Agent 工作区」「媒体缓存」与用户文件夹并列显示(FileTable folderRows);用户文件夹可进入(面包屑)、重命名、删除;文件行操作:预览/下载/重命名/移动到…/删除(菜单);批量:下载(zip)/移动/删除;上传目标跟随当前文件夹
 - **媒体缓存 → 文件中心流转**:`POST /api/media/cached/{key}/save`(agent-service 侧,服务端直传 file-service)把派生缓存转为正式资产——用户可见的"保存到文件中心"按钮在媒体缓存页
 - **跨服务约定**:其他服务读文件元数据走 `FileService.getById`(Dubbo)或 REST;`FileItem` record 带 `folderId`,构造点增删参数要同步 api/file-api 测试与 file-service 测试
+
+## notification-service(通知中心,2026-09-19)
+
+- **架构**:Kafka 事件总线(用户明确"独立服务,谁产生谁推送")——业务服务作 producer 发事件到 `nora.notifications` topic,本服务(consumer,手动 ack)消费落库 `schema_notification.notification`,前端 REST 拉取。**为什么 Kafka 不是 RocketMQ**:KRaft 单节点=1 容器(512M),RocketMQ 要 namesrv+broker;单用户量级两者都是降维打击,轻的赢
+- **producer 接线**:automation(任务完成/失败)/ env(PROC 死亡/拉起失败)/ rag(索引完成)——`nora-common` 的 `NotificationPublisher`(懒连接/3s 快速失败/失败静默,对齐 NoraRedis 降级模式;**Kafka 挂了只丢通知,不影响主业务**);原生 KafkaProducer 而非 spring-kafka(发布侧不需要 consumer 基础设施)
+- **端点**:`GET /api/notifications`(list)/ `GET /unread-count` / `POST /read-all` / `POST /{id}/read` / `DELETE`(清空)/ `POST /api/notifications`(前端上报——上传完成等用户当前动作,source=frontend)
+- **前端**:`notificationsApi` + `useNotifications`(服务端镜像:乐观插入负 id + 上报 + 60s 轮询同步,visibilitychange 切回立即刷);`NotificationWatcher` 是纯同步器(旧的前端事件轮询已移除——那些逻辑已是后端 producer);已读状态在服务端,跨浏览器一致
+- **运维**:`docker compose --profile dev-basic up -d kafka` 起容器;topic 首次需手动创建(`kafka-topics.sh --create --topic nora.notifications --partitions 1 --replication-factor 1`);`nora.sh` 的服务表/check_infra 已含 kafka/notification
 
 ## agent-service 关键链路
 
