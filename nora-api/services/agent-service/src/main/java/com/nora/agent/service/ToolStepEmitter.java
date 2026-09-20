@@ -523,26 +523,7 @@ class ToolStepEmitter {
         return "read_file".equals(name) ? "manage_file" : name;
     }
 
-    /**
-     * 参数规范化(验收 F4;R2/R3 修正):解析为 JSON 对象后**递归**按键名
-     * 排序序列化(嵌套对象同样排序,数组顺序保留——数组顺序通常是业务语义)。
-     *
-     * <p>字段处理按工具语义分层(验收 R2——工作区别名规则不能套到 MCP 上):
-     * <ul>
-     *   <li><b>所有工具</b>:剔除 {@code description}(本地注入的展示标题,
-     *       不进 MCP 调用语义——见 parseArgs 的展示用途);</li>
-     *   <li><b>内置工具</b>(manage_workspace / manage_file):filename/file→path
-     *       别名归一、动作方言归一(download/save/fetch→import)——与执行层
-     *       归一化对齐,保证「实际执行目标相同 → 指纹相同」;</li>
-     *   <li><b>MCP 工具(mcp__ 前缀与 manage_mcp)</b>:业务字段**全部保留**——
-     *       description/filename/save 在远端工具里可能是真实业务字段,
-     *       改动它们就是不同的调用(R2 复现:被误判重复而阻断)。</li>
-     * </ul>
-     *
-     * <p>递归排序修正 R3:此前只对最外层排序,嵌套 arguments 内换序仍能
-     * 绕过重复检测(复现:同参数换 4 种排列,4 次都执行)。
-     * 解析失败(非法 JSON)时退回原始串——宁可保守也不要漏判。
-     */
+    /** 按实际工具语义归一参数,递归排序对象键;MCP 业务字段和数组顺序保留。 */
     private String canonicalArgs(String toolName, String args) {
         if (args == null || args.isBlank()) {
             return "";
@@ -552,39 +533,67 @@ class ToolStepEmitter {
             if (!(node instanceof ObjectNode obj)) {
                 return args;
             }
-            // 分层处理(验收 R2 复验后修正):挂载的 MCP 工具(mcp__*)的参数
-            // 全部是远端业务字段——description/filename/action 都可能是有含义的
-            // 业务数据,一个都不能动(此前统一剔除 description 导致改它被误判
-            // 为重复调用而阻断)。内置工具的 description 才是本地展示标题。
             boolean mountedMcp = toolName != null && toolName.startsWith("mcp__");
             if (!mountedMcp) {
                 // 内置工具:description 是本地注入的展示标题,剔除
                 obj.remove("description");
-            }
-            boolean workspaceTool = "manage_workspace".equals(toolName)
-                    || "manage_file".equals(toolName) || "read_file".equals(toolName);
-            if (workspaceTool) {
-                // 内置工具的别名归一(与执行层语义对齐;MCP 业务字段保留,见 R2)。
-                // 注意 path 为空串时执行层会回退到 filename(RiskClassifier.workspacePathOf
-                // 的 isBlank 判定)——指纹必须同语义,否则 a.txt/b.txt 经 path=""+filename
-                // 两种实际目标会得到同一指纹(R2 复现)。
-                String pathValue = obj.has("path") ? obj.path("path").asText("") : "";
-                if (pathValue.isBlank()) {
-                    String alias = obj.has("filename") ? obj.path("filename").asText(null)
-                            : obj.has("file") ? obj.path("file").asText(null) : null;
-                    if (alias != null && !alias.isBlank()) {
-                        obj.put("path", alias);
-                    }
+                // action 归一(与执行层同一别名表,验收 F4「标准化动作」):
+                // add→create / invoke→call / download→import 等同一执行语义的
+                // 拼写必须得到同一指纹,否则模型换拼写即可绕过重复检测
+                if (obj.has("action") && obj.get("action").isTextual()) {
+                    String rawAction = obj.path("action").asText("");
+                    String canonical = switch (toolName == null ? "" : toolName) {
+                        case "manage_workspace" -> RiskClassifier.normalizeWorkspaceAction(rawAction);
+                        case "manage_datasource" -> RiskClassifier.normalizeDatasourceAction(rawAction);
+                        case "manage_service" -> RiskClassifier.normalizeServiceAction(rawAction);
+                        case "manage_mcp" -> RiskClassifier.normalizeMcpAction(rawAction);
+                        // 其余内置工具:执行层用 trim().toLowerCase() 派发
+                        default -> rawAction.trim().toLowerCase(java.util.Locale.ROOT);
+                    };
+                    obj.put("action", canonical);
                 }
+            }
+            if ("manage_workspace".equals(toolName)) {
+                // 寻址字段归一(与执行层共用同一别名序;验收 T2):
+                // 缺失/null/空串/空白都按同一回退序 path→filename→file
+                String path = RiskClassifier.workspacePathOf(obj);
+                obj.remove("path");
                 obj.remove("filename");
                 obj.remove("file");
-                if (obj.has("action")) {
-                    String action = obj.path("action").asText("");
-                    String canonical = RiskClassifier.normalizeWorkspaceAction(action);
-                    if (!canonical.equals(action)) {
-                        obj.put("action", canonical);
+                if (path != null && !path.isBlank()) {
+                    obj.put("path", path);
+                }
+            }
+            if ("manage_file".equals(toolName) || "read_file".equals(toolName)) {
+                // 文件中心寻址归一(同类 T2):与执行层 parseArgs 的提取序完全一致
+                // ——id→path→filename(执行层不认 file 别名,这里也不能认:认了
+                // 会把「file=a.txt」(实际走 list)与「path=a.txt」(实际 read)并成
+                // 同一指纹,制造假合并)。
+                // 归一后:数字目标统一存 id(执行层对数字一律按文件中心 id 处理),
+                // 非数字统一存 path(id="abc" 与 path="abc" 执行层同走路径路由)。
+                String target = obj.path("id").asText(null);
+                if (target == null || target.isBlank()) {
+                    target = obj.path("path").asText(null);
+                }
+                if (target == null || target.isBlank()) {
+                    target = obj.path("filename").asText(null);
+                }
+                obj.remove("id");
+                obj.remove("path");
+                obj.remove("filename");
+                if (target != null && !target.isBlank()) {
+                    if (target.trim().matches("\\d+")) {
+                        obj.put("id", target.trim());
+                    } else {
+                        obj.put("path", target);
                     }
                 }
+            }
+            if ("manage_mcp".equals(toolName)
+                    && "call".equals(obj.path("action").asText(""))) {
+                // action 已归一为小写 call;arguments 对象与 JSON 字符串按同一
+                // 执行语义解析(验收 T3)——两个入口得到相同指纹
+                obj.set("arguments", ChatToolExecutor.mcpArguments(objectMapper, obj.path("arguments")));
             }
             // 递归规范化(嵌套对象排序;数组顺序保留)
             return canonicalJson(obj).toString();

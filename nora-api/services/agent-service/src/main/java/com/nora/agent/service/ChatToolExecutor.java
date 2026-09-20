@@ -1089,26 +1089,11 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: 服务器「" + server.name() + "」已停用——先 action=enable target="
                     + server.name(), null, null, false);
         }
-        // arguments 兼容三种形态:对象(直接透传)/JSON 字符串/省略(空对象)
-        JsonNode argsNode = a.path("arguments");
         String argsJson;
-        if (argsNode.isMissingNode() || argsNode.isNull()) {
-            argsJson = "{}";
-        } else if (argsNode.isObject()) {
-            argsJson = argsNode.toString();
-        } else if (argsNode.isTextual()) {
-            String raw = argsNode.asText("");
-            // 字符串形态必须是合法 JSON 对象(模型常把 arguments 写成 JSON 字符串)
-            try {
-                JsonNode parsed = objectMapper.readTree(raw.isBlank() ? "{}" : raw);
-                argsJson = parsed.isObject() ? parsed.toString() : "{}";
-            } catch (Exception e) {
-                return new ToolOutcome("ERROR: arguments 不是合法 JSON: " + Texts.abbreviate(raw, 120)
-                        + "。示例:{\"action\": \"call\", \"target\": \"github\", \"tool\": \"get_me\", \"arguments\": \"{}\"}",
-                        null, null, false);
-            }
-        } else {
-            return new ToolOutcome("ERROR: arguments 必须是对象或 JSON 字符串", null, null, false);
+        try {
+            argsJson = mcpArguments(objectMapper, a.path("arguments")).toString();
+        } catch (IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
         }
         McpServerService.McpToolResult mcpResult = mcpServerService.callToolRich(server.id(), tool.trim(), argsJson);
         if (galleryPrefetcher != null && !mcpResult.isError()) {
@@ -1123,6 +1108,26 @@ class ChatToolExecutor {
                         : outcome)
                 : new ToolOutcome(outcome.content(), outcome.summary(), outcome.rowCount(),
                         outcome.truncated(), mcpResult.images(), mcpResult.unknown());
+    }
+
+    /** lazy MCP 的执行与指纹共用同一参数解释;省略或空白字符串表示空对象。 */
+    static JsonNode mcpArguments(ObjectMapper mapper, JsonNode arguments) {
+        if (arguments.isMissingNode() || arguments.isNull()) {
+            return mapper.createObjectNode();
+        }
+        JsonNode parsed = arguments;
+        if (arguments.isTextual()) {
+            String raw = arguments.asText();
+            try {
+                parsed = mapper.readTree(raw.isBlank() ? "{}" : raw);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalArgumentException("arguments 不是合法 JSON，请传参数对象或对象的 JSON 字符串", e);
+            }
+        }
+        if (!parsed.isObject()) {
+            throw new IllegalArgumentException("arguments 必须是对象或对象的 JSON 字符串");
+        }
+        return parsed;
     }
 
     /** manage_mcp action=register:注册 + 自动测试连接(失败不回滚注册)。 */

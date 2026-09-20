@@ -111,14 +111,15 @@ class ChatContextAssembler {
                具体协议与字段先读技能「产物画廊指南」(manage_skill action=read)获取;
                数据必须来自真实工具结果,不许编造。
                小改动(改了一个文件、建了一个文件夹)不必出画廊,直接文字汇报。
+            9. 早期助手回复和工具过程可能已省略,用户消息仍按原顺序保留。
+               后续补充不会自动取消之前的限制;明确修改、撤销或切换任务时以较新的要求为准,
+               不要重新执行已撤销的旧任务。
             """;
 
     /**
      * 系统性上下文装配(设计见 docs/context-management-design.md):
-     * 固定层(system prompt + RAG 片段 + 反思 + 新消息)之外,历史按 token
-     * 预算从新到旧装入;预算 = 触发线 - 输出预留 - 固定开销。估算统一走
-     * {@link ContextBudget#estimateTokens}(CJK 感知);上游真实 usage 只做
-     * 展示与事后校准,不参与装配决策。至少保留 1 条历史,条数硬上限 40。
+     * 固定层之外先为全部历史用户消息留出上下文,剩余空间装入最近的助手/
+     * 工具过程(最多 40 条历史)。不以最后一条消息或摘录替代累计用户要求。
      */
     List<WireMessage> buildMessages(String userMessage,
                                             List<ChatStoreService.StoredMessage> history,
@@ -142,7 +143,6 @@ class ChatContextAssembler {
                 + ContextBudget.estimateTokens(userMessage)
                 + (int) requestOverheadTokens();
         long historyBudget = budget.historyBudgetTokens(fixedCost);
-        int used = 0;
         // controller 在调用前已把当前 user 消息落库(loadMessages 的末条就是它),
         // 这里只拼历史部分并排除末条,末尾统一 add(userMessage)——否则当前消息
         // 会被发两遍(中转/上游按两条独立 user 消息计费并处理)
@@ -153,24 +153,28 @@ class ChatContextAssembler {
                 historyEnd--;
             }
         }
+        long used = 0;
+        for (int i = 0; i < historyEnd; i++) {
+            if ("user".equals(history.get(i).role())) {
+                used += wireCostOf(history.get(i));
+            }
+        }
+        if (used > historyBudget) {
+            throw new IllegalArgumentException("历史用户要求已超出当前模型可容纳的上下文，无法完整保留目标与限制。"
+                    + "请切换更大上下文的模型，或在新会话中提供当前有效的任务要求后继续。");
+        }
         int from = historyEnd;
-        while (from > 0) {
+        while (from > 0 && historyEnd - from < 40) {
             ChatStoreService.StoredMessage prev = history.get(from - 1);
-            int cost = wireCostOf(prev);
-            if (used + cost > historyBudget && from < historyEnd) break; // 至少保留 1 条
+            int cost = "user".equals(prev.role()) ? 0 : wireCostOf(prev);
+            if (used + cost > historyBudget) break;
             used += cost;
             from--;
-            if (historyEnd - from >= 40) break; // 条数硬上限,防御超长单条
         }
-        // 任务锚点(设计 §8.2「长任务经过压缩后仍记得目标与限制」;2026-09-20
-        // 验收 F1 修正):历史被预算裁掉开头时,注入**最近**的用户目标而不是
-        // 最早的消息——用户可能已改口/撤销旧任务,把最早消息提升为 system
-        // 「以它为准」会重新激活已作废的目标(验收探针复现)。
-        // 语义:低优先级背景参考,最新一条用户消息才是当前任务的权威。
-        if (from > 0) {
-            String anchor = taskAnchor(history, from);
-            if (anchor != null) {
-                messages.add(WireMessage.system(objectMapper, anchor));
+        // 保留被裁过程中的用户原文及先后顺序,包括修订和撤销;不提升为 system 指令。
+        for (int i = 0; i < from; i++) {
+            if ("user".equals(history.get(i).role())) {
+                appendHistoryMessage(messages, history.get(i));
             }
         }
         for (int i = from; i < historyEnd; i++) {
@@ -178,50 +182,6 @@ class ChatContextAssembler {
         }
         messages.add(WireMessage.user(objectMapper, userMessage));
         return messages;
-    }
-
-    /**
-     * 任务锚点文本(2026-09-20 验收 F1/R1 修正):
-     * <ul>
-     *   <li>取被裁区间内**最近一条有实质内容**的用户消息——"继续/好的"这类
-     *       续接消息不携带任务信息,不能当锚点(否则 42 条"continue"会把
-     *       真实任务与限制全部冲掉,复验 R1 实测);</li>
-     *   <li>措辞为「仅供参考的早期背景」,不写「以它为准」——后续消息
-     *       (包括本轮 userMessage)始终优先。</li>
-     * </ul>
-     */
-    private static String taskAnchor(List<ChatStoreService.StoredMessage> history, int trimmedUntil) {
-        String latestSubstantive = null;
-        for (int i = 0; i < trimmedUntil && i < history.size(); i++) {
-            ChatStoreService.StoredMessage m = history.get(i);
-            if (!"user".equals(m.role()) || m.content() == null || m.content().isBlank()) {
-                continue;
-            }
-            if (isTrivialContinuation(m.content())) {
-                continue;
-            }
-            latestSubstantive = m.content();
-        }
-        if (latestSubstantive == null) {
-            return null;
-        }
-        String excerpt = latestSubstantive.length() <= 400 ? latestSubstantive
-                : latestSubstantive.substring(0, 400) + "…";
-        return "背景(历史较早部分已省略;以下是用户此前最近一条有内容的表述,仅作参考——"
-                + "用户后续的消息与要求优先,如与下方内容冲突以更新者为准):\n" + excerpt;
-    }
-
-    /**
-     * 寒暄/续接类短消息判定(验收 R1):不携带任务信息,不能当任务锚点。
-     * 长度受限 + 模式匹配——只拦纯续接语,不误伤短的实质指令(如「只统计」)。
-     */
-    static boolean isTrivialContinuation(String content) {
-        String t = content.trim();
-        if (t.isEmpty() || t.length() > 40) {
-            return false;
-        }
-        return t.matches("(?i)^(继续|continue|go on|next|下一步|好的?|ok(ay)?|嗯+|行|可以|收到|谢谢|多谢)"
-                + "[\\s\\d.!。!?？,、~…]*$");
     }
 
     /**

@@ -1,7 +1,7 @@
 # Nora Agent 与工具设计验收记录
 
 日期：2026-09-20  
-最新结论（第二轮复验，`3975fee`）：**4 项通过、3 项部分修复，暂不全部通过。F2/F3/F5/F7 已通过实测；F1/F4/F6 仍有问题，详见文末第 7 节。**
+最新结论（第三轮独立复验，`188ec67`）：**原 7 项中 5 项通过，F1/F4 仍有边界遗漏，暂不全部通过。上轮直接复现场景均已通过；剩余 3 个具体问题见文末第 9 节。**
 
 首轮结论：暂不通过。以下第 1–6 节保留首轮证据，不代表修复后的现状。
 
@@ -280,7 +280,7 @@ CONTINUE Windows反斜杠路径 hint_parse_error=JsonParseException
 
 下一轮只需针对 R1–R4 修正并复验，保留已经通过的四项。不需要重写 Agent，也不需要增加执行预算。
 
-## 8. 第三轮修复（2026-09-20 深夜，针对 R1–R4）
+## 8. 实施者第三轮修复记录（2026-09-20 深夜，针对 R1–R4）
 
 R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.py`，源码同步更新）复验通过：
 
@@ -292,3 +292,87 @@ R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.p
 | R4 | 续读提示路径统一转正斜杠（resolveAny 两种分隔符都接受），示例 JSON 始终可解析 | Windows 反斜杠绝对路径：`offset=201 status=completed`（此前 hint_parse_error=JsonParseException） |
 
 回归：后端 135 测试 / 工具评测 9/9 通过。修复提交见 git log（`fix(agent): 第二轮复验 R1-R4`）。
+
+## 9. 第三轮独立复验（2026-09-20，`188ec67`）
+
+**结论：上轮直接复现场景全部修复；同一逻辑的边界补测仍有 3 个遗漏。** 本轮重新编译、执行实际类与本机 MCP HTTP 链路，未修改业务代码。执行预算排除。
+
+### 9.1 已通过的场景
+
+- 明确的任务更正之后连续输入 `continue`，裁剪后仍保留更正内容，不恢复旧目标。
+- 挂载 MCP 工具改变 description、filename 或 action，新的业务调用均实际发出，不再被误拦。
+- 工作区 `path=""` 配合非空 filename，不同目标的指纹已区分。
+- lazy MCP 的 arguments **对象**仅改变键顺序时，第四次按重复规则阻断，远端收到 3 次请求。
+- Windows 反斜杠绝对路径和嵌套相对路径的续读示例均能解析并从真实第 201 行继续；单行超长文件可以补读到末尾。
+- 前轮通过的 MCP 本地信任开关、参数错误分类、媒体四种结果状态及中段内容变化检测，本轮回归均通过。
+
+按首轮编号：F2/F3/F5/F6/F7 通过；F1/F4 部分修复。按第二轮编号：R4 通过，R1–R3 的直接案例通过但仍存在下面的同类边界。
+
+### 9.2 剩余问题
+
+#### T1 · P2：只保留最后一条实质消息，仍会丢失先前有效限制
+
+位置：[ChatContextAssembler.java:203](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:203)。
+
+实际场景：用户先要求“统计报告数量，全程只读，禁止删除或覆盖原文件”，随后补充“先处理 2026 目录，其余规则不变”；多轮继续后触发裁剪。最终上下文只保留第二条的处理范围，统计目标及只读限制均消失。第二条明确没有撤销原规则，不能替代第一条。补测“继续吧”也会被当成实质消息，覆盖任务信息。
+
+本次的关键词过滤修好了旧例子，但没有解决“任务信息分布在多条消息中”的问题。建议保留当前有效目标、累计限制和明确撤销关系的简短状态；不要继续扩充“继续”的正则来代替任务状态。这里确认的是装配上下文丢失信息，未声称模型已执行越权操作。
+
+复验重点：完整目标与限制 → 补充范围且声明原规则不变 → 历史裁剪 → 用户继续。目标、范围、限制应同时存在。
+
+#### T2 · P2：路径别名回退仍与执行器不同，连续空值会误拦另一文件
+
+位置：[ToolStepEmitter.java:573](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:573)，对照 [RiskClassifier.java:244](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/RiskClassifier.java:244)。
+
+指纹选择 filename 时只检查字段存在；filename 存在但为空时，不会继续选择 file，随后又把两字段都删除。实际执行器却会连续跳过空 path 和空 filename，使用 file。
+
+实际通过工具执行：前三次读取 `{"action":"read","path":"","filename":"","file":"alias-a.txt"}` 成功；第四次改为 alias-b.txt，虽然真实目标不同，却被标记 declined，未读取第二个文件。
+
+修正方向：工作区指纹直接复用 `workspacePathOf` 的输出，不再另写近似的回退逻辑。验收覆盖缺失、null、空串、空白字符串，以及多个别名同时存在的优先级。
+
+#### T3 · P2：arguments 为 JSON 字符串时，重复检测仍未按执行语义归一
+
+位置：[ToolStepEmitter.java:589](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:589)，对照 [ChatToolExecutor.java:1099](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatToolExecutor.java:1099)。
+
+当前递归排序处理对象与数组，但文本节点原样保留。执行器明确支持 arguments 传 JSON 字符串，并将其解析为对象再调用远端；所以两个语义相同的调用，在指纹层仍可能不同。
+
+实际协议复现：arguments 用 JSON 字符串承载同一组 `a=1,b=2,c=3`，只变换字符串内部对象的键顺序，四次均 completed，远端收到 4 次实际请求。同样参数改用对象传递，则第四次正确阻断。
+
+修正方向：仅针对 `manage_mcp action=call` 已约定的 arguments 字符串先解析，再做递归规范化；对象和字符串入口应得到相同的指纹。不要把其他工具的普通文本字段擅自解释成 JSON。
+
+### 9.3 检查与证据
+
+- 后端 135 项测试通过，0 失败、0 错误、0 跳过。
+- 前端 typecheck、lint、126 项测试、build 通过；此前两条构建警告仍在。
+- 验证覆盖实际上下文装配、实际文件读取、工具步骤和本机 MCP HTTP 请求计数；未运行真实模型完整对话或浏览器 E2E，不扩展为全项目验收结论。
+- 本轮只更新本文件。临时探针及输出：`C:/Users/24883/AppData/Local/Temp/nora-agent-reacceptance3-20260920/` 中的 `RoundTwoProbe.java`、`run.py`、`observations.txt`。运行前需重新编译项目，脚本通过实际输出复验，不含单测断言。
+
+```text
+旧场景：CONTEXT_KEEP_PRESENT=true OLD_TASK_PRESENT=false
+补充范围后：goal=false limit=false scope=true
+续接“继续吧”后：goal=false limit=false
+MCP_BUSINESS_FIELD=description/filename/action：4 次均发出
+空 path + 空 filename + file 改目标：[completed, completed, completed, declined]
+LAZY_NESTED_ORDER（对象）：[completed, completed, completed, declined] requests=3
+LAZY_STRING_ORDER（JSON 字符串）：[completed, completed, completed, completed] requests=4
+Windows 路径续读：offset=201 status=completed
+```
+
+下一轮聚焦 T1–T3。T2/T3 可以在现有参数处理处收敛；T1 需要保留累积任务信息，继续替换“最后一条消息”的筛选规则无法覆盖其根因。
+
+## 10. 实施者第四轮修复记录（2026-09-20 深夜，针对 T1–T3 + 同类边角）
+
+T1–T3 全部修复，并补齐同类边角（动作别名/文件中心寻址），第三轮探针复验通过：
+
+| 项 | 修复 | 复验输出 |
+|---|---|---|
+| T1 | `buildMessages` 不再用"最后一条/摘录"替代累计要求：**按原顺序保留全部用户消息**（先为全部用户消息计预算，超预算时明确报错而不是静默丢弃），剩余空间装最近的助手/工具过程；system 提示新增第 9 条说明"用户消息按原顺序保留、后续补充不自动取消先前限制" | `AMENDED_CONTEXT goal=true limit=true scope=true`（目标+限制+范围同时保留）；`继续吧` 后 `goal=true limit=true`（不被续接语覆盖） |
+| T2 | 工作区指纹直接复用 `workspacePathOf` 的输出（与执行器/权限判定同一别名序，缺失/null/空串/空白统一回退 path→filename→file） | `ALIAS_EMPTY_STATUSES=[completed×4]`——第 4 次 alias-b.txt 正确读取到 BBB（此前被误拦 declined） |
+| T3 | `manage_mcp action=call` 的 arguments 在**执行与指纹共用同一解释**（`ChatToolExecutor.mcpArguments`）：对象与 JSON 字符串、省略与空白统一解析为对象后再递归排序 | `LAZY_STRING_ORDER=[completed×3, declined]`——JSON 字符串换序第 4 次正确阻断（此前 4 次都发出）；对象入口同前 |
+| 边角 1 | **全部内置工具**的 action 别名归一进指纹（add→create / invoke→call / download→import / pause→disable 等，与执行层同一别名表）——同一执行语义的拼写必须同指纹，否则换拼写即可绕过重复检测 | 单测冒烟（`AgentContextAndArgumentsSmokeTest`）+ 既有 139 项测试通过 |
+| 边角 2 | `manage_file` 寻址归一（id→path→filename，与执行层 parseArgs 提取序完全一致；数字目标统一存 id、非数字统一存 path）——同一目标的不同寻址拼写同指纹，不同目标（a.txt/b.txt）不同指纹 | `EMPTY_PATH` a/b 指纹各异；`FILE_ACTION` 四动作指纹各异 |
+
+回归：后端 139 测试 / 前端 126 测试 / tsc / 工具评测 9/9 全部通过。
+
+新增冒烟测试 `AgentContextAndArgumentsSmokeTest`（4 项：上下文保留/超限明确拒绝/参数归一/MCP arguments 形态解析），
+按项目约定不带断言、只执行路径；行为正确性由上述探针的真实工具/HTTP 路径复验。
