@@ -2,8 +2,8 @@
 
 AI 驱动的个人文件管理与开发者工作台——前端仓库。
 
-> 后端 `nora-api` 已上线，本仓库通过 `VITE_USE_BACKEND` 开关接入真实 API；
-> 7 个域已完成对接，未接入的域仍走本地 Mock。详见下方[「后端接入现状」](#后端接入现状)。
+> 后端 `nora-api` 已上线（8 个微服务），本仓库通过 `VITE_USE_BACKEND` 开关接入真实 API；
+> 全部业务域已对接后端，Mock 仅作 `USE_BACKEND=false` 的本地回退。详见下方[「后端接入现状」](#后端接入现状)。
 
 ## 技术栈
 
@@ -35,17 +35,19 @@ nora-web/
 ├── vite.config.ts          # 构建配置（@ 别名 + next/* 兼容层映射）
 ├── src/
 │   ├── main.tsx            # ReactDOM.createRoot + BrowserRouter + ThemeProvider
-│   ├── App.tsx             # 路由表（9 条主路由 + 重定向 + 404 兜底）
+│   ├── App.tsx             # 路由表（11 条主路由——含登录页,全部 React.lazy 懒加载 + 重定向 + 404 兜底）
 │   ├── app/                # 路由页面组件（仅胶水层，≤150 行）
 │   │   ├── page.tsx        #   首页（概览面板）
-│   │   ├── files/          #   文件管理
+│   │   ├── files/          #   文件管理（文件中心 = 统一文件系统视图）
 │   │   ├── chat/           #   AI 对话
 │   │   ├── knowledge/      #   知识库 RAG（4 Tab）
 │   │   ├── skills/         #   AI 能力
+│   │   ├── mcp/            #   MCP 管理
 │   │   ├── data-sources/   #   数据源
 │   │   ├── environments/   #   环境控制台
 │   │   ├── automations/    #   自动任务
-│   │   └── settings/       #   设置中心
+│   │   ├── settings/       #   设置中心
+│   │   └── login/          #   令牌登录页
 │   ├── components/
 │   │   ├── ui/             # 基础 UI 原语（Button/Input/Switch/Select/Tabs/Modal）
 │   │   │   └── custom/     #   共享 UI（Modal/UploadModal/States）
@@ -92,7 +94,8 @@ nora-web/
 | 域 | 状态 |
 |----|------|
 | 文件 / 知识库 / 对话 / 数据源 / 环境 / 自动任务 / 模型管理 | ✅ 已接入后端 |
-| AI 能力 / 设置 / 环境变量 / 通知 | ⬜ 后端未提供，仍为本地 Zustand + localStorage |
+| AI 能力（技能）/ MCP 管理 / 通知 / 工作区 / 媒体缓存 / 登录 | ✅ 已接入后端 |
+| 环境变量（设置页） | ✅ 已接入后端（`/api/env-vars`） |
 
 接入新域或改契约后，请同步更新 [AGENTS.md](AGENTS.md) 的「后端接入现状」表。
 

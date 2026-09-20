@@ -50,17 +50,23 @@
 
 | 域 | 契约文件 | 后端端点 | 状态 |
 |---|---|---|---|
-| 文件 | `filesApi.ts` | `/api/files/**` | ✅ 已接入（上传/列表/删除/预览/索引） |
+| 文件 | `filesApi.ts` | `/api/files/**` | ✅ 已接入（上传/文件夹/列表/删除/回收站/预览/下载/索引） |
 | 知识库 RAG | `ragService.ts` | `/api/rag/**` | ✅ 已接入（文档/检索/统计/引用/详情/重命名/删除/批量删除/重建索引） |
-| 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval） |
-| 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询；引擎 pg/mysql/redis，Redis 键空间浏览 + 只读命令控制台） |
-| 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE） |
-| 自动任务 | `automationsApi.ts` | `/api/automations/**` | ✅ 已接入（规则 CRUD/执行） |
+| 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval + 断线重连 + 并发冲突 409） |
+| 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询；引擎 pg/mysql/redis） |
+| 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE/进程守护） |
+| 自动任务 | `automationsApi.ts` | `/api/automations/**` | ✅ 已接入（规则 CRUD/执行；**file/error 触发条件未接通,UI 已标不可选**） |
 | 模型 Provider | `modelsApi.ts` | `/api/models/**` | ✅ 已接入（CRUD/连通测试） |
-| AI 能力 / 设置 / 环境变量 / 通知 | — | — | ⬜ 后端未提供，仍为本地 Zustand + localStorage |
+| 技能 | `skillsApi` / `useSkills` | `/api/skills/**` | ✅ 已接入（列表不带正文/详情按需拉取） |
+| MCP 管理 | `mcpApi` | `/api/mcp/**` | ✅ 已接入（含 STDIO/GitHub OAuth） |
+| 通知 | `notificationsApi.ts` / `useNotifications` | `/api/notifications/**` | ✅ 已接入（Kafka 事件落库 + 前端轮询同步） |
+| 工作区 | `workspaceApi.ts` | `/api/workspace/**` | ✅ 已接入（文件页内「Agent 工作区」浏览器） |
+| 媒体缓存 | `mediaCacheApi.ts` | `/api/media/**` | ✅ 已接入（缓存列表/删除/保存到文件中心/代理预览） |
+| 登录 | `auth.ts` | `/api/auth/**` | ✅ 已接入（令牌登录,缺省免登录；SSE/img 走 `?token=`） |
 
 新增接入时遵循同一模式：在 `lib/services/` 建 `xxxApi.ts`，导出 async 函数并在内部 `requestJson`；
 Hook 中按 `USE_BACKEND` 分流；保留同步 Mock 函数作为回退，**并在 JSDoc 中注明它是回退实现**。
+**带令牌的媒体/下载入口必须用 `withAuthToken()`**（`<img>`/`window.open`/EventSource 无法带 header，2026-09-20 统一修复过一批遗漏）。
 
 ## 📁 目录约定 (Directory Structure)
 - `/` 根目录：`index.html`（Vite 入口）、`vite.config.ts`（构建配置，含 `@` 别名与 `/api` 代理）、`src/main.tsx`（ReactDOM.createRoot + BrowserRouter）、`src/App.tsx`（路由表）
