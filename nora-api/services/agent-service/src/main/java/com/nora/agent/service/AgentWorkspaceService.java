@@ -331,12 +331,12 @@ public class AgentWorkspaceService {
 
     /** 读取文本文件(限长;二进制拒绝)。 */
     public String read(String relative) {
-        return readPath(resolveSafe(relative));
+        return readPath(resolveSafe(relative), relative);
     }
 
     /** 读取任意文件(agent 工具用;区外按审批档位放行)。 */
     public String readAny(String path) {
-        return readPath(resolveAny(path).path());
+        return readPath(resolveAny(path).path(), path);
     }
 
     /**
@@ -392,7 +392,7 @@ public class AgentWorkspaceService {
         }
     }
 
-    private String readPath(Path file) {
+    private String readPath(Path file, String originalPath) {
         if (!Files.isRegularFile(file)) {
             // 日记空态出路(2026-09-18 文件工具分析):memory/YYYY-MM-DD.md 读不到时,
             // 若文件名恰是今天(模型想读"今天的日记"但还没写),给可操作提示而非干巴巴的
@@ -415,11 +415,23 @@ public class AgentWorkspaceService {
                 throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
             }
             if (content.length() > MAX_FILE_CHARS) {
-                // 截断即给续读出路(设计 §5.3):截断的内容不能变成读不到的证据
-                return content.substring(0, MAX_FILE_CHARS)
-                        + "\n…(文件过大,已截断;继续读取用 offset/limit 分段读,"
-                        + "如 {\"action\": \"read\", \"path\": \"" + file.getFileName()
-                        + "\", \"offset\": 501})";
+                // 截断即给续读出路(设计 §5.3;验收 F6 修正):
+                // ① 用**完整原始路径**(不是裸文件名——嵌套文件照抄会报不存在);
+                // ② 算出**真实的下一行号**(按截断点之前的换行数,不是硬编码 501)。
+                String truncated = content.substring(0, MAX_FILE_CHARS);
+                int nextLine = 1;
+                for (int i = 0; i < truncated.length(); i++) {
+                    if (truncated.charAt(i) == '\n') {
+                        nextLine++;
+                    }
+                }
+                String pathHint = originalPath == null || originalPath.isBlank()
+                        ? file.toString().replace('\\', '/')
+                        : originalPath;
+                return truncated
+                        + "\n…(文件过大,已截断(约第 " + nextLine + " 行处);继续读取:"
+                        + "{\"action\": \"read\", \"path\": \"" + pathHint + "\", \"offset\": "
+                        + nextLine + "})";
             }
             return content;
         } catch (IOException e) {

@@ -1389,15 +1389,26 @@ class ChatToolExecutor {
                     sb.append("- ").append(report.errors().get(i)).append('\n');
                 }
             }
-            // 部分成功(设计 §5.2):有失败项时明确标注,不显示为全量成功——
-            // 模型据此只处理未完成项,而不是声称"全部完成"
-            if (report.failed() > 0) {
+            // 状态从统计派生(2026-09-20 验收 F3):「可用结果」= 本次下载成功 +
+            // 已存在跳过(跳过也是目录里的可用文件)。全部失败=失败(不是"部分
+            // 成功");有可用结果且还有失败项才是部分成功;状态与文案同源。
+            int usable = report.downloaded() + report.skipped();
+            boolean allFailed = report.failed() > 0 && usable == 0;
+            boolean someFailed = report.failed() > 0 && usable > 0;
+            if (allFailed) {
+                String detail = report.errors().isEmpty() ? "" : "(" + report.errors().get(0) + ")";
+                return new ToolOutcome("ERROR: 全部 " + report.failed() + " 个文件下载失败,未得到可用结果 " + detail
+                        + "\n下一步:确认手机 App 在线与网络状态,或缩小范围重试;已存在的文件会跳过,可安全重跑。",
+                        "全部失败(" + report.failed() + "/" + report.total() + ")", 0, false);
+            }
+            if (someFailed) {
+                // 部分成功:模型据此只处理未完成项,而不是声称"全部完成"
                 sb.append("\n(部分成功:").append(report.failed())
                         .append(" 个文件失败——可只重试失败项,已成功的会跳过)");
             }
             ToolOutcome fetchOutcome = bounded(sb.toString(), "下载 " + report.downloaded() + "/" + report.total()
                     + (report.failed() > 0 ? ",失败 " + report.failed() : ""));
-            return report.failed() > 0
+            return someFailed
                     ? new ToolOutcome(fetchOutcome.content(), fetchOutcome.summary(), fetchOutcome.rowCount(),
                             fetchOutcome.truncated(), java.util.List.of(), false, true)
                     : fetchOutcome;

@@ -58,11 +58,26 @@ public class McpServerService {
     /** 客户端连接池 + STDIO 进程树(从本类拆出,2026-09-17)。 */
     private final McpClientPool clientPool;
     private final ObjectMapper objectMapper;
+    /**
+     * 本地是否信任远端 readOnlyHint 声明(2026-09-20 验收 F2,设计 §6):
+     * 默认 false——远端注解只是参考,仅当本地配置显式信任时,声明只读的
+     * 工具才允许调用中断后自动重放。配置项 nora.agent.mcp.trust-readonly-hints。
+     */
+    private final boolean trustReadOnlyHints;
 
+    /** 测试便捷构造(不信任远端只读声明)。 */
     public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, RelayMediaRouter relayRouter) {
+        this(jdbcTemplate, objectMapper, relayRouter, false);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, RelayMediaRouter relayRouter,
+                            @org.springframework.beans.factory.annotation.Value(
+                                    "${nora.agent.mcp.trust-readonly-hints:false}") boolean trustReadOnlyHints) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.clientPool = new McpClientPool(objectMapper, relayRouter);
+        this.trustReadOnlyHints = trustReadOnlyHints;
     }
 
     // ---------- 注册表 CRUD ----------
@@ -288,20 +303,34 @@ public class McpServerService {
      * {@link #callTool} 的富变体:保留 image 内容块,让编排层以多模态部件
      * 喂给支持视觉的模型。文本渲染与旧行为一致(图片留一行尺寸占位)。
      *
-     * <p>重试策略(2026-09-20,架构设计 §9.2「重连和重做是两个决定」):
+     * <p>重试策略(2026-09-20,架构设计 §9.2「重连和重做是两个决定」;
+     * 验收 F2/F7 修正):
      * <ul>
+     *   <li><b>本地参数解析失败</b> → 请求从未发出:返回可纠正的参数错误,
+     *       <b>不是</b> unknown(验收 F7:解析失败不能报"可能已在远端生效");</li>
      *   <li><b>连接建立失败</b>(初始化未完成,调用尚未发出)→ 驱逐死连接、
-     *       重连一次(任何工具都安全——远端没收到任何调用);</li>
-     *   <li><b>调用中断</b>(已发出、结果未知)→ 仅当该工具在快照中
-     *       <b>明确声明 readOnlyHint=true</b> 时才允许重连重试(只读可重复);
-     *       其余保留「结果未知」状态,不自动重放——远端可能已经完成操作,
-     *       盲目重试会造成重复副作用。模型收到 unknown 状态后应先查询/核对。</li>
+     *       重连一次(任何工具都安全);</li>
+     *   <li><b>调用中断</b>(已发出、结果未知)→ 默认保留 unknown 不重放;
+     *       仅当<b>本地信任配置</b>({@code nora.agent.mcp.trust-readonly-hints},
+     *       默认 false)开启且该工具声明 readOnlyHint=true 时才重连重试——
+     *       远端注解只是参考,执行策略按本地配置(设计 §6;验收 F2)。</li>
      * </ul>
      */
     public McpToolResult callToolRich(long serverId, String toolName, String argsJson) {
         RawServer server = rawById(serverId);
         if (server == null) {
             return McpToolResult.error("ERROR: mcp server " + serverId + " 不存在");
+        }
+        // 阶段 0:本地参数解析——失败即返回可纠正错误,请求不发出(验收 F7)
+        Map<String, Object> args;
+        try {
+            args = argsJson == null || argsJson.isBlank()
+                    ? Map.of()
+                    : objectMapper.readValue(argsJson, Map.class);
+        } catch (Exception parseFailure) {
+            return McpToolResult.error("ERROR: 工具参数不是合法 JSON(" + toolName + "): "
+                    + shorten(parseFailure.getMessage() == null ? parseFailure.toString() : parseFailure.getMessage())
+                    + " —— 参数未通过本地校验,请求没有发出。请修正参数后重试");
         }
         // 阶段 1:连接(或复用)客户端——初始化失败 = 调用尚未发出,重连一次安全
         McpSyncClient client;
@@ -319,25 +348,19 @@ public class McpServerService {
                 return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
             }
         }
-        // 阶段 2:实际调用——中断 = 结果未知(可能已生效),重试按只读声明决策
+        // 阶段 2:实际调用——中断 = 结果未知(可能已生效),重试按本地信任配置决策
         try {
-            return renderResultRich(client.callTool(new McpSchema.CallToolRequest(toolName,
-                    argsJson == null || argsJson.isBlank()
-                            ? Map.of()
-                            : objectMapper.readValue(argsJson, Map.class))));
+            return renderResultRich(client.callTool(new McpSchema.CallToolRequest(toolName, args)));
         } catch (Exception callFailure) {
             clientPool.evictClient(serverId);
             String raw = callFailure.getMessage() == null ? callFailure.toString() : callFailure.getMessage();
-            if (declaredReadOnly(serverId, toolName)) {
-                // 明确只读:重连重试一次(可重复操作,无副作用)
-                log.info("mcp read-only callTool failed (server={} tool={}), retrying once: {}",
+            if (trustReadOnlyHints && declaredReadOnly(serverId, toolName)) {
+                // 本地信任 + 工具声明只读:重连重试一次(可重复操作,无副作用)
+                log.info("mcp read-only callTool failed (server={} tool={}), retrying once (local trust enabled): {}",
                         server.name(), toolName, shorten(raw));
                 try {
                     McpSyncClient fresh = clientPool.clientFor(server);
-                    return renderResultRich(fresh.callTool(new McpSchema.CallToolRequest(toolName,
-                            argsJson == null || argsJson.isBlank()
-                                    ? Map.of()
-                                    : objectMapper.readValue(argsJson, Map.class))));
+                    return renderResultRich(fresh.callTool(new McpSchema.CallToolRequest(toolName, args)));
                 } catch (Exception e) {
                     String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
                     log.warn("mcp read-only callTool failed after reconnect: server={} tool={}: {}",
@@ -345,7 +368,7 @@ public class McpServerService {
                     return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
                 }
             }
-            // 未声明只读(或声明有副作用):保留结果未知,不自动重放
+            // 默认(或声明有副作用):保留结果未知,不自动重放
             log.warn("mcp callTool interrupted, outcome unknown (server={} tool={}): {}",
                     server.name(), toolName, shorten(raw));
             return McpToolResult.unknown("ERROR: MCP 工具调用中断(" + toolName + "): " + shorten(friendlyConnectError(raw))

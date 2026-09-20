@@ -123,23 +123,16 @@ class ToolStepEmitter {
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
 
-        // 循环检测(2026-09-20 改为结果感知,设计 §9.3):相同(工具, 归一化参数)
-        // 且**结果也不变**时才累计——正常的轮询/有进展的重复读取会因结果变化重置,
-        // 不会被误拦;只有持续无进展的重复才最终阻断。
-        // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
-        // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill/
-        // manage_mcp/run_command 同理(主体在 content/path/instructions/url/command 字段)。
-        // fetch_media(2026-09-19 修复):真实区分维度是 from/to/type/folder,
-        // typed input 只含 folder——同一目录分批拉不同时间范围(常见批量场景)
-        // 会被误判重复而熔断,改用原始 args 指纹。
-        boolean rawFingerprint = name.startsWith("mcp__")
-                || "manage_workspace".equals(name) || "manage_skill".equals(name)
-                || "manage_mcp".equals(name) || "run_command".equals(name)
-                || "manage_knowledge".equals(name) || "manage_automation".equals(name)
-                || "search_knowledge".equals(name) || "fetch_media".equals(name);
-        String fingerprint = name + "|"
-                + (rawFingerprint ? (args == null ? "" : args)
-                        : normalizeArgs(name, input, parsed.datasourceAction()));
+        // 循环检测(2026-09-20 改为结果感知,设计 §9.3;验收 F4 修正):
+        // 指纹 = 标准工具名 + 规范化参数(JSON 键排序、剔除展示字段 description、
+        // 别名归一到标准名)。修正两个方向:
+        //   ① 漏拦:此前部分工具用原始 JSON——description(展示标题)变化或
+        //      字段顺序变化会重置计数,同一调用换描述就能绕过熔断;
+        //   ② 误拦:此前 manage_file 只用 target(id)——同一文件的 read/rename/
+        //      move/delete 指纹相同,前一个动作累计到阈值会阻断后一个不同动作。
+        // 规范化后:同一次操作(忽略展示差异)指纹一致;不同操作(action/参数
+        // 含义不同)指纹不同。
+        String fingerprint = canonicalToolName(name) + "|" + canonicalArgs(args);
         if (loopDetector.shouldBlock(fingerprint, LOOP_BLOCK_THRESHOLD)) {
             String error = "重复调用已阻断：同样的参数已连续 " + loopDetector.blockCount(fingerprint)
                     + " 次得到相同结果。请基于已有结果继续回答,或换一种查询/诊断方式。";
@@ -259,18 +252,30 @@ class ToolStepEmitter {
     }
 
     /**
-     * 循环检测的结果指纹(设计 §9.3「判断时使用结果或进度」):
-     * 内容 + 长度。长结果只取头尾采样,避免大输出(视频清单等)反复哈希的开销,
-     * 又保留「内容确实变了」的区分度。
+     * 循环检测的结果指纹(设计 §9.3「判断时使用结果或进度」;验收 F5 修正):
+     * 对**完整内容**做 SHA-256 取前 16 位十六进制。
+     *
+     * <p>此前只比较头尾各 1000 字符 + 长度——中段变化但长度不变时指纹相同,
+     * 真实变化被误判为「没有进展」而阻断(验收探针复现:连续更新文件中段数字,
+     * 第四轮被 declined)。工具输出最大 30K 字符,整串哈希是微秒级开销,
+     * 没有理由做有损采样。
      */
     private static String resultHashOf(String content) {
         if (content == null) {
             return null;
         }
-        String sample = content.length() <= 2000
-                ? content
-                : content.substring(0, 1000) + "|" + content.substring(content.length() - 1000);
-        return content.length() + ":" + Integer.toHexString(sample.hashCode());
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            // SHA-256 必然可用;兜底退化为全串 hashCode(仍比头尾采样强)
+            return content.length() + ":" + Integer.toHexString(content.hashCode());
+        }
     }
 
     private void finishToolStep(String toolStepId, String name, String title, ChatStepDto.StepInput input,
@@ -510,29 +515,69 @@ class ToolStepEmitter {
         };
     }
 
-    /** 循环检测用的稳定字符串:参数中有意义的部分。 */
-    private String normalizeArgs(String name, ChatStepDto.StepInput input, String action) {
-        if ("execute_sql".equals(name) || "execute_write_sql".equals(name)) {
-            return (input.sql() == null ? "" : input.sql().trim().toLowerCase())
-                    + "@" + (input.target() == null ? "" : input.target().toLowerCase());
+    /**
+     * 工具名归一(验收 F4):兼容别名归到标准名——旧历史/旧调用里的
+     * read_file 与 manage_file 视为同一工具,避免新旧名各自计数绕过熔断。
+     */
+    private static String canonicalToolName(String name) {
+        return "read_file".equals(name) ? "manage_file" : name;
+    }
+
+    /**
+     * 参数规范化(验收 F4):解析为 JSON 对象后按键名排序序列化,
+     * 剔除展示字段(description)并归一执行层会接受的别名。
+     * 修正两个方向的缺陷:
+     * <ul>
+     *   <li>漏拦:此前部分工具直接用原始 JSON——description 变化或字段顺序
+     *       变化会重置计数,同一调用换描述就能绕过熔断;</li>
+     *   <li>误拦:此前 manage_file 只用 target(id)——同一文件的
+     *       read/rename/move/delete 指纹相同,不同动作互相阻断。</li>
+     * </ul>
+     * 解析失败(非法 JSON)时退回原始串——宁可保守也不要漏判。
+     */
+    private String canonicalArgs(String args) {
+        if (args == null || args.isBlank()) {
+            return "";
         }
-        if ("read_service_logs".equals(name)) return (input.service() == null ? "" : input.service()) + "#" + input.limit();
-        if ("manage_container".equals(name)) return input.service() == null ? "" : input.service();
-        if ("manage_datasource".equals(name) || "manage_service".equals(name)) {
-            // action 进指纹(2026-09-19 修复):同一 target 上 list→schema→test
-            // 是不同动作,此前共用指纹会被误判重复调用而熔断
-            return (action == null ? "?" : action.toLowerCase()) + "@"
-                    + (input.target() == null ? "?" : input.target().toLowerCase());
+        try {
+            JsonNode node = objectMapper.readTree(args);
+            if (!(node instanceof ObjectNode obj)) {
+                return args;
+            }
+            // 剔除展示字段(不影响执行语义)
+            obj.remove("description");
+            // 路径别名归一(与 RiskClassifier.workspacePathOf 同一别名序)
+            if (!obj.has("path")) {
+                String alias = obj.has("filename") ? obj.path("filename").asText(null)
+                        : obj.has("file") ? obj.path("file").asText(null) : null;
+                if (alias != null) {
+                    obj.put("path", alias);
+                }
+            }
+            obj.remove("filename");
+            obj.remove("file");
+            // 动作方言归一(与执行层共用)
+            if (obj.has("action")) {
+                String action = obj.path("action").asText("");
+                String canonical = RiskClassifier.normalizeWorkspaceAction(action);
+                if (!canonical.equals(action)) {
+                    obj.put("action", canonical);
+                }
+            }
+            // 键排序(确定性输出;剔除展示差异后的同一次调用指纹一致)
+            java.util.TreeMap<String, JsonNode> sorted = new java.util.TreeMap<>();
+            obj.fieldNames().forEachRemaining(f -> sorted.put(f, obj.get(f)));
+            StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
+            for (var e : sorted.entrySet()) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append('"').append(e.getKey()).append("\":").append(e.getValue().toString());
+            }
+            return sb.append('}').toString();
+        } catch (Exception e) {
+            return args;
         }
-        if ("manage_file".equals(name) || "read_file".equals(name)) {
-            return input.target() == null ? "?" : input.target();
-        }
-        if ("manage_workspace".equals(name) || "manage_skill".equals(name) || "manage_mcp".equals(name)
-                || "run_command".equals(name) || "fetch_media".equals(name)) {
-            return (input.target() == null ? "?" : input.target().toLowerCase())
-                    + "#" + (input.limit() == null ? "" : input.limit());
-        }
-        return "";
     }
 
     /** approval_required 事件载荷:操作类型、目标、参数摘要、风险说明、参数明细。 */

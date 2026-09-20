@@ -162,9 +162,11 @@ class ChatContextAssembler {
             from--;
             if (historyEnd - from >= 40) break; // 条数硬上限,防御超长单条
         }
-        // 任务锚点(设计 §8.2「长任务经过压缩后仍记得目标与限制」):历史被预算
-        // 裁掉开头时,把会话最初的任务目标单独注入一条 system——否则早期消息
-        // 被裁剪后,模型只剩中段工具结果,容易丢掉"用户最初要什么"
+        // 任务锚点(设计 §8.2「长任务经过压缩后仍记得目标与限制」;2026-09-20
+        // 验收 F1 修正):历史被预算裁掉开头时,注入**最近**的用户目标而不是
+        // 最早的消息——用户可能已改口/撤销旧任务,把最早消息提升为 system
+        // 「以它为准」会重新激活已作废的目标(验收探针复现)。
+        // 语义:低优先级背景参考,最新一条用户消息才是当前任务的权威。
         if (from > 0) {
             String anchor = taskAnchor(history, from);
             if (anchor != null) {
@@ -179,19 +181,29 @@ class ChatContextAssembler {
     }
 
     /**
-     * 任务锚点文本:会话最初一条用户消息(任务目标/限制的原始表述)的摘录。
-     * 仅在历史开头被裁剪时注入;过短无信息量的不注入。
+     * 任务锚点文本(2026-09-20 验收 F1 修正):
+     * <ul>
+     *   <li>取**最近**被裁掉区间内(以及保留区间第一条之前)的用户消息——
+     *       用户的改口/撤销总是更晚发生,最新表述才代表当前任务;</li>
+     *   <li>措辞为「仅供参考的早期背景」,不写「以它为准」——后续消息
+     *       (包括本轮 userMessage)始终优先。</li>
+     * </ul>
      */
     private static String taskAnchor(List<ChatStoreService.StoredMessage> history, int trimmedUntil) {
+        String latest = null;
         for (int i = 0; i < trimmedUntil && i < history.size(); i++) {
             ChatStoreService.StoredMessage m = history.get(i);
             if (!"user".equals(m.role()) || m.content() == null || m.content().isBlank()) {
                 continue;
             }
-            String excerpt = m.content().length() <= 400 ? m.content() : m.content().substring(0, 400) + "…";
-            return "本会话最早的任务目标(历史较早部分已省略,以下为用户原话摘录,继续以它为准):\n" + excerpt;
+            latest = m.content();
         }
-        return null;
+        if (latest == null) {
+            return null;
+        }
+        String excerpt = latest.length() <= 400 ? latest : latest.substring(0, 400) + "…";
+        return "背景(历史较早部分已省略;以下是用户此前最近的表述,仅作参考——"
+                + "用户后续的消息与要求优先,如与下方内容冲突以更新者为准):\n" + excerpt;
     }
 
     /**
