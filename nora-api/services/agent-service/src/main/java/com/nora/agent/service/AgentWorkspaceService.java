@@ -425,9 +425,11 @@ public class AgentWorkspaceService {
                         nextLine++;
                     }
                 }
+                // 路径提示必须是合法 JSON 字符串(验收 R4):Windows 反斜杠原样
+                // 插入会让示例 JSON 解析失败——统一转正斜杠(resolveAny 两种分隔符都接受)。
                 String pathHint = originalPath == null || originalPath.isBlank()
                         ? file.toString().replace('\\', '/')
-                        : originalPath;
+                        : originalPath.replace('\\', '/');
                 return truncated
                         + "\n…(文件过大,已截断(约第 " + nextLine + " 行处);继续读取:"
                         + "{\"action\": \"read\", \"path\": \"" + pathHint + "\", \"offset\": "

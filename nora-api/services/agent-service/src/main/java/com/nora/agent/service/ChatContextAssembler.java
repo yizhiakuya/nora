@@ -181,29 +181,47 @@ class ChatContextAssembler {
     }
 
     /**
-     * 任务锚点文本(2026-09-20 验收 F1 修正):
+     * 任务锚点文本(2026-09-20 验收 F1/R1 修正):
      * <ul>
-     *   <li>取**最近**被裁掉区间内(以及保留区间第一条之前)的用户消息——
-     *       用户的改口/撤销总是更晚发生,最新表述才代表当前任务;</li>
+     *   <li>取被裁区间内**最近一条有实质内容**的用户消息——"继续/好的"这类
+     *       续接消息不携带任务信息,不能当锚点(否则 42 条"continue"会把
+     *       真实任务与限制全部冲掉,复验 R1 实测);</li>
      *   <li>措辞为「仅供参考的早期背景」,不写「以它为准」——后续消息
      *       (包括本轮 userMessage)始终优先。</li>
      * </ul>
      */
     private static String taskAnchor(List<ChatStoreService.StoredMessage> history, int trimmedUntil) {
-        String latest = null;
+        String latestSubstantive = null;
         for (int i = 0; i < trimmedUntil && i < history.size(); i++) {
             ChatStoreService.StoredMessage m = history.get(i);
             if (!"user".equals(m.role()) || m.content() == null || m.content().isBlank()) {
                 continue;
             }
-            latest = m.content();
+            if (isTrivialContinuation(m.content())) {
+                continue;
+            }
+            latestSubstantive = m.content();
         }
-        if (latest == null) {
+        if (latestSubstantive == null) {
             return null;
         }
-        String excerpt = latest.length() <= 400 ? latest : latest.substring(0, 400) + "…";
-        return "背景(历史较早部分已省略;以下是用户此前最近的表述,仅作参考——"
+        String excerpt = latestSubstantive.length() <= 400 ? latestSubstantive
+                : latestSubstantive.substring(0, 400) + "…";
+        return "背景(历史较早部分已省略;以下是用户此前最近一条有内容的表述,仅作参考——"
                 + "用户后续的消息与要求优先,如与下方内容冲突以更新者为准):\n" + excerpt;
+    }
+
+    /**
+     * 寒暄/续接类短消息判定(验收 R1):不携带任务信息,不能当任务锚点。
+     * 长度受限 + 模式匹配——只拦纯续接语,不误伤短的实质指令(如「只统计」)。
+     */
+    static boolean isTrivialContinuation(String content) {
+        String t = content.trim();
+        if (t.isEmpty() || t.length() > 40) {
+            return false;
+        }
+        return t.matches("(?i)^(继续|continue|go on|next|下一步|好的?|ok(ay)?|嗯+|行|可以|收到|谢谢|多谢)"
+                + "[\\s\\d.!。!?？,、~…]*$");
     }
 
     /**

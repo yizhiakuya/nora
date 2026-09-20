@@ -132,7 +132,7 @@ class ToolStepEmitter {
         //      move/delete 指纹相同,前一个动作累计到阈值会阻断后一个不同动作。
         // 规范化后:同一次操作(忽略展示差异)指纹一致;不同操作(action/参数
         // 含义不同)指纹不同。
-        String fingerprint = canonicalToolName(name) + "|" + canonicalArgs(args);
+        String fingerprint = canonicalToolName(name) + "|" + canonicalArgs(name, args);
         if (loopDetector.shouldBlock(fingerprint, LOOP_BLOCK_THRESHOLD)) {
             String error = "重复调用已阻断：同样的参数已连续 " + loopDetector.blockCount(fingerprint)
                     + " 次得到相同结果。请基于已有结果继续回答,或换一种查询/诊断方式。";
@@ -524,18 +524,26 @@ class ToolStepEmitter {
     }
 
     /**
-     * 参数规范化(验收 F4):解析为 JSON 对象后按键名排序序列化,
-     * 剔除展示字段(description)并归一执行层会接受的别名。
-     * 修正两个方向的缺陷:
+     * 参数规范化(验收 F4;R2/R3 修正):解析为 JSON 对象后**递归**按键名
+     * 排序序列化(嵌套对象同样排序,数组顺序保留——数组顺序通常是业务语义)。
+     *
+     * <p>字段处理按工具语义分层(验收 R2——工作区别名规则不能套到 MCP 上):
      * <ul>
-     *   <li>漏拦:此前部分工具直接用原始 JSON——description 变化或字段顺序
-     *       变化会重置计数,同一调用换描述就能绕过熔断;</li>
-     *   <li>误拦:此前 manage_file 只用 target(id)——同一文件的
-     *       read/rename/move/delete 指纹相同,不同动作互相阻断。</li>
+     *   <li><b>所有工具</b>:剔除 {@code description}(本地注入的展示标题,
+     *       不进 MCP 调用语义——见 parseArgs 的展示用途);</li>
+     *   <li><b>内置工具</b>(manage_workspace / manage_file):filename/file→path
+     *       别名归一、动作方言归一(download/save/fetch→import)——与执行层
+     *       归一化对齐,保证「实际执行目标相同 → 指纹相同」;</li>
+     *   <li><b>MCP 工具(mcp__ 前缀与 manage_mcp)</b>:业务字段**全部保留**——
+     *       description/filename/save 在远端工具里可能是真实业务字段,
+     *       改动它们就是不同的调用(R2 复现:被误判重复而阻断)。</li>
      * </ul>
+     *
+     * <p>递归排序修正 R3:此前只对最外层排序,嵌套 arguments 内换序仍能
+     * 绕过重复检测(复现:同参数换 4 种排列,4 次都执行)。
      * 解析失败(非法 JSON)时退回原始串——宁可保守也不要漏判。
      */
-    private String canonicalArgs(String args) {
+    private String canonicalArgs(String toolName, String args) {
         if (args == null || args.isBlank()) {
             return "";
         }
@@ -544,40 +552,67 @@ class ToolStepEmitter {
             if (!(node instanceof ObjectNode obj)) {
                 return args;
             }
-            // 剔除展示字段(不影响执行语义)
-            obj.remove("description");
-            // 路径别名归一(与 RiskClassifier.workspacePathOf 同一别名序)
-            if (!obj.has("path")) {
-                String alias = obj.has("filename") ? obj.path("filename").asText(null)
-                        : obj.has("file") ? obj.path("file").asText(null) : null;
-                if (alias != null) {
-                    obj.put("path", alias);
+            // 分层处理(验收 R2 复验后修正):挂载的 MCP 工具(mcp__*)的参数
+            // 全部是远端业务字段——description/filename/action 都可能是有含义的
+            // 业务数据,一个都不能动(此前统一剔除 description 导致改它被误判
+            // 为重复调用而阻断)。内置工具的 description 才是本地展示标题。
+            boolean mountedMcp = toolName != null && toolName.startsWith("mcp__");
+            if (!mountedMcp) {
+                // 内置工具:description 是本地注入的展示标题,剔除
+                obj.remove("description");
+            }
+            boolean workspaceTool = "manage_workspace".equals(toolName)
+                    || "manage_file".equals(toolName) || "read_file".equals(toolName);
+            if (workspaceTool) {
+                // 内置工具的别名归一(与执行层语义对齐;MCP 业务字段保留,见 R2)。
+                // 注意 path 为空串时执行层会回退到 filename(RiskClassifier.workspacePathOf
+                // 的 isBlank 判定)——指纹必须同语义,否则 a.txt/b.txt 经 path=""+filename
+                // 两种实际目标会得到同一指纹(R2 复现)。
+                String pathValue = obj.has("path") ? obj.path("path").asText("") : "";
+                if (pathValue.isBlank()) {
+                    String alias = obj.has("filename") ? obj.path("filename").asText(null)
+                            : obj.has("file") ? obj.path("file").asText(null) : null;
+                    if (alias != null && !alias.isBlank()) {
+                        obj.put("path", alias);
+                    }
+                }
+                obj.remove("filename");
+                obj.remove("file");
+                if (obj.has("action")) {
+                    String action = obj.path("action").asText("");
+                    String canonical = RiskClassifier.normalizeWorkspaceAction(action);
+                    if (!canonical.equals(action)) {
+                        obj.put("action", canonical);
+                    }
                 }
             }
-            obj.remove("filename");
-            obj.remove("file");
-            // 动作方言归一(与执行层共用)
-            if (obj.has("action")) {
-                String action = obj.path("action").asText("");
-                String canonical = RiskClassifier.normalizeWorkspaceAction(action);
-                if (!canonical.equals(action)) {
-                    obj.put("action", canonical);
-                }
-            }
-            // 键排序(确定性输出;剔除展示差异后的同一次调用指纹一致)
-            java.util.TreeMap<String, JsonNode> sorted = new java.util.TreeMap<>();
-            obj.fieldNames().forEachRemaining(f -> sorted.put(f, obj.get(f)));
-            StringBuilder sb = new StringBuilder("{");
-            boolean first = true;
-            for (var e : sorted.entrySet()) {
-                if (!first) sb.append(',');
-                first = false;
-                sb.append('"').append(e.getKey()).append("\":").append(e.getValue().toString());
-            }
-            return sb.append('}').toString();
+            // 递归规范化(嵌套对象排序;数组顺序保留)
+            return canonicalJson(obj).toString();
         } catch (Exception e) {
             return args;
         }
+    }
+
+    /**
+     * 递归规范化 JSON:对象按键名排序重建,数组逐项规范化(顺序保留),
+     * 其余值原样。Jackson 序列化保证字符串转义正确(R4 同类问题的根治思路)。
+     */
+    private JsonNode canonicalJson(JsonNode node) {
+        if (node.isObject()) {
+            java.util.TreeMap<String, JsonNode> sorted = new java.util.TreeMap<>();
+            node.fieldNames().forEachRemaining(f -> sorted.put(f, canonicalJson(node.get(f))));
+            ObjectNode out = objectMapper.createObjectNode();
+            sorted.forEach(out::set);
+            return out;
+        }
+        if (node.isArray()) {
+            ArrayNode out = objectMapper.createArrayNode();
+            for (JsonNode item : node) {
+                out.add(canonicalJson(item));
+            }
+            return out;
+        }
+        return node;
     }
 
     /** approval_required 事件载荷:操作类型、目标、参数摘要、风险说明、参数明细。 */

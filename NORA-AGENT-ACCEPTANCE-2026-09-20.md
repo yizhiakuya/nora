@@ -1,7 +1,10 @@
 # Nora Agent 与工具设计验收记录
 
 日期：2026-09-20  
-结论：**暂不通过。主干方向合理，部分能力已落地，但执行事实、循环检测和任务上下文仍有可复现缺陷。**  
+最新结论（第二轮复验，`3975fee`）：**4 项通过、3 项部分修复，暂不全部通过。F2/F3/F5/F7 已通过实测；F1/F4/F6 仍有问题，详见文末第 7 节。**
+
+首轮结论：暂不通过。以下第 1–6 节保留首轮证据，不代表修复后的现状。
+
 范围：依据《Nora Agent 架构与工具设计建议》验收 Agent、工具和上下文相关改动，不涉及此前的产品业务改造。**执行预算按用户要求排除，不作为缺失项，也不建议补做。**
 
 ## 1. 验收方式与边界
@@ -167,7 +170,9 @@ MEDIA_ALL_FAILED status=partial，成功 0，跳过 0，失败 1，共 1
 
 ---
 
-## 附：修复记录（2026-09-20 晚，验收后）
+## 附：实施者修复记录（2026-09-20 晚，首轮验收后）
+
+本节保留实施者的修复说明；独立复验结论见第 7 节。
 
 F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `McpAcceptanceProbe.java`，探针源码随本记录更新为当前实现）：
 
@@ -188,3 +193,102 @@ F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `M
   在 application.yml 设 `nora.agent.mcp.trust-readonly-hints: true` 即可。
 - F4 的指纹实现同时服务「漏拦/误拦」两个方向：`canonicalArgs` 剔除展示差异（防绕过）、
   保留 action 与全部业务参数（防误判）。`normalizeArgs` 旧实现已删除。
+
+## 7. 第二轮独立复验（2026-09-20）
+
+验收提交：`3975fee`；修复提交：`41043c3`。开始时工作区干净。本轮重新编译执行后端测试，使用当前 `target/classes` 编译新的独立探针，并重跑前端门禁；没有修改业务代码。执行预算继续排除。
+
+### 7.1 逐项结论
+
+| 首轮问题 | 本轮结论 | 实际证据 |
+|---|---|---|
+| F1 历史任务锚点 | **部分修复** | 不再强制遵循最早目标，但有效目标和“不删除”限制仍会一起丢失，只剩“continue 1”。见 R1。 |
+| F2 MCP 重放信任 | **通过** | 默认不重放；仅本地信任开启且远端声明只读时重试一次。四种组合均实测。 |
+| F3 下载全部失败状态 | **通过** | 全失败=failed；全成功=completed；成功失败混合=partial；全跳过=completed。真实 HTTP 下载链路实测。 |
+| F4 调用指纹 | **部分修复** | 内置工具换描述不再绕过；文件不同 action 已区分。但 MCP 业务字段被合并，嵌套参数换序仍绕过。见 R2/R3。 |
+| F5 中段变化识别 | **通过** | 相同长度、相同头尾、中段逐次变化的文件，四次读取均 completed。 |
+| F6 截断续读 | **部分修复** | 嵌套相对路径从真实第 201 行续读成功；单行超长文件也能补到末尾。但 Windows 反斜杠路径的提示不是合法 JSON。见 R4。 |
+| F7 本地参数错误 | **通过** | 非法 JSON 的 tools/call 请求数为 0，返回 error=true、unknown=false。 |
+
+### 7.2 剩余问题与修正方向
+
+#### R1 · P2：最后一条旧用户消息不能替代有效任务状态（F1 未闭环）
+
+位置：[ChatContextAssembler.java:199](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:199)。
+
+当前实现把被裁历史中最后一条用户消息覆盖到 `latest`。如果这条消息只是“继续”，更早的任务目标和有效限制都会消失。
+
+实际装配场景：最初要求删除报告，随后更正为“保留全部报告，只统计，不删除”，再经过 42 条短的往返消息，本轮用户只说“继续”。装配出的上下文既不含旧任务，也不含更正后的限制；锚点是 system 消息，内容仅为 `continue 1`。原来的“过时目标强制优先”问题已改善，但“长任务仍记得有效目标与限制”的复验标准未达到。
+
+修正方向：保留随用户修订更新的简短任务状态，不要把任意最近一条消息当成完整任务。复验必须包含“明确目标/限制 → 多次继续 → 裁剪 → 继续”，不能只测最后一句恰好完整复述目标的情形。
+
+#### R2 · P2：工作区参数规则被应用到全部 MCP 工具，造成误拦（F4 修复引入）
+
+位置：[ToolStepEmitter.java:547](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:547)。
+
+`canonicalArgs` 不接收工具名，却统一删除 `description`、合并 `filename/file/path`，并将 `save/fetch/download` 归为 `import`。这些规则只适用于已明确约定的内置工具；MCP 中的 description 可能是要更新的正文，path 与 filename 可以同时有独立含义，save 和 fetch 也可以是不同动作。
+
+实际协议复现：同一 MCP 工具连续三次返回相同结果，第四次分别修改真实业务字段 description、filename，或把 action 从 save 改成 fetch。三种情况均被本地判为 declined，远端只收到前三次请求，新的操作没有发出。
+
+此外，工作区自身也没有完全复用现有解析：`path=""` 时，执行器会回退到 filename；指纹却删除 filename。实测 a.txt 与 b.txt 的实际目标不同，指纹同为 `{"action":"read","path":""}`。
+
+修正方向：按工具语义决定哪些字段可以删、哪些名称是别名；工作区直接复用现有路径解析。MCP 原始业务字段默认全部保留，只有本地明确作为展示元数据注入的字段才可忽略。
+
+#### R3 · P2：只对最外层排序，lazy MCP 的嵌套参数仍能绕过重复检测（F4 未闭环）
+
+位置：[ToolStepEmitter.java:568](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:568)。
+
+外层键放入 TreeMap，但值仍直接调用 `JsonNode.toString()`。`manage_mcp action=call` 的真实参数在 arguments 对象内，其键顺序仍参与指纹。
+
+实际协议复现：同一工具、同一组 `a=1,b=2,c=3` 参数、同样返回 `ok`，仅变换 arguments 内键的排列，四次均 completed，远端收到四次请求；第四次没有按既定重复规则阻断。
+
+修正方向：对 JSON 对象递归规范化键顺序，保留数组顺序与业务值；对于明确接受 JSON 字符串的 arguments，先按真实执行语义解析。用现有 JSON 库序列化，不要手工拼键值文本。
+
+#### R4 · P2：续读参数直接拼接路径，Windows 路径使 JSON 非法（F6 未闭环）
+
+位置：[AgentWorkspaceService.java:428](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/AgentWorkspaceService.java:428)。
+
+只有 originalPath 为空时才将反斜杠转成斜杠；正常传入 `C:\Users\…\long.txt` 时，会原样插进 JSON 字符串，未转义反斜杠。
+
+实际通过 manage_workspace 读取临时目录中的长文件，原始调用参数由 JSON 库正确编码，读取成功；提取返回的续读示例后，用同一 ObjectMapper 解析却抛出 `JsonParseException`。因此“照提示继续读取”在常见 Windows 路径上仍不成立。
+
+修正方向：将 action、path、offset 构造成对象，再由 JSON 库序列化。复验同时覆盖反斜杠绝对路径与嵌套相对路径。
+
+### 7.3 本轮检查结果及边界
+
+- 后端：`mvn -pl services/agent-service -am test -q` 成功；agent-service 135 项，0 失败、0 错误、0 跳过。
+- 前端：typecheck、lint、126 项测试和 build 全部通过。CSS 无效声明与动态/静态导入重叠两条既有构建警告仍在。
+- 新探针执行实际工作区工具、上下文装配、工具步骤与真实 MCP HTTP 客户端；MCP 使用本机测试服务和内存数据库，媒体下载覆盖 200/404 响应。
+- 本轮没有重跑真实模型对话或浏览器交互；结论针对上述修复路径，不代表所有 Agent 场景均验收通过。
+- 没有沿用旧脚本硬编码的错误续读路径作为新证据；本轮从当前工具返回值提取续读参数再执行。也没有用“输出中不再包含旧目标”代替“正确目标仍被保留”的检查。
+
+复现材料：`C:/Users/24883/AppData/Local/Temp/nora-agent-reacceptance-20260920/` 下的 `RoundTwoProbe.java`、`run.py` 和 `observations.txt`。运行 `rtk proxy python -X utf8 <该目录>/run.py` 可执行；它读取项目已编译类，因此改代码后须先重新编译。探针不带单测断言，观察值保存在文本中。
+
+```text
+CONTEXT_KEEP_PRESENT=false OLD_TASK_PRESENT=false
+CONTEXT_ANCHOR role=system ... continue 1
+RETRY trust=false hint=true requests=1 unknown=true error=true
+RETRY trust=true hint=true requests=2 unknown=false error=false
+INVALID_JSON requests=0 unknown=false error=true
+MEDIA failed=failed success=completed mixed=partial skipped=completed
+MIDDLE_CHANGES=[completed, completed, completed, completed]
+MCP_BUSINESS_FIELD=description/filename/action -> 第四次 declined，请求数 3
+LAZY_NESTED_ORDER=[completed, completed, completed, completed] requests=4
+CONTINUE nested/long.txt offset=201 status=completed
+CONTINUE Windows反斜杠路径 hint_parse_error=JsonParseException
+```
+
+下一轮只需针对 R1–R4 修正并复验，保留已经通过的四项。不需要重写 Agent，也不需要增加执行预算。
+
+## 8. 第三轮修复（2026-09-20 深夜，针对 R1–R4）
+
+R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.py`，源码同步更新）复验通过：
+
+| 项 | 修复 | 复验输出 |
+|---|---|---|
+| R1 | `taskAnchor` 跳过寒暄/续接类短消息（「继续/好的/ok/谢谢」等模式）——42 条 "continue" 不再冲掉真实任务；只取最近一条**有实质内容**的用户表述 | `CONTEXT_KEEP_PRESENT=true OLD_TASK_PRESENT=false`；锚点内容为 KEEP_MARK 更正后的限制（此前仅 "continue 1"） |
+| R2 | `canonicalArgs` 按工具语义分层：**挂载 MCP 工具（mcp__*）参数全部保留**（description/filename/action 可能是远端业务字段）；内置工具才做展示剔除与别名归一；`path=""` 时与执行层同语义回退 filename | `MCP_BUSINESS_FIELD=description/filename/action` 三种改动均 4/4 发出（此前 description 第 4 次被误拦）；`EMPTY_PATH` a.txt/b.txt 指纹各不相同 |
+| R3 | 递归规范化 JSON（嵌套对象同样按键排序，数组顺序保留） | `LAZY_NESTED_ORDER=[completed×3, declined]`——arguments 换序不再绕过，第 4 次正确阻断（此前 4 次都执行） |
+| R4 | 续读提示路径统一转正斜杠（resolveAny 两种分隔符都接受），示例 JSON 始终可解析 | Windows 反斜杠绝对路径：`offset=201 status=completed`（此前 hint_parse_error=JsonParseException） |
+
+回归：后端 135 测试 / 工具评测 9/9 通过。修复提交见 git log（`fix(agent): 第二轮复验 R1-R4`）。
