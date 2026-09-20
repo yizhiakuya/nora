@@ -510,6 +510,29 @@ export interface LiveTurnInfo {
   lastSeq?: number | null;
 }
 
+/** 对话运行条目(M3-01,后端 chat_run;任务页「正在处理」聚合用)。 */
+export interface ChatRunInfo {
+  id: string;
+  sessionId: string;
+  sessionTitle: string | null;
+  /** queued/running/awaiting_approval/cancelling/completed/partial/failed/cancelled/interrupted */
+  status: string;
+  content: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/** GET /chat/runs → 对话运行列表(status 可选逗号分隔过滤)。 */
+export async function fetchChatRuns(statuses?: string[], limit = 50): Promise<ChatRunInfo[]> {
+  const params = new URLSearchParams();
+  if (statuses && statuses.length > 0) params.set("status", statuses.join(","));
+  params.set("limit", String(limit));
+  const res = await fetch(`${API_BASE}/chat/runs?${params.toString()}`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
+  if (!res.ok) throw new Error(`fetchChatRuns failed: ${res.status}`);
+  const envelope = await res.json() as { code: number; data: ChatRunInfo[]; message: string };
+  return envelope.data ?? [];
+}
+
 /**
  * 订阅进行中轮次的事件流(断线重连/切页返回):
  * 服务端先回放已缓冲事件,再实时推送直至 done/error;无进行中轮次时发 `idle` 后关闭。

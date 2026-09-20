@@ -81,12 +81,25 @@ class ChatTurnRunner {
         // 每轮注册 live turn:事件进有界缓冲,SSE 断开(刷新/切页)后可重连回放;
         // 编排线程不受断开影响,收尾照常落库
         TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content);
+        // 运行生命周期持久化(M3-01,方案 §6.4):开始时落 running,结束更新同一行。
+        // runId 用 liveTurn.turnId(与 SSE 游标/事件 id 同源,前端能对上)。
+        String runId = liveTurn.turnId;
+        // 数组包装:lambda(whenComplete)里要读取该标记,普通 boolean 不是 effectively final
+        boolean[] runStarted = {false};
+        // 最近一次已落库的运行状态(避免每次步骤都打 DB;M3-02 状态衔接用)
+        String[] lastRunStatus = {"running"};
         try {
             // 标题：先落「用户消息开头若干字 + …」当占位（立刻有名字可看），
             // 再异步让 AI 生成短标题覆盖它。不再把整条原文塞进标题列——
             // 列宽 VARCHAR(255)，超长消息会让会话创建直接失败（实测）。
             boolean firstTurn = chatStoreService.ensureSession(
                     sessionId, ChatStoreService.placeholderTitle(content));
+            try {
+                chatStoreService.startRun(runId, sessionId, content);
+                runStarted[0] = true;
+            } catch (Exception e) {
+                log.warn("failed to persist run start for {}: {}", sessionId, e.getMessage());
+            }
             chatStoreService.saveMessage(sessionId, "user", content, null, null);
             // 仅本会话首次命名：后续轮次改标题会覆盖上一轮已经起好的名字
             if (firstTurn) {
@@ -131,6 +144,17 @@ class ChatTurnRunner {
                         @Override
                         public void step(ChatStepDto step) {
                             lastEventMs[0] = System.currentTimeMillis();
+                            // 状态衔接(M3-02):等待确认后批准 → 工具重发 running 步骤,
+                            // 运行状态改回 running(仅在刚从 awaiting_approval 离开时打 DB)
+                            if (runStarted[0] && "awaiting_approval".equals(lastRunStatus[0])
+                                    && "running".equals(step.status())) {
+                                try {
+                                    chatStoreService.updateRunStatus(runId, "running");
+                                    lastRunStatus[0] = "running";
+                                } catch (Exception e) {
+                                    log.debug("run status back-to-running failed: {}", e.getMessage());
+                                }
+                            }
                             // 同 id 增量更新(进度 tick/实时输出)原位替换:列表与
                             // 落库 JSON 只保留该步骤最新快照,不随 tick 线性膨胀。
                             // 首次出现与终态各落库一次(running 先行、终态覆盖的
@@ -199,6 +223,17 @@ class ChatTurnRunner {
                         public void approvalRequired(com.nora.agent.dto.ApprovalRequestDto request) {
                             send(emitter, "approval_required", request);
                             turnStreams.publish(liveTurn, "approval_required", toJson(request));
+                            // 运行状态推进(M3-02):等待用户确认——任务页「等待确认」
+                            // 视图据此显示;批准/拒绝后工具步骤的 running 事件会把
+                            // 状态改回 running(见 ToolStepEmitter 批准后重发 running)。
+                            if (runStarted[0]) {
+                                try {
+                                    chatStoreService.updateRunStatus(runId, "awaiting_approval");
+                                    lastRunStatus[0] = "awaiting_approval";
+                                } catch (Exception e) {
+                                    log.debug("run status awaiting_approval failed: {}", e.getMessage());
+                                }
+                            }
                         }
 
                         @Override
@@ -297,6 +332,18 @@ class ChatTurnRunner {
                         turnStreams.publish(liveTurn, "done", toJson(done));
                         send(emitter, "done", done);
                         emitter.complete();
+                        // 运行生命周期终态(M3-01):取消轮 = cancelled;正常完成 =
+                        // completed(有失败工具步骤时为 partial——有可用成果但存在
+                        // 未完成项,方案 §6.3)。更新同一行,不插重复行。
+                        if (runStarted[0]) {
+                            boolean anyStepFailed = steps.stream().anyMatch(s -> "failed".equals(s.status()));
+                            String terminal = userCancelled ? "cancelled" : (anyStepFailed ? "partial" : "completed");
+                            try {
+                                chatStoreService.finishRun(runId, terminal);
+                            } catch (Exception e) {
+                                log.warn("failed to persist run terminal state for {}: {}", sessionId, e.getMessage());
+                            }
+                        }
                     });
         } catch (Exception e) {
             log.error("chat turn failed for session {}: {}", sessionId, e.getMessage(), e);
@@ -304,6 +351,14 @@ class ChatTurnRunner {
             turnStreams.publish(liveTurn, "error", toJson(payload));
             send(emitter, "error", payload);
             emitter.complete();
+            // 运行生命周期终态(M3-01):编排/提交层异常 = failed
+            if (runStarted[0]) {
+                try {
+                    chatStoreService.finishRun(runId, "failed");
+                } catch (Exception persistError) {
+                    log.warn("failed to persist run failed state for {}: {}", sessionId, persistError.getMessage());
+                }
+            }
         } finally {
             turnStreams.finish(sessionId, liveTurn);
             // 轮次收尾:清除取消标志(不可吞的会话级信号,见 TurnCancellation)。

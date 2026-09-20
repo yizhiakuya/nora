@@ -307,6 +307,85 @@ public class ChatStoreService {
                 sessionId, taskSignature, reflection);
     }
 
+    // ---------- 对话运行生命周期(M3-01,2026-09-20,方案 §6.4) ----------
+
+    /**
+     * 轮次开始:落一行 running(稳定 runId,与 SSE/MDC 的 turnId 同源)。
+     * 幂等(同 id 覆盖为 running,防御重放)。
+     */
+    public void startRun(String runId, String sessionId, String content) {
+        jdbcTemplate.update("""
+                INSERT INTO chat_run (id, session_id, status, content) VALUES (?, ?, 'running', ?)
+                ON CONFLICT (id) DO UPDATE SET status = 'running', updated_at = now()
+                """, runId, sessionId, content);
+    }
+
+    /** 运行状态推进(awaiting_approval / cancelling 等中间态)。 */
+    public void updateRunStatus(String runId, String status) {
+        jdbcTemplate.update(
+                "UPDATE chat_run SET status = ?, updated_at = now() WHERE id = ?", status, runId);
+    }
+
+    /** 会话内全部非终态运行 → cancelling(M3-02:取消请求已受理、工作未退出)。 */
+    public void markSessionRunsCancelling(String sessionId) {
+        jdbcTemplate.update("""
+                UPDATE chat_run SET status = 'cancelling', updated_at = now()
+                WHERE session_id = ? AND status IN ('queued', 'running', 'awaiting_approval')
+                """, sessionId);
+    }
+
+    /** 轮次结束:更新**同一行**为终态(方案约束:不插入第二条重复行)。 */
+    public void finishRun(String runId, String status) {
+        jdbcTemplate.update("""
+                UPDATE chat_run SET status = ?, finished_at = now(), updated_at = now() WHERE id = ?
+                """, status, runId);
+    }
+
+    /**
+     * 启动恢复(方案 §6.4 第 6 条):把上一进程遗留的非终态标 interrupted——
+     * 不自动重放有副作用的任务,用户可在界面选择重试。
+     *
+     * @return 标记的行数
+     */
+    public int markStaleRunsInterrupted() {
+        return jdbcTemplate.update("""
+                UPDATE chat_run SET status = 'interrupted', finished_at = now(), updated_at = now()
+                WHERE status IN ('queued', 'running', 'awaiting_approval', 'cancelling')
+                """);
+    }
+
+    /** 最近运行(任务页「正在处理」聚合;按开始时间倒序)。 */
+    public List<RunView> listRuns(List<String> statuses, int limit) {
+        String placeholders = statuses == null || statuses.isEmpty()
+                ? null : String.join(",", statuses.stream().map(s -> "?").toList());
+        String sql = "SELECT r.id, r.session_id, s.title, r.status, r.content, r.started_at, r.finished_at "
+                + "FROM chat_run r LEFT JOIN chat_session s ON s.id = r.session_id "
+                + (placeholders == null ? "" : "WHERE r.status IN (" + placeholders + ") ")
+                + "ORDER BY r.started_at DESC LIMIT ?";
+        Object[] args = placeholders == null
+                ? new Object[]{limit}
+                : java.util.stream.Stream.concat(statuses.stream(), java.util.stream.Stream.of(limit)).toArray();
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new RunView(
+                rs.getString("id"),
+                rs.getString("session_id"),
+                rs.getString("title"),
+                rs.getString("status"),
+                rs.getString("content"),
+                rs.getObject("started_at", java.time.LocalDateTime.class),
+                rs.getObject("finished_at", java.time.LocalDateTime.class)), args);
+    }
+
+    /** 任务页运行条目(对话来源)。 */
+    public record RunView(
+            String id,
+            String sessionId,
+            String sessionTitle,
+            String status,
+            String content,
+            java.time.LocalDateTime startedAt,
+            java.time.LocalDateTime finishedAt) {
+    }
+
     public void saveStep(String sessionId, int stepIndex, ChatStepDto step) {
         jdbcTemplate.update("""
                 INSERT INTO agent_step (session_id, step_index, step_type, title, detail, status, duration_ms,

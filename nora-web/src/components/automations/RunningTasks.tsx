@@ -1,33 +1,34 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { Loader2, Inbox, MessageSquare } from "lucide-react";
+import { Loader2, Inbox, MessageSquare, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { fetchLiveTurn } from "@/lib/api/agentApi";
+import { fetchChatRuns, type ChatRunInfo } from "@/lib/api/agentApi";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { USE_BACKEND } from "@/lib/api/client";
 
 /**
- * 「正在处理」视图(M1,2026-09-20):聚合展示后台仍在运行的对话轮次。
+ * 「正在处理」视图(M3-01,2026-09-20,方案 §4.3):
+ * 后端持久化的对话运行(chat_run)聚合——刷新/换页/进程重启后都能找到
+ * 「我发出去还没回来看的任务」。
  *
- * 数据来源:各会话的 /turn/live 探测(agent-service 的 TurnStreamRegistry
- * 为权威)。定期任务的运行中状态在「执行记录」里体现(manual 试跑同步完成,
- * 后台调度有记录),这里聚焦用户最常找的"我发出去还没回来看的任务"。
- *
- * 无运行中轮次时不展示"运行中"字样的假数据,给下一步引导。
+ * 状态语义(方案 §6.3):running/queued/awaiting_approval/cancelling 为进行中;
+ * interrupted(进程中断)单独列出,给「查看已记录内容」入口而不是假装完成。
  */
-interface RunningEntry {
-  sessionId: string;
-  title: string;
-  startedAtMs: number | null;
-  bufferedEvents: number;
-}
+const ACTIVE_STATUSES = ["queued", "running", "awaiting_approval", "cancelling"];
+
+const STATUS_LABEL: Record<string, string> = {
+  queued: "已接受,等待开始",
+  running: "处理中",
+  awaiting_approval: "等待确认",
+  cancelling: "正在停止",
+  interrupted: "已中断(进程重启,需手动决定是否重试)",
+};
 
 export function RunningTasks() {
   const navigate = useNavigate();
-  const sessions = useChatSessions((s) => s.sessions);
   const setActive = useChatSessions((s) => s.setActive);
-  const [entries, setEntries] = useState<RunningEntry[]>([]);
+  const [runs, setRuns] = useState<ChatRunInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -37,31 +38,18 @@ export function RunningTasks() {
         setLoading(false);
         return;
       }
-      const results: RunningEntry[] = [];
-      // 并行探测最近会话(最多 10 个,避免大量请求)
-      const recent = sessions.slice(0, 10);
-      await Promise.all(recent.map(async (s) => {
-        try {
-          const info = await fetchLiveTurn(s.id);
-          if (info?.running) {
-            results.push({
-              sessionId: s.id,
-              title: s.title,
-              startedAtMs: info.startedAtMs ?? null,
-              bufferedEvents: info.bufferedEvents ?? 0,
-            });
-          }
-        } catch {
-          /* 单会话探测失败忽略 */
-        }
-      }));
-      if (!cancelled) {
-        setEntries(results);
-        setLoading(false);
+      try {
+        // 进行中 + 中断(单独呈现)——均属"需要用户关注"的运行
+        const items = await fetchChatRuns([...ACTIVE_STATUSES, "interrupted"], 30);
+        if (!cancelled) setRuns(items);
+      } catch {
+        /* 后端不可达:空态 */
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [sessions]);
+  }, []);
 
   if (loading) {
     return (
@@ -71,7 +59,7 @@ export function RunningTasks() {
     );
   }
 
-  if (entries.length === 0) {
+  if (runs.length === 0) {
     return (
       <div className="bg-card border border-border rounded-xl py-16 text-center space-y-2">
         <Inbox className="w-8 h-8 mx-auto text-muted-foreground/40" />
@@ -85,28 +73,34 @@ export function RunningTasks() {
 
   return (
     <div className="space-y-3">
-      {entries.map((e) => (
-        <div key={e.sessionId} className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
-          <Loader2 className="w-4 h-4 animate-spin text-blue-500 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-foreground truncate">{e.title}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              处理中 · 已产生 {e.bufferedEvents} 个事件
-              {e.startedAtMs ? ` · 开始于 ${new Date(e.startedAtMs).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""}
+      {runs.map((r) => {
+        const interrupted = r.status === "interrupted";
+        const Icon = interrupted ? AlertTriangle : Loader2;
+        return (
+          <div key={r.id} className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
+            <Icon className={`w-4 h-4 shrink-0 ${interrupted ? "text-amber-500" : "animate-spin text-blue-500"}`} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold text-foreground truncate">
+                {r.sessionTitle || r.content?.slice(0, 30) || r.sessionId}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                {STATUS_LABEL[r.status] ?? r.status}
+                {r.startedAt ? ` · 开始于 ${r.startedAt.slice(11, 16)}` : ""}
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setActive(r.sessionId);
+                navigate("/chat");
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-border text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700 transition-colors cursor-pointer"
+            >
+              <MessageSquare className="w-3 h-3" /> 查看
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setActive(e.sessionId);
-              navigate("/chat");
-            }}
-            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-border text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700 transition-colors cursor-pointer"
-          >
-            <MessageSquare className="w-3 h-3" /> 查看
-          </button>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

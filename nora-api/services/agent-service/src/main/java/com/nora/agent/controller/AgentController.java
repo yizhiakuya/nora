@@ -316,6 +316,13 @@ public class AgentController {
         boolean cancelled = future != null;
         if (cancelled) {
             future.cancel(true);
+            // 运行状态推进(M3-02):cancelling = 已请求停止、工作尚未全部退出。
+            // 终态(cancelled)由轮次收尾写入;此处的中间态让任务页显示「正在停止」。
+            try {
+                chatStoreService.markSessionRunsCancelling(sessionId);
+            } catch (Exception e) {
+                log.debug("mark cancelling failed for {}: {}", sessionId, e.getMessage());
+            }
         }
         approvalService.clearPending(sessionId);
         // 有在途轮次或标志已置,都算"取消已受理"(前端据 ok(true) 收敛 UI)

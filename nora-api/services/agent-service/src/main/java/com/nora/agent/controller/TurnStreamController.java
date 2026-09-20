@@ -37,9 +37,30 @@ public class TurnStreamController {
     private static final long SSE_TIMEOUT_MS = 180_000;
 
     private final TurnStreamRegistry turnStreams;
+    private final com.nora.agent.service.ChatStoreService chatStoreService;
 
-    public TurnStreamController(TurnStreamRegistry turnStreams) {
+    public TurnStreamController(TurnStreamRegistry turnStreams,
+                                com.nora.agent.service.ChatStoreService chatStoreService) {
         this.turnStreams = turnStreams;
+        this.chatStoreService = chatStoreService;
+    }
+
+    /**
+     * 对话运行列表(M3-01,方案 §6.4):任务页「正在处理」聚合的数据源。
+     *
+     * @param status 可选逗号分隔状态过滤(如 running,awaiting_approval,cancelling);
+     *               缺省 = 全部
+     * @param limit  最大条数(缺省 50,封顶 200)
+     */
+    @GetMapping("/runs")
+    public ApiResponse<java.util.List<com.nora.agent.service.ChatStoreService.RunView>> runs(
+            @org.springframework.web.bind.annotation.RequestParam(value = "status", required = false) String status,
+            @org.springframework.web.bind.annotation.RequestParam(value = "limit", required = false) Integer limit) {
+        java.util.List<String> statuses = (status == null || status.isBlank())
+                ? null
+                : java.util.Arrays.stream(status.split(",")).map(String::trim).filter(s -> !s.isBlank()).toList();
+        int bounded = limit == null ? 50 : Math.min(Math.max(limit, 1), 200);
+        return ApiResponse.ok(chatStoreService.listRuns(statuses, bounded));
     }
 
     /**

@@ -143,3 +143,39 @@
 
 - refs 的「资料范围即权限」语义未启用:当前 refs 是"本次参考资料",不限制工具访问(方案允许:
   不声称"仅访问这些资料"即可)。
+
+---
+
+## M3：运行状态与任务聚合（完成）
+
+### 已完成任务
+
+- **M3-01 对话运行持久化** — 新增 `chat_run` 表(V22):每轮开始落 running(稳定 runId =
+  liveTurn.turnId,与 SSE 游标同源),结束**更新同一行**为终态(方案 §6.4 约束);
+  `StaleRunRecovery` 启动时把遗留非终态标 `interrupted`(不自动重放有副作用任务);
+  `GET /api/chat/runs`(状态过滤 + 会话标题 JOIN)。
+  - 验证(E2E):正常轮 → completed(单行,started/finished 都有);取消轮 → cancelled;
+    手动插入 running 行后重启 → interrupted(日志确认 "marked interrupted: 1")。
+- **M3-02 状态衔接** — awaiting_approval(审批卡下发时)/ cancelling(cancel 端点受理时)/
+  批准后回 running(工具重发 running 步骤时);终态:cancelled(用户取消)/
+  partial(有失败工具步骤)/ completed / failed(编排异常)。
+  - 验证(E2E):取消轮终态 = cancelled;`/runs` 状态过滤正确。
+- **M3-03 任务页聚合** — 「正在处理」视图改用后端 `/runs` 持久化数据(刷新/换页/
+  重启后都能找到);中断的运行单独呈现(提示"需手动决定是否重试")而非假装完成。
+  - 验证(浏览器):空态正确(无假数据);active tab 正确。
+
+### 验证方式汇总(M3)
+
+| 项 | 方式 | 结果 |
+|---|---|---|
+| M3-01 | E2E(completed/cancelled/interrupted 三态 + 重启恢复) | 通过 |
+| M3-02 | E2E(cancelling → cancelled) | 通过 |
+| M3-03 | 浏览器(任务页正在处理) | 通过 |
+| 工程门禁 | tsc / lint / 126 测试 / agent 测试 0 失败 | 通过 |
+
+### 已知限制
+
+- 任务页聚合目前覆盖对话运行(chat_run);自动任务执行记录仍在「执行记录」视图
+  (两套权威存储,前端薄适配,方案 §6.4 第 4 条允许)。
+- `partial` 判定基于"有失败工具步骤"的启发式;更精细的语义(如部分文件导入成功)
+  由 S2 场景(M3-04 范围)在 fetch_media 结果里体现。
