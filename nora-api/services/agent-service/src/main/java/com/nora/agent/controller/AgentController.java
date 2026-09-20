@@ -221,10 +221,17 @@ public class AgentController {
     private final ExecutorService agentRunExecutor = Executors.newCachedThreadPool();
 
     /**
-     * POST /api/chat/agent/run — 供服务间调用(automation 动作)的非流式一次性
-     * agent 运行。走同一套编排(RAG + 工具循环),FULL 权限档、无审批门(无会话),
-     * 静默收集事件,返回最终回答 + token 用量;以 SSE 超时为上限,超时会真正
-     * 中断编排线程使上游 LLM 读中止。
+     * POST /api/chat/agent/run — 供服务间调用(automation 动作)的一次性 agent 运行。
+     *
+     * <p><b>定时任务=往会话发消息(2026-09-20,用户明确语义)</b>:
+     * {@code sessionId} 非空时,本运行**落进该会话**——确保会话存在(origin=automation)、
+     * 写入 {@code sender=automation} 的用户消息、AI 回答与步骤照常持久化;
+     * 用户在会话列表就能看到定时任务的完整记录。sessionId 为空时保持旧行为
+     * (无会话静默运行,不落库)。
+     *
+     * <p><b>无人值守语义</b>:有会话也不接受交互审批——CRITICAL 工具直接拒绝
+     * (unattended=true 穿透到工具层,不等 120s 超时);FULL 档其余工具照常执行。
+     * 这是用户确认的权限取舍(见实施记录 §7.4)。
      *
      * <p>响应 {@code {status:"completed", answer, usage}} 或
      * {@code {status:"error", error}};status 字段让调用方无需靠答案文本猜测成败。
@@ -243,16 +250,48 @@ public class AgentController {
         PermissionMode mode = request.permissionMode() == null || request.permissionMode().isBlank()
                 ? PermissionMode.FULL
                 : PermissionMode.parse(request.permissionMode());
+        String sessionId = request.sessionId() == null || request.sessionId().isBlank()
+                ? null : request.sessionId().trim();
+        // 会话落库(定时任务=往会话发消息):确保会话存在并写入 automation 消息
+        List<ChatStoreService.StoredMessage> history = List.of();
+        if (sessionId != null) {
+            try {
+                chatStoreService.ensureAutomationSession(sessionId,
+                        request.sessionTitle() == null || request.sessionTitle().isBlank()
+                                ? "定时任务" : request.sessionTitle().trim());
+                chatStoreService.saveMessage(sessionId, "user", request.prompt().trim(),
+                        null, null, null, null, null, "automation");
+                history = chatStoreService.loadMessages(sessionId);
+            } catch (Exception e) {
+                log.warn("automation session persist failed for {}: {}", sessionId, e.getMessage());
+            }
+        }
+        final List<ChatStoreService.StoredMessage> turnHistory = history;
+        // 无人值守:CRITICAL 工具直接拒绝,不等审批(用户确认的权限取舍,§7.4)
+        final boolean unattended = true;
         java.util.concurrent.Future<ChatOrchestrationService.ChatTurn> future =
                 agentRunExecutor.submit(TraceContext.wrap(() -> orchestrationService.chat(
                         request.prompt().trim(),
-                        List.of(), List.of(),
+                        turnHistory, List.of(),
                         request.model(), request.reasoningLevel(),
                         mode,
+                        sessionId,
                         null,
+                        null,
+                        unattended,
                         SILENT_CONSUMER).join()));
         try {
             ChatOrchestrationService.ChatTurn turn = future.get(SSE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            // AI 回答落进会话(与聊天链路一致:用户能看到完整记录)
+            if (sessionId != null && turn != null && turn.answer() != null && !turn.answer().isBlank()) {
+                try {
+                    chatStoreService.saveMessage(sessionId, "assistant", turn.answer(),
+                            null, turn.citations(), null,
+                            turn.promptTokens(), turn.contextWindow(), "assistant");
+                } catch (Exception e) {
+                    log.warn("automation answer persist failed for {}: {}", sessionId, e.getMessage());
+                }
+            }
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("status", "completed");
             out.put("answer", turn.answer());
@@ -285,8 +324,17 @@ public class AgentController {
                 @Override public void sources(List<CitationDto> found) { }
             };
 
-    /** POST /api/chat/agent/run 请求体。permissionMode 缺省 FULL;只读分析场景传 ASSIST。 */
-    public record AgentRunRequest(String prompt, String model, String reasoningLevel, String permissionMode) {
+    /**
+     * POST /api/chat/agent/run 请求体。permissionMode 缺省 FULL;只读分析场景传 ASSIST。
+     * sessionId/sessionTitle(2026-09-20):非空时本运行落进该会话(定时任务=往会话
+     * 发消息,sender=automation);为空保持无会话静默运行。
+     */
+    public record AgentRunRequest(String prompt, String model, String reasoningLevel, String permissionMode,
+                                  String sessionId, String sessionTitle) {
+        /** 兼容构造:旧调用方(无会话)。 */
+        public AgentRunRequest(String prompt, String model, String reasoningLevel, String permissionMode) {
+            this(prompt, model, reasoningLevel, permissionMode, null, null);
+        }
     }
 
     /**

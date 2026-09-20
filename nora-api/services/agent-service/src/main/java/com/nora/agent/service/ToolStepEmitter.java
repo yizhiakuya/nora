@@ -75,7 +75,7 @@ class ToolStepEmitter {
                               String sessionId,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
         emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
-                permissionMode, sessionId, null, eventConsumer);
+                permissionMode, sessionId, false, null, eventConsumer);
     }
 
     /** 携带已解析 LLM 的重载,让图片附件能遵循其视觉能力。 */
@@ -85,6 +85,24 @@ class ToolStepEmitter {
                               int roundIndex,
                               PermissionMode permissionMode,
                               String sessionId,
+                              ResolvedLlm llm,
+                              ChatOrchestrationService.ChatEventConsumer eventConsumer) {
+        emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
+                permissionMode, sessionId, false, llm, eventConsumer);
+    }
+
+    /**
+     * 无人值守重载(2026-09-20,定时任务=往会话发消息):
+     * {@code unattended=true} 时——即使有会话也不进交互审批(现场无人),
+     * CRITICAL 工具直接拒绝(不等 120s 超时);FULL 档其余工具照常执行。
+     */
+    void emitToolStep(String toolStepId, String name, String args,
+                              Map<String, Integer> fingerprints,
+                              List<WireMessage> messages, String callId,
+                              int roundIndex,
+                              PermissionMode permissionMode,
+                              String sessionId,
+                              boolean unattended,
                               ResolvedLlm llm,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
         ParsedArgs parsed = parseArgs(name, args);
@@ -135,10 +153,12 @@ class ToolStepEmitter {
             log.info("loop warning: {} called {} times with identical args", name, repeats);
         }
 
-        // 无会话通道闸(/agent/run 等 automation 场景):sessionId 为 null 意味着
-        // 没有用户在场,审批门(APPWD/ASSIST 的询问)形同虚设——CRITICAL(不可逆/
-        // 带外操作)在此通道一律拒绝;模型会收到引导文案转告调用方走聊天通道
-        if (sessionId == null && RiskClassifier.classify(name, args) == RiskClassifier.Risk.CRITICAL) {
+        // 无人值守闸(2026-09-20 扩展):sessionId 为 null(旧 /agent/run)或
+        // unattended=true(定时任务会话,现场无人)时,审批门形同虚设——
+        // CRITICAL(不可逆/带外操作)一律拒绝,不等交互审批;模型收到引导文案。
+        // 有会话的无人值守仍落库(步骤/回答进会话,用户事后可查)。
+        if ((sessionId == null || unattended)
+                && RiskClassifier.classify(name, args) == RiskClassifier.Risk.CRITICAL) {
             String error = "拒绝执行：" + name + " 属于不可逆操作(删除/注册类),只能在有人值守的聊天对话中执行"
                     + "(用户需亲自批准)。请把这一结论连同操作目的返回给调用方";
             finishToolStep(toolStepId, name, title, input, toolStart,
@@ -150,8 +170,9 @@ class ToolStepEmitter {
 
         // 审批门:ASK 全问;ASSIST 问 HIGH+CRITICAL;FULL 只问 CRITICAL
         // (不可逆/带外操作,如删数据源、注册纳管命令)。审批状态保存在
-        // 服务端(ApprovalService),模型文本中的"同意"不构成批准
-        if (approvalService != null && sessionId != null) {
+        // 服务端(ApprovalService),模型文本中的"同意"不构成批准。
+        // unattended=true 时不进此门(无人可答,上面已处理 CRITICAL)。
+        if (approvalService != null && sessionId != null && !unattended) {
             RiskClassifier.Risk risk = RiskClassifier.classify(name, args);
             boolean needApproval = permissionMode == PermissionMode.ASK
                     || permissionMode == PermissionMode.ASSIST && risk != RiskClassifier.Risk.LOW

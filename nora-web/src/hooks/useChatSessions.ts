@@ -16,6 +16,11 @@ export interface ChatSession {
   titleGenerated?: boolean;
   updatedAt: number;
   messageCount?: number;
+  /**
+   * 会话来源(2026-09-20,定时任务=往会话发消息):
+   * automation=定时任务专属会话(侧栏显示「定时」徽章)。旧数据 undefined 按 user。
+   */
+  origin?: "user" | "automation";
   /** 本地缓存的消息(仅离线兜底/即时渲染用;真相在后端) */
   messages: ChatMessage[];
 }
@@ -198,6 +203,7 @@ export const useChatSessions = create<ChatSessionsState>()(
               titleGenerated: r.titleGenerated,
               messageCount: r.messageCount,
               updatedAt,
+              origin: r.origin === "automation" ? "automation" as const : undefined,
               // 保留本地消息缓存直到 loadHistory 拉到后端历史
               messages: local?.messages ?? [],
             };

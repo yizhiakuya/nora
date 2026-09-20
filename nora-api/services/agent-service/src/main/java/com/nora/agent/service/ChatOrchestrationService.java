@@ -328,6 +328,26 @@ public class ChatOrchestrationService {
                                             Long providerId,
                                             com.nora.agent.dto.TaskContext taskContext,
                                             ChatEventConsumer eventConsumer) {
+        return chat(userMessage, history, reflections, requestedModel, requestedReasoningLevel,
+                permissionMode, sessionId, providerId, taskContext, false, eventConsumer);
+    }
+
+    /**
+     * @param unattended 无人值守(定时任务):CRITICAL 工具**直接拒绝**、不等待
+     *                   交互审批(2026-09-20 定时任务=往会话发消息;用户确认的
+     *                   权限取舍见实施记录 §7.4——有会话但现场无人)
+     */
+    public CompletableFuture<ChatTurn> chat(String userMessage,
+                                            List<ChatStoreService.StoredMessage> history,
+                                            List<String> reflections,
+                                            String requestedModel,
+                                            String requestedReasoningLevel,
+                                            PermissionMode permissionMode,
+                                            String sessionId,
+                                            Long providerId,
+                                            com.nora.agent.dto.TaskContext taskContext,
+                                            boolean unattended,
+                                            ChatEventConsumer eventConsumer) {
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
@@ -526,7 +546,7 @@ public class ChatOrchestrationService {
                     String args = call.path("function").path("arguments").asText("{}");
                     String toolStepId = "s-call-" + callFingerprints.size() + "-" + callId;
                     stepEmitter.emitToolStep(toolStepId, name, args, callFingerprints, messages, callId,
-                            round + 1, permissionMode, sessionId, resolved, eventConsumer);
+                            round + 1, permissionMode, sessionId, unattended, resolved, eventConsumer);
                     String lastResult = contextAssembler.lastToolResult(messages);
                     if (lastResult != null) {
                         toolOutcome = lastResult;

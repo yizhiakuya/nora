@@ -203,6 +203,15 @@ public class AutomationService {
         return execute(rule);
     }
 
+    /**
+     * 规则专属会话 id(2026-09-20,定时任务=往会话发消息):
+     * 确定性生成({@code auto-rule-<id>})——同一规则每次触发都进同一个会话,
+     * 历史可累积;会话由 agent-service 侧按需创建/复活。
+     */
+    static String sessionIdFor(long ruleId) {
+        return "auto-rule-" + ruleId;
+    }
+
     /** 手动运行与调度器共用的执行路径。 */
     public ExecutionView execute(RuleView rule) {
         // 同一规则不并发执行:agent 动作一次可跑数分钟,期间调度器每分钟都会
@@ -212,7 +221,19 @@ public class AutomationService {
         }
         try {
             long start = System.currentTimeMillis();
-            String detail = actionExecutor.execute(rule.actionJson());
+            // 定时任务=往会话发消息:agent 动作落进规则专属会话(标题「定时任务:规则名」),
+            // 消息 sender=automation、AI 回答与步骤持久化;SQL 动作忽略会话参数。
+            String sessionId = sessionIdFor(rule.id());
+            String sessionTitle = "定时任务:" + rule.name();
+            // 规则表记录会话 id(可观测;会话被删后由 agent 侧复活)
+            try {
+                jdbcTemplate.update(
+                        "UPDATE automation_rule SET session_id = ? WHERE id = ? AND deleted_at IS NULL",
+                        sessionId, rule.id());
+            } catch (Exception e) {
+                log.debug("session id persist failed for rule {}: {}", rule.id(), e.getMessage());
+            }
+            String detail = actionExecutor.execute(rule.actionJson(), sessionId, sessionTitle);
             long duration = System.currentTimeMillis() - start;
             boolean ok = !detail.startsWith("ERROR");
             jdbcTemplate.update(

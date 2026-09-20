@@ -136,6 +136,11 @@ export interface ChatMessage {
   stopped?: boolean;
   /** 本轮流式开始时刻(Date.now());仅进行中的消息有,用于 UI 实时计时 */
   startedAtMs?: number;
+  /**
+   * 发送者(2026-09-20,定时任务=往会话发消息):user=用户输入;
+   * automation=定时任务发送——气泡显示「定时任务」徽章。旧数据 undefined 按 user。
+   */
+  sender?: "user" | "automation" | "assistant";
 }
 
 export type PermissionMode = "ask" | "assist" | "full";

@@ -56,6 +56,23 @@ public class ChatStoreService {
     }
 
     /**
+     * 确保定时任务会话存在(2026-09-20,定时任务=往会话发消息)。
+     *
+     * <p>会话 id 由 automation-service 按规则确定性生成({@code auto-rule-<id>}),
+     * 标题「定时任务:规则名」。被用户删除过(deleted_at 非空)时**复活**——
+     * 规则仍会触发,不能把消息写进已删会话;标题以传入值为准(规则可改名)。
+     * origin 标记为 automation(会话列表可区分)。
+     */
+    public void ensureAutomationSession(String sessionId, String title) {
+        jdbcTemplate.update("""
+                INSERT INTO chat_session (id, title, origin) VALUES (?, ?, 'automation')
+                ON CONFLICT (id) DO UPDATE SET
+                    deleted_at = NULL, title = EXCLUDED.title, origin = 'automation'
+                WHERE chat_session.origin = 'automation' OR chat_session.origin IS NULL
+                """, sessionId, clampTitle(title));
+    }
+
+    /**
      * 首轮占位标题：用户消息开头若干字 + 省略号。
      *
      * <p>为什么不再直接存整条原文：标题只用于侧栏辨识，长消息既显示不下又会撑爆
@@ -114,17 +131,30 @@ public class ChatStoreService {
     public void saveMessage(String sessionId, String role, String content,
                             List<ChatStepDto> steps, List<CitationDto> sources, Long durationMs,
                             Integer promptTokens, Long contextWindow) {
+        saveMessage(sessionId, role, content, steps, sources, durationMs, promptTokens, contextWindow,
+                "user".equals(role) ? "user" : "assistant");
+    }
+
+    /**
+     * 带发送者标记的保存(2026-09-20,定时任务=往会话发消息):
+     * {@code sender} 为 user/automation/assistant——定时任务触发的用户侧消息
+     * 标 automation,前端气泡显示「定时任务」徽章。
+     */
+    public void saveMessage(String sessionId, String role, String content,
+                            List<ChatStepDto> steps, List<CitationDto> sources, Long durationMs,
+                            Integer promptTokens, Long contextWindow, String sender) {
         jdbcTemplate.update(
-                "INSERT INTO chat_message (id, session_id, role, content, steps, sources, duration_ms, prompt_tokens, context_window) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO chat_message (id, session_id, role, content, steps, sources, duration_ms, prompt_tokens, context_window, sender) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 UUID.randomUUID().toString(), sessionId, role, content,
-                toJson(steps), toJson(sources), durationMs, promptTokens, contextWindow);
+                toJson(steps), toJson(sources), durationMs, promptTokens, contextWindow,
+                sender == null ? "user" : sender);
     }
 
     /** 按时间序加载会话的全部消息(排除软删行)。 */
     public List<StoredMessage> loadMessages(String sessionId) {
         List<StoredMessage> loaded = jdbcTemplate.query(
-                "SELECT role, content, steps, sources, duration_ms, prompt_tokens, context_window, created_at FROM chat_message "
+                "SELECT role, content, steps, sources, duration_ms, prompt_tokens, context_window, created_at, sender FROM chat_message "
                         + "WHERE session_id = ? AND deleted_at IS NULL ORDER BY created_at, id",
                 (rs, rowNum) -> new StoredMessage(
                         rs.getString("role"),
@@ -134,7 +164,8 @@ public class ChatStoreService {
                         rs.getObject("duration_ms", Long.class),
                         rs.getObject("prompt_tokens", Integer.class),
                         rs.getObject("context_window", Long.class),
-                        rs.getObject("created_at", java.time.LocalDateTime.class)),
+                        rs.getObject("created_at", java.time.LocalDateTime.class),
+                        rs.getString("sender")),
                 sessionId);
         // steps 按 (id → 状态) 追加式存储(running 先行、终态覆盖),恢复时合并去重,
         // 并丢弃没有终态的悬挂 running(会话中断残留)
@@ -146,7 +177,7 @@ public class ChatStoreService {
             loaded.set(i, new StoredMessage(loaded.get(i).role(), loaded.get(i).content(),
                     mergeSteps(steps, loaded.get(i).durationMs() == null), loaded.get(i).sources(),
                     loaded.get(i).durationMs(), loaded.get(i).promptTokens(),
-                    loaded.get(i).contextWindow(), loaded.get(i).createdAt()));
+                    loaded.get(i).contextWindow(), loaded.get(i).createdAt(), loaded.get(i).sender()));
         }
         return loaded;
     }
@@ -251,12 +282,12 @@ public class ChatStoreService {
     public List<SessionSummary> listSessions() {
         return jdbcTemplate.query(
                 """
-                SELECT s.id, s.title, s.title_generated, s.created_at, count(m.id) AS message_count,
+                SELECT s.id, s.title, s.title_generated, s.created_at, s.origin, count(m.id) AS message_count,
                        max(m.created_at) AS last_activity
                 FROM chat_session s
                 LEFT JOIN chat_message m ON m.session_id = s.id AND m.deleted_at IS NULL
                 WHERE s.deleted_at IS NULL
-                GROUP BY s.id, s.title, s.title_generated, s.created_at
+                GROUP BY s.id, s.title, s.title_generated, s.created_at, s.origin
                 ORDER BY max(m.created_at) DESC NULLS LAST, s.created_at DESC
                 """,
                 (rs, rowNum) -> new SessionSummary(
@@ -265,7 +296,8 @@ public class ChatStoreService {
                         rs.getBoolean("title_generated"),
                         rs.getInt("message_count"),
                         rs.getTimestamp("created_at"),
-                        rs.getTimestamp("last_activity")));
+                        rs.getTimestamp("last_activity"),
+                        rs.getString("origin")));
     }
 
     /**
@@ -410,7 +442,9 @@ public class ChatStoreService {
             boolean titleGenerated,
             int messageCount,
             java.sql.Timestamp createdAt,
-            java.sql.Timestamp lastActivity) {
+            java.sql.Timestamp lastActivity,
+            /** user=用户创建;automation=定时任务会话(前端列表区分显示)。 */
+            String origin) {
     }
 
     private String toJson(Object value) {
@@ -453,18 +487,27 @@ public class ChatStoreService {
             Integer promptTokens,
             /** 当轮生效的上下文窗口;旧数据为 null。 */
             Long contextWindow,
-            java.time.LocalDateTime createdAt
+            java.time.LocalDateTime createdAt,
+            /** user=用户发送;automation=定时任务发送;assistant=AI;旧数据 null 按 user 处理。 */
+            String sender
     ) {
 
         /** 兼容构造:无 DB 时间戳的内存消息。 */
         public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources) {
-            this(role, content, steps, sources, null, null, null, null);
+            this(role, content, steps, sources, null, null, null, null, null);
         }
 
         /** 兼容构造:仅耗时(既有测试/调用方)。 */
         public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources,
                              Long durationMs, java.time.LocalDateTime createdAt) {
-            this(role, content, steps, sources, durationMs, null, null, createdAt);
+            this(role, content, steps, sources, durationMs, null, null, createdAt, null);
+        }
+
+        /** 兼容构造:无 sender(旧调用方)。 */
+        public StoredMessage(String role, String content, List<ChatStepDto> steps, List<CitationDto> sources,
+                             Long durationMs, Integer promptTokens, Long contextWindow,
+                             java.time.LocalDateTime createdAt) {
+            this(role, content, steps, sources, durationMs, promptTokens, contextWindow, createdAt, null);
         }
     }
 }

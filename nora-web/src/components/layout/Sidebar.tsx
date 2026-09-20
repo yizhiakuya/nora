@@ -147,7 +147,16 @@ export function Sidebar() {
                               )}
                               title={session.title}
                             >
-                              <div className="truncate pr-5">{session.title}</div>
+                              <div className="truncate pr-5 flex items-center gap-1">
+                                {/* 定时任务会话徽章(2026-09-20):定时器往会话发消息,
+                                    用户在列表一眼区分人工会话与任务会话 */}
+                                {session.origin === "automation" && (
+                                  <span className="shrink-0 text-[9px] font-bold px-1 py-px rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300" title="定时任务会话:由任务触发写入">
+                                    定时
+                                  </span>
+                                )}
+                                <span className="truncate">{session.title}</span>
+                              </div>
                               <div className={cn("text-[10px] tabular-nums pr-5", isSessionActive ? "text-blue-500/70 dark:text-blue-400/70" : "text-muted-foreground/60")}>
                                 {session.messageCount != null && session.messageCount > 0 && <span>{session.messageCount} 条 · </span>}{relativeTime(session.updatedAt)}
                               </div>

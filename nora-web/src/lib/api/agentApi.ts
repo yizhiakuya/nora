@@ -377,14 +377,14 @@ export async function cancelTurnOnBackend(sessionId: string): Promise<void> {
  * 通过写操作失效缓存，所以「写后立刻看得到」不受影响。
  */
 export async function fetchSessions(force = false): Promise<
-  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string }[]
+  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string; origin?: string | null }[]
 > {
   return cached("/chat/sessions", 30_000, force, fetchSessionsUncached);
 }
 
 /** 真实请求；缓存包装见 {@link fetchSessions}。 */
 async function fetchSessionsUncached(): Promise<
-  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string }[]
+  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string; origin?: string | null }[]
 > {
   const res = await fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
@@ -397,6 +397,8 @@ async function fetchSessionsUncached(): Promise<
     messageCount: number;
     createdAt: string;
     lastActivity?: string;
+    /** user=用户创建;automation=定时任务会话(2026-09-20) */
+    origin?: string | null;
   }>;
   return Array.isArray(list) ? list : [];
 }
@@ -444,12 +446,15 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     /** 当轮生效上下文窗口(落库);旧数据为 null */
     contextWindow?: number | null;
     createdAt?: string;
+    /** 发送者(2026-09-20):automation=定时任务发送;旧数据 null 按 user */
+    sender?: string | null;
   }>;
   return (stored ?? []).map((m, i) => ({
     id: `${sessionId}-${i}`,
     role: m.role,
     content: m.content ?? "",
     timestamp: toHm(m.createdAt),
+    sender: m.sender === "automation" ? "automation" as const : undefined,
     steps: (m.steps ?? []).map((s, j) => normalizeStep(s, j)),
     sources: normalizeSources(m.sources),
     // 整轮耗时来自落库字段(与 done 事件同源)。此前只在流式期间有,刷新/切会话

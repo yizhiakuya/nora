@@ -46,11 +46,21 @@ public class ActionExecutor {
      * @return 执行细节(成功渲染或 ERROR: 行);绝不抛异常
      */
     public String execute(String actionJson) {
+        return execute(actionJson, null, null);
+    }
+
+    /**
+     * 带会话信息的执行(2026-09-20,定时任务=往会话发消息):
+     * agent 动作把运行落进规则专属会话({@code sessionId}),消息 sender=automation、
+     * AI 回答/步骤照常持久化——用户在会话列表就能看到定时任务的完整记录。
+     * sessionId 为空时保持旧行为(无会话静默运行)。
+     */
+    public String execute(String actionJson, String sessionId, String sessionTitle) {
         try {
             JsonNode action = objectMapper.readTree(actionJson);
             String type = action.path("type").asText("sql");
             if ("agent".equals(type)) {
-                return executeAgent(action.path("prompt").asText(""));
+                return executeAgent(action.path("prompt").asText(""), sessionId, sessionTitle);
             }
             if (!"sql".equals(type)) {
                 return "ERROR: unsupported action type " + type;
@@ -85,15 +95,21 @@ public class ActionExecutor {
     }
 
     /** 走 agent-service 的一次性运行端点执行自然语言指令;回答即执行详情。 */
-    private String executeAgent(String prompt) {
+    private String executeAgent(String prompt, String sessionId, String sessionTitle) {
         if (prompt.isBlank()) {
             return "ERROR: action prompt is empty";
         }
         try {
+            java.util.Map<String, Object> body = new java.util.HashMap<>();
+            body.put("prompt", prompt);
+            if (sessionId != null && !sessionId.isBlank()) {
+                body.put("sessionId", sessionId);
+                body.put("sessionTitle", sessionTitle == null ? "定时任务" : sessionTitle);
+            }
             java.util.Map<String, Object> out = agentRestClient.post()
                     .uri("/api/chat/agent/run")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(java.util.Map.of("prompt", prompt))
+                    .body(body)
                     .retrieve()
                     .body(new ParameterizedTypeReference<java.util.Map<String, Object>>() {
                     });

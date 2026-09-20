@@ -1,4 +1,4 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2 } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -261,6 +261,13 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
               </div>
             ) : (
               <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%]">
+                {/* 发送者标记(2026-09-20,定时任务=往会话发消息):该消息由定时任务
+                    触发写入,不是用户手输——用户看历史时能明确区分 */}
+                {msg.sender === "automation" && (
+                  <div className="flex items-center gap-1 mb-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                    <Clock className="w-3 h-3" /> 定时任务
+                  </div>
+                )}
                 {(() => {
                   // 引用行拆成 chips 展示(文件/知识库/技能/MCP 工具),正文保留原样换行
                   const { body, refs } = splitChatRefs(msg.content);
