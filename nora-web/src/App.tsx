@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
@@ -11,17 +11,21 @@ import { GlobalRouteError, reportRenderError } from "@/app/error";
 // 全局错误兜底(window.onerror/unhandledrejection/资源加载失败)→ 上报后端日志
 installGlobalErrorReporting();
 
-import HomePage from "@/app/page";
-import FilesPage from "@/app/files/page";
-import ChatPage from "@/app/chat/page";
-import KnowledgePage from "@/app/knowledge/page";
-import SkillsPage from "@/app/skills/page";
-import McpPage from "@/app/mcp/page";
-import DataSourcesPage from "@/app/data-sources/page";
-import EnvironmentsPage from "@/app/environments/page";
-import AutomationsPage from "@/app/automations/page";
-import SettingsPage from "@/app/settings/page";
-import LoginPage from "@/app/login/page";
+// 路由级懒加载(2026-09-20,审查报告 P2 工程门禁):此前 11 个页面全部静态导入,
+// 主包 814KB/gzip 240KB(目标 ≤180KB)——首屏必须下载所有页面代码。
+// 懒加载后每个页面独立 chunk,首屏只含首页 + 公共依赖;重型页面
+// (文件预览/媒体/对话)按访问时机加载。
+const HomePage = lazy(() => import("@/app/page"));
+const FilesPage = lazy(() => import("@/app/files/page"));
+const ChatPage = lazy(() => import("@/app/chat/page"));
+const KnowledgePage = lazy(() => import("@/app/knowledge/page"));
+const SkillsPage = lazy(() => import("@/app/skills/page"));
+const McpPage = lazy(() => import("@/app/mcp/page"));
+const DataSourcesPage = lazy(() => import("@/app/data-sources/page"));
+const EnvironmentsPage = lazy(() => import("@/app/environments/page"));
+const AutomationsPage = lazy(() => import("@/app/automations/page"));
+const SettingsPage = lazy(() => import("@/app/settings/page"));
+const LoginPage = lazy(() => import("@/app/login/page"));
 
 const TITLES: Record<string, string> = {
   "/": "首页",
@@ -67,6 +71,7 @@ function RouteShell({ children }: { children: React.ReactNode }) {
 /**
  * 页面级包裹(2026-09-17):RouteShell(健康探测/侧栏/标题)+ 渲染错误边界
  * ——渲染崩溃时展示 GlobalRouteError 兜底并上报(白屏类灾难的最后防线)。
+ * Suspense(2026-09-20):懒加载 chunk 拉取期间显示轻量占位(避免白屏闪烁)。
  */
 function Page({ children }: { children: React.ReactNode }) {
   return (
@@ -76,9 +81,18 @@ function Page({ children }: { children: React.ReactNode }) {
         onError={reportRenderError}
         onReset={() => window.location.reload()}
       >
-        {children}
+        <Suspense fallback={<RouteLoading />}>{children}</Suspense>
       </ErrorBoundary>
     </RouteShell>
+  );
+}
+
+/** 懒加载占位:与页面背景一致的轻量骨架,避免切换时的白屏。 */
+function RouteLoading() {
+  return (
+    <div className="flex-1 flex items-center justify-center bg-background">
+      <div className="text-xs text-muted-foreground">加载中…</div>
+    </div>
   );
 }
 
@@ -96,7 +110,11 @@ export default function App() {
       <Route path="/automations" element={<Page><AutomationsPage /></Page>} />
       <Route path="/settings" element={<Page><SettingsPage /></Page>} />
       {/* 令牌登录页(2026-09-19):独立全屏,无侧栏/无健康探测壳 */}
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login" element={
+        <Suspense fallback={<RouteLoading />}>
+          <LoginPage />
+        </Suspense>
+      } />
       {/* 兼容旧路由 → 重定向 */}
       <Route path="/models" element={<Navigate to="/settings?tab=模型管理" replace />} />
       <Route path="/env-vars" element={<Navigate to="/settings?tab=环境变量" replace />} />

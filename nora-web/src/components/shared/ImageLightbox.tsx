@@ -63,6 +63,9 @@ export function ImageLightbox({
   /** 平移偏移(px;仅放大后拖拽产生)。 */
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragging = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+  /** 拖拽进行中(渲染用 React state:render 里读 ref 违反 react-hooks/refs,
+   *  lint 报错——ref 只作事件处理器内的可变存储,视觉状态走 state)。 */
+  const [isDragging, setIsDragging] = useState(false);
   /** 触屏双指捏合:两指距离与基准倍率。 */
   const pinch = useRef<{ dist: number; baseScale: number } | null>(null);
 
@@ -186,6 +189,7 @@ export function ImageLightbox({
     if (isVideo || scale <= 1.01) return;
     e.stopPropagation();
     dragging.current = { startX: e.clientX, startY: e.clientY, baseX: offset.x, baseY: offset.y };
+    setIsDragging(true);
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
   }, [isVideo, scale, offset]);
 
@@ -199,6 +203,7 @@ export function ImageLightbox({
 
   const onPointerUp = useCallback(() => {
     dragging.current = null;
+    setIsDragging(false);
   }, []);
 
   /** 触屏双指捏合。 */
@@ -458,7 +463,7 @@ export function ImageLightbox({
                 width: fit ? `${fit.w}px` : undefined,
                 height: fit ? `${fit.h}px` : undefined,
                 transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-                transition: dragging.current ? "none" : "transform 0.15s ease-out",
+                transition: isDragging ? "none" : "transform 0.15s ease-out",
               }}
               className={`max-w-full max-h-full object-contain select-none ${
                 scale > 1.01 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
