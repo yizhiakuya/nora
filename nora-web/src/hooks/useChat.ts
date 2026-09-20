@@ -58,6 +58,12 @@ interface UseChatOptions {
   initialInput?: string;
   /** 初始引用(跨页「交给助手」交接:M2-02);仅挂载时生效 */
   initialRefs?: ChatRef[];
+  /**
+   * 挂载后自动发送 initialInput(2026-09-20 首页「开始新需求」)。
+   * 仅当 initialInput 非空时生效,且只触发一次——发送后 URL 的 autosend
+   * 参数由调用方移除,刷新不会重发。
+   */
+  autoSendInitial?: boolean;
 /** 响应器：决定谁来回应用户消息（主对话 / 调试预览等场景） */
   responder?: ChatResponder;
   /** 传入时消息自动持久化到会话 store */
@@ -67,7 +73,7 @@ interface UseChatOptions {
 const formatTime = () =>
   new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function useChat({ initialMessages = [], initialInput = "", initialRefs = [], responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
+export function useChat({ initialMessages = [], initialInput = "", initialRefs = [], autoSendInitial = false, responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState(initialInput);
   /** 待发送引用(附件/文件/知识库文档;2026-09-17):发送时序列化进消息尾部。
@@ -434,6 +440,35 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
     setRefs([]);
     await runTurn(content, assistantMsgId, context);
   }, [input, refs, isSending, runTurn, composeWithRefs, contextFromRefs]);
+
+  // 自动发送(2026-09-20 首页「开始新需求」):挂载后把 initialInput 直接发出。
+  // 三重防重:①ref 守卫(StrictMode 双挂载不重发);②发送即把 URL 的
+  // autosend/prompt 清掉——组件因切会话重挂载时读实时 URL 已无 autosend,不再发;
+  // ③发送后输入框与引用清空,即使有漏网重挂载也发不出去(空输入守卫)。
+  const autoSentRef = useRef(false);
+  useEffect(() => {
+    if (!autoSendInitial || autoSentRef.current) return;
+    const stillArmed = (() => {
+      try {
+        return new URLSearchParams(window.location.search).get("autosend") === "1";
+      } catch {
+        return false;
+      }
+    })();
+    if (!stillArmed) return;
+    if (!initialInput.trim() && initialRefs.length === 0) return;
+    autoSentRef.current = true;
+    void sendMessage();
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("autosend");
+      url.searchParams.delete("prompt");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      /* URL 处理失败不影响发送 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时触发一次
+  }, []);
 
   /**
    * 重试失败的轮次:用原用户消息发起新一轮,失败的助手消息就地清空复用

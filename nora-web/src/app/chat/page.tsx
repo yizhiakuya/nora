@@ -24,6 +24,9 @@ export default function ChatPage() {
   const [copied, setCopied] = useState(false);
   // 跨页跳转预填(如数据源页「让 AI 帮我写 SQL」带 ?prompt=...):只读一次,避免后续重挂载重复填入
   const [prefillPrompt] = useState(() => new URLSearchParams(window.location.search).get("prompt") ?? "");
+  // 自动发送(2026-09-20 首页「开始新需求」):autosend=1 时预填后直接发出,
+  // 发送即从 URL 移除该参数——刷新页面不会重复发送。
+  const [autoSend] = useState(() => new URLSearchParams(window.location.search).get("autosend") === "1");
   // 跨页「交给助手」交接(M2-02):?refs=<JSON> 携带结构化引用(文件/文档等),
   // 预填为引用 chip(用户可增删后再发送)。格式:[{kind,id,name}]。
   const [prefillRefs] = useState<import("@/lib/chatRefs").ChatRef[]>(() => {
@@ -141,7 +144,7 @@ export default function ChatPage() {
       <div className="flex-1 flex overflow-hidden">
         {active ? (
           <div key={active.id} className="flex-1 relative flex flex-col min-w-0">
-            <ChatConversation sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} initialRefs={prefillRefs} />
+            <ChatConversation sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} initialRefs={prefillRefs} autoSendInitial={autoSend} />
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">

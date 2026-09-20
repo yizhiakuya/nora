@@ -18,8 +18,9 @@ import { useChatSessions } from "@/hooks/useChatSessions";
  * 输入需求为首要焦点;「继续处理」展示后台运行中的轮次;「最近成果」打开
  * 已完成的结果。不再是服务数/连接数/Chunks 的运维面板(审查报告 B10)。
  *
- * 开始新需求 = 新建会话后带 prompt 跳转(不自动发送——用户可在输入区
- * 编辑、增删资料后再发,方案 §4.1 明确要求)。
+ * 开始新需求 = 新建会话后带 prompt 跳转,**在对话页自动发送**(2026-09-20 用户
+ * 反馈修正:此前只预填不发送,用户以为"发不出去")。跳转携带 autosend=1,
+ * 对话页发送后即从 URL 移除,刷新不会重发。
  */
 export default function Home() {
   // 问候语(2026-09-19 去假数据):按时段 + 用户昵称
@@ -46,13 +47,13 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  /** 开始新需求:创建新会话,带输入内容跳转到对话页(输入区可继续编辑) */
+  /** 开始新需求:创建会话,带输入内容跳转对话页并自动发送(autosend=1) */
   const startDemand = () => {
     const text = demand.trim();
     if (!text || starting) return;
     setStarting(true);
     const sessionId = createSession();
-    navigate(`/chat?prompt=${encodeURIComponent(text)}&session=${encodeURIComponent(sessionId)}`);
+    navigate(`/chat?prompt=${encodeURIComponent(text)}&session=${encodeURIComponent(sessionId)}&autosend=1`);
   };
 
   const headerActions = (

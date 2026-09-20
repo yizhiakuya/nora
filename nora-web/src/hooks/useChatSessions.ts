@@ -21,6 +21,12 @@ export interface ChatSession {
    * automation=定时任务专属会话(侧栏显示「定时」徽章)。旧数据 undefined 按 user。
    */
   origin?: "user" | "automation";
+  /**
+   * 草稿会话(2026-09-20):本地创建、从未发送过消息的会话。
+   * 「新建对话」/首页「开始新需求」遇到已有草稿时复用而不是无限创建;
+   * 首条消息发出(saveMessages 收到非空消息)即清除。
+   */
+  draft?: boolean;
   /** 本地缓存的消息(仅离线兜底/即时渲染用;真相在后端) */
   messages: ChatMessage[];
 }
@@ -88,9 +94,21 @@ export const useChatSessions = create<ChatSessionsState>()(
       activeId: "",
       syncing: false,
       createSession: () => {
+        // 复用已有草稿会话(2026-09-20 用户反馈:连点「新建对话」/首页反复
+        // 发需求会堆积一串空会话)。草稿 = 本地创建、从未发送过消息的会话
+        // (draft 标记,不依赖 messages.length——后端会话未加载历史时也是空数组,
+        // 不能用"空数组"判定草稿,否则会把老会话误当草稿复用)。
+        // 后端行在首条消息发出时才创建(ChatTurnRunner.ensureSession),
+        // 复用草稿不需要任何后端操作。
+        const { sessions } = get();
+        const draft = sessions.find((s) => s.draft);
+        if (draft) {
+          set({ activeId: draft.id });
+          return draft.id;
+        }
         const id = `sess-${Date.now()}`;
         const session: ChatSession = {
-          id, title: DEFAULT_TITLE, titleGenerated: false, updatedAt: Date.now(), messages: [],
+          id, title: DEFAULT_TITLE, titleGenerated: false, updatedAt: Date.now(), messages: [], draft: true,
         };
         set((state) => {
           const withoutSame = state.sessions.filter((s) => s.id !== id);
@@ -138,6 +156,8 @@ export const useChatSessions = create<ChatSessionsState>()(
                   messages,
                   messageCount: Math.max(s.messageCount ?? 0, messages.length),
                   updatedAt: Date.now(),
+                  // 首条消息发出即脱离草稿态(此后「新建对话」不再复用它会话)
+                  draft: messages.length === 0 ? s.draft : undefined,
                   title:
                     s.title === DEFAULT_TITLE && messages[0]?.role === "user"
                       ? placeholderTitle(messages[0].content)
@@ -209,9 +229,15 @@ export const useChatSessions = create<ChatSessionsState>()(
             };
           });
           const activeStillThere = remoteSessions.some((s) => s.id === get().activeId);
+          // 本地草稿(未发消息的会话)在后端没有行,不能被列表同步抹掉——
+          // 否则「新建对话 → 侧栏挂载同步」会把刚建的草稿清掉,用户再点又建新的
+          // (无限创建的另一半根因,2026-09-20)。草稿排在列表最前(最新)。
+          const drafts = get().sessions.filter((s) => s.draft);
           set({
-            sessions: remoteSessions,
-            activeId: activeStillThere ? get().activeId : remoteSessions[0]?.id ?? "",
+            sessions: [...drafts, ...remoteSessions],
+            activeId: activeStillThere || drafts.some((d) => d.id === get().activeId)
+              ? get().activeId
+              : remoteSessions[0]?.id ?? drafts[0]?.id ?? "",
           });
           // 默认激活的第一个会话总是刷新历史(后台,不阻塞)。
           // 不能用「缓存非空就跳过」:localStorage 里可能躺着陈旧瞬态
@@ -236,7 +262,11 @@ export const useChatSessions = create<ChatSessionsState>()(
           const messages = await fetchSessionMessages(id);
           if ((localWriteVersions.get(id) ?? 0) !== localWritesAtRequest) return;
           set((state) => ({
-            sessions: state.sessions.map((s) => (s.id === id ? { ...s, messages } : s)),
+            sessions: state.sessions.map((s) =>
+              s.id === id
+                ? { ...s, messages, draft: messages.length > 0 ? undefined : s.draft }
+                : s
+            ),
           }));
         } catch {
           // 网络失败:沿用本地缓存
