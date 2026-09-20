@@ -1,95 +1,32 @@
 'use client';
 
-import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
-import { BookOpen, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { UploadModal } from "@/components/ui/custom/UploadModal";
-import { useSimulatedUpload } from "@/hooks/useUpload";
-import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
-import { useNotifications } from "@/hooks/useNotifications";
-import { toast } from "sonner";
-import { KnowledgeTabs } from "@/components/knowledge/KnowledgeTabs";
-import { DocumentLibrary } from "@/components/knowledge/DocumentLibrary";
-import { RetrievalTest } from "@/components/knowledge/RetrievalTest";
-import { IndexStatus } from "@/components/knowledge/IndexStatus";
-import { USE_BACKEND } from "@/lib/api/client";
-import { FileItem } from "@/types";
+import { BookOpen } from "lucide-react";
+import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
 
+/**
+ * /knowledge 兼容页(M1-03,2026-09-20):资料页的长期知识视图现位于
+ * /files?view=knowledge;此路由保留直达(书签/深链不丢目标),内容与
+ * 资料页的知识视图完全一致。
+ */
 export default function KnowledgePage() {
-  const [activeTab, setActiveTab] = useState("文档库");
-  const upload = useSimulatedUpload();
-  const indexFile = useKnowledgeDocs((s) => s.indexFile);
-  const indexFileFromBackend = useKnowledgeDocs((s) => s.indexFileFromBackend);
-  const syncFromBackend = useKnowledgeDocs((s) => s.syncFromBackend);
-  const addNotification = useNotifications((s) => s.addNotification);
-
-  useEffect(() => { if (USE_BACKEND) void syncFromBackend().catch(() => undefined); }, [syncFromBackend]);
-
-  const handleImport = (fileName?: string, uploadedFile?: FileItem) => {
-    if (USE_BACKEND && uploadedFile) {
-      // 上传已完成,再触发 rag-service 索引(异步)
-      indexFileFromBackend(uploadedFile.id, uploadedFile.name)
-        .then(() => {
-          addNotification(
-            "文档索引入库",
-            `「${uploadedFile.name}」已开始清洗与向量化，完成后 AI 即可检索其内容。`,
-            "indexed"
-          );
-          toast.success(`「${uploadedFile.name}」索引任务已提交`);
-        })
-        .catch((e: Error) => toast.error(`索引失败：${e.message}`));
-      return;
-    }
-    const name = fileName ?? `导入文档_${Date.now().toString().slice(-4)}.pdf`;
-    indexFile(name);
-    addNotification(
-      "文档索引入库",
-      `「${name}」已完成清洗与向量化，AI 现在可以检索其内容。`,
-      "indexed"
-    );
-    toast.success(`「${name}」已导入知识库`);
-  };
-
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "知识库", isCurrent: true }]}
-        actions={
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => upload.open()}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 导入文档
-          </Button>
-        }
+        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "资料", href: "/files", isCurrent: false }, { label: "长期知识", isCurrent: true }]}
       />
-
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">
           <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
             <div>
               <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" /> 知识库
+                <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" /> 长期知识
               </h1>
-              <p className="text-xs text-muted-foreground mt-1">
-                文件、数据库、代码、环境配置统一摄入 → 清洗 → 索引，为 AI 提供准确上下文。
-              </p>
             </div>
-            <KnowledgeTabs active={activeTab} onChange={setActiveTab} />
           </div>
-
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {activeTab === "文档库" && <DocumentLibrary />}
-            {activeTab === "检索测试" && <RetrievalTest />}
-            {activeTab === "索引状态" && <IndexStatus />}
-          </div>
+          <KnowledgeView />
         </div>
       </div>
-
-      <UploadModal
-        upload={upload}
-        title="导入文档到知识库"
-        hint="支持 PDF / Word / Excel / Markdown，完成后自动清洗与索引"
-        onUploadComplete={handleImport}
-      />
     </>
   );
 }

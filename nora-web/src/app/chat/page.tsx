@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 export default function ChatPage() {
   const navigate = useNavigate();
   const sessions = useChatSessions((s) => s.sessions);
+  const createSession = useChatSessions((s) => s.createSession);
   const activeId = useChatSessions((s) => s.activeId);
   const deleteSession = useChatSessions((s) => s.deleteSession);
   const undoDeleteSession = useChatSessions((s) => s.undoDeleteSession);
@@ -23,6 +24,16 @@ export default function ChatPage() {
   const [copied, setCopied] = useState(false);
   // 跨页跳转预填(如数据源页「让 AI 帮我写 SQL」带 ?prompt=...):只读一次,避免后续重挂载重复填入
   const [prefillPrompt] = useState(() => new URLSearchParams(window.location.search).get("prompt") ?? "");
+  // 指定会话(M1-02):助手首页「开始新需求」新建会话后带 ?session=<id> 进入,
+  // 直接落到该会话而不是"最近一个活跃会话"。挂载时只应用一次。
+  const [targetSessionId] = useState(() => new URLSearchParams(window.location.search).get("session") ?? "");
+  const setActiveSession = useChatSessions((s) => s.setActive);
+
+  useEffect(() => {
+    if (targetSessionId) {
+      setActiveSession(targetSessionId);
+    }
+  }, [targetSessionId, setActiveSession]);
 
   useEffect(() => {
     void syncProviders().catch(() => undefined);
@@ -118,8 +129,18 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-            <p className="text-sm">暂无会话</p>
-            <p className="text-xs opacity-70">从左侧「新建对话」开始,或稍后同步会话列表</p>
+            <p className="text-sm">还没有对话</p>
+            <Button
+              size="sm"
+              className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600"
+              onClick={() => {
+                const s = createSession();
+                setActiveSession(s);
+              }}
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1.5" /> 开始新对话
+            </Button>
+            <p className="text-xs opacity-70">或从左侧「新建对话」开始</p>
           </div>
         )}
       </div>

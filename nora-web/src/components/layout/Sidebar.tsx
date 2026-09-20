@@ -2,9 +2,8 @@
 
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  Home, Folder, MessageSquare, Zap, BookOpen, Server, Plug,
-  Database, ListCheck, Settings,
-Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
+  Sparkles, Folder, ListCheck, Settings,
+  Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
@@ -20,18 +19,24 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
+/**
+ * 主导航(M1-01,2026-09-20,按产品改造方案 §3.1):
+ * 四入口「助手 / 资料 / 任务 / 设置」——此前技术模块平铺为十个顶级入口,
+ * 用户开始一件事之前要先学系统结构(审查报告 B01)。
+ * 高级工具(数据源/环境控制台)保留路由与直达入口,从设置-高级进入,
+ * 不再占主导航;技能/MCP 归入设置。
+ */
 const NAV_ITEMS = [
-{ name: "首页", icon: Home, href: "/" },
-{ name: "文件", icon: Folder, href: "/files" },
-{ name: "对话", icon: MessageSquare, href: "/chat" },
-{ name: "知识库", icon: BookOpen, href: "/knowledge" },
-{ name: "AI 能力", icon: Zap, href: "/skills" },
-{ name: "MCP", icon: Plug, href: "/mcp" },
-{ name: "数据源", icon: Database, href: "/data-sources" },
-{ name: "环境控制台", icon: Server, href: "/environments" },
-{ name: "自动任务", icon: ListCheck, href: "/automations" },
-{ name: "设置", icon: Settings, href: "/settings" },
+  { name: "助手", icon: Sparkles, href: "/" },
+  { name: "资料", icon: Folder, href: "/files" },
+  { name: "任务", icon: ListCheck, href: "/tasks" },
 ];
+
+/** 激活判定:多项共享前缀时取最长匹配(href="/" 仅精确匹配)。 */
+function isNavActive(pathname: string, href: string): boolean {
+  if (href === "/") return pathname === "/" || pathname.startsWith("/chat");
+  return pathname === href || pathname.startsWith(href + "/") || pathname.startsWith(href + "?");
+}
 
 export function Sidebar() {
   const location = useLocation();
@@ -111,7 +116,7 @@ export function Sidebar() {
           <div className="flex-1 overflow-y-auto custom-scroll sidebar-scroll px-2 sm:px-3 py-2">
             <nav className="space-y-1">
               {NAV_ITEMS.map((item) => {
-                const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+                const isActive = isNavActive(pathname, item.href);
                 return (
                   <div key={item.name} className="mb-0.5 flex flex-col">
                     <Link
@@ -122,8 +127,8 @@ export function Sidebar() {
                       <div className={cn("flex items-center", collapsed ? "justify-center" : "gap-3")}><item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground group-hover:text-foreground")} />{!collapsed && <span className="truncate">{item.name}</span>}</div>
                     </Link>
 
-                    {/* Chat Sessions Secondary Menu */}
-                    {item.name === "对话" && !collapsed && (
+                    {/* 助手:最近会话子菜单 */}
+                    {item.name === "助手" && !collapsed && (
                       <div className="ml-9 mt-1 mb-1 space-y-0.5 overflow-hidden animate-in slide-in-from-top-2 fade-in duration-200">
                         {recentSessions.map(session => {
                           const isSessionActive = activeId === session.id && pathname.startsWith("/chat");
@@ -178,7 +183,15 @@ export function Sidebar() {
           </div>
         </div>
         <div className={cn("border-t border-border shrink-0", collapsed ? "p-2" : "p-3 sm:p-4")}>
-          <Link to="/settings" title={collapsed ? "设置中心" : undefined} className={cn("flex items-center rounded-lg text-sm font-medium transition-colors mb-2", collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5", pathname.startsWith("/settings") ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Settings className={cn("w-4 h-4 shrink-0", pathname.startsWith("/settings") ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")} />{!collapsed && "设置中心"}</Link>
+          {/* 设置入口(唯一):高级工具(数据源/环境控制台)从设置-高级进入 */}
+          <Link to="/settings" title={collapsed ? "设置" : undefined} className={cn("flex items-center rounded-lg text-sm font-medium transition-colors mb-2", collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5", pathname.startsWith("/settings") ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Settings className={cn("w-4 h-4 shrink-0", pathname.startsWith("/settings") ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")} />{!collapsed && "设置"}</Link>
+          {/* 高级工具直达(弱化展示,不占主导航) */}
+          {!collapsed && (
+            <div className="px-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground/70">
+              <Link to="/data-sources" className={cn("hover:text-foreground transition-colors", pathname.startsWith("/data-sources") && "text-blue-600 dark:text-blue-400")}>数据源</Link>
+              <Link to="/environments" className={cn("hover:text-foreground transition-colors", pathname.startsWith("/environments") && "text-blue-600 dark:text-blue-400")}>环境</Link>
+            </div>
+          )}
         </div>
       </aside>
     </>

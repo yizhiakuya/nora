@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Home, Folder, MessageSquare, BookOpen, Zap, Database, Server, ListCheck, Settings, File, FileCode, Cpu, ArrowRight } from "lucide-react";
+import { Search, Home, Folder, MessageSquare, BookOpen, Zap, Database, Server, ListCheck, Settings, File, FileCode, Cpu, ArrowRight, Plug } from "lucide-react";
 import { useFiles } from "@/hooks/useFiles";
 import { useConnections } from "@/hooks/useConnections";
 import { useServices } from "@/hooks/useServices";
@@ -25,16 +25,17 @@ interface SearchResult {
 }
 
 const NAV_PAGES: SearchResult[] = [
-  { id: "nav-home",    group: "页面", label: "首页",       hint: "概览与快捷入口", href: "/",              icon: Home,      color: "text-blue-500 dark:text-blue-400" },
-  { id: "nav-files",   group: "页面", label: "文件",       hint: "文件管理与预览", href: "/files",          icon: Folder,    color: "text-blue-500 dark:text-blue-400" },
+  { id: "nav-home",    group: "页面", label: "助手",       hint: "输入需求、继续处理、最近成果", href: "/",       icon: Home,      color: "text-blue-500 dark:text-blue-400" },
+  { id: "nav-files",   group: "页面", label: "资料",       hint: "文件、长期知识、已保存成果",   href: "/files",   icon: Folder,    color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-chat",    group: "页面", label: "对话",       hint: "AI 对话助手",    href: "/chat",           icon: MessageSquare, color: "text-blue-500 dark:text-blue-400" },
-  { id: "nav-know",    group: "页面", label: "知识库",     hint: "RAG 管线管理",   href: "/knowledge",      icon: BookOpen,  color: "text-blue-500 dark:text-blue-400" },
-  { id: "nav-skills",  group: "页面", label: "AI 能力",    hint: "定义 AI 能做什么", href: "/skills",       icon: Zap,       color: "text-yellow-500 dark:text-yellow-400" },
-  { id: "nav-models",  group: "页面", label: "模型管理",   hint: "设置 · LLM 服务商接入", href: "/settings?tab=模型管理", icon: Cpu, color: "text-blue-500 dark:text-blue-400" },
-  { id: "nav-ds",      group: "页面", label: "数据源",     hint: "数据库连接与查询", href: "/data-sources", icon: Database,  color: "text-purple-500 dark:text-purple-400" },
-  { id: "nav-env",     group: "页面", label: "环境控制台", hint: "服务与日志",     href: "/environments",   icon: Server,    color: "text-green-500 dark:text-green-400" },
-  { id: "nav-envvars", group: "页面", label: "环境变量",   hint: "设置 · 自定义凭据", href: "/settings?tab=环境变量", icon: Server, color: "text-green-500 dark:text-green-400" },
-  { id: "nav-auto",    group: "页面", label: "自动任务",   hint: "触发与执行历史",  href: "/automations",   icon: ListCheck, color: "text-yellow-500 dark:text-yellow-400" },
+  { id: "nav-tasks",   group: "页面", label: "任务",       hint: "正在处理 / 定期任务 / 执行记录", href: "/tasks", icon: ListCheck, color: "text-yellow-500 dark:text-yellow-400" },
+  { id: "nav-know",    group: "页面", label: "长期知识",   hint: "资料 · RAG 检索", href: "/knowledge",      icon: BookOpen,  color: "text-blue-500 dark:text-blue-400" },
+  { id: "nav-skills",  group: "页面", label: "技能",       hint: "设置 · 可复用的处理方法", href: "/settings?section=skills", icon: Zap, color: "text-yellow-500 dark:text-yellow-400" },
+  { id: "nav-mcp",     group: "页面", label: "连接与工具", hint: "设置 · MCP 服务器", href: "/settings?section=connections", icon: Plug, color: "text-blue-500 dark:text-blue-400" },
+  { id: "nav-models",  group: "页面", label: "模型",       hint: "设置 · LLM 服务商接入", href: "/settings?section=model", icon: Cpu, color: "text-blue-500 dark:text-blue-400" },
+  { id: "nav-ds",      group: "页面", label: "数据源",     hint: "数据库连接与查询（高级）", href: "/data-sources", icon: Database,  color: "text-purple-500 dark:text-purple-400" },
+  { id: "nav-env",     group: "页面", label: "环境控制台", hint: "服务与日志（高级）", href: "/environments",   icon: Server,    color: "text-green-500 dark:text-green-400" },
+  { id: "nav-envvars", group: "页面", label: "环境变量",   hint: "设置 · 自定义凭据", href: "/settings?section=env", icon: Server, color: "text-green-500 dark:text-green-400" },
   { id: "nav-set",     group: "页面", label: "设置",       hint: "偏好与模型配置",  href: "/settings",      icon: Settings,  color: "text-muted-foreground" },
 ];
 
@@ -62,7 +63,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       id: `svc-${s.id}`, group: "服务", label: s.name, hint: `:${s.port} · ${s.status}`, href: "/environments", icon: Server, color: "text-green-500 dark:text-green-400",
     })),
     ...automations.map((a) => ({
-      id: `auto-${a.id}`, group: "自动任务", label: a.name, hint: a.trigger, href: "/automations", icon: Zap, color: "text-yellow-500 dark:text-yellow-400",
+      id: `auto-${a.id}`, group: "任务", label: a.name, hint: a.trigger, href: "/tasks", icon: Zap, color: "text-yellow-500 dark:text-yellow-400",
     })),
   ], [files, docs, automations, connections, services]);
 

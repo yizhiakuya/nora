@@ -25,9 +25,33 @@ import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { usePreferences } from "@/hooks/usePreferences";
 import { filesApi, humanSize, type BackendFolder } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
+import { SavedResultsView } from "@/components/files/SavedResultsView";
 
 export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  /**
+   * 资料页视图(M1-03,2026-09-20,方案 §4.2):files(全部文件,默认)/
+   * knowledge(长期知识)/ results(已保存成果)。URL ?view= 同步,刷新/
+   * 返回键/复制链接保持一致。旧链接无 view 参数时按 files 处理。
+   */
+  const [dataView, setDataView] = useState<"files" | "knowledge" | "results">(() => {
+    const v = new URLSearchParams(window.location.search).get("view");
+    return v === "knowledge" || v === "results" ? v : "files";
+  });
+  const switchDataView = (v: "files" | "knowledge" | "results") => {
+    setDataView(v);
+    // 切视图时退出子视图(文件夹/工作区/缓存/回收站),避免状态叠加
+    setCurrentFolder(null);
+    setWorkspaceDir(null);
+    setMediaCacheOpen(false);
+    setTrashOpen(false);
+    const params = new URLSearchParams(window.location.search);
+    if (v === "files") params.delete("view");
+    else params.set("view", v);
+    const qs = params.toString();
+    window.history.replaceState(null, "", `/files${qs ? `?${qs}` : ""}`);
+  };
   /** 工作区导航状态:null=文件中心根视图;""=工作区根目录;"memory/..."=子目录。
    *  工作区是文件系统的一部分——像普通文件夹一样进入,而不是独立 Tab。 */
   const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
@@ -463,7 +487,31 @@ export default function FilesPage() {
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          {trashOpen ? (
+          {/* 资料视图切换(M1-03):全部文件 / 长期知识 / 已保存成果 */}
+          <div role="tablist" aria-label="资料视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit mb-4">
+            {([
+              { key: "files", label: "全部文件" },
+              { key: "knowledge", label: "长期知识" },
+              { key: "results", label: "已保存成果" },
+            ] as const).map((v) => (
+              <button
+                key={v.key}
+                type="button"
+                role="tab"
+                aria-selected={dataView === v.key}
+                onClick={() => switchDataView(v.key)}
+                className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${dataView === v.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          {dataView === "knowledge" ? (
+            <KnowledgeView />
+          ) : dataView === "results" ? (
+            <SavedResultsView />
+          ) : trashOpen ? (
             <TrashBrowser onExit={() => setTrashOpen(false)} />
           ) : mediaCacheOpen ? (
             <MediaCacheBrowser onExit={() => setMediaCacheOpen(false)} />

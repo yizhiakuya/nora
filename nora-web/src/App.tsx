@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -23,20 +23,21 @@ const SkillsPage = lazy(() => import("@/app/skills/page"));
 const McpPage = lazy(() => import("@/app/mcp/page"));
 const DataSourcesPage = lazy(() => import("@/app/data-sources/page"));
 const EnvironmentsPage = lazy(() => import("@/app/environments/page"));
-const AutomationsPage = lazy(() => import("@/app/automations/page"));
+const TasksPage = lazy(() => import("@/app/tasks/page"));
 const SettingsPage = lazy(() => import("@/app/settings/page"));
 const LoginPage = lazy(() => import("@/app/login/page"));
 
 const TITLES: Record<string, string> = {
-  "/": "首页",
-  "/files": "文件",
-  "/chat": "对话",
-  "/knowledge": "知识库",
+  "/": "助手",
+  "/files": "资料",
+  "/chat": "助手",
+  "/tasks": "任务",
+  "/knowledge": "资料",
   "/skills": "AI 能力",
   "/data-sources": "数据源",
   "/environments": "环境控制台",
-  "/automations": "自动任务",
-  "/settings": "设置中心",
+  "/automations": "任务",
+  "/settings": "设置",
   "/login": "登录",
 };
 
@@ -102,12 +103,15 @@ export default function App() {
       <Route path="/" element={<Page><HomePage /></Page>} />
       <Route path="/files" element={<Page><FilesPage /></Page>} />
       <Route path="/chat" element={<Page><ChatPage /></Page>} />
+      {/* 任务聚合页(M1):view=running|schedules|history */}
+      <Route path="/tasks" element={<Page><TasksPage /></Page>} />
+      {/* 兼容旧路由(产品改造方案 §3.2):/automations → /tasks(view 保留) */}
+      <Route path="/automations" element={<CompatAutomations />} />
       <Route path="/knowledge" element={<Page><KnowledgePage /></Page>} />
       <Route path="/skills" element={<Page><SkillsPage /></Page>} />
       <Route path="/mcp" element={<Page><McpPage /></Page>} />
       <Route path="/data-sources" element={<Page><DataSourcesPage /></Page>} />
       <Route path="/environments" element={<Page><EnvironmentsPage /></Page>} />
-      <Route path="/automations" element={<Page><AutomationsPage /></Page>} />
       <Route path="/settings" element={<Page><SettingsPage /></Page>} />
       {/* 令牌登录页(2026-09-19):独立全屏,无侧栏/无健康探测壳 */}
       <Route path="/login" element={
@@ -121,4 +125,16 @@ export default function App() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
+}
+
+/**
+ * /automations 兼容跳转(M1):保留可识别的历史子视图——
+ * ?tab=执行历史 → /tasks?view=history;其余 → /tasks?view=schedules。
+ * 旧链接(含侧栏书签)不丢目标。
+ */
+function CompatAutomations() {
+  const [params] = useSearchParams();
+  const tab = params.get("tab");
+  const view = tab === "执行历史" ? "history" : "schedules";
+  return <Navigate to={`/tasks?view=${view}`} replace />;
 }

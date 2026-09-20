@@ -1,27 +1,37 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { usePreferences } from "@/hooks/usePreferences";
-import { Search, CloudUpload } from "lucide-react";
+import { Search, ArrowUp, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { UploadModal } from "@/components/ui/custom/UploadModal";
-import { useSimulatedUpload } from "@/hooks/useUpload";
 import { CommandPalette } from "@/components/home/CommandPalette";
 import { QuickActions } from "@/components/home/QuickActions";
-import { RecentFilesTable } from "@/components/home/RecentFilesTable";
-import { HomeSidePanel } from "@/components/home/HomeSidePanel";
+import { RunningTasks } from "@/components/automations/RunningTasks";
+import { RecentResults } from "@/components/home/RecentResults";
+import { useChatSessions } from "@/hooks/useChatSessions";
 
+/**
+ * 助手首页(M1-02,2026-09-20,按产品改造方案 §4.1):
+ * 输入需求为首要焦点;「继续处理」展示后台运行中的轮次;「最近成果」打开
+ * 已完成的结果。不再是服务数/连接数/Chunks 的运维面板(审查报告 B10)。
+ *
+ * 开始新需求 = 新建会话后带 prompt 跳转(不自动发送——用户可在输入区
+ * 编辑、增删资料后再发,方案 §4.1 明确要求)。
+ */
 export default function Home() {
-  // 问候语(2026-09-19 去假数据):按时段 + 用户昵称(未设置则通用问候,
-  // 此前写死"早上好,Nora!"——夜里也显示早上好,名字也不是用户的)
+  // 问候语(2026-09-19 去假数据):按时段 + 用户昵称
   const accountName = usePreferences((s) => s.account.name);
   const hour = new Date().getHours();
   const greeting = hour < 6 ? "夜深了" : hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
-  const greetLine = accountName.trim() ? `${greeting}，${accountName.trim()}！` : `${greeting}！`;
+  const greetLine = accountName.trim() ? `${greeting}，${accountName.trim()}` : greeting;
   const [isCmdKOpen, setIsCmdKOpen] = useState(false);
-  const upload = useSimulatedUpload();
+  const [demand, setDemand] = useState("");
+  const [starting, setStarting] = useState(false);
+  const navigate = useNavigate();
+  const createSession = useChatSessions((s) => s.createSession);
 
   // Global Cmd+K / Escape listener
   useEffect(() => {
@@ -36,7 +46,14 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const openUpload = () => upload.open();
+  /** 开始新需求:创建新会话,带输入内容跳转到对话页(输入区可继续编辑) */
+  const startDemand = () => {
+    const text = demand.trim();
+    if (!text || starting) return;
+    setStarting(true);
+    const sessionId = createSession();
+    navigate(`/chat?prompt=${encodeURIComponent(text)}&session=${encodeURIComponent(sessionId)}`);
+  };
 
   const headerActions = (
     <>
@@ -47,19 +64,8 @@ export default function Home() {
           <kbd className="border border-border rounded px-1 text-[9px] text-muted-foreground bg-card">⌘K</kbd>
         </div>
       </div>
-
       <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={() => setIsCmdKOpen(true)}>
         <Search className="w-4 h-4" />
-      </Button>
-
-      <div className="w-px h-5 bg-gray-200 dark:bg-gray-800 mx-1 sm:mx-2"></div>
-
-      <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 hidden sm:flex" onClick={openUpload}>
-        <CloudUpload className="w-3.5 h-3.5 mr-1.5" /> 上传文件
-      </Button>
-
-      <Button size="icon" className="h-8 w-8 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 sm:hidden rounded-lg" onClick={openUpload}>
-        <CloudUpload className="w-4 h-4 text-white" />
       </Button>
     </>
   );
@@ -67,29 +73,66 @@ export default function Home() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "概览", isCurrent: true }]}
+        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "助手", isCurrent: true }]}
         actions={headerActions}
       />
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 relative">
-        <div className="max-w-6xl mx-auto space-y-6 pb-20">
-          <div className="flex items-center justify-between mb-2 animate-in fade-in slide-in-from-bottom-2">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-foreground">{greetLine}</h1>
-              <p className="text-xs sm:text-sm text-muted-foreground mt-1">管理文件、查数据库、控制环境——AI 都能帮你。</p>
+        <div className="max-w-4xl mx-auto space-y-6 pb-20">
+          {/* 首要焦点:输入需求 */}
+          <div className="pt-6 sm:pt-10 animate-in fade-in slide-in-from-bottom-2">
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground mb-4">{greetLine}，今天想让我帮你做什么？</h1>
+            <div className="bg-card border border-border rounded-2xl shadow-sm focus-within:border-blue-400 dark:focus-within:border-blue-600 transition-colors p-3">
+              <textarea
+                rows={2}
+                value={demand}
+                onChange={(e) => setDemand(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    startDemand();
+                  }
+                }}
+                placeholder="例如：比较这几份资料的差异，给我一份报告；或把本周的演出照片整理到一个文件夹"
+                className="w-full bg-transparent border-none outline-none resize-none text-sm text-foreground placeholder:text-muted-foreground/60 px-1 py-1"
+              />
+              <div className="flex items-center justify-between mt-1">
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+                  <Sparkles className="w-3 h-3" />
+                  <span>进入对话后可添加资料、选择连接；Enter 发送，Shift+Enter 换行</span>
+                </div>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600"
+                  onClick={startDemand}
+                  disabled={!demand.trim() || starting}
+                >
+                  {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUp className="w-3.5 h-3.5" />}
+                </Button>
+              </div>
             </div>
           </div>
 
-          <QuickActions />
+          {/* 继续处理:后台运行中的轮次(真实探测,无则不显示空卡片) */}
+          <section className="animate-in fade-in slide-in-from-bottom-3 duration-500">
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">继续处理</h2>
+            <RunningTasks />
+          </section>
 
-          <div className="flex flex-col lg:flex-row gap-6 mt-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <RecentFilesTable />
-            <HomeSidePanel />
-          </div>
+          {/* 最近成果 */}
+          <section className="animate-in fade-in slide-in-from-bottom-3 duration-500">
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">最近成果</h2>
+            <RecentResults />
+          </section>
+
+          {/* 常用操作 */}
+          <section className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">常用操作</h2>
+            <QuickActions />
+          </section>
         </div>
       </div>
 
-      <UploadModal upload={upload} title="上传到个人空间" hint="支持 PDF, DOCX, XLSX, 图片等格式" />
       <CommandPalette isOpen={isCmdKOpen} onClose={() => setIsCmdKOpen(false)} />
     </>
   );
