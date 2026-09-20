@@ -35,7 +35,7 @@ class AutomationControllerTest {
     void listWrapsRulesInEnvelope() {
         List<AutomationService.RuleView> rules = List.of(
                 new AutomationService.RuleView(1L, "巡检", "daily", "每日定时",
-                        "{\"type\":\"sql\"}", true, "active", null));
+                        "{\"type\":\"sql\"}", true, "active", null, null, null, "ok"));
         when(service.list()).thenReturn(rules);
 
         controller.list();

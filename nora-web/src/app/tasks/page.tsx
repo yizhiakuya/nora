@@ -32,6 +32,8 @@ export default function TasksPage() {
   const viewParam = searchParams.get("view");
   const view: TaskView = (VIEWS.some((v) => v.key === viewParam) ? viewParam : "schedules") as TaskView;
   const [modalOpen, setModalOpen] = useState(false);
+  /** M4-02:从成果创建定期任务时的预填(名称+指令)。 */
+  const [modalPrefill, setModalPrefill] = useState<{ name?: string; action?: string } | null>(null);
   const syncFromBackend = useAutomations((s) => s.syncFromBackend);
 
   useEffect(() => {
@@ -84,12 +86,24 @@ export default function TasksPage() {
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             {view === "running" && <RunningTasks />}
             {view === "schedules" && <AutomationList />}
-            {view === "history" && <ExecutionHistory />}
+            {view === "history" && (
+              <ExecutionHistory
+                onCreateSchedule={(prefill) => {
+                  setModalPrefill(prefill);
+                  setView("schedules");
+                  setModalOpen(true);
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
 
-      <NewAutomationModal isOpen={modalOpen} onClose={() => setModalOpen(false)} />
+      <NewAutomationModal
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setModalPrefill(null); }}
+        prefill={modalPrefill}
+      />
     </>
   );
 }

@@ -54,6 +54,12 @@ export function AutomationList() {
                   {rule.name}
                 </span>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
+                {/* M4-05:存量规则缺真实日程/连接 → 显示「需配置」而非正常启用 */}
+                {rule.needsConfig && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" title="缺少真实日程/连接配置:请编辑补充后再启用">
+                    需配置
+                  </span>
+                )}
               </div>
               <Switch checked={rule.enabled} onCheckedChange={() => toggle(rule.id)} />
             </div>

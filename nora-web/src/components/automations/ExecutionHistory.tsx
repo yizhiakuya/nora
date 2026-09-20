@@ -19,7 +19,7 @@ const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; 
  * 截为 120 字且没有查看入口,「成功」之后拿不到报告(审查报告 B04)。
  * detail 字段本身已是全文(automationsApi.toExecution),详情面板直接渲染。
  */
-export function ExecutionHistory() {
+export function ExecutionHistory({ onCreateSchedule }: { onCreateSchedule?: (prefill: { name: string; action: string }) => void } = {}) {
   const [retrying, setRetrying] = useState<number | null>(null);
   const [viewing, setViewing] = useState<ExecutionRecord | null>(null);
   const records = useAutomations((s) => s.executions);
@@ -94,6 +94,21 @@ export function ExecutionHistory() {
         width="w-[94%] sm:w-[720px]"
         footer={viewing && (
           <>
+            <Button
+              variant="outline" size="sm"
+              onClick={() => {
+                // M4-02:从成果创建定期任务——带入规则名与结果摘要作为指令参考;
+                // 用户在新建弹窗里确认日程(不静默继承)。
+                onCreateSchedule?.({
+                  name: `${viewing.ruleName}（定期）`,
+                  action: viewing.detail.slice(0, 2000),
+                });
+                setViewing(null);
+              }}
+              title="以本次结果为依据创建定期任务"
+            >
+              设为定期任务
+            </Button>
             <Button
               variant="outline" size="sm"
               onClick={() => { void navigator.clipboard.writeText(viewing.detail); }}

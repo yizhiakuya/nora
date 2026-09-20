@@ -18,6 +18,8 @@ import com.nora.common.notification.NotificationPublisher;
 @Service
 public class AutomationService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AutomationService.class);
+
     private final JdbcTemplate jdbcTemplate;
     private final ActionExecutor actionExecutor;
     private final ObjectMapper objectMapper;
@@ -45,7 +47,7 @@ public class AutomationService {
     /** 列出规则,最新在前(前端 AutomationRule[])。 */
     public List<RuleView> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule WHERE deleted_at IS NULL ORDER BY id DESC",
+                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at, schedule, next_run_at, configuration_status FROM automation_rule WHERE deleted_at IS NULL ORDER BY id DESC",
                 (rs, rowNum) -> new RuleView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -54,20 +56,33 @@ public class AutomationService {
                         rs.getString("action"),
                         rs.getBoolean("enabled"),
                         rs.getString("status"),
-                        rs.getTimestamp("last_run_at")));
+                        rs.getTimestamp("last_run_at"),
+                        rs.getString("schedule"),
+                        rs.getTimestamp("next_run_at"),
+                        rs.getString("configuration_status")));
     }
 
     /**
-     * Creates a rule. 动作二选一:{@code actionType="agent"} + {@code prompt}
+     * Creates a rule(M4-01 扩展)。动作二选一:{@code actionType="agent"} + {@code prompt}
      * (自然语言指令,由 agent-service 执行),或默认 SQL + {@code sql}。
+     *
+     * <p>日程(M4-01):daily/weekly 必须带 {@code scheduleJson}
+     * ({@code {frequency,localTime,dayOfWeek,timezone}});服务端校验并计算
+     * nextRunAt(方案 §7.2:新建规则默认第一次在未来计划点执行)。手动规则忽略。
      */
     public RuleView create(String name, String triggerType, String actionType, String sql, String prompt) {
+        return create(name, triggerType, actionType, sql, prompt, null);
+    }
+
+    public RuleView create(String name, String triggerType, String actionType, String sql, String prompt,
+                           String scheduleJson) {
         if (name == null || name.isBlank()) {
             throw new BusinessException(400, "name is required");
         }
         String type = triggerType == null ? "manual" : triggerType;
-        if (!List.of("manual", "daily", "weekly", "file", "error").contains(type)) {
-            throw new BusinessException(400, "invalid trigger type: " + type);
+        if (!List.of("manual", "daily", "weekly").contains(type)) {
+            throw new BusinessException(400,
+                    "invalid trigger type: " + type + "(file/error 触发方式未接通,请使用 manual/daily/weekly)");
         }
         boolean agentAction = "agent".equals(actionType);
         if (agentAction) {
@@ -77,16 +92,89 @@ public class AutomationService {
         } else if (sql == null || sql.isBlank()) {
             throw new BusinessException(400, "sql action is required");
         }
+        // 日程校验与 nextRunAt 计算(M4-01):daily/weekly 必须带完整日程
+        String normalizedSchedule = null;
+        java.time.LocalDateTime nextRunAt = null;
+        if ("daily".equals(type) || "weekly".equals(type)) {
+            if (scheduleJson == null || scheduleJson.isBlank()) {
+                throw new BusinessException(400,
+                        "daily/weekly 规则必须提供 schedule(frequency/localTime/dayOfWeek/timezone)");
+            }
+            normalizedSchedule = normalizeSchedule(scheduleJson, type);
+            nextRunAt = computeNextRunAt(normalizedSchedule);
+        }
         String label = triggerLabel(type);
         String actionJson = agentAction
                 ? actionExecutor.agentAction(prompt.trim())
                 : actionExecutor.sqlAction(sql);
         jdbcTemplate.update(
-                "INSERT INTO automation_rule (name, trigger_type, trigger_expr, action, enabled, status) VALUES (?, ?, ?, ?::jsonb, true, 'active')",
-                name.trim(), type, label, actionJson);
+                "INSERT INTO automation_rule (name, trigger_type, trigger_expr, action, enabled, status, schedule, next_run_at, configuration_status) "
+                        + "VALUES (?, ?, ?, ?::jsonb, true, 'active', ?::jsonb, ?, 'ok')",
+                name.trim(), type, label, actionJson, normalizedSchedule, nextRunAt);
         Long id = jdbcTemplate.queryForObject(
                 "SELECT id FROM automation_rule WHERE name = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1", Long.class, name.trim());
         return get(id);
+    }
+
+    /**
+     * 校验并规范化 schedule JSON(M4-01):频率与 triggerType 一致、时间/星期/时区有效。
+     * 返回规范化的 JSON 字符串(供落库)。
+     */
+    private String normalizeSchedule(String scheduleJson, String type) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(scheduleJson);
+            // 频率以 triggerType 为准(防前后端不一致)
+            ((com.fasterxml.jackson.databind.node.ObjectNode) node).put("frequency", type);
+            ScheduleCalculator.Schedule parsed = ScheduleCalculator.parse(node);
+            if (parsed == null) {
+                throw new BusinessException(400,
+                        "schedule 非法:需要 localTime(HH:mm)、weekly 还需 dayOfWeek(1-7)、timezone(IANA)");
+            }
+            return objectMapper.writeValueAsString(node);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(400, "schedule 解析失败: " + e.getMessage());
+        }
+    }
+
+    /** 由 schedule 计算下一次计划执行(规则时区;转本地挂钟存储)。 */
+    private java.time.LocalDateTime computeNextRunAt(String scheduleJson) {
+        try {
+            ScheduleCalculator.Schedule parsed = ScheduleCalculator.parse(objectMapper.readTree(scheduleJson));
+            if (parsed == null) {
+                return null;
+            }
+            return ScheduleCalculator.nextAfter(parsed, java.time.LocalDateTime.now());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 日程预览(M4-01):返回未来至少 3 次计划点(方案 §8.1「保存前预览」)。
+     * 输入为未落库的 schedule JSON。
+     */
+    public List<String> previewSchedule(String scheduleJson, String triggerType, int count) {
+        String type = triggerType == null ? "daily" : triggerType;
+        String normalized = normalizeSchedule(scheduleJson, type);
+        ScheduleCalculator.Schedule parsed;
+        try {
+            parsed = ScheduleCalculator.parse(objectMapper.readTree(normalized));
+        } catch (Exception e) {
+            throw new BusinessException(400, "schedule 解析失败: " + e.getMessage());
+        }
+        if (parsed == null) {
+            throw new BusinessException(400, "schedule 非法");
+        }
+        int n = Math.min(Math.max(count, 1), 10);
+        List<String> out = new java.util.ArrayList<>(n);
+        java.time.LocalDateTime cursor = java.time.LocalDateTime.now();
+        for (int i = 0; i < n; i++) {
+            cursor = ScheduleCalculator.nextAfter(parsed, cursor);
+            out.add(cursor.toString());
+        }
+        return out;
     }
 
     /** 启用/停用规则。 */
@@ -166,37 +254,77 @@ public class AutomationService {
                 limit);
     }
 
-    /** 计划扫描:运行窗口已到的启用 daily/weekly 规则。 */
+    /**
+     * 计划扫描(M4-01/M4-04):按 nextRunAt 找到期规则并执行。
+     *
+     * <p>语义(方案 §7.2):
+     * <ul>
+     *   <li>now ∈ [nextRunAt, nextRunAt+10min] → 执行,并推进 nextRunAt 到下一个未来计划点;</li>
+     *   <li>now 超过宽限(missed)→ **不自动补跑**:落一条 missed_schedule 执行记录,
+     *       推进 nextRunAt,等待用户手动补跑(方案 §7.2);</li>
+     *   <li>去重(M4-04):推进 nextRunAt 与执行记录领取在同一事务内完成——
+     *       重复扫描不会对同一计划点执行两次;</li>
+     *   <li>暂停规则不触发;恢复后从下一个未来计划点开始(不追赶)。</li>
+     * </ul>
+     */
     public int runDueScheduled() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
         int ran = 0;
         for (RuleView rule : list()) {
             if (!rule.enabled() || !List.of("daily", "weekly").contains(rule.triggerType())) {
                 continue;
             }
-            // v1 节律:不追踪"每服务进程每窗口只触发一次"——调度器每分钟调用,
-            // 当 last_run 早于今天(daily)或早于 7 天前(weekly)时触发。
-            java.sql.Timestamp last = rule.lastRunAt();
-            boolean due = switch (rule.triggerType()) {
-                case "daily" -> last == null || last.before(todayMinus(0));
-                case "weekly" -> last == null || last.before(todayMinus(6));
-                default -> false;
-            };
-            if (due) {
+            if (rule.nextRunAt() == null) {
+                continue;
+            }
+            java.time.LocalDateTime scheduledAt = rule.nextRunAt().toLocalDateTime();
+            if (now.isBefore(scheduledAt)) {
+                continue; // 未到点
+            }
+            // 领取计划点(原子):条件更新 nextRunAt(仅当仍等于本次读取值)——
+            // 两个实例/重复扫描只有一个能领到(方案 §7.3 的 (ruleId, scheduledAt) 去重等效实现)
+            ScheduleCalculator.Schedule parsed = parseScheduleOf(rule);
+            java.time.LocalDateTime next = parsed == null ? null : ScheduleCalculator.nextAfter(parsed, now);
+            int claimed = jdbcTemplate.update(
+                    "UPDATE automation_rule SET next_run_at = ? WHERE id = ? AND next_run_at = ? AND deleted_at IS NULL",
+                    next == null ? null : java.sql.Timestamp.valueOf(next),
+                    rule.id(), java.sql.Timestamp.valueOf(scheduledAt));
+            if (claimed == 0) {
+                continue; // 另一实例已领取该计划点
+            }
+            if (ScheduleCalculator.withinGrace(scheduledAt, now)) {
                 execute(rule);
                 ran++;
+            } else {
+                // 超过宽限:记录 missed_schedule,不冒充 cancelled/completed(方案 §7.2)
+                try {
+                    jdbcTemplate.update(
+                            "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, 0, 'missed_schedule', ?)",
+                            rule.id(), "计划点 " + scheduledAt + " 已错过(超过 " + ScheduleCalculator.GRACE_MINUTES
+                                    + " 分钟宽限),未自动补跑;可在任务页手动运行。");
+                } catch (Exception e) {
+                    log.warn("failed to record missed schedule for rule {}: {}", rule.id(), e.getMessage());
+                }
             }
         }
         return ran;
     }
 
-    private java.sql.Timestamp todayMinus(int days) {
-        return java.sql.Timestamp.valueOf(
-                java.time.LocalDate.now().minusDays(days).atStartOfDay());
+    /** 读取规则的 schedule 并解析(供调度推进 nextRunAt 用)。 */
+    private ScheduleCalculator.Schedule parseScheduleOf(RuleView rule) {
+        if (rule.schedule() == null || rule.schedule().isBlank()) {
+            return null;
+        }
+        try {
+            return ScheduleCalculator.parse(objectMapper.readTree(rule.schedule()));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private RuleView get(long id) {
         List<RuleView> rows = jdbcTemplate.query(
-                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at FROM automation_rule WHERE id = ? AND deleted_at IS NULL",
+                "SELECT id, name, trigger_type, trigger_expr, action, enabled, status, last_run_at, schedule, next_run_at, configuration_status FROM automation_rule WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new RuleView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -205,7 +333,10 @@ public class AutomationService {
                         rs.getString("action"),
                         rs.getBoolean("enabled"),
                         rs.getString("status"),
-                        rs.getTimestamp("last_run_at")),
+                        rs.getTimestamp("last_run_at"),
+                        rs.getString("schedule"),
+                        rs.getTimestamp("next_run_at"),
+                        rs.getString("configuration_status")),
                 id);
         if (rows.isEmpty()) {
             throw new BusinessException(404, "rule not found: " + id);
@@ -249,7 +380,13 @@ public class AutomationService {
             String actionJson,
             boolean enabled,
             String status,
-            java.sql.Timestamp lastRunAt) {
+            java.sql.Timestamp lastRunAt,
+            /** 日程 JSON(M4-01;null = 手动/需配置)。 */
+            String schedule,
+            /** 下一次计划执行(派生;手动规则/需配置为 null)。 */
+            java.sql.Timestamp nextRunAt,
+            /** ok / needs_config(存量无时刻规则标需配置,方案 §8.3)。 */
+            String configurationStatus) {
     }
 
     /** 前端消费的执行行(ruleId 供「重试」定位规则)。 */

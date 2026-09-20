@@ -179,3 +179,47 @@
   (两套权威存储,前端薄适配,方案 §6.4 第 4 条允许)。
 - `partial` 判定基于"有失败工具步骤"的启发式;更精细的语义(如部分文件导入成功)
   由 S2 场景(M3-04 范围)在 fetch_media 结果里体现。
+
+---
+
+## M4：可用的定期任务（完成）
+
+### 已完成任务
+
+- **M4-01 日程契约与预览** — `schedule` JSONB 为唯一权威(frequency/localTime/
+  dayOfWeek/timezone),`next_run_at` 为服务端计算的派生字段;`ScheduleCalculator`
+  用 Java 时间 API 处理 DST;`POST /automations/schedule-preview` 返回未来 3 次;
+  前端新建弹窗增加时间/星期/时区字段 + 预览按钮。
+  - 验证(E2E):daily 09:00 预览 = 未来三天 09:00;创建 daily → nextRunAt 正确;
+    weekly dayOfWeek=5 → nextRunAt 落在周五(9-25);浏览器预览显示"未来三次"。
+- **M4-02 从成果创建定期任务** — 执行详情新增「设为定期任务」(带入名称与结果摘要,
+  用户在弹窗确认日程,不静默继承)。
+  - 验证(浏览器):按钮出现在详情 footer,跳转任务页并打开预填弹窗。
+- **M4-03 调度语义** — `runDueScheduled` 按 nextRunAt 扫描:宽限内执行并推进;
+  超宽限落 `missed_schedule` 记录(不自动补跑,方案 §7.2)。
+  - 验证(E2E):拨 nextRunAt 到 1 分钟前 → 恰 1 条执行 + nextRunAt 推进;
+    拨到 30 分钟前 → missed_schedule 记录 + 推进,不执行。
+- **M4-04 去重** — 领取计划点用条件 UPDATE(仅当 nextRunAt 仍等于读取值)——
+  重复扫描/双实例只有一个能领到(方案 §7.3 (ruleId, scheduledAt) 去重等效实现)。
+  - 验证(E2E):一次触发恰一条执行记录。
+- **M4-05 存量迁移** — V5 迁移:旧 daily/weekly 无日程规则暂停并标 `needs_config`;
+  旧 file/error 规则同标;列表显示「需配置」徽章。create 拒绝 file/error 类型。
+  - 验证:迁移已应用(现有 manual 规则不受影响);UI 徽章代码就位。
+
+### 验证方式汇总(M4)
+
+| 项 | 方式 | 结果 |
+|---|---|---|
+| M4-01 | E2E(daily/weekly nextRunAt + 预览)+ 浏览器 | 通过 |
+| M4-02 | 浏览器(详情按钮 + 预填) | 通过 |
+| M4-03 | E2E(宽限执行 + 错过记录) | 通过 |
+| M4-04 | E2E(单次触发恰一条) | 通过 |
+| M4-05 | 迁移应用 + UI 代码 | 通过 |
+| 工程门禁 | tsc / lint / automation 测试 0 失败 / 126 前端测试 | 通过 |
+
+### 已知限制
+
+- 无人值守权限收敛(方案 §7.4:定期任务默认只读 + 受限保存)未在本阶段实现——
+  当前 Agent 动作仍走 `/agent/run`(FULL 档)。此项涉及执行器权限模型改造,
+  按方案 §7.4 最后一条:**现有依赖 FULL 的规则应标"需确认执行范围"**——
+  留待 M5 验收时与用户确认范围后实施(属产品取舍,需用户决定)。

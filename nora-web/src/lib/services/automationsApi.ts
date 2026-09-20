@@ -1,7 +1,7 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 
-/** 后端 automation_rule 行 */
+/** 后端 automation_rule 行(M4-01 扩展日程字段) */
 export interface BackendRule {
   id: number;
   name: string;
@@ -11,6 +11,23 @@ export interface BackendRule {
   enabled: boolean;
   status: string;
   lastRunAt: string | null;
+  /** 日程 JSON(M4-01;null = 手动/需配置) */
+  schedule: string | null;
+  /** 下一次计划执行(派生;手动/需配置为 null) */
+  nextRunAt: string | null;
+  /** ok / needs_config */
+  configurationStatus: string;
+}
+
+/** 日程契约(M4-01;与后端 ScheduleCalculator 对齐)。 */
+export interface ScheduleSpec {
+  frequency: "daily" | "weekly";
+  /** HH:mm */
+  localTime: string;
+  /** weekly:1-7(1=周一) */
+  dayOfWeek?: number;
+  /** IANA 时区 */
+  timezone: string;
 }
 
 /** 后端 execution_record 行 */
@@ -29,15 +46,34 @@ function formatTime(ts: string | null): string {
   return ts.slice(5, 16).replace("T", " ");
 }
 
+/** 日程摘要(列表展示):「每日 09:00(Asia/Shanghai)」/「每周五 09:00」。 */
+function describeSchedule(scheduleJson: string | null): string | null {
+  if (!scheduleJson) return null;
+  try {
+    const s = JSON.parse(scheduleJson) as { frequency?: string; localTime?: string; dayOfWeek?: number; timezone?: string };
+    if (!s.frequency || !s.localTime) return null;
+    const week = ["", "一", "二", "三", "四", "五", "六", "日"];
+    const base = s.frequency === "weekly" && s.dayOfWeek
+      ? `每周${week[s.dayOfWeek] ?? ""} ${s.localTime}`
+      : `每日 ${s.localTime}`;
+    return s.timezone ? `${base}（${s.timezone}）` : base;
+  } catch {
+    return null;
+  }
+}
+
 function toRule(r: BackendRule): AutomationRule {
+  const scheduleText = describeSchedule(r.schedule);
   return {
     id: r.id,
     name: r.name,
-    trigger: r.triggerLabel ?? r.triggerType,
+    trigger: scheduleText ?? r.triggerLabel ?? r.triggerType,
     action: describeAction(r.actionJson),
     enabled: r.enabled,
     lastRun: formatTime(r.lastRunAt),
     status: r.status === "error" ? "error" : r.enabled ? "active" : "paused",
+    nextRun: r.nextRunAt ? formatTime(r.nextRunAt) : undefined,
+    needsConfig: r.configurationStatus === "needs_config",
   };
 }
 
@@ -104,12 +140,23 @@ export const automationsApi = {
     sql?: string;
     /** actionType="agent" 时的自然语言指令 */
     prompt?: string;
+    /** daily/weekly 必填:日程 JSON 字符串(M4-01,{frequency,localTime,dayOfWeek,timezone}) */
+    schedule?: string;
   }): Promise<AutomationRule> {
     const item = await requestJson<BackendRule>("/automations", {
       method: "POST",
       body: JSON.stringify(input),
     });
     return toRule(item);
+  },
+
+  /** 日程预览(M4-01):服务端计算未来 3 次计划点(保存前展示准确时间)。 */
+  async previewSchedule(schedule: ScheduleSpec, triggerType: string): Promise<string[]> {
+    const items = await requestJson<string[]>("/automations/schedule-preview", {
+      method: "POST",
+      body: JSON.stringify({ triggerType, schedule: JSON.stringify(schedule) }),
+    });
+    return items;
   },
 
   async toggleRule(id: number): Promise<void> {

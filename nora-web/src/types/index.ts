@@ -213,6 +213,8 @@ export interface AutomationRule {
   lastRun: string;
   nextRun?: string;
   status: "active" | "paused" | "error";
+  /** 存量规则缺真实日程/连接(M4-05):界面显示「需配置」而非正常启用。 */
+  needsConfig?: boolean;
 }
 
 /** 自动任务执行记录 */

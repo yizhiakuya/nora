@@ -38,11 +38,23 @@ public class AutomationController {
         return ApiResponse.ok(service.list());
     }
 
-    /** Creates a rule (SQL 或 agent 动作,由 actionType 区分). */
+    /** Creates a rule (SQL 或 agent 动作,由 actionType 区分;daily/weekly 需 schedule)。 */
     @PostMapping
     public ApiResponse<AutomationService.RuleView> create(@RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(request.name(), request.triggerType(),
-                request.actionType(), request.sql(), request.prompt()));
+                request.actionType(), request.sql(), request.prompt(), request.schedule()));
+    }
+
+    /**
+     * 日程预览(M4-01):服务端计算未来 3 次计划点(方案 §8.1「保存前预览」)。
+     * 请求体同 create 的 schedule 字段。
+     */
+    @PostMapping("/schedule-preview")
+    public ApiResponse<List<String>> previewSchedule(@RequestBody CreateRequest request) {
+        if (request.schedule() == null || request.schedule().isBlank()) {
+            throw new com.nora.common.exception.BusinessException(400, "schedule is required");
+        }
+        return ApiResponse.ok(service.previewSchedule(request.schedule(), request.triggerType(), 3));
     }
 
     /** 切换启用/暂停。 */
@@ -75,7 +87,8 @@ public class AutomationController {
     }
 
     /** POST /api/automations 请求体。 */
-    /** actionType 缺省 = "sql";"agent" 时用 prompt。 */
-    public record CreateRequest(String name, String triggerType, String actionType, String sql, String prompt) {
+    /** actionType 缺省 = "sql";"agent" 时用 prompt。schedule 为 M4-01 日程 JSON。 */
+    public record CreateRequest(String name, String triggerType, String actionType, String sql, String prompt,
+                                String schedule) {
     }
 }

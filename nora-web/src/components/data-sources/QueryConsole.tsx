@@ -132,13 +132,19 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
   };
 
   const saveAsAutomation = async () => {
+    // M4-01:携带真实日程(每日 09:00 + 本地时区)——后端强制校验 daily/weekly
+    // 的 schedule,不再只有"每日 09:00"的标签(审查报告 B06)。
+    const tz = (() => {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai"; } catch { return "Asia/Shanghai"; }
+    })();
     const saved = await addRule(
       isRedis ? "定时执行 Redis 命令" : "定时执行查询：订单状态分布",
       "每日 09:00",
       sql.trim() || AI_SUGGEST,
+      { frequency: "daily", localTime: "09:00", timezone: tz },
     );
     if (saved) {
-      toast.success("已保存为自动任务（每日 09:00 执行），到「自动任务」页查看");
+      toast.success("已保存为定期任务（每日 09:00 执行），到「任务」页查看");
     }
     // 失败:store 已 toast 人话错误(2026-09-19 修假成功),这里不再重复提示
   };

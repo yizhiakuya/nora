@@ -18,7 +18,9 @@ interface AutomationsState {
   /** 后端模式:拉取服务端规则与执行历史 */
   syncFromBackend: () => Promise<void>;
   /** 创建规则;后端模式失败返回 null(已提示,绝不产生"未创建却成功"的幽灵条目) */
-  addRule: (name: string, trigger: string, action: string) => Promise<AutomationRule | null>;
+  /** 创建规则;后端模式失败返回 null(已提示,绝不产生"未创建却成功"的幽灵条目)。
+   *  schedule(M4-01):daily/weekly 必填日程(daily/weekly 规则后端强制校验)。 */
+  addRule: (name: string, trigger: string, action: string, schedule?: import("@/lib/services/automationsApi").ScheduleSpec) => Promise<AutomationRule | null>;
   /** 启用/暂停规则;返回是否真实切换成功(后端模式等服务器结果,失败回滚) */
   toggleRule: (id: number) => Promise<boolean>;
   /** 立即运行;返回是否真实执行成功(后端模式等待服务器结果) */
@@ -67,7 +69,7 @@ export const useAutomations = create<AutomationsState>()(
           /* 后端不可用时沿用本地缓存 */
         }
       },
-      addRule: async (name, trigger, action) => {
+      addRule: async (name, trigger, action, schedule) => {
         const isSqlAction = looksLikeSql(action);
         if (USE_BACKEND) {
           // 后端模式:等服务器真实结果再落状态(2026-09-19 修假成功)。
@@ -86,8 +88,8 @@ export const useAutomations = create<AutomationsState>()(
           try {
             const saved = await automationsApi.createRule(
               isSqlAction
-                ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action }
-                : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action },
+                ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action, schedule: schedule ? JSON.stringify(schedule) : undefined }
+                : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action, schedule: schedule ? JSON.stringify(schedule) : undefined },
             );
             set((state) => ({
               rules: state.rules.map((r) => (r.id === optimistic.id ? saved : r)),
