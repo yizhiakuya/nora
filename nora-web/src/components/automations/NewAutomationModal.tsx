@@ -244,6 +244,15 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
           />
         </div>
 
+        {/* 执行权限说明(2026-09-20,用户确认保持 FULL 档):让每次创建都是
+            "知道自己在选什么"——定期任务到点自动执行,现场无人审批。 */}
+        <div className="p-3 rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/50">
+          <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">
+            执行权限:到点自动执行时<strong>无人审批</strong>,任务可调用本机终端等工具(与对话页的「完全访问」档相同);
+            仅删除/注册类不可逆操作会被强制拒绝。请确认指令范围与措辞。
+          </p>
+        </div>
+
         {error && <p className="text-[11px] text-red-500 dark:text-red-400">{error}</p>}
       </div>
     </Modal>
