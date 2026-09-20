@@ -1,3 +1,5 @@
+import { withAuthToken } from "@/lib/auth";
+
 /**
  * 产物画廊协议 v4(2026-09-18,按业务分画廊)。
  *
@@ -14,6 +16,11 @@
  *   {"gallery": "table",  ...table 画廊的字段...}
  *   ...
  * 未知 gallery 名 → 降级通用列表(不报错,前向兼容)。
+ *
+ * 宽容归一化(2026-09-20 用户反馈:模型没按协议写时整段 JSON 原样显示):
+ * 模型偶尔凭记忆写围栏——缺 gallery 字段、item 用 title/subtitle/path/type
+ * 这类别名。解析层按形态**推断画廊类型并映射字段别名**,而不是直接降级成
+ * 原始 JSON(实测踩过:相册整理任务输出一坨 JSON,用户以为坏了)。
  *
  * 画廊目录(字段定义见各自组件文件):
  *   media    相册/媒体     items[{url,thumbUrl,fullUrl,caption,meta,kind,name}]
@@ -116,12 +123,12 @@ export function parseArtifactsFence(content: string | null | undefined): Artifac
 export function parseArtifactsJson(raw: string): ArtifactGallery[] | null {
   try {
     const data = JSON.parse(raw) as Record<string, unknown>;
-    if (!data || typeof data !== "object") {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
       return null;
     }
     // 新协议(v4):{gallery: "...", ...}
     if (typeof data.gallery === "string" && data.gallery.trim() !== "") {
-      return [{ gallery: data.gallery.trim(), data }];
+      return [{ gallery: normalizeGalleryName(data.gallery.trim()), data: normalizeGalleryData(data.gallery.trim(), data) }];
     }
     // 兼容 v2/v3(历史消息):{sections: [{kind, ...}]} → 每段转一条画廊
     if (Array.isArray(data.sections)) {
@@ -137,14 +144,125 @@ export function parseArtifactsJson(raw: string): ArtifactGallery[] | null {
         }
         if (merged.title == null && data.title != null) merged.title = data.title;
         if (merged.note == null && data.note != null) merged.note = data.note;
-        out.push({ gallery: kind, data: merged });
+        out.push({ gallery: normalizeGalleryName(kind), data: normalizeGalleryData(kind, merged) });
       });
       return out.length > 0 ? out : null;
+    }
+    // 宽容路径(2026-09-20 用户反馈):模型凭记忆写围栏——缺 gallery 字段、
+    // item 用别名(title/subtitle/path/type)。这里按形态推断画廊类型并归一化,
+    // 而不是整段丢弃让用户看到原始 JSON。
+    const inferred = inferGallery(data);
+    if (inferred) {
+      return [inferred];
     }
     return null;
   } catch {
     return null;
   }
+}
+
+// ---------- 宽容归一化(缺字段/写别名时尽力渲染,不影响展示) ----------
+
+/** 画廊名别名归一化(模型写 singular/大小写/同义词时映射到注册名)。 */
+function normalizeGalleryName(name: string): string {
+  const n = name.trim().toLowerCase();
+  const alias: Record<string, string> = {
+    photo: "media", photos: "media", image: "media", images: "media", album: "media",
+    video: "media", videos: "media", gallery: "media",
+    file: "files", folder: "files", folders: "files",
+    grid: "table", rows: "table",
+    changes: "diff", change: "diff",
+    steps: "timeline", progress: "timeline", events: "timeline",
+    detail: "keyvalue", details: "keyvalue", kv: "keyvalue", object: "keyvalue",
+    report: "text", markdown: "text", md: "text",
+    items: "list", default: "list",
+  };
+  return alias[n] ?? n;
+}
+
+/**
+ * 按 JSON 形态推断画廊类型(缺 gallery 字段时)并归一化数据。
+ * 优先级:有 columns+rows → table;items 里有图片 URL 形态 → media;
+ * 有 text → text;items 有 open/note → files;其余有 items → list。
+ */
+function inferGallery(data: Record<string, unknown>): ArtifactGallery | null {
+  if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
+    return { gallery: "table", data };
+  }
+  if (typeof data.text === "string" && data.text.trim() !== "") {
+    return { gallery: "text", data };
+  }
+  const items = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : null;
+  if (items && items.length > 0) {
+    const looksMedia = items.some((it) => it && typeof it === "object"
+      && (typeof it.url === "string" || typeof it.fullUrl === "string" || typeof it.thumbUrl === "string"
+          || typeof it.path === "string" || typeof it.src === "string")
+      && (typeof it.type === "string" && /image|video|photo/i.test(it.type)
+          || typeof it.kind === "string" && /image|video/i.test(it.kind)
+          || typeof it.path === "string" && /\.(jpe?g|png|gif|webp|bmp|mp4|mov|webm)$/i.test(it.path)
+          || typeof it.url === "string" && /\.(jpe?g|png|gif|webp|bmp|mp4|mov|webm)(\?|$)/i.test(it.url)
+          || typeof it.subtitle === "string" && /×|MB|KB|GB/i.test(it.subtitle)));
+    if (looksMedia) {
+      return { gallery: "media", data: normalizeGalleryData("media", data) };
+    }
+    return { gallery: "list", data: normalizeGalleryData("list", data) };
+  }
+  // 连 items 都没有:无 title 也无可展示内容 → 不是画廊
+  if (data.title == null && data.summary == null) {
+    return null;
+  }
+  return { gallery: "list", data };
+}
+
+/**
+ * 数据字段别名归一化(模型写的别名映射到组件字段;原字段保留)。
+ * 全部字段都是可选的——缺任何字段都不该影响展示(2026-09-20 用户明确)。
+ */
+function normalizeGalleryData(gallery: string, data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+  // 头部别名:heading/name → title;description → summary;footer → note
+  if (out.title == null) out.title = out.heading ?? out.name;
+  if (out.summary == null) out.summary = out.description;
+  if (out.note == null) out.note = out.footer;
+  const items = Array.isArray(out.items) ? out.items : null;
+  if (!items) return out;
+  out.items = items.map((raw) => {
+    if (!raw || typeof raw !== "object") return raw;
+    const it = { ...(raw as Record<string, unknown>) };
+    // 通用别名(全部可选,缺啥都不影响展示)
+    if (it.meta == null) {
+      // media 的 subtitle 通常是尺寸/大小(如「3264×2448 · 3.0MB」)→ meta;
+      // 其余画廊 subtitle 是说明文字 → caption
+      it.meta = gallery === "media" ? (it.subtitle ?? it.size ?? it.detail) : (it.size ?? it.detail);
+    }
+    if (it.caption == null && gallery !== "media") it.caption = it.subtitle ?? it.label ?? it.desc;
+    if (it.caption == null && gallery === "media") it.caption = it.label ?? it.desc;
+    if (it.name == null) it.name = it.title ?? it.filename;
+    // media 专属:path → url;src → url;thumbnail → thumbUrl;takenAt → meta 兜底
+    if (it.url == null && typeof it.path === "string") {
+      // 工作区相对路径 → raw 端点(可加载,附令牌供 <img> 使用);http(s) 原样
+      const p = it.path as string;
+      it.url = /^https?:\/\//i.test(p)
+        ? p
+        : withAuthToken(`/api/workspace/file/raw?path=${encodeURIComponent(p)}`);
+    }
+    if (it.url == null && typeof it.src === "string") it.url = it.src;
+    if (it.thumbUrl == null) it.thumbUrl = it.thumbnail ?? it.thumb;
+    if (it.kind == null) {
+      const t = typeof it.type === "string" ? it.type.toLowerCase() : "";
+      if (/video|mp4|mov|webm/.test(t) || typeof it.path === "string" && /\.(mp4|mov|webm)$/i.test(it.path as string)) {
+        it.kind = "video";
+      } else if (/image|photo|jpe?g|png|gif|webp/.test(t) || typeof it.path === "string" && /\.(jpe?g|png|gif|webp|bmp)$/i.test(it.path as string)) {
+        it.kind = "image";
+      }
+    }
+    // files 专属:path → open(workspace 深链)
+    if (it.open == null && typeof it.path === "string" && gallery === "files") {
+      it.open = `workspace:${it.path}`;
+    }
+    return it;
+  });
+  return out;
 }
 
 /**

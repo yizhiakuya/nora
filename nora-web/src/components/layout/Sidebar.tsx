@@ -2,7 +2,7 @@
 
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  Sparkles, Folder, ListCheck, Settings,
+  Sparkles, Folder, ListCheck, Settings, Database, Server,
   Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,16 +20,17 @@ import {
 import { toast } from "sonner";
 
 /**
- * 主导航(M1-01,2026-09-20,按产品改造方案 §3.1):
- * 四入口「助手 / 资料 / 任务 / 设置」——此前技术模块平铺为十个顶级入口,
- * 用户开始一件事之前要先学系统结构(审查报告 B01)。
- * 高级工具(数据源/环境控制台)保留路由与直达入口,从设置-高级进入,
- * 不再占主导航;技能/MCP 归入设置。
+ * 主导航(2026-09-20,按产品改造方案 §3.1 + 用户反馈):
+ * 「助手 / 资料 / 任务 / 数据源 / 环境 / 设置」——此前技术模块平铺为十个
+ * 顶级入口,用户开始一件事之前要先学系统结构(审查报告 B01);
+ * 数据源与环境控制台从底部小链接提升为并列主导航(用户明确要求,2026-09-20)。
  */
 const NAV_ITEMS = [
   { name: "助手", icon: Sparkles, href: "/" },
   { name: "资料", icon: Folder, href: "/files" },
   { name: "任务", icon: ListCheck, href: "/tasks" },
+  { name: "数据源", icon: Database, href: "/data-sources" },
+  { name: "环境", icon: Server, href: "/environments" },
 ];
 
 /** 激活判定:多项共享前缀时取最长匹配(href="/" 仅精确匹配)。 */
@@ -192,15 +193,8 @@ export function Sidebar() {
           </div>
         </div>
         <div className={cn("border-t border-border shrink-0", collapsed ? "p-2" : "p-3 sm:p-4")}>
-          {/* 设置入口(唯一):高级工具(数据源/环境控制台)从设置-高级进入 */}
-          <Link to="/settings" title={collapsed ? "设置" : undefined} className={cn("flex items-center rounded-lg text-sm font-medium transition-colors mb-2", collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5", pathname.startsWith("/settings") ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Settings className={cn("w-4 h-4 shrink-0", pathname.startsWith("/settings") ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")} />{!collapsed && "设置"}</Link>
-          {/* 高级工具直达(弱化展示,不占主导航) */}
-          {!collapsed && (
-            <div className="px-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground/70">
-              <Link to="/data-sources" className={cn("hover:text-foreground transition-colors", pathname.startsWith("/data-sources") && "text-blue-600 dark:text-blue-400")}>数据源</Link>
-              <Link to="/environments" className={cn("hover:text-foreground transition-colors", pathname.startsWith("/environments") && "text-blue-600 dark:text-blue-400")}>环境</Link>
-            </div>
-          )}
+          {/* 设置入口(数据源/环境已提升为并列主导航,2026-09-20 用户要求) */}
+          <Link to="/settings" title={collapsed ? "设置" : undefined} className={cn("flex items-center rounded-lg text-sm font-medium transition-colors", collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5", pathname.startsWith("/settings") ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Settings className={cn("w-4 h-4 shrink-0", pathname.startsWith("/settings") ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")} />{!collapsed && "设置"}</Link>
         </div>
       </aside>
     </>
