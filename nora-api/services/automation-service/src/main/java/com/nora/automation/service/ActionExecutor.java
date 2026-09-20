@@ -94,27 +94,88 @@ public class ActionExecutor {
         }
     }
 
-    /** 走 agent-service 的一次性运行端点执行自然语言指令;回答即执行详情。 */
+    /**
+     * 执行自然语言指令(定时任务=往会话发消息,2026-09-20 用户明确语义):
+     * **直接复用正常对话端点** {@code POST /sessions/{id}/messages}(SSE)——步骤
+     * 收集、推理聚合、消息落库、运行生命周期全部走 ChatTurnRunner 同一套引擎,
+     * 本方法只做「发一条消息(sender=automation)+ 取回最终回答」。
+     *
+     * <p>sessionId 非空时必走对话端点;为空(旧调用方/无会话场景)回退
+     * {@code /agent/run} 无会话静默运行(不落库)。
+     */
     private String executeAgent(String prompt, String sessionId, String sessionTitle) {
         if (prompt.isBlank()) {
             return "ERROR: action prompt is empty";
         }
+        if (sessionId == null || sessionId.isBlank()) {
+            return executeAgentUnattended(prompt);
+        }
         try {
             java.util.Map<String, Object> body = new java.util.HashMap<>();
-            body.put("prompt", prompt);
-            if (sessionId != null && !sessionId.isBlank()) {
-                body.put("sessionId", sessionId);
-                body.put("sessionTitle", sessionTitle == null ? "定时任务" : sessionTitle);
+            body.put("content", prompt);
+            body.put("sender", "automation");
+            body.put("unattended", true);
+            body.put("sessionTitle", sessionTitle == null ? "定时任务" : sessionTitle);
+            // SSE 响应:逐行解析,收集 delta 拼最终回答、error 取错误
+            String answer = agentRestClient.post()
+                    .uri("/api/chat/sessions/{id}/messages", sessionId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.TEXT_EVENT_STREAM)
+                    .body(body)
+                    .exchange((req, res) -> {
+                        // exchange 不走 defaultStatusHandler:非 2xx(如 409 会话忙)
+                        // 在这里显式读错误体并抛出,提示可操作
+                        if (res.getStatusCode().isError()) {
+                            String errBody = new String(res.getBody().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8);
+                            throw new IllegalStateException("HTTP " + res.getStatusCode().value() + ": " + errBody);
+                        }
+                        StringBuilder answerBuf = new StringBuilder();
+                        StringBuilder errorBuf = new StringBuilder();
+                        String event = "";
+                        try (var reader = new java.io.BufferedReader(
+                                new java.io.InputStreamReader(res.getBody(), java.nio.charset.StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                if (line.startsWith("event:")) {
+                                    event = line.substring(6).trim();
+                                } else if (line.startsWith("data:")) {
+                                    String data = line.substring(5).trim();
+                                    if ("delta".equals(event)) {
+                                        answerBuf.append(extractContent(data));
+                                    } else if ("error".equals(event) && errorBuf.length() == 0) {
+                                        errorBuf.append(extractMessage(data));
+                                    }
+                                }
+                            }
+                        }
+                        if (errorBuf.length() > 0 && answerBuf.length() == 0) {
+                            throw new IllegalStateException(errorBuf.toString());
+                        }
+                        return answerBuf.toString();
+                    });
+            return answer == null || answer.isBlank() ? "ERROR: agent returned empty answer" : answer;
+        } catch (Exception e) {
+            log.warn("agent action failed: {}", e.getMessage());
+            // 错误体里的具体提示透传,错误才可操作(符合仓库「错误带 hint」约定)
+            String hint = "";
+            if (e instanceof org.springframework.web.client.RestClientResponseException restEx) {
+                hint = " | " + restEx.getResponseBodyAsString();
             }
+            return "ERROR: agent run failed: " + e.getMessage() + hint;
+        }
+    }
+
+    /** 无会话一次性运行(旧路径,env-service 诊断同款;不落库)。 */
+    private String executeAgentUnattended(String prompt) {
+        try {
             java.util.Map<String, Object> out = agentRestClient.post()
                     .uri("/api/chat/agent/run")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
+                    .body(java.util.Map.of("prompt", prompt))
                     .retrieve()
                     .body(new ParameterizedTypeReference<java.util.Map<String, Object>>() {
                     });
-            // agent-service 以 status 字段标明成败(答案文本可能是任意内容,不能靠
-            // "ERROR:" 前缀猜;模型未配置时也返回 status=error)
             if (out == null) {
                 return "ERROR: empty agent response";
             }
@@ -127,8 +188,6 @@ public class ActionExecutor {
             return answer == null ? "ERROR: agent returned null answer" : answer.toString();
         } catch (Exception e) {
             log.warn("agent action failed: {}", e.getMessage());
-            // 5xx 时 RestClient 只给状态行,响应体里的具体错误/操作提示被丢掉;
-            // 读出 body 一起返回,错误才可操作(符合仓库「错误带 hint」约定)
             String hint = "";
             if (e instanceof org.springframework.web.client.RestClientResponseException restEx) {
                 hint = " | " + restEx.getResponseBodyAsString();
@@ -136,6 +195,32 @@ public class ActionExecutor {
             return "ERROR: agent run failed: " + e.getMessage() + hint;
         }
     }
+
+    /** 从 SSE data JSON 里提取 delta 文本({@code {"content":"…"}});失败返回空串。 */
+    private static String extractContent(String data) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node =
+                    MAPPER.readTree(data);
+            return node.path("content").asText("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 从 SSE error JSON 里提取 message;失败返回原始串。 */
+    private static String extractMessage(String data) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node =
+                    MAPPER.readTree(data);
+            String message = node.path("message").asText("");
+            return message.isBlank() ? data : message;
+        } catch (Exception e) {
+            return data;
+        }
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private Long firstConnectionId() {
         try {

@@ -74,6 +74,20 @@ class ChatTurnRunner {
     void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
                          PermissionMode permissionMode, Long providerId,
                          com.nora.agent.dto.TaskContext taskContext, SseEmitter emitter) {
+        runChatTurn(sessionId, content, model, reasoningLevel, permissionMode, providerId, taskContext,
+                "user", false, null, emitter);
+    }
+
+    /**
+     * 完整入口(2026-09-20,定时任务=往会话发消息):
+     * {@code sender}=automation 时消息落库标「定时任务」、会话按 sessionTitle 命名;
+     * {@code unattended}=true 时工具层 CRITICAL 直接拒绝(不等交互审批)。
+     * 其余与正常对话完全同路径(步骤收集/推理聚合/落库/运行生命周期全复用)。
+     */
+    void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
+                         PermissionMode permissionMode, Long providerId,
+                         com.nora.agent.dto.TaskContext taskContext,
+                         String sender, boolean unattended, String sessionTitle, SseEmitter emitter) {
         // 每轮开始:清陈旧取消标志(上一轮遗留的信号作废,避免新轮被误杀)
         if (turnCancellation != null) {
             turnCancellation.begin(sessionId);
@@ -92,15 +106,24 @@ class ChatTurnRunner {
             // 标题：先落「用户消息开头若干字 + …」当占位（立刻有名字可看），
             // 再异步让 AI 生成短标题覆盖它。不再把整条原文塞进标题列——
             // 列宽 VARCHAR(255)，超长消息会让会话创建直接失败（实测）。
-            boolean firstTurn = chatStoreService.ensureSession(
-                    sessionId, ChatStoreService.placeholderTitle(content));
+            boolean firstTurn;
+            if ("automation".equals(sender)) {
+                // 定时任务会话:确定性 id + 「定时任务:规则名」标题;被删可复活
+                chatStoreService.ensureAutomationSession(sessionId,
+                        sessionTitle == null || sessionTitle.isBlank() ? "定时任务" : sessionTitle);
+                firstTurn = false; // 定时会话不参与 AI 起标题(标题由规则名固定)
+            } else {
+                firstTurn = chatStoreService.ensureSession(
+                        sessionId, ChatStoreService.placeholderTitle(content));
+            }
             try {
                 chatStoreService.startRun(runId, sessionId, content);
                 runStarted[0] = true;
             } catch (Exception e) {
                 log.warn("failed to persist run start for {}: {}", sessionId, e.getMessage());
             }
-            chatStoreService.saveMessage(sessionId, "user", content, null, null);
+            // 用户消息落库(带发送者标记:定时任务的指令消息 sender=automation)
+            chatStoreService.saveMessage(sessionId, "user", content, null, null, null, null, null, sender);
             // 仅本会话首次命名：后续轮次改标题会覆盖上一轮已经起好的名字
             if (firstTurn) {
                 scheduleTitleGeneration(sessionId, content, model, providerId, liveTurn, emitter);
@@ -140,6 +163,7 @@ class ChatTurnRunner {
                     sessionId,
                     providerId,
                     taskContext,
+                    unattended,
                     new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {
@@ -310,7 +334,8 @@ class ChatTurnRunner {
                             chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations,
                                     durationMs,
                                     turn != null ? turn.promptTokens() : null,
-                                    turn != null ? turn.contextWindow() : null);
+                                    turn != null ? turn.contextWindow() : null,
+                                    "assistant");
                         } catch (Exception e) {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());
