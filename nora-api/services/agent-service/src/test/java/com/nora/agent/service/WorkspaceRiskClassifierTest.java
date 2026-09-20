@@ -56,6 +56,27 @@ class WorkspaceRiskClassifierTest {
     }
 
     @Test
+    void fieldAliasesAndActionDialectShareWithExecutor() {
+        // 2026-09-20 参数理解统一:分类器与执行层共用同一别名序——
+        // filename/file 别名、download/save/fetch 动作方言都必须被权限判定看见,
+        // 不能出现「审批检查 path=null 判区内,执行层却按 filename 写区外」
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"write\", \"filename\": \"D:/projects/x.txt\", \"content\": \"x\"}");
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"write\", \"file\": \"/etc/hosts\", \"content\": \"x\"}");
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"write\", \"filename\": \"MEMORY.md\", \"content\": \"x\"}");
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"download\", \"url\": \"https://x\", \"path\": \"D:/out/x.jpg\"}");
+        RiskClassifier.classify("manage_workspace",
+                        "{\"action\": \"download\", \"url\": \"https://x\", \"filename\": \"photos/a.jpg\"}");
+        RiskClassifier.normalizeWorkspaceAction("download");
+        RiskClassifier.normalizeWorkspaceAction("save");
+        RiskClassifier.normalizeWorkspaceAction("fetch");
+        RiskClassifier.normalizeWorkspaceAction("WRITE");
+    }
+
+    @Test
     void editFollowsWriteTiering() {
         // edit(精确替换,2026-09-18 新增):与 write 同分级——区内 LOW、区外 HIGH
         RiskClassifier.classify("manage_workspace",
@@ -128,18 +149,22 @@ class WorkspaceRiskClassifierTest {
 
     @Test
     void fileCenterManageActionsTiered() {
-        // 文件中心管理面(2026-09-18 复查补齐):list/read/folders 只读 LOW;
+        // 文件中心管理面(2026-09-18 复查补齐;2026-09-20 更名 manage_file,
+        // read_file 为兼容别名——两个名字必须同档):list/read/folders 只读 LOW;
         // import/rename/move/delete/mkdir 写类 HIGH(delete 是软删可恢复)
-        RiskClassifier.classify("read_file", "{\"action\": \"list\"}");
-        RiskClassifier.classify("read_file", "{\"action\": \"read\", \"id\": \"3\"}");
-        RiskClassifier.classify("read_file", "{\"action\": \"folders\"}");
-        RiskClassifier.classify("read_file", "{\"action\": \"import\", \"url\": \"https://x\"}");
-        RiskClassifier.classify("read_file", "{\"action\": \"rename\", \"id\": \"3\", \"name\": \"x.pdf\"}");
-        RiskClassifier.classify("read_file", "{\"action\": \"move\", \"id\": \"3\", \"folderId\": 1}");
-        RiskClassifier.classify("read_file", "{\"action\": \"delete\", \"id\": \"3\"}");
-        RiskClassifier.classify("read_file", "{\"action\": \"mkdir\", \"name\": \"合同\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"list\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"read\", \"id\": \"3\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"folders\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"import\", \"url\": \"https://x\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"rename\", \"id\": \"3\", \"name\": \"x.pdf\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"move\", \"id\": \"3\", \"folderId\": 1}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"delete\", \"id\": \"3\"}");
+        RiskClassifier.classify("manage_file", "{\"action\": \"mkdir\", \"name\": \"合同\"}");
         // 无 action 但有 id = read 语义(默认 LOW)
-        RiskClassifier.classify("read_file", "{\"id\": \"3\"}");
+        RiskClassifier.classify("manage_file", "{\"id\": \"3\"}");
+        // 兼容别名与主名同档(旧历史/旧调用)
+        RiskClassifier.classify("read_file", "{\"action\": \"list\"}");
+        RiskClassifier.classify("read_file", "{\"action\": \"delete\", \"id\": \"3\"}");
     }
 
     @Test

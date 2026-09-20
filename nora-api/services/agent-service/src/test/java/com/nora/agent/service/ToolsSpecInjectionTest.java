@@ -53,7 +53,8 @@ class ToolsSpecInjectionTest {
         containsTool(tools, "manage_skill");
         // 既有工具不受影响
         containsTool(tools, "execute_sql");
-        containsTool(tools, "read_file");
+        containsTool(tools, "manage_file");
+        // 旧名 read_file 不再暴露(2026-09-20 更名;执行层保留兼容别名)
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.nora.agent.service;
 
 import java.util.List;
-import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,35 +58,35 @@ class ToolStepEmitter {
      */
     /** 遗留的测试/辅助入口:无会话即绕过审批。 */
     void emitToolStep(String toolStepId, String name, String args,
-                              Map<String, Integer> fingerprints,
+                              LoopDetector loopDetector,
                               List<WireMessage> messages, String callId,
                               int roundIndex,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
-        emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
+        emitToolStep(toolStepId, name, args, loopDetector, messages, callId, roundIndex,
                 PermissionMode.FULL, null, eventConsumer);
     }
 
     void emitToolStep(String toolStepId, String name, String args,
-                              Map<String, Integer> fingerprints,
+                              LoopDetector loopDetector,
                               List<WireMessage> messages, String callId,
                               int roundIndex,
                               PermissionMode permissionMode,
                               String sessionId,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
-        emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
+        emitToolStep(toolStepId, name, args, loopDetector, messages, callId, roundIndex,
                 permissionMode, sessionId, false, null, eventConsumer);
     }
 
     /** 携带已解析 LLM 的重载,让图片附件能遵循其视觉能力。 */
     void emitToolStep(String toolStepId, String name, String args,
-                              Map<String, Integer> fingerprints,
+                              LoopDetector loopDetector,
                               List<WireMessage> messages, String callId,
                               int roundIndex,
                               PermissionMode permissionMode,
                               String sessionId,
                               ResolvedLlm llm,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
-        emitToolStep(toolStepId, name, args, fingerprints, messages, callId, roundIndex,
+        emitToolStep(toolStepId, name, args, loopDetector, messages, callId, roundIndex,
                 permissionMode, sessionId, false, llm, eventConsumer);
     }
 
@@ -97,7 +96,7 @@ class ToolStepEmitter {
      * CRITICAL 工具直接拒绝(不等 120s 超时);FULL 档其余工具照常执行。
      */
     void emitToolStep(String toolStepId, String name, String args,
-                              Map<String, Integer> fingerprints,
+                              LoopDetector loopDetector,
                               List<WireMessage> messages, String callId,
                               int roundIndex,
                               PermissionMode permissionMode,
@@ -124,7 +123,9 @@ class ToolStepEmitter {
         eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
 
-        // 循环熔断:相同(工具, 归一化参数)重复过多次。
+        // 循环检测(2026-09-20 改为结果感知,设计 §9.3):相同(工具, 归一化参数)
+        // 且**结果也不变**时才累计——正常的轮询/有进展的重复读取会因结果变化重置,
+        // 不会被误拦;只有持续无进展的重复才最终阻断。
         // MCP 工具参数 schema 千差万别,typed input 抽不出共同字段——指纹直接用
         // 原始 args,避免不同参数被误判为重复调用;manage_workspace/manage_skill/
         // manage_mcp/run_command 同理(主体在 content/path/instructions/url/command 字段)。
@@ -139,18 +140,18 @@ class ToolStepEmitter {
         String fingerprint = name + "|"
                 + (rawFingerprint ? (args == null ? "" : args)
                         : normalizeArgs(name, input, parsed.datasourceAction()));
-        int repeats = fingerprints.merge(fingerprint, 1, Integer::sum);
-        if (repeats > LOOP_BLOCK_THRESHOLD) {
-            String error = "重复调用已阻断：同样的参数已连续执行 " + (repeats - 1)
-                    + " 次且结果不变。请基于已有结果继续回答,或换一种查询/诊断方式。";
+        if (loopDetector.shouldBlock(fingerprint, LOOP_BLOCK_THRESHOLD)) {
+            String error = "重复调用已阻断：同样的参数已连续 " + loopDetector.blockCount(fingerprint)
+                    + " 次得到相同结果。请基于已有结果继续回答,或换一种查询/诊断方式。";
             finishToolStep(toolStepId, name, title, input, toolStart,
                     new ChatStepDto.StepResult(null, "重复调用被循环熔断阻断", null, null, false, error),
                     "declined", roundIndex, eventConsumer);
             backfillToolMessage(messages, callId, "ERROR: " + error);
             return;
         }
-        if (repeats == LOOP_WARN_THRESHOLD) {
-            log.info("loop warning: {} called {} times with identical args", name, repeats);
+        if (loopDetector.shouldWarn(fingerprint, LOOP_WARN_THRESHOLD)) {
+            log.info("loop warning: {} repeated with unchanged result {} time(s)", name,
+                    loopDetector.blockCount(fingerprint));
         }
 
         // 无人值守闸(2026-09-20 扩展):sessionId 为 null(旧 /agent/run)或
@@ -236,7 +237,12 @@ class ToolStepEmitter {
                     }
                 });
         boolean failure = outcome.content().startsWith("ERROR:");
-        String status = failure ? "failed" : "completed";
+        // 状态语义(设计 §5.2):结果未知(调用已发出但中断,远端可能已生效)
+        // 与普通失败分开——不是"没执行",不能静默当失败重做;
+        // 部分成功(批量任务有成功也有失败)同样独立,不显示为全量成功
+        String status = outcome.unknown() ? "unknown"
+                : outcome.partial() ? "partial"
+                : (failure ? "failed" : "completed");
         ChatStepDto.StepResult result = new ChatStepDto.StepResult(
                 outcome.content(),
                 outcome.summary(),
@@ -244,8 +250,27 @@ class ToolStepEmitter {
                 countLines(outcome.content()),
                 outcome.truncated(),
                 failure ? outcome.content() : null);
+        // 记录本次结果(结果感知的循环检测,设计 §9.3):结果变化会重置计数——
+        // 「正常轮询/有进展的重复读取」不被误拦;结果未知不参与判定
+        loopDetector.recordResult(fingerprint, outcome.unknown() ? null
+                : outcome.content() == null ? null : resultHashOf(outcome.content()));
         finishToolStep(toolStepId, name, title, input, execStart[0], result, status, roundIndex, eventConsumer);
         backfillToolMessage(messages, callId, outcome.content(), outcome.images(), llm);
+    }
+
+    /**
+     * 循环检测的结果指纹(设计 §9.3「判断时使用结果或进度」):
+     * 内容 + 长度。长结果只取头尾采样,避免大输出(视频清单等)反复哈希的开销,
+     * 又保留「内容确实变了」的区分度。
+     */
+    private static String resultHashOf(String content) {
+        if (content == null) {
+            return null;
+        }
+        String sample = content.length() <= 2000
+                ? content
+                : content.substring(0, 1000) + "|" + content.substring(content.length() - 1000);
+        return content.length() + ":" + Integer.toHexString(sample.hashCode());
     }
 
     private void finishToolStep(String toolStepId, String name, String title, ChatStepDto.StepInput input,
@@ -364,7 +389,7 @@ class ToolStepEmitter {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
                 }
-                case "read_file" -> {
+                case "manage_file", "read_file" -> {
                     // 寻址参数:数字 id 为主;模型常写 path(路径路由,2026-09-18
                     // 文件工具分析)或 filename 别名——都提取到 target 交给执行层路由
                     String target = node.path("id").asText(null);
@@ -380,9 +405,9 @@ class ToolStepEmitter {
                             description, null, action);
                 }
                 case "manage_workspace" -> {
-                    // 展示路径(根目录 list 无 path,用 dir 兜底)
-                    String p1 = node.path("path").asText(null);
-                    if (p1 == null) {
+                    // 展示路径与权限判定/执行层同一别名序(2026-09-20);根目录 list 无 path,用 dir 兜底
+                    String p1 = RiskClassifier.workspacePathOf(node);
+                    if (p1 == null || p1.isBlank()) {
                         p1 = node.path("dir").asText(null);
                     }
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, p1),
@@ -397,13 +422,15 @@ class ToolStepEmitter {
                 }
                 case "manage_skill", "manage_mcp" -> {
                     // read/update/remove 用 target(名称或 id);create/register 用 name;
-                    // call(P2-9)展示「服务器.工具名」;tools 展示服务器名
+                    // call 展示「服务器.工具名」;tools 展示服务器名(tool 参数时附工具名)
                     String target = node.path("target").asText(null);
                     if (target == null) {
                         target = node.path("name").asText(null);
                     }
-                    if ("call".equalsIgnoreCase(action) && target != null && !node.path("tool").asText("").isBlank()) {
-                        target = target + "." + node.path("tool").asText("");
+                    String toolArg = node.path("tool").asText("");
+                    if (("call".equalsIgnoreCase(action) || "tools".equalsIgnoreCase(action))
+                            && target != null && !toolArg.isBlank()) {
+                        target = target + "." + toolArg;
                     }
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
@@ -469,7 +496,7 @@ class ToolStepEmitter {
             case "manage_container" -> "容器操作";
             case "manage_datasource" -> "数据源管理";
             case "manage_service" -> "服务纳管";
-            case "read_file" -> "读取文件";
+            case "manage_file", "read_file" -> "文件中心";
             case "manage_workspace" -> "工作区文件";
             case "manage_skill" -> "技能管理";
             case "manage_mcp" -> "MCP 服务器管理";
@@ -497,7 +524,7 @@ class ToolStepEmitter {
             return (action == null ? "?" : action.toLowerCase()) + "@"
                     + (input.target() == null ? "?" : input.target().toLowerCase());
         }
-        if ("read_file".equals(name)) {
+        if ("manage_file".equals(name) || "read_file".equals(name)) {
             return input.target() == null ? "?" : input.target();
         }
         if ("manage_workspace".equals(name) || "manage_skill".equals(name) || "manage_mcp".equals(name)
@@ -696,8 +723,9 @@ class ToolStepEmitter {
                     risk = "对自动任务执行 " + action + " 操作";
                 }
             }
-            case "read_file" -> {
-                // 文件中心管理动作(2026-09-18 补齐)的审批明细;list/read 是 LOW 不会走到这
+            case "manage_file", "read_file" -> {
+                // 文件中心管理动作(2026-09-18 补齐;2026-09-20 更名 manage_file,
+                // read_file 兼容别名)的审批明细;list/read 是 LOW 不会走到这
                 actionType = "file_manage";
                 JsonNode a = parseArgsSafe(rawArgs);
                 String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().toLowerCase();
@@ -729,9 +757,10 @@ class ToolStepEmitter {
             case "manage_workspace" -> {
                 actionType = "workspace_file";
                 JsonNode a = parseArgsSafe(rawArgs);
-                String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction();
-                String p = a.path("path").asText(null);
-                if (p == null) {
+                String action = RiskClassifier.normalizeWorkspaceAction(parsed.datasourceAction());
+                // 寻址与风险判定/执行层同一别名序(2026-09-20 统一);list 的 dir 仅作展示兜底
+                String p = RiskClassifier.workspacePathOf(a);
+                if (p == null || p.isBlank()) {
                     p = a.path("dir").asText(null);
                 }
                 target = p == null ? "工作区" : p;

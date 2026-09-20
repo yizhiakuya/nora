@@ -72,7 +72,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
 
   /**
    * 保存到文件中心:缓存是自动派生层,这里一键转为正式知识资产——
-   * 保存后可在文件中心索引入知识库、被对话 @ 引用、被 AI read_file 读取。
+   * 保存后可在文件中心索引入知识库、被对话 @ 引用、被 AI manage_file 读取。
    */
   const handleSaveToFiles = async (item: CachedMediaItem) => {
     try {

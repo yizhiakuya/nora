@@ -339,6 +339,59 @@ public class AgentWorkspaceService {
         return readPath(resolveAny(path).path());
     }
 
+    /**
+     * 分段读取(设计 §5.3 大结果回读):按行区间读取文件——截断不变成证据
+     * 永久丢失,模型可继续取后续内容。offset 从 1 开始(与「第 N 行」一致);
+     * limit 默认 500 行、上限 2000。
+     *
+     * @return 文本 + 一行「还有后续」的续读指引(到文件尾时不给)
+     */
+    public String readRangeAny(String path, int offsetLines, int limitLines) {
+        Path file = resolveAny(path).path();
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("文件不存在: " + file);
+        }
+        int offset = Math.max(1, offsetLines);
+        int limit = Math.min(Math.max(1, limitLines), 2000);
+        try {
+            // 超大文件防护:分段读仍会整读进内存——50MB 以上拒绝(日志类文件
+            // 一般远小于此;真需要时先切分/过滤)
+            long size = Files.size(file);
+            if (size > 50L * 1024 * 1024) {
+                throw new IllegalArgumentException("文件过大(" + (size / 1024 / 1024)
+                        + "MB),分段读需要先缩小范围——可用 run_command 过滤(如 Select-String)或先切分文件");
+            }
+            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            // 二进制防呆:任一行含 NUL 即拒绝(与 readPath 同口径)
+            for (String line : lines) {
+                if (line.indexOf('\u0000') >= 0) {
+                    throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
+                }
+            }
+            if (offset > lines.size()) {
+                throw new IllegalArgumentException("起始行 " + offset + " 超过文件总行数("
+                        + lines.size() + " 行)——用更小的 offset 重试");
+            }
+            int from = offset - 1;
+            int to = Math.min(lines.size(), from + limit);
+            StringBuilder sb = new StringBuilder();
+            for (int i = from; i < to; i++) {
+                sb.append(lines.get(i)).append('\n');
+            }
+            sb.append("(第 ").append(offset).append('-').append(to).append(" 行,共 ")
+                    .append(lines.size()).append(" 行)");
+            if (to < lines.size()) {
+                sb.append("\n…还有后续:").append(lines.size() - to)
+                        .append(" 行未显示——继续读取用 offset=").append(to + 1);
+            }
+            return sb.toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
+            throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取失败: " + e.getMessage());
+        }
+    }
+
     private String readPath(Path file) {
         if (!Files.isRegularFile(file)) {
             // 日记空态出路(2026-09-18 文件工具分析):memory/YYYY-MM-DD.md 读不到时,
@@ -362,7 +415,11 @@ public class AgentWorkspaceService {
                 throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
             }
             if (content.length() > MAX_FILE_CHARS) {
-                return content.substring(0, MAX_FILE_CHARS) + "\n…(文件过大,已截断;完整读取请分段)";
+                // 截断即给续读出路(设计 §5.3):截断的内容不能变成读不到的证据
+                return content.substring(0, MAX_FILE_CHARS)
+                        + "\n…(文件过大,已截断;继续读取用 offset/limit 分段读,"
+                        + "如 {\"action\": \"read\", \"path\": \"" + file.getFileName()
+                        + "\", \"offset\": 501})";
             }
             return content;
         } catch (IOException e) {

@@ -249,9 +249,12 @@ public class McpServerService {
         }
         List<ToolEntry> entries = new ArrayList<>();
         for (McpSchema.Tool tool : tools.tools()) {
-            // SDK 的 inputSchema 可能是 POJO(JsonSchema);统一转 JsonNode 存快照
+            // SDK 的 inputSchema 可能是 POJO(JsonSchema);统一转 JsonNode 存快照。
+            // annotations.readOnlyHint 一并存快照(2026-09-20):供「有副作用调用
+            // 断线后不盲目重放」判定——仅明确声明只读的工具才允许自动重连重试。
             entries.add(new ToolEntry(tool.name(), tool.description(),
-                    tool.inputSchema() == null ? null : objectMapper.valueToTree(tool.inputSchema())));
+                    tool.inputSchema() == null ? null : objectMapper.valueToTree(tool.inputSchema()),
+                    tool.annotations() == null ? null : tool.annotations().readOnlyHint()));
         }
         ObjectNode cache = objectMapper.createObjectNode();
         ArrayNode arr = cache.putArray("tools");
@@ -261,6 +264,9 @@ public class McpServerService {
             n.put("description", entry.description() == null ? "" : entry.description());
             if (entry.inputSchema() != null) {
                 n.set("inputSchema", entry.inputSchema());
+            }
+            if (entry.readOnlyHint() != null) {
+                n.put("readOnlyHint", entry.readOnlyHint());
             }
         }
         jdbcTemplate.update("UPDATE mcp_server SET status='connected', status_detail=NULL, tools_cache=? WHERE id = ?",
@@ -281,50 +287,122 @@ public class McpServerService {
     /**
      * {@link #callTool} 的富变体:保留 image 内容块,让编排层以多模态部件
      * 喂给支持视觉的模型。文本渲染与旧行为一致(图片留一行尺寸占位)。
+     *
+     * <p>重试策略(2026-09-20,架构设计 §9.2「重连和重做是两个决定」):
+     * <ul>
+     *   <li><b>连接建立失败</b>(初始化未完成,调用尚未发出)→ 驱逐死连接、
+     *       重连一次(任何工具都安全——远端没收到任何调用);</li>
+     *   <li><b>调用中断</b>(已发出、结果未知)→ 仅当该工具在快照中
+     *       <b>明确声明 readOnlyHint=true</b> 时才允许重连重试(只读可重复);
+     *       其余保留「结果未知」状态,不自动重放——远端可能已经完成操作,
+     *       盲目重试会造成重复副作用。模型收到 unknown 状态后应先查询/核对。</li>
+     * </ul>
      */
     public McpToolResult callToolRich(long serverId, String toolName, String argsJson) {
         RawServer server = rawById(serverId);
         if (server == null) {
             return McpToolResult.error("ERROR: mcp server " + serverId + " 不存在");
         }
-        // 动态挂载的关键:远端服务器可能在中途挂掉/恢复,缓存的死连接必须能自愈——
-        // 失败时把客户端踢出池(关闭)并重连重试一次;再失败才返回错误
+        // 阶段 1:连接(或复用)客户端——初始化失败 = 调用尚未发出,重连一次安全
+        McpSyncClient client;
         try {
-            McpSyncClient client = clientPool.clientFor(server);
+            client = clientPool.clientFor(server);
+        } catch (Exception first) {
+            log.info("mcp connect failed (server={}), reconnecting once: {}", server.name(),
+                    shorten(first.getMessage() == null ? first.toString() : first.getMessage()));
+            clientPool.evictClient(serverId);
+            try {
+                client = clientPool.clientFor(server);
+            } catch (Exception e) {
+                String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
+                log.warn("mcp connect failed after reconnect: server={} tool={}: {}", server.name(), toolName, shorten(msg));
+                return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
+            }
+        }
+        // 阶段 2:实际调用——中断 = 结果未知(可能已生效),重试按只读声明决策
+        try {
             return renderResultRich(client.callTool(new McpSchema.CallToolRequest(toolName,
                     argsJson == null || argsJson.isBlank()
                             ? Map.of()
                             : objectMapper.readValue(argsJson, Map.class))));
-        } catch (Exception first) {
-            log.info("mcp callTool failed (server={} tool={}), evicting pooled client and retrying once: {}",
-                    server.name(), toolName, shorten(first.getMessage() == null ? first.toString() : first.getMessage()));
+        } catch (Exception callFailure) {
             clientPool.evictClient(serverId);
-            try {
-                McpSyncClient fresh = clientPool.clientFor(server);
-                return renderResultRich(fresh.callTool(new McpSchema.CallToolRequest(toolName,
-                        argsJson == null || argsJson.isBlank()
-                                ? Map.of()
-                                : objectMapper.readValue(argsJson, Map.class))));
-            } catch (Exception e) {
-                String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
-                log.warn("mcp callTool failed after reconnect: server={} tool={}: {}", server.name(), toolName, shorten(msg));
-                return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
+            String raw = callFailure.getMessage() == null ? callFailure.toString() : callFailure.getMessage();
+            if (declaredReadOnly(serverId, toolName)) {
+                // 明确只读:重连重试一次(可重复操作,无副作用)
+                log.info("mcp read-only callTool failed (server={} tool={}), retrying once: {}",
+                        server.name(), toolName, shorten(raw));
+                try {
+                    McpSyncClient fresh = clientPool.clientFor(server);
+                    return renderResultRich(fresh.callTool(new McpSchema.CallToolRequest(toolName,
+                            argsJson == null || argsJson.isBlank()
+                                    ? Map.of()
+                                    : objectMapper.readValue(argsJson, Map.class))));
+                } catch (Exception e) {
+                    String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
+                    log.warn("mcp read-only callTool failed after reconnect: server={} tool={}: {}",
+                            server.name(), toolName, shorten(msg));
+                    return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
+                }
             }
+            // 未声明只读(或声明有副作用):保留结果未知,不自动重放
+            log.warn("mcp callTool interrupted, outcome unknown (server={} tool={}): {}",
+                    server.name(), toolName, shorten(raw));
+            return McpToolResult.unknown("ERROR: MCP 工具调用中断(" + toolName + "): " + shorten(friendlyConnectError(raw))
+                    + " —— 结果未知:该操作可能已在远端生效。不要直接重发;先查询/核对远端状态,确认未生效后再重试");
         }
+    }
+
+    /**
+     * 工具快照里是否明确声明只读(readOnlyHint=true)。
+     * 仅作参考信息(设计 §6):未声明/读取失败按「非只读」保守处理——
+     * 未知能力的调用中断后不自动重放。
+     */
+    private boolean declaredReadOnly(long serverId, String toolName) {
+        try {
+            List<String> rows = jdbcTemplate.query(
+                    "SELECT COALESCE(tools_cache, '') FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
+                    (rs, i) -> rs.getString(1), serverId);
+            if (rows.isEmpty() || rows.get(0) == null || rows.get(0).isBlank()) {
+                return false;
+            }
+            JsonNode root = objectMapper.readTree(rows.get(0));
+            for (JsonNode t : root.path("tools")) {
+                if (toolName.equals(t.path("name").asText())) {
+                    return t.path("readOnlyHint").asBoolean(false);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("readOnlyHint lookup failed for server {} tool {}: {}", serverId, toolName, e.getMessage());
+        }
+        return false;
     }
 
     /**
      * MCP 工具调用结果:文本渲染 + 保真的图片块。
      * images 为空 = 纯文本结果(与旧行为一致)。
+     *
+     * @param unknown 结果未知(调用已发出但中断,远端可能已生效)——与普通失败
+     *                区分:模型与前端都不应把它当"没执行"处理(设计 §5.2)
      */
-    public record McpToolResult(String text, boolean isError, List<ImageBlock> images) {
+    public record McpToolResult(String text, boolean isError, List<ImageBlock> images, boolean unknown) {
 
         public McpToolResult {
             if (images == null) images = List.of();
         }
 
+        /** 兼容构造:非 unknown 的结果(旧调用点)。 */
+        public McpToolResult(String text, boolean isError, List<ImageBlock> images) {
+            this(text, isError, images, false);
+        }
+
         static McpToolResult error(String text) {
-            return new McpToolResult(text, true, List.of());
+            return new McpToolResult(text, true, List.of(), false);
+        }
+
+        /** 调用中断、结果未知(有副作用且未声明只读,不自动重放)。 */
+        static McpToolResult unknown(String text) {
+            return new McpToolResult(text, true, List.of(), true);
         }
 
         /** 一个图片内容块(base64 原样,不做解码)。 */
@@ -398,7 +476,8 @@ public class McpServerService {
             for (JsonNode t : root.path("tools")) {
                 out.add(new ToolEntry(t.path("name").asText(),
                         t.path("description").asText(""),
-                        t.has("inputSchema") ? t.get("inputSchema") : null));
+                        t.has("inputSchema") ? t.get("inputSchema") : null,
+                        t.has("readOnlyHint") ? t.path("readOnlyHint").asBoolean() : null));
             }
         } catch (Exception e) {
             log.warn("mcp tools_cache parse failed for server {}: {}", id, e.getMessage());
@@ -650,8 +729,20 @@ public class McpServerService {
             String toolPolicy) {
     }
 
-    /** 缓存中的一个工具快照。 */
-    public record ToolEntry(String name, String description, JsonNode inputSchema) {
+    /**
+     * 缓存中的一个工具快照。
+     *
+     * @param readOnlyHint 远端 annotations.readOnlyHint(只读声明);null=未声明。
+     *                     仅作参考:执行策略按本地规则(设计 §6「外部工具声明的
+     *                     只读/幂等只能作为参考」),用于「有副作用调用断线后
+     *                     不盲目重放」的判定——明确只读才允许自动重连重试。
+     */
+    public record ToolEntry(String name, String description, JsonNode inputSchema, Boolean readOnlyHint) {
+
+        /** 兼容构造:无 annotations 的调用点(测试/旧数据)。 */
+        public ToolEntry(String name, String description, JsonNode inputSchema) {
+            this(name, description, inputSchema, null);
+        }
     }
 
     /** 挂载进编排层 toolsSpec 的一个工具。 */

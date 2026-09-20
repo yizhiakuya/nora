@@ -358,10 +358,14 @@ class ChatTurnRunner {
                         send(emitter, "done", done);
                         emitter.complete();
                         // 运行生命周期终态(M3-01):取消轮 = cancelled;正常完成 =
-                        // completed(有失败工具步骤时为 partial——有可用成果但存在
-                        // 未完成项,方案 §6.3)。更新同一行,不插重复行。
+                        // completed(有失败/未知/部分成功工具步骤时为 partial——
+                        // 有可用成果但存在未完成/待核对项,方案 §6.3)。
+                        // 更新同一行,不插重复行。
                         if (runStarted[0]) {
-                            boolean anyStepFailed = steps.stream().anyMatch(s -> "failed".equals(s.status()));
+                            boolean anyStepFailed = steps.stream()
+                                    .anyMatch(s -> "failed".equals(s.status())
+                                            || "unknown".equals(s.status())
+                                            || "partial".equals(s.status()));
                             String terminal = userCancelled ? "cancelled" : (anyStepFailed ? "partial" : "completed");
                             try {
                                 chatStoreService.finishRun(runId, terminal);

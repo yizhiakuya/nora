@@ -5,9 +5,18 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 /**
  * 高风险操作分类器:决定一个工具调用在 ASSIST 档下是否需要用户批准。
  * 判定在 harness 层(永不信任模型自评);模型文本中的"同意"不视为批准。
+ *
+ * <p>2026-09-20 参数理解统一(架构设计 §5.1):解析改用 ObjectMapper
+ * (与执行层同源),并共享执行层的字段别名/动作方言归一化——此前分类器用
+ * 字符串 indexOf 简易解析且不认 filename/file 别名,「审批检查的目标」
+ * 可能与「真正执行的目标」不一致(如 {"action":"write","filename":"D:/区外/x"}
+ * 被判为区内 LOW,执行层却按区外写)。
  */
 final class RiskClassifier {
 
@@ -19,6 +28,9 @@ final class RiskClassifier {
     /** SELECT ... INTO / SELECT FOR UPDATE 等伪装只读的写形态。 */
     private static final Pattern HIDDEN_WRITE = Pattern.compile(
             "\\b(into\\s+|for\\s+update\\b)", Pattern.CASE_INSENSITIVE);
+
+    /** 共享解析器(ObjectMapper 线程安全;与执行层同源语义,不再用字符串 indexOf)。 */
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private RiskClassifier() {
     }
@@ -43,12 +55,12 @@ final class RiskClassifier {
             // 区外:读仍 LOW(只读无破坏),写/追加 HIGH,删除 CRITICAL(不可逆)
             return classifyWorkspace(argsJson);
         }
-        if ("read_file".equals(toolName)) {
-            // 文件中心(用户上传文件,2026-09-18 补齐管理面):
+        if ("manage_file".equals(toolName) || "read_file".equals(toolName)) {
+            // 文件中心(用户上传文件;2026-09-20 更名 manage_file,read_file 为兼容别名):
             // list/read/folders 只读 LOW;import 写文件(可删可重来)HIGH;
             // rename/move/mkdir 改组织(可逆)HIGH;delete=软删进回收站(可恢复)HIGH。
             // 与 manage_workspace 的区内写同级——文件中心没有"区外"概念。
-            String action = extractAction(argsJson);
+            String action = actionOf(argsJson);
             if (action == null || action.isBlank()
                     || "list".equalsIgnoreCase(action) || "read".equalsIgnoreCase(action)
                     || "folders".equalsIgnoreCase(action)) {
@@ -66,7 +78,7 @@ final class RiskClassifier {
             // list/test/schema 只读自动(HIGH 之外的连接探测无副作用);
             // create 改数据源清单,HIGH;remove 删连接+级联历史,CRITICAL。
             // 别名归一化(执行层共用):add→create / delete→remove 等
-            String action = normalizeDatasourceAction(extractAction(argsJson));
+            String action = normalizeDatasourceAction(actionOf(argsJson));
             if ("remove".equals(action)) {
                 return Risk.CRITICAL;
             }
@@ -79,7 +91,7 @@ final class RiskClassifier {
         if ("manage_service".equals(toolName)) {
             // register/remove CRITICAL:PROC 注册=宿主机命令纳入守护,删除不可逆;
             // list 只读 LOW;enable/disable 可逆,HIGH。别名归一化(执行层共用)
-            String action = normalizeServiceAction(extractAction(argsJson));
+            String action = normalizeServiceAction(actionOf(argsJson));
             if ("register".equals(action) || "remove".equals(action)) {
                 return Risk.CRITICAL;
             }
@@ -94,7 +106,7 @@ final class RiskClassifier {
             // 其余动作(register/remove/refresh/enable/disable)改变 Agent 的工具挂载面,
             // 统一 HIGH——跟随全局权限档位(ASK 全问 / ASSIST 询问 / FULL 自动),
             // 不做单独的强制审批;别名归一化与执行层共用,保证判定一致
-            String action = normalizeMcpAction(extractAction(argsJson));
+            String action = normalizeMcpAction(actionOf(argsJson));
             if ("list".equals(action) || "tools".equals(action)) {
                 return Risk.LOW;
             }
@@ -113,7 +125,7 @@ final class RiskClassifier {
         if ("manage_knowledge".equals(toolName)) {
             // list/stats 只读 LOW;index 写知识库(可逆:可 remove 重来)HIGH;
             // remove 删文档+分块不可逆 CRITICAL;reindex 重建向量(可重跑)HIGH
-            String action = extractAction(argsJson);
+            String action = actionOf(argsJson);
             if ("list".equalsIgnoreCase(action) || "stats".equalsIgnoreCase(action)) {
                 return Risk.LOW;
             }
@@ -125,7 +137,7 @@ final class RiskClassifier {
         if ("manage_automation".equals(toolName)) {
             // list/executions 只读 LOW;create/toggle/run 改变未来自动执行面 HIGH;
             // remove 删除规则(历史保留)可重建,但属破坏性操作——CRITICAL
-            String action = extractAction(argsJson);
+            String action = actionOf(argsJson);
             if ("list".equalsIgnoreCase(action) || "executions".equalsIgnoreCase(action)) {
                 return Risk.LOW;
             }
@@ -143,7 +155,8 @@ final class RiskClassifier {
             // (与 manage_workspace import 同语义:区内落盘 LOW,不打断
             // 「把相册整理进来」这类明确用户意图;区外路径=HIGH 跟随档位)。
             // folder 字段走与 workspace 相同的区外判定。
-            String folder = extractStringField(argsJson, "folder");
+            JsonNode a = parseObject(argsJson);
+            String folder = a == null ? null : a.path("folder").asText(null);
             return isOutsideWorkspace(folder) ? Risk.HIGH : Risk.LOW;
         }
         if (toolName != null && toolName.startsWith("mcp__")) {
@@ -158,13 +171,18 @@ final class RiskClassifier {
      * manage_workspace 的风险分级:解析 args 的 action 与 path,
      * 判断目标是否在工作区内(相对路径=区内;绝对路径/.. = 区外)。
      * 解析失败按 HIGH 保守处理。
+     *
+     * <p>2026-09-20 参数理解统一:字段别名(filename/file)与动作方言
+     * (download/save/fetch→import)与执行层 {@code execManageWorkspace}
+     * 共用同一归一化——审批检查的目标必须与真正执行的目标一致。
      */
     private static Risk classifyWorkspace(String argsJson) {
-        if (argsJson == null || argsJson.isBlank()) {
+        JsonNode a = parseObject(argsJson);
+        if (a == null) {
             return Risk.HIGH;
         }
         try {
-            String action = extractAction(argsJson).toLowerCase(Locale.ROOT);
+            String action = normalizeWorkspaceAction(a.path("action").asText(""));
             if ("list".equals(action) || "read".equals(action)) {
                 return Risk.LOW; // 读操作无副作用(含区外读)
             }
@@ -175,10 +193,8 @@ final class RiskClassifier {
             if (!knownAction) {
                 return Risk.HIGH; // 参数坏/action 未知:保守按 HIGH
             }
-            // 写/追加/删除:判定目标是否区外
-            String path = extractStringField(argsJson, "path");
-            String dir = extractStringField(argsJson, "dir");
-            String target = path != null ? path : dir;
+            // 写/追加/删除:判定目标是否区外(路径字段别名与执行层一致)
+            String target = workspacePathOf(a);
             boolean outside = isOutsideWorkspace(target);
             if ("delete".equals(action)) {
                 return outside ? Risk.CRITICAL : Risk.HIGH;
@@ -187,8 +203,7 @@ final class RiskClassifier {
             // 区内=LOW(整理工作区自己的文件,与 write 同级)。
             // copy:读操作+区内写,源永远只读;区外目标=HIGH,其余 LOW。
             if ("move".equals(action) || "copy".equals(action)) {
-                String to = extractStringField(argsJson, "to");
-                boolean toOutside = isOutsideWorkspace(to);
+                boolean toOutside = isOutsideWorkspace(a.path("to").asText(null));
                 return outside || toOutside ? Risk.HIGH : Risk.LOW;
             }
             // import:从远程 URL 下载并落盘(有出站请求 + 写文件)。
@@ -204,6 +219,52 @@ final class RiskClassifier {
         }
     }
 
+    /**
+     * manage_workspace 动作方言归一化(与执行层 execManageWorkspace 共用):
+     * download/save/fetch 语义即 import(实测模型写 download)。
+     * 输出小写。
+     */
+    static String normalizeWorkspaceAction(String action) {
+        if (action == null) {
+            return "";
+        }
+        String a = action.trim().toLowerCase(Locale.ROOT);
+        return switch (a) {
+            case "download", "save", "fetch" -> "import";
+            default -> a;
+        };
+    }
+
+    /**
+     * manage_workspace 的寻址字段解析(与执行层共用别名序):
+     * path 优先,其次 filename/file——执行层真正落盘的路径与权限判定
+     * 必须来自同一归一化(设计 §5.1:审批检查的目标 = 执行的目标)。
+     * list 的 dir 参数只用于列目录(恒 LOW),不参与写类判定。
+     */
+    static String workspacePathOf(JsonNode a) {
+        String path = a.path("path").asText(null);
+        if (path == null || path.isBlank()) {
+            path = a.path("filename").asText(null);
+        }
+        if (path == null || path.isBlank()) {
+            path = a.path("file").asText(null);
+        }
+        return path;
+    }
+
+    /** JSON 对象解析(非对象/非法/空白 → null,调用方按保守处理)。 */
+    private static JsonNode parseObject(String argsJson) {
+        if (argsJson == null || argsJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = MAPPER.readTree(argsJson);
+            return node != null && node.isObject() ? node : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** 简单判定:绝对路径或含 ../ 上跳 = 工作区外。 */
     static boolean isOutsideWorkspace(String path) {
         if (path == null || path.isBlank()) {
@@ -213,39 +274,13 @@ final class RiskClassifier {
         return cleaned.startsWith("/") || cleaned.matches("^[A-Za-z]:.*") || cleaned.contains("../");
     }
 
-    /** 提取 args JSON 里的指定字符串字段(简易解析,失败返回 null)。 */
-    private static String extractStringField(String argsJson, String field) {
-        try {
-            int idx = argsJson.indexOf("\"" + field + "\"");
-            if (idx < 0) {
-                return null;
-            }
-            int colon = argsJson.indexOf(':', idx);
-            int quoteStart = argsJson.indexOf('"', colon + 1);
-            int quoteEnd = argsJson.indexOf('"', quoteStart + 1);
-            return quoteStart < 0 || quoteEnd < 0 ? null : argsJson.substring(quoteStart + 1, quoteEnd);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** 提取 args JSON 里的 action 字段(解析失败按空串=未知,按 HIGH 处理)。 */
-    private static String extractAction(String argsJson) {
-        if (argsJson == null || argsJson.isBlank()) {
-            return "";
-        }
-        try {
-            int idx = argsJson.indexOf("\"action\"");
-            if (idx < 0) {
-                return "";
-            }
-            int colon = argsJson.indexOf(':', idx);
-            int quoteStart = argsJson.indexOf('"', colon + 1);
-            int quoteEnd = argsJson.indexOf('"', quoteStart + 1);
-            return quoteStart < 0 || quoteEnd < 0 ? "" : argsJson.substring(quoteStart + 1, quoteEnd);
-        } catch (Exception e) {
-            return "";
-        }
+    /**
+     * 提取 args JSON 里的 action 字段(与执行层同源的 JSON 解析;
+     * 非对象/非法/缺失 → 空串=未知,调用方按 HIGH 保守处理)。
+     */
+    static String actionOf(String argsJson) {
+        JsonNode a = parseObject(argsJson);
+        return a == null ? "" : a.path("action").asText("");
     }
 
     /** 写 SQL 的动词校验(拒绝多语句与未知动词,与 SqlGuard 语义一致)。 */

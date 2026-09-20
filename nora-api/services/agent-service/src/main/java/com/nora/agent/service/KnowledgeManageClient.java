@@ -140,7 +140,7 @@ public class KnowledgeManageClient {
                     + "。现在可用 search_knowledge 检索它";
         } catch (Exception e) {
             log.warn("knowledge index failed for file {}: {}", fileId, e.getMessage());
-            return "ERROR: " + e.getMessage() + "(先 read_file list 确认文件 id;无提取文本的文件不能索引)";
+            return "ERROR: " + e.getMessage() + "(先 manage_file list 确认文件 id;无提取文本的文件不能索引)";
         }
     }
 

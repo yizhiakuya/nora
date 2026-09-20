@@ -105,7 +105,7 @@ export function ReferencePicker({
 
         <p className="text-[10px] text-muted-foreground leading-relaxed">
           {kind === "file"
-            ? "引用后 AI 可用 read_file 工具读取文件内容。"
+            ? "引用后 AI 可用 manage_file 工具读取文件内容。"
             : "引用后回答会优先参考该文档（已在知识库中，检索时命中）。"}
         </p>
       </div>

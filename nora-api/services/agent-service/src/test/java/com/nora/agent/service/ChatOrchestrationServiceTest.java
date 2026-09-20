@@ -147,7 +147,7 @@ class ChatOrchestrationServiceTest {
     @Test
     void toolStepsPersistScrubbedRawArgsForHistoryReplay() throws Exception {
         // 跨轮历史重建的前提:step 持久化脱敏原始参数;凭据不落库、非法 JSON 不附
-        Map<String, Integer> fingerprints = new java.util.HashMap<>();
+        LoopDetector loopDetector = new LoopDetector();
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         ChatOrchestrationService.ChatEventConsumer consumer = new NoopConsumer() {
             @Override
@@ -156,7 +156,7 @@ class ChatOrchestrationServiceTest {
         invokeEmit(service, "s-call-r1", "manage_mcp",
                 "{\"action\":\"register\",\"name\":\"weather\",\"url\":\"https://x\","
                         + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}",
-                fingerprints, new java.util.ArrayList<>(), 1, consumer);
+                loopDetector, new java.util.ArrayList<>(), 1, consumer);
 
         ChatStepDto toolStep = steps.stream()
                 .filter(s -> "s-call-r1".equals(s.id()) && s.result() != null).findFirst().orElseThrow();
@@ -166,7 +166,7 @@ class ChatOrchestrationServiceTest {
         raw.contains("\"name\":\"weather\"");
         // 非法 JSON 参数不附 rawArgs(该步退化为文本历史,不产生非法 wire 调用)
         List<ChatStepDto> steps2 = new java.util.ArrayList<>();
-        invokeEmit(service, "s-call-r2", "execute_sql", "not-json", new java.util.HashMap<>(),
+        invokeEmit(service, "s-call-r2", "execute_sql", "not-json", new LoopDetector(),
                 new java.util.ArrayList<>(), 1, new NoopConsumer() {
                     @Override
                     public void step(ChatStepDto step) { steps2.add(step); }
@@ -549,7 +549,7 @@ class ChatOrchestrationServiceTest {
         ChatOrchestrationService loopService = new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, recorder, serviceLogClient, new ObjectMapper(), 5);
-        Map<String, Integer> fingerprints = new java.util.HashMap<>();
+        LoopDetector loopDetector = new LoopDetector();
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<WireSnapshot> wire = new java.util.ArrayList<>();
         ChatOrchestrationService.ChatEventConsumer consumer = new NoopConsumer() {
@@ -560,7 +560,7 @@ class ChatOrchestrationServiceTest {
         for (int i = 0; i < 4; i++) {
             List<Object[]> captured = new java.util.ArrayList<>();
             invokeEmit(loopService, "s-call-" + i, "execute_sql", "{\"sql\": \"SELECT 1\"}",
-                    fingerprints, captured, i + 1, consumer);
+                    loopDetector, captured, i + 1, consumer);
             // emitToolStep 经回填把工具消息追加到我们捕获的列表
             wire.add(new WireSnapshot(captured));
         }
@@ -581,7 +581,7 @@ class ChatOrchestrationServiceTest {
         ChatOrchestrationService headless = new ChatOrchestrationService(
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), 5);
-        Map<String, Integer> fingerprints = new java.util.HashMap<>();
+        LoopDetector loopDetector = new LoopDetector();
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         ChatOrchestrationService.ChatEventConsumer consumer = new NoopConsumer() {
             @Override
@@ -589,7 +589,7 @@ class ChatOrchestrationServiceTest {
         };
 
         invokeEmitFull(headless, "s-h1", "manage_datasource",
-                "{\"action\": \"remove\", \"target\": \"1\"}", fingerprints, 1, consumer);
+                "{\"action\": \"remove\", \"target\": \"1\"}", loopDetector, 1, consumer);
 
         steps.get(steps.size() - 1);
         steps.get(steps.size() - 1);
@@ -597,17 +597,17 @@ class ChatOrchestrationServiceTest {
 
     /** 带显式权限档与 sessionId 的 emitToolStep(headless = null 会话)。 */
     private void invokeEmitFull(ChatOrchestrationService svc, String stepId, String tool, String args,
-                                Map<String, Integer> fingerprints,
+                                LoopDetector loopDetector,
                                 int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
         try {
             ToolStepEmitter emitter = stepEmitterOf(svc);
             var method = ToolStepEmitter.class.getDeclaredMethod("emitToolStep",
-                    String.class, String.class, String.class, Map.class, List.class, String.class,
+                    String.class, String.class, String.class, LoopDetector.class, List.class, String.class,
                     int.class, PermissionMode.class, String.class,
                     ChatOrchestrationService.ChatEventConsumer.class);
             method.setAccessible(true);
             List<Object> wireList = new java.util.ArrayList<>();
-            method.invoke(emitter, stepId, tool, args, fingerprints, wireList, "call-h1", roundIndex,
+            method.invoke(emitter, stepId, tool, args, loopDetector, wireList, "call-h1", roundIndex,
                     PermissionMode.FULL, null, consumer);
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -616,12 +616,12 @@ class ChatOrchestrationServiceTest {
 
     /** 捕获编排层回填的工具消息(role=tool JSON)。 */
     private void invokeEmit(ChatOrchestrationService svc, String stepId, String tool, String args,
-                            Map<String, Integer> fingerprints, List<Object[]> messages,
+                            LoopDetector loopDetector, List<Object[]> messages,
                             int roundIndex, ChatOrchestrationService.ChatEventConsumer consumer) {
         try {
             ToolStepEmitter emitter = stepEmitterOf(svc);
             var method = ToolStepEmitter.class.getDeclaredMethod("emitToolStep",
-                    String.class, String.class, String.class, Map.class, List.class, String.class,
+                    String.class, String.class, String.class, LoopDetector.class, List.class, String.class,
                     int.class, ChatOrchestrationService.ChatEventConsumer.class);
             // messages 是 List<WireMessage>(私有 record);传一个记录 add 的代理列表
             method.setAccessible(true);
@@ -632,7 +632,7 @@ class ChatOrchestrationServiceTest {
                     return true;
                 }
             };
-            method.invoke(emitter, stepId, tool, args, fingerprints, wireList, "call-1", roundIndex, consumer);
+            method.invoke(emitter, stepId, tool, args, loopDetector, wireList, "call-1", roundIndex, consumer);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

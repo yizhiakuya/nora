@@ -162,11 +162,36 @@ class ChatContextAssembler {
             from--;
             if (historyEnd - from >= 40) break; // 条数硬上限,防御超长单条
         }
+        // 任务锚点(设计 §8.2「长任务经过压缩后仍记得目标与限制」):历史被预算
+        // 裁掉开头时,把会话最初的任务目标单独注入一条 system——否则早期消息
+        // 被裁剪后,模型只剩中段工具结果,容易丢掉"用户最初要什么"
+        if (from > 0) {
+            String anchor = taskAnchor(history, from);
+            if (anchor != null) {
+                messages.add(WireMessage.system(objectMapper, anchor));
+            }
+        }
         for (int i = from; i < historyEnd; i++) {
             appendHistoryMessage(messages, history.get(i));
         }
         messages.add(WireMessage.user(objectMapper, userMessage));
         return messages;
+    }
+
+    /**
+     * 任务锚点文本:会话最初一条用户消息(任务目标/限制的原始表述)的摘录。
+     * 仅在历史开头被裁剪时注入;过短无信息量的不注入。
+     */
+    private static String taskAnchor(List<ChatStoreService.StoredMessage> history, int trimmedUntil) {
+        for (int i = 0; i < trimmedUntil && i < history.size(); i++) {
+            ChatStoreService.StoredMessage m = history.get(i);
+            if (!"user".equals(m.role()) || m.content() == null || m.content().isBlank()) {
+                continue;
+            }
+            String excerpt = m.content().length() <= 400 ? m.content() : m.content().substring(0, 400) + "…";
+            return "本会话最早的任务目标(历史较早部分已省略,以下为用户原话摘录,继续以它为准):\n" + excerpt;
+        }
+        return null;
     }
 
     /**

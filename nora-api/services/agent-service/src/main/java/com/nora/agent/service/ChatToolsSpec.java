@@ -290,15 +290,18 @@ class ChatToolsSpec {
         svcRequired.add("action");
         tools.add(svcTool);
 
-        // 文件读取:纯只读(LOW),无审批;文件名猜不准,先 list 再按 id 读
+        // 文件中心管理:读取(list/read)+ 管理(import/rename/move/delete/folders/mkdir)。
+        // 2026-09-20 更名(架构设计 §4.2):原名 read_file 与真实能力不符(它能改名/移动/
+        // 删除)——统一为 manage_file;read_file 保留为兼容别名(旧历史/旧调用仍路由),
+        // 但不再作为工具名暴露给模型。
         ObjectNode fileTool = objectMapper.createObjectNode();
         fileTool.put("type", "function");
         ObjectNode fileFn = fileTool.putObject("function");
-        fileFn.put("name", "read_file");
-        fileFn.put("description", "工作台文件管理(**用户上传到文件页的文件**,不是工作区/整机文件系统——那是 manage_workspace)。"
+        fileFn.put("name", "manage_file");
+        fileFn.put("description", "文件中心(用户上传到文件页的文件,**不是工作区/整机文件系统——那是 manage_workspace**)。"
                 + "list 列出全部文件(按文件夹分组展示,可看到用户整理的结构);"
                 + "带 id 读取某个文件的提取文本(支持文档/PDF/代码等);"
-                + "**import 把远程 URL 下载并存成工作台文件**"
+                + "**import 把远程 URL 下载并存成文件中心文件**"
                 + "(适合把 MCP 工具返回的图片链接存起来:用户可在「文件」页直接看到);"
                 + "**rename 改名 / move 移到文件夹 / delete 移入回收站 / folders 列文件夹 / mkdir 建文件夹**"
                 + "(用户说「把上传的 XX 改名/移到 YY/删了/建个文件夹」时用)。"
@@ -349,7 +352,7 @@ class ChatToolsSpec {
         wsTool.put("type", "function");
         ObjectNode wsFn = wsTool.putObject("function");
         wsFn.put("name", "manage_workspace");
-        wsFn.put("description", "文件系统读写(**工作区与整机的文件**,不是文件中心——用户上传的文件用 read_file)。"
+        wsFn.put("description", "文件系统读写(**工作区与整机的文件**,不是文件中心——用户上传的文件用 manage_file)。"
                 + "工作区是你的家目录,也是你的长期记忆。"
                 + "list 列目录;read 读文件;write 覆盖写入;append 追加;delete 删除;"
                 + "mkdir 建目录;"
@@ -388,6 +391,13 @@ class ChatToolsSpec {
         wsPathProp.put("description", "read/write/append/delete/import 时:相对路径=工作区内(如 USER.md);"
                 + "绝对路径=整机(如 D:/projects/x/README.md;写/删前会被要求确认)。"
                 + "import 不给 path 时默认存到工作区 imports/ 目录");
+        ObjectNode wsOffsetProp = wsProps.putObject("offset");
+        wsOffsetProp.put("type", "integer");
+        wsOffsetProp.put("description", "read 时可选:起始行号(1-based)。读大文件被截断后,"
+                + "用截断提示里的 offset 继续读后续内容,如 {\"action\": \"read\", \"path\": \"big.log\", \"offset\": 501}");
+        ObjectNode wsLimitProp = wsProps.putObject("limit");
+        wsLimitProp.put("type", "integer");
+        wsLimitProp.put("description", "read 时可选:读取行数(默认 500,上限 2000);配合 offset 分段读大文件");
         ObjectNode wsToProp = wsProps.putObject("to");
         wsToProp.put("type", "string");
         wsToProp.put("description", "move/copy 时:目标路径(相对=工作区内)。目标为已存在目录时,源会移入/复制进该目录;"
@@ -541,7 +551,7 @@ class ChatToolsSpec {
         ObjectNode kbFn = kbTool.putObject("function");
         kbFn.put("name", "manage_knowledge");
         kbFn.put("description", "管理知识库文档:list=列出全部文档(可用 filter 按名过滤);"
-                + "index=把工作台文件索引进知识库(参数 fileId,先 read_file list 拿 id);"
+                + "index=把文件中心文件索引进知识库(参数 fileId,先 manage_file list 拿 id);"
                 + "remove=删除文档及其分块(不动文件中心原文件);reindex=重建文档向量(嵌入模型变更后刷新);"
                 + "stats=索引统计(文档/块数/模型)。"
                 + "用户说「把这份文档加进知识库/删掉那篇旧文档/知识库多大」时使用。"
@@ -559,7 +569,7 @@ class ChatToolsSpec {
         kbFilterProp.put("description", "list 时可选:按文档名包含的子串过滤(如「周报」)");
         ObjectNode kbFileIdProp = kbProps.putObject("fileId");
         kbFileIdProp.put("type", "string");
-        kbFileIdProp.put("description", "index 时:工作台文件 id(先 read_file action=list 拿 id)");
+        kbFileIdProp.put("description", "index 时:文件中心文件 id(先 manage_file action=list 拿 id)");
         ObjectNode kbNameProp = kbProps.putObject("name");
         kbNameProp.put("type", "string");
         kbNameProp.put("description", "index 时可选:知识库展示名(默认取文件名)");
@@ -654,7 +664,8 @@ class ChatToolsSpec {
                 + "list=列出已注册服务器(名称/状态/工具数);"
                 + "refresh=测试连接并拉取工具清单(拉取成功后其工具挂载为 mcp__<服务器名>__<工具名>,你即可调用);"
                 + "enable/disable=启用或停用;register=注册新服务器;remove=删除注册;"
-                + "tools=查看某服务器的工具清单(读缓存快照,不触发远端;lazy 服务器的工具从这里发现);"
+                + "tools=查看某服务器的工具清单(读缓存快照,不触发远端;lazy 服务器的工具从这里发现;"
+                + "**加 tool=<工具名> 参数则返回该工具的完整参数 schema**——调用前先读它,按 schema 构造 arguments,不要猜);"
                 + "call=按名调用工具(参数 target=服务器、tool=工具名、arguments=参数对象/JSON 字符串;"
                 + "lazy 服务器用它调用,eager 服务器等价于挂载调用);"
                 + "setPolicy=设置工具加载策略(target + toolPolicy=eager/lazy;lazy=不挂载为独立工具、"

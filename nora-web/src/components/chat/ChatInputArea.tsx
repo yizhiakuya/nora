@@ -91,7 +91,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
 
   /**
    * 📎 附件:选本地文件 → 上传文件中心 → 作为 file 引用加入待发送区。
-   * 上传成功后同步文件中心列表(引用要能被 read_file 工具读到,必须服务端可见)。
+   * 上传成功后同步文件中心列表(引用要能被 manage_file 工具读到,必须服务端可见)。
    */
   const handlePickLocalFile = async (file: globalThis.File) => {
     if (uploading) return;
@@ -424,7 +424,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         variant="ghost" size="icon"
                         className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
                         onClick={() => setPicker("file")}
-                        title="引用文件中心的文件(AI 用 read_file 读取)"
+                        title="引用文件中心的文件(AI 用 manage_file 读取)"
                       >
                         <FileText className="w-4 h-4" />
                       </Button>

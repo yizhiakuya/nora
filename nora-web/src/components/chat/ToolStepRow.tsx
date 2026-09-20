@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, Check, ChevronDown, Loader2, Wrench } from "lucide-react";
+import { AlertTriangle, Ban, Check, ChevronDown, CircleDashed, CircleHelp, Loader2, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
@@ -207,9 +207,13 @@ export function ToolRow({ step }: { step: ChatStep }) {
         } ${
           step.status === "failed"
             ? "border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/20"
-            : step.status === "declined"
-              ? "border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20"
-              : "border-border bg-card"
+            : step.status === "unknown"
+              ? "border-orange-200 dark:border-orange-900/60 bg-orange-50/50 dark:bg-orange-950/20"
+              : step.status === "partial"
+                ? "border-yellow-200 dark:border-yellow-900/60 bg-yellow-50/50 dark:bg-yellow-950/20"
+                : step.status === "declined"
+                  ? "border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20"
+                  : "border-border bg-card"
         }`}
       >
         <span className="shrink-0">
@@ -217,6 +221,10 @@ export function ToolRow({ step }: { step: ChatStep }) {
             <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
           ) : step.status === "failed" ? (
             <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+          ) : step.status === "unknown" ? (
+            <CircleHelp className="w-3.5 h-3.5 text-orange-500" />
+          ) : step.status === "partial" ? (
+            <CircleDashed className="w-3.5 h-3.5 text-yellow-600" />
           ) : step.status === "declined" ? (
             <Ban className="w-3.5 h-3.5 text-amber-500" />
           ) : (
@@ -243,6 +251,8 @@ export function ToolRow({ step }: { step: ChatStep }) {
           <span className="text-[10px] text-muted-foreground shrink-0">获取清单…</span>
         )}
         {step.status === "failed" && <span className="text-[10px] text-red-600 dark:text-red-400 shrink-0">失败</span>}
+        {step.status === "unknown" && <span className="text-[10px] text-orange-600 dark:text-orange-400 shrink-0">结果未知</span>}
+        {step.status === "partial" && <span className="text-[10px] text-yellow-600 dark:text-yellow-400 shrink-0">部分成功</span>}
         {step.status === "declined" && <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">已拦截</span>}
         {step.duration && <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{step.duration}</span>}
         {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />}
@@ -349,7 +359,7 @@ function ToolDetail({ step }: { step: ChatStep }) {
     <div className="ml-6 my-1 space-y-1.5 max-w-2xl">
       {inputJson && <Section title="工具参数" content={inputJson} />}
       {result?.error ? (
-        <Section title="失败原因" content={result.error} tone="error" />
+        <Section title={step.status === "unknown" ? "结果未知(需核对)" : "失败原因"} content={result.error} tone="error" />
       ) : result?.content != null ? (
         <Section
           title="执行结果"

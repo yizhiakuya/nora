@@ -1,8 +1,6 @@
 package com.nora.agent.service;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -419,8 +417,8 @@ public class ChatOrchestrationService {
         final long turnStartMs = System.currentTimeMillis();
         final long[] ttftMs = {-1};
         TokenUsage totalUsage = null;
-        // 循环熔断状态:(toolName + 归一化参数) → 连续重复计数
-        Map<String, Integer> callFingerprints = new HashMap<>();
+        // 循环检测状态(结果感知:同参且同结果才累计;设计 §9.3)
+        LoopDetector loopDetector = new LoopDetector();
         try {
             for (int round = 0; round < maxToolRounds; round++) {
                 if (isTurnCancelled(sessionId)) {
@@ -544,8 +542,9 @@ public class ChatOrchestrationService {
                     String callId = call.path("id").asText();
                     String name = call.path("function").path("name").asText();
                     String args = call.path("function").path("arguments").asText("{}");
-                    String toolStepId = "s-call-" + callFingerprints.size() + "-" + callId;
-                    stepEmitter.emitToolStep(toolStepId, name, args, callFingerprints, messages, callId,
+                    loopDetector.countAttempt();
+                    String toolStepId = "s-call-" + loopDetector.attempts() + "-" + callId;
+                    stepEmitter.emitToolStep(toolStepId, name, args, loopDetector, messages, callId,
                             round + 1, permissionMode, sessionId, unattended, resolved, eventConsumer);
                     String lastResult = contextAssembler.lastToolResult(messages);
                     if (lastResult != null) {

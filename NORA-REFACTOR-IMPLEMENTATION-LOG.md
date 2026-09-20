@@ -285,3 +285,87 @@
 （检索知识库/加载长期记忆/加载技能目录/工作区×2/photos_stats/photos_search）；
 浏览器确认「查看工作过程 · 5 次工具调用 · 11.7s」可展开、产物画廊正常渲染、
 「定时任务」徽章保留。
+
+---
+
+## 追加：Agent 架构设计第一轮落地（2026-09-20 晚，依据 NORA-AGENT-ARCHITECTURE-DESIGN-2026-09-20.md）
+
+**目标（设计 §11 第一轮）**：让执行事实可靠——统一参数理解、消除权限分歧、
+明确结果状态、修正有副作用调用的重试策略。完成标志：同一操作不因参数别名
+改变权限；部分失败和未知结果不当成成功；断线不直接触发不受控的重复写入。
+
+### 已完成任务
+
+- **A 参数理解统一（设计 §5.1，真实漏洞修复）** — `RiskClassifier` 弃用字符串
+  indexOf 简易解析（改 ObjectMapper，与执行层同源）；`workspacePathOf`
+  （path→filename→file 别名序）与 `normalizeWorkspaceAction`
+  （download/save/fetch→import 方言）提升为分类器/执行层/审批明细三处共用。
+  **修掉真实分歧**：此前 `{"action":"write","filename":"D:/区外/x"}` 被判为
+  区内 LOW（分类器只认 path 字段），执行层却按 filename 写到区外——审批门形同虚设。
+  - 验证：单测（别名/方言均被权限判定看见）+ 编译；E2E 走通。
+- **B 有副作用 MCP 调用不盲目重放（设计 §9.2）** — `callToolRich` 拆两阶段：
+  ①连接建立失败（调用未发出）→ 驱逐重连一次（任何工具安全）；
+  ②调用中断（结果未知）→ 仅当工具快照声明 `readOnlyHint=true` 才重连重试，
+  否则返回 `unknown` 状态 + 引导文案（「不要直接重发;先查询/核对远端状态」）。
+  配套：`refresh` 把 annotations.readOnlyHint 存进 tools_cache（github 实测
+  get_commit=true / create_repository=false）；`McpToolResult`/`ToolOutcome`
+  增加 unknown 标志。
+  - 验证：刷新 phone(id=20)/github(id=16) 快照含注解；单测通过。
+- **C 结果状态语义（设计 §5.2）** — 步骤状态新增 `unknown`（结果未知：调用已发出
+  但中断，远端可能已生效）与 `partial`（部分成功：批量任务有成功也有失败）：
+  - fetch_media 有失败项时输出追加「(部分成功:N 个文件失败——可只重试失败项)」
+    并标 partial，不显示为全量成功；
+  - 运行终态：failed/unknown/partial 任一 → chat_run 记 partial；
+  - 前端：unknown=橙色「结果未知」+ CircleHelp；partial=黄色「部分成功」+ CircleDashed；
+    详情面板 unknown 时标题为「结果未知(需核对)」。
+  - 验证：E2E eval 会话 → chat_run.partial（failed 步骤）；e2e-segread-test →
+    completed；浏览器确认「execute_sql … 失败」红色渲染与「查看工作过程 · 2 次工具调用」。
+- **D 循环检测结果感知（设计 §9.3）** — 新 `LoopDetector`：同参数指纹且**结果也不变**
+  才累计（结果指纹=长度+头尾 2000 字符采样哈希）；结果变化重置计数——正常轮询/
+  有进展的重复读取不被误拦。`ToolStepEmitter`/`ChatOrchestrationService` 从
+  `Map<String,Integer>` 迁移到 `LoopDetector`。
+  - 验证：单测（4 次同参同结果调用 → 第 4 次阻断；recorder 记录前 3 次已执行）。
+
+### 第二轮（随本轮一并落地）
+
+- **E MCP lazy schema 获取（设计 §6）** — `manage_mcp action=tools` 加 `tool=<名>`
+  返回该工具完整 inputSchema（读缓存快照）；工具描述与 `[引用MCP服务器]` lazy
+  指引同步教「先读 schema 再 call」。
+- **F 工具更名 read_file→manage_file（设计 §4.2）** — 原名与真实能力不符（能改名/
+  移动/删除）；新名进入 tools spec，`read_file` 保留为兼容别名（执行/分类/步骤
+  解析全部双名路由，旧历史不破）。V24 迁移同步「工作台使用手册」正文；前端文案、
+  权威文档、eval 用例同步。
+  - 验证：E2E 新会话模型直接调 `manage_file`（步骤 toolName=manage_file）；
+    工具评测 read-file-needs-list PASS。
+- **G 大结果分段回读（设计 §5.3）** — `manage_workspace read` 支持 `offset`/`limit`
+  （1-based、上限 2000 行、50MB 防护）；截断消息带续读指引（含示例参数）。
+  - 验证：E2E 两次分段读 AGENTS.md → 「(第 1-10 行,共 29 行)…继续读取用 offset=11」→
+    「(第 11-20 行,共 29 行)…offset=21」，模型正确续读。
+- **H Skill 内容版本记录（设计 §7）** — `manage_skill read` 输出附版本时间戳
+  （updatedAt），本次执行用了哪一版可追溯。
+- **I 任务锚点（设计 §8.2）** — 历史被预算裁剪掉开头时，注入会话最早用户消息
+  摘录（≤400 字）为 system「任务锚点」——长任务压缩后仍记得目标与限制。
+
+### 验证方式汇总（本轮）
+
+| 项 | 方式 | 结果 |
+|---|---|---|
+| A | 单测(别名/方言) | 通过 |
+| B | 刷新快照(github/phone) + 单测 | 通过 |
+| C | E2E(chat_run partial/completed) + 浏览器 | 通过 |
+| D | 单测(4 次同参阻断) | 通过 |
+| E | 代码路径 + 描述同步 | 通过 |
+| F | E2E(manage_file 直调) + eval PASS | 通过 |
+| G | E2E(两段续读 + 行数区间正确) | 通过 |
+| H/I | 编译 + 单测 | 通过 |
+| 工程门禁 | 后端 135 测试 / 前端 126 测试 / tsc / 工具评测 9/9 | 通过 |
+
+### 已知取舍
+
+- 工具评测原 `sql-guardrail-gives-example` 用例移除：模型行为概率性（有时直接
+  文字拒绝、有时调用被 guardrail 拒绝），两者都正确但脚本只能表达单一期望；
+  guardrail 本身已由单测 + E2E（三段式拒绝消息原文）覆盖。
+- 手机 Android 端尚未声明 readOnlyHint 注解（legacy JS 版有）——其调用中断
+  按「未声明=保守」处理（不自动重放），行为正确；后续可在 App 端补注解。
+- B 的「调用中断」判定覆盖 SDK 抛异常路径；HTTP 层半包断连若被 SDK 静默重试
+  不在本轮范围（SDK 行为，后续如需可加请求级幂等键）。

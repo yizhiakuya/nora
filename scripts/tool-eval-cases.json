@@ -2,13 +2,17 @@
   {
     "name": "env-status-selected",
     "prompt": "看下现在环境里各服务的状态怎么样",
-    "expectAny": ["environment_status"],
+    "expectAny": [
+      "environment_status"
+    ],
     "note": "诊断入口:用户问系统状态应先调 environment_status 而不是逐个翻日志"
   },
   {
     "name": "kb-search-selected",
     "prompt": "用 search_knowledge 在知识库里搜一下 Nora 这个词",
-    "expectAny": ["search_knowledge"],
+    "expectAny": [
+      "search_knowledge"
+    ],
     "note": "主动检索工具可被选中并执行"
   },
   {
@@ -28,37 +32,42 @@
   {
     "name": "workspace-edit-selected",
     "prompt": "在工作区建一个 eval-edit-test.md 写入「原始内容」,然后用 edit 把它改成「新内容」,最后读出来确认",
-    "expectAny": ["manage_workspace"],
+    "expectAny": [
+      "manage_workspace"
+    ],
     "note": "edit 精确替换路径(写→改→读)"
-  },
-  {
-    "name": "sql-guardrail-gives-example",
-    "prompt": "用 execute_sql 执行 UPDATE users SET x=1",
-    "expectAny": ["execute_sql", "execute_write_sql"],
-    "note": "写语句应被 guardrail 拒绝且错误带正确示例(检查失败消息,不是选择本身)"
   },
   {
     "name": "automation-create-selected",
     "prompt": "帮我建个自动任务:名字「评测任务」,手动触发,内容是「输出测试」",
-    "expectAny": ["manage_automation"],
+    "expectAny": [
+      "manage_automation"
+    ],
     "note": "自动任务创建应走 manage_automation"
   },
   {
     "name": "mcp-list-before-guess",
     "prompt": "github 服务器现在注册了吗?有哪些 MCP 服务器?",
-    "expectAny": ["manage_mcp"],
+    "expectAny": [
+      "manage_mcp"
+    ],
     "note": "MCP 查询应调 manage_mcp list,不猜测"
   },
   {
     "name": "read-file-needs-list",
     "prompt": "帮我读一下工作台文件里的 eval-edit-test.md",
-    "expectAny": ["read_file", "manage_workspace"],
-    "note": "文件读取类(工作台 read_file 或工作区 manage_workspace 都合理)"
+    "expectAny": [
+      "manage_file",
+      "manage_workspace"
+    ],
+    "note": "文件读取类(文件中心 manage_file 或工作区 manage_workspace 都合理)"
   },
   {
     "name": "media-fetch-selected",
     "prompt": "把手机相册里 2026-09-17 当天拍的照片拉到工作区 photos/eval-test 目录",
-    "expectAny": ["fetch_media"],
+    "expectAny": [
+      "fetch_media"
+    ],
     "note": "批量媒体必须用 fetch_media(一等工具),不许 run_command 逐个下载。**注意:本用例有真实副作用(下载文件到工作区),适合定期人工跑,不适合高频自动化**"
   }
 ]

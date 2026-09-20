@@ -86,7 +86,7 @@ export interface ChatStep {
   title: string;
   detail?: string;
   duration?: string;
-  status: "pending" | "running" | "completed" | "failed" | "declined";
+  status: "pending" | "running" | "completed" | "failed" | "declined" | "unknown" | "partial";
   /** 工具名(如 execute_sql),tool 类型步骤才有 */
   toolName?: string;
   /** 解析后的结构化入参 */

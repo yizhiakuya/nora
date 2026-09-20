@@ -36,7 +36,7 @@ export function formatChatRefs(refs: ChatRef[]): string {
     .map((r) => {
       switch (r.kind) {
         case "file":
-          return `[引用文件] ${r.name} (file_id=${r.id}${r.size ? `, ${r.size}` : ""}) —— 内容已随消息提供;如需完整原文可用 read_file 工具读取`;
+          return `[引用文件] ${r.name} (file_id=${r.id}${r.size ? `, ${r.size}` : ""}) —— 内容已随消息提供;如需完整原文可用 manage_file 工具读取`;
         case "doc":
           return `[引用知识库] ${r.name} (doc_id=${r.id}) —— 内容已注入上下文,回答时优先参考`;
         case "skill":

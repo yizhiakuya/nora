@@ -212,7 +212,8 @@ class ChatToolExecutor {
         if ("manage_service".equals(name)) {
             return execManageService(name, args, parsed, liveOutput);
         }
-        if ("read_file".equals(name)) {
+        if ("manage_file".equals(name) || "read_file".equals(name)) {
+            // read_file = 旧名兼容别名(2026-09-20 更名 manage_file;旧历史/旧调用仍路由)
             return execReadFile(name, args, parsed, liveOutput);
         }
         if ("manage_workspace".equals(name)) {
@@ -266,11 +267,17 @@ class ChatToolExecutor {
                 galleryPrefetcher.prefetchFromToolResult(mcpResult.text());
             }
             ToolOutcome mcpOutcome = bounded(mcpResult.text(), "MCP " + server.name() + " 执行完成");
+            // 结果未知(调用已发出但中断,远端可能已生效;设计 §5.2):单独状态,
+            // 不混入普通 failed——前端橙色警示、运行终态记 partial
+            if (mcpResult.unknown()) {
+                mcpOutcome = new ToolOutcome(mcpOutcome.content(), mcpOutcome.summary(),
+                        mcpOutcome.rowCount(), mcpOutcome.truncated(), mcpOutcome.images(), true);
+            }
             // 保留 image 块:图片本体不参与文本截断(避免把 base64 当文本切)，
             // 由回填层按模型识图能力决定是否附上
             return mcpResult.images().isEmpty() ? mcpOutcome
                     : new ToolOutcome(mcpOutcome.content(), mcpOutcome.summary(), mcpOutcome.rowCount(),
-                            mcpOutcome.truncated(), mcpResult.images());
+                            mcpOutcome.truncated(), mcpResult.images(), mcpOutcome.unknown());
         }
         return new ToolOutcome("ERROR: unknown tool " + name
                 + ". 可用工具：execute_sql（只读 SQL,可选 datasource 参数）、execute_write_sql（写 SQL,需批准）、"
@@ -278,7 +285,7 @@ class ChatToolExecutor {
                 + "manage_container（容器启停,需批准）、"
                 + "manage_datasource（数据源 list/create/test/schema/remove,create/remove 需批准）、"
                 + "manage_service（纳管源 list/register/enable/disable/remove,register/remove 需批准）、"
-                + "read_file（工作台文件 list/read,只读）、"
+                + "manage_file（文件中心:用户上传文件 list/read/import/rename/move/delete/folders/mkdir）、"
                 + "manage_workspace（工作区文件 list/read/write/append/delete/edit/import/move/copy/mkdir）、"
                 + "search_knowledge（知识库主动检索）、manage_knowledge（知识库 list/index/remove/reindex/stats）、"
                 + "manage_automation（自动任务 list/create/toggle/remove/run/executions）、"
@@ -702,12 +709,7 @@ class ChatToolExecutor {
         if (agentWorkspaceService == null) {
             return new ToolOutcome("ERROR: 工作区能力未启用(服务未配置)", null, null, false);
         }
-        String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-        // 方言归一化(2026-09-18:实测模型写 download——语义即 import):
-        // save/fetch 等同类词一并归位
-        if ("download".equals(action) || "save".equals(action) || "fetch".equals(action)) {
-            action = "import";
-        }
+        String action = RiskClassifier.normalizeWorkspaceAction(parsed.datasourceAction());
         if (!java.util.Set.of("list", "read", "write", "append", "delete", "import", "move", "copy", "mkdir", "edit")
                 .contains(action)) {
             return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
@@ -717,11 +719,9 @@ class ChatToolExecutor {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
             // 参数方言兼容(2026-09-18 复盘数据驱动):模型对「读文件」的第一直觉
             // 参数名是 filename/file(实测 12 次失败全是 filename)——harness 层吸收
-            // 模型方言,别让用户为参数名教学买单。
-            String path = a.path("path").asText(null);
-            if (path == null || path.isBlank()) {
-                path = Texts.firstNonNull(a.path("filename").asText(null), a.path("file").asText(null));
-            }
+            // 模型方言,别让用户为参数名教学买单。与 RiskClassifier.workspacePathOf
+            // 同一别名序(2026-09-20 统一):权限判定与实际执行必须看到同一路径。
+            String path = RiskClassifier.workspacePathOf(a);
             // read 图片:文本解码必然失败("Input length = 1"),改走图像通道——
             // 原始字节作为图像附件喂给视觉模型;非视觉模型由 backfillToolMessage
             // 明确告知「看不到」,不静默丢弃、不报解码错误。
@@ -771,6 +771,12 @@ class ChatToolExecutor {
                     if (path == null || path.isBlank()) {
                         yield "ERROR: 缺少 path 参数。相对路径=工作区内(如 USER.md);绝对路径可读整机(如 D:/projects/x/README.md)"
                                 + ";路径本身就是相对工作区解析的,不要再拼工作区目录名(避免 agent-workspace/agent-workspace 这类重复)";
+                    }
+                    // 分段读(设计 §5.3 大结果回读):offset/limit 给截断后的续读出路
+                    Integer readOffset = a.path("offset").isNumber() ? a.path("offset").asInt() : null;
+                    if (readOffset != null) {
+                        Integer readLimit = a.path("limit").isNumber() ? a.path("limit").asInt() : 500;
+                        yield agentWorkspaceService.readRangeAny(path, readOffset, readLimit);
                     }
                     yield agentWorkspaceService.readAny(path);
                 }
@@ -892,7 +898,11 @@ class ChatToolExecutor {
                     if (skill == null) {
                         yield "ERROR: 找不到技能「" + target + "」。可用技能:\n" + skillNameList();
                     }
-                    yield "技能「" + skill.name() + "」完整指令:\n" + skill.instructions();
+                    // 记录实际加载的内容版本(设计 §7):便于复盘「这次用的是哪一版技能」
+                    // (技能可在会话中途被 update——版本时间戳让行为变化可追溯)
+                    yield "技能「" + skill.name() + "」完整指令"
+                            + (skill.updatedAt() != null ? "(版本:" + skill.updatedAt() + ")" : "")
+                            + ":\n" + skill.instructions();
                 }
                 case "create" -> {
                     String sName = a.path("name").asText(null);
@@ -1002,7 +1012,12 @@ class ChatToolExecutor {
         return new ToolOutcome(sb.toString(), null, null, false);
     }
 
-    /** manage_mcp action=tools:某服务器的工具清单(读缓存快照,不触发远端)。 */
+    /**
+     * manage_mcp action=tools:某服务器的工具清单(读缓存快照,不触发远端)。
+     * 带 tool 参数时返回该工具的完整 inputSchema(设计 §6:lazy 路径
+     * 「能力摘要 → 找到工具 → 读取完整参数说明 → 校验并调用」——
+     * 缓存里已有 schema,调用前用它精确构造参数,不靠猜)。
+     */
     private ToolOutcome mcpToolsResult(JsonNode a) {
         String target = Texts.firstNonNull(a.path("target").asText(null),
                 Texts.firstNonNull(a.path("name").asText(null), a.path("server").asText(null)));
@@ -1020,8 +1035,27 @@ class ChatToolExecutor {
             return new ToolOutcome("(服务器「" + server.name() + "」还没有工具清单快照——"
                     + "先用 action=refresh target=" + server.name() + " 拉取)", null, null, false);
         }
+        // 单工具 schema 模式(带 tool 参数):完整参数说明,供精确构造调用
+        String toolName = Texts.firstNonNull(a.path("tool").asText(null), a.path("toolName").asText(null));
+        if (toolName != null && !toolName.isBlank()) {
+            for (McpServerService.ToolEntry t : entries) {
+                if (toolName.trim().equals(t.name())) {
+                    StringBuilder sb = new StringBuilder("服务器「").append(server.name())
+                            .append("」的工具 ").append(t.name()).append(" 完整说明:\n");
+                    sb.append("描述: ").append(t.description() == null || t.description().isBlank()
+                            ? "(无描述)" : t.description()).append('\n');
+                    sb.append("参数 schema(按此构造 arguments;required 中的字段必填):\n");
+                    sb.append(t.inputSchema() == null ? "(该工具未声明参数 schema——按描述调用,不确定时传空对象 {})"
+                            : t.inputSchema().toPrettyString());
+                    return bounded(sb.toString(), "工具说明 " + t.name());
+                }
+            }
+            return new ToolOutcome("ERROR: 服务器「" + server.name() + "」没有名为 \"" + toolName
+                    + "\" 的工具(以 action=tools 清单为准,不要凭记忆拼写)", null, null, false);
+        }
         StringBuilder sb = new StringBuilder("服务器「").append(server.name()).append("」的工具清单(共 ")
-                .append(entries.size()).append(" 个;lazy 服务器用 action=call 按名调用):\n");
+                .append(entries.size()).append(" 个;lazy 服务器用 action=call 按名调用;"
+                        + "调用前可 action=tools target=" + server.name() + " tool=<工具名> 查看完整参数说明):\n");
         for (McpServerService.ToolEntry t : entries) {
             sb.append("- ").append(t.name());
             String desc = t.description() == null ? "" : t.description();
@@ -1081,9 +1115,14 @@ class ChatToolExecutor {
             galleryPrefetcher.prefetchFromToolResult(mcpResult.text());
         }
         ToolOutcome outcome = bounded(mcpResult.text(), "MCP " + server.name() + "." + tool.trim() + " 执行完成");
-        return mcpResult.images().isEmpty() ? outcome
+        // 结果未知(调用已发出但中断):与挂载工具同语义透传(设计 §5.2)
+        return mcpResult.images().isEmpty()
+                ? (mcpResult.unknown()
+                        ? new ToolOutcome(outcome.content(), outcome.summary(), outcome.rowCount(),
+                                outcome.truncated(), outcome.images(), true)
+                        : outcome)
                 : new ToolOutcome(outcome.content(), outcome.summary(), outcome.rowCount(),
-                        outcome.truncated(), mcpResult.images());
+                        outcome.truncated(), mcpResult.images(), mcpResult.unknown());
     }
 
     /** manage_mcp action=register:注册 + 自动测试连接(失败不回滚注册)。 */
@@ -1350,8 +1389,18 @@ class ChatToolExecutor {
                     sb.append("- ").append(report.errors().get(i)).append('\n');
                 }
             }
-            return bounded(sb.toString(), "下载 " + report.downloaded() + "/" + report.total()
+            // 部分成功(设计 §5.2):有失败项时明确标注,不显示为全量成功——
+            // 模型据此只处理未完成项,而不是声称"全部完成"
+            if (report.failed() > 0) {
+                sb.append("\n(部分成功:").append(report.failed())
+                        .append(" 个文件失败——可只重试失败项,已成功的会跳过)");
+            }
+            ToolOutcome fetchOutcome = bounded(sb.toString(), "下载 " + report.downloaded() + "/" + report.total()
                     + (report.failed() > 0 ? ",失败 " + report.failed() : ""));
+            return report.failed() > 0
+                    ? new ToolOutcome(fetchOutcome.content(), fetchOutcome.summary(), fetchOutcome.rowCount(),
+                            fetchOutcome.truncated(), java.util.List.of(), false, true)
+                    : fetchOutcome;
         } catch (IllegalArgumentException e) {
             return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage(), 300), null, null, false);
         } catch (Exception e) {
@@ -1398,7 +1447,7 @@ class ChatToolExecutor {
                 case "index" -> {
                     String fileIdRaw = a.path("fileId").asText(null);
                     if (fileIdRaw == null || !fileIdRaw.matches("\\d+")) {
-                        yield new ToolOutcome("ERROR: index 需要 fileId 参数(工作台文件的数字 id;先 read_file action=list 查看)。"
+                        yield new ToolOutcome("ERROR: index 需要 fileId 参数(文件中心文件的数字 id;先 manage_file action=list 查看)。"
                                 + "示例:{\"action\": \"index\", \"fileId\": \"12\"}", null, null, false);
                     }
                     yield bounded(knowledgeManageClient.indexFile(Long.parseLong(fileIdRaw),
@@ -1810,11 +1859,29 @@ class ChatToolExecutor {
     /** 一次执行的工具调用:有界内容 + 面向 UI 的元数据。 */
     record ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
                         /** 图片附件(MCP 工具返回的 image 块);空 = 纯文本 */
-                        java.util.List<McpServerService.McpToolResult.ImageBlock> images) {
+                        java.util.List<McpServerService.McpToolResult.ImageBlock> images,
+                        /** 结果未知(调用已发出但中断,远端可能已生效;设计 §5.2):
+                         *  与普通失败区分——前端橙色警示、运行终态记 partial。 */
+                        boolean unknown,
+                        /** 部分成功(批量任务有成功也有失败;设计 §5.2):
+                         *  保留成功/失败/跳过区别,不显示为全量成功。 */
+                        boolean partial) {
 
         /** 纯文本结果(旧行为,保持不变) */
         ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated) {
-            this(content, summary, rowCount, truncated, java.util.List.of());
+            this(content, summary, rowCount, truncated, java.util.List.of(), false, false);
+        }
+
+        /** 带图片的结果(兼容构造:非 unknown/partial)。 */
+        ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
+                    java.util.List<McpServerService.McpToolResult.ImageBlock> images) {
+            this(content, summary, rowCount, truncated, images, false, false);
+        }
+
+        /** 带 unknown 的结果(兼容构造:非 partial)。 */
+        ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
+                    java.util.List<McpServerService.McpToolResult.ImageBlock> images, boolean unknown) {
+            this(content, summary, rowCount, truncated, images, unknown, false);
         }
 
         boolean hasImages() {

@@ -29,7 +29,7 @@ class MessageRefResolver {
 
     private static final Logger log = LoggerFactory.getLogger(MessageRefResolver.class);
 
-    /** 单文件注入上限(字符);完整原文可让模型改用 read_file 工具。 */
+    /** 单文件注入上限(字符);完整原文可让模型改用 manage_file 工具。 */
     private static final int FILE_INJECT_CHARS = 8_000;
     /** 单文档多 chunk 注入总量上限(字符)。 */
     private static final int DOC_INJECT_CHARS = 12_000;
@@ -218,7 +218,7 @@ class MessageRefResolver {
             content = "(该文件没有可提取的文本内容,可能是二进制/图片;如需查看请让用户改用支持识图的模型)";
         } else if (text.length() > FILE_INJECT_CHARS) {
             content = text.substring(0, FILE_INJECT_CHARS)
-                    + "\n…[已截断,共 " + text.length() + " 字符;完整原文可用 read_file 工具读取 file_id=" + ref.id() + "]";
+                    + "\n…[已截断,共 " + text.length() + " 字符;完整原文可用 manage_file 工具读取 file_id=" + ref.id() + "]";
         } else {
             content = text;
         }
@@ -293,8 +293,9 @@ class MessageRefResolver {
             return List.of(new CitationDto(ref.id(), ref.name(), "text", 0, 1.0,
                     "【用户指定的 MCP 服务器】用户要求优先使用「" + ref.name()
                             + "」提供的工具处理本请求。该服务器的工具为按需加载:先用 manage_mcp action=tools target=\""
-                            + ref.name() + "\" 查看工具清单,再用 manage_mcp action=call target=\"" + ref.name()
-                            + "\" tool=<工具名> 调用;若确实不适用,再考虑其他工具并说明原因。"));
+                            + ref.name() + "\" 查看工具清单,再对要用的工具加 tool=<工具名> 读一次完整参数 schema,"
+                            + "然后 manage_mcp action=call target=\"" + ref.name()
+                            + "\" tool=<工具名> arguments={...} 调用;若确实不适用,再考虑其他工具并说明原因。"));
         }
         return List.of(new CitationDto(ref.id(), ref.name(), "text", 0, 1.0,
                 "【用户指定的 MCP 服务器】用户要求优先使用「" + ref.name()
