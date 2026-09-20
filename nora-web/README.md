@@ -35,18 +35,18 @@ nora-web/
 ├── vite.config.ts          # 构建配置（@ 别名 + next/* 兼容层映射）
 ├── src/
 │   ├── main.tsx            # ReactDOM.createRoot + BrowserRouter + ThemeProvider
-│   ├── App.tsx             # 路由表（11 条主路由——含登录页,全部 React.lazy 懒加载 + 重定向 + 404 兜底）
+│   ├── App.tsx             # 路由表（助手/资料/任务/设置四入口 + 兼容路由,全部 React.lazy 懒加载 + 重定向 + 404 兜底）
 │   ├── app/                # 路由页面组件（仅胶水层，≤150 行）
-│   │   ├── page.tsx        #   首页（概览面板）
-│   │   ├── files/          #   文件管理（文件中心 = 统一文件系统视图）
-│   │   ├── chat/           #   AI 对话
-│   │   ├── knowledge/      #   知识库 RAG（4 Tab）
-│   │   ├── skills/         #   AI 能力
-│   │   ├── mcp/            #   MCP 管理
-│   │   ├── data-sources/   #   数据源
-│   │   ├── environments/   #   环境控制台
-│   │   ├── automations/    #   自动任务
-│   │   ├── settings/       #   设置中心
+│   │   ├── page.tsx        #   助手首页（输入需求/继续处理/最近成果）
+│   │   ├── files/          #   资料（全部文件/长期知识/已保存成果三视图）
+│   │   ├── tasks/          #   任务（正在处理/定期任务/执行记录）
+│   │   ├── chat/           #   会话工作区
+│   │   ├── knowledge/      #   长期知识（兼容页,复用 KnowledgeView）
+│   │   ├── skills/         #   技能（兼容页,复用 SkillsView）
+│   │   ├── mcp/            #   连接与工具（兼容页,复用 ConnectionsView）
+│   │   ├── data-sources/   #   数据源（高级工具）
+│   │   ├── environments/   #   环境控制台（高级工具）
+│   │   ├── settings/       #   设置（含 我的偏好/连接与工具/技能）
 │   │   └── login/          #   令牌登录页
 │   ├── components/
 │   │   ├── ui/             # 基础 UI 原语（Button/Input/Switch/Select/Tabs/Modal）

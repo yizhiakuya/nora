@@ -1,6 +1,6 @@
 # Nora
 
-AI 驱动的个人工作台：RAG 知识库 + 可调用 SQL/日志/文件/环境工具的对话 Agent + 数据源/环境/自动任务管理。
+个人 AI 助手：使用你的资料和已连接工具完成具体任务、交付成果，并持续处理重复工作。
 
 ## 目录结构
 
@@ -15,25 +15,28 @@ Nora/
 
 ## 当前状态（2026-09-20）
 
-**能实际使用的单用户工作台**，不建议再给未经验收的完成度百分比（历史进度见 PROGRESS-REVIEW-2026-09-06.md，其口径已过时）。
+**能实际使用的单用户个人助手**。主导航按任务收敛为四入口：**助手 / 资料 / 任务 / 设置**（技术模块从主导航移到设置与高级工具，旧链接全部兼容）。
 
 | 端 | 状态 |
 |----|------|
-| 后端 | 8 个微服务（gateway/file/rag/agent/datasource/env/automation/notification）；Kafka 事件通知已上线（替换文档中计划的"通知 SSE"）；令牌登录（NORA_AUTH_TOKEN，缺省免登录） |
-| 前端 | 10 个工作台页面 + 登录页；全部经统一 envelope 接入真实后端；USE_BACKEND 开关保留本地 mock 路径 |
+| 后端 | 8 个微服务（gateway/file/rag/agent/datasource/env/automation/notification）；Kafka 事件通知；令牌登录（NORA_AUTH_TOKEN，缺省免登录）；对话运行持久化（chat_run）与定期任务日程契约 |
+| 前端 | 助手首页（输入需求/继续处理/最近成果）+ 资料（文件/长期知识/已保存成果）+ 任务（正在处理/定期任务/执行记录）+ 设置（含连接与工具/技能/我的偏好）；USE_BACKEND 开关保留本地 mock 路径 |
 
-**核心能力**：对话 Agent（SSE 流式/工具审批/断线重连/上下文压缩）、文件中心（上传/文件夹/预览/回收站/RAG 索引/媒体缓存流转）、RAG 检索（pgvector + pg_trgm 混合召回）、数据源（PG/MySQL/Redis，只读通道有数据库级只读约束）、环境控制台（Docker/日志/进程守护）、自动任务（手动/每日/每周调度）、MCP 管理（含 STDIO 本地进程与 GitHub OAuth）、手机相册（独立仓库）。
+**用户可见的核心闭环**：
+- **资料处理 → 完整成果**：多选资料「交给助手」→ 引用注入真实内容 → 完整报告（画廊原生渲染）→「保存为文件」（工作区真实 Markdown，回读校验）/「保存到知识库」。
+- **任务真实状态**：对话运行持久化（刷新/换页/进程重启可找回）；取消/中断/部分完成各有真实依据；自动结果全文可读。
+- **定期任务**：真实日程（时间/星期/时区，服务端计算 nextRunAt 并可预览）；从成果一键创建；手动试跑不改计划点；错过宽限记录 missed_schedule 不冒充执行。
+- **可信度**：删除/恢复/索引的生命周期同步带持久化重试与版本防乱序；「运行中/已启用/已完成/执行失败」文案与后台实际状态一致。
 
-**近期质量修复（2026-09-19/20，依据 PROJECT-ANALYSIS-2026-09-19.md）**：
-- P1：中继缓存鉴权绕过、只读 SQL 边界（数据库级只读）、自动任务假成功
-- P2：审批竞态、SSE 游标协议与回放缺口、单会话并发轮次、首次索引事务、文件生命周期同步补偿、登录后媒体令牌
-- 工程：lint 全绿、路由级懒加载（主包 gzip 240KB→97.7KB）
+**近期修复记录**：见 [NORA-REFACTOR-IMPLEMENTATION-LOG.md](NORA-REFACTOR-IMPLEMENTATION-LOG.md)（M0–M5 各阶段验证证据）与 [PROJECT-ANALYSIS-2026-09-19.md](PROJECT-ANALYSIS-2026-09-19.md)（P1/P2 问题清单）。
 
 ## 文档索引
 
 | 文档 | 内容 |
 |------|------|
-| [PROJECT-ANALYSIS-2026-09-19.md](PROJECT-ANALYSIS-2026-09-19.md) | **最新全面分析**（问题清单与推进顺序，P1/P2 已落地） |
+| [NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md](NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md) | **产品改造方案**（信息架构/业务场景/契约/验收矩阵） |
+| [NORA-REFACTOR-IMPLEMENTATION-LOG.md](NORA-REFACTOR-IMPLEMENTATION-LOG.md) | **改造实施记录**（M0–M5 完成项与验证证据、已知限制） |
+| [PROJECT-ANALYSIS-2026-09-19.md](PROJECT-ANALYSIS-2026-09-19.md) | 全面分析（问题清单与推进顺序，P1/P2 已落地） |
 | [PROGRESS-REVIEW-2026-09-06.md](PROGRESS-REVIEW-2026-09-06.md) | 历史进度评估（口径过时，保留作参考） |
 | [nora-web/README.md](nora-web/README.md) | 前端技术栈、项目结构、业务流 |
 | [nora-web/AGENTS.md](nora-web/AGENTS.md) | 前端开发规约 |

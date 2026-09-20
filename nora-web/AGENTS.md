@@ -70,7 +70,7 @@ Hook 中按 `USE_BACKEND` 分流；保留同步 Mock 函数作为回退，**并�
 
 ## 📁 目录约定 (Directory Structure)
 - `/` 根目录：`index.html`（Vite 入口）、`vite.config.ts`（构建配置，含 `@` 别名与 `/api` 代理）、`src/main.tsx`（ReactDOM.createRoot + BrowserRouter）、`src/App.tsx`（路由表）
-- `/src/app`: 路由页面组件 (Home, Chat, Files, Knowledge, Skills, Data-Sources, Environments, Automations, Settings)。由 `src/App.tsx` 统一注册到 react-router-dom。**禁止在此存放长段逻辑代码**。
+- `/src/app`: 路由页面组件 (Home=助手, Files=资料, Tasks=任务, Chat, Knowledge, Skills, Data-Sources, Environments, Settings, Mcp, Login)。由 `src/App.tsx` 统一注册到 react-router-dom；主视图组件可复用(如 `components/knowledge/KnowledgeView` 同时被资料页与 /knowledge 使用)。**禁止在此存放长段逻辑代码**。
 - `/src/components/ui`: 基础 UI 原语（Button, Input, Switch, Select, Tabs, Modal）。
 - `/src/components/{domain}`: 领域业务组件（如 `/chat`, `/files`, `/settings/model` 下的专属拆分组件）。
 - `/src/components/layout`: Sidebar, Header, NotificationBell, ThemeProvider。
