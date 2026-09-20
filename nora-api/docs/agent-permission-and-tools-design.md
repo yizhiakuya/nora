@@ -67,6 +67,9 @@ needApproval = mode == ASK
 | `manage_mcp` | list / **tools** | LOW | 视图已脱敏；tools 读缓存快照不触发远端（2026-09-18 P2-9） |
 | `manage_mcp` | refresh/enable/disable/register/remove/setPolicy/**call** | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH）。**call**=按名调用 lazy 服务器工具（与 mcp__* 挂载同语义）；**setPolicy** 改变挂载面（eager/lazy） |
 | `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守通道放行 |
+| `mcp__*__photos_manage` | trash_list | LOW | 手机相册回收站查看（只读；2026-09-20） |
+| `mcp__*__photos_manage` | move/copy/rename/delete/trash_restore/album_create | HIGH | 手机相册整理写操作；delete=移入 App 回收站（Pictures/Nora回收站）可恢复，不是销毁 |
+| `mcp__*__photos_manage` | **trash_purge** | **CRITICAL** | 彻底删除手机照片（不可恢复；仅回收站内文件可被 purge）；无人值守通道直接拒绝 |
 | `manage_skill` | list/read/create/update/remove | LOW | 纯数据操作（技能库），无系统副作用 |
 | `search_knowledge` | — | LOW | 知识库主动检索（只读；2026-09-18 新增） |
 | `manage_knowledge` | list/stats | LOW | 只读视图 |

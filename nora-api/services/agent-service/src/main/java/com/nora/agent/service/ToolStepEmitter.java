@@ -511,7 +511,14 @@ class ToolStepEmitter {
             case "manage_knowledge" -> "知识库管理";
             case "manage_automation" -> "自动任务管理";
             case "environment_status" -> "环境状态快照";
-            default -> name.startsWith("mcp__") ? "调用 MCP 工具" : name;
+            default -> {
+                // 手机相册整理(2026-09-20):任意挂载名下的 photos_manage 都给
+                // 可读标题,与泛化「调用 MCP 工具」区分,时间线一眼可读
+                if (name.startsWith("mcp__") && name.endsWith("__photos_manage")) {
+                    yield "整理手机相册";
+                }
+                yield name.startsWith("mcp__") ? "调用 MCP 工具" : name;
+            }
         };
     }
 
@@ -876,9 +883,36 @@ class ToolStepEmitter {
                     // 畸形挂载名(LLM 幻觉出 mcp__srv 缺第二个 __)不能让 substring 越界
                     int sep = toolName.indexOf("__", "mcp__".length());
                     String serverName = sep < 0 ? "?" : toolName.substring("mcp__".length(), sep);
-                    target = "MCP 服务器 " + serverName;
-                    detail = "工具: " + toolName + "\n参数: " + Texts.abbreviate(rawArgs == null ? "{}" : rawArgs, 400);
-                    risk = "外部 MCP 服务器提供的工具,能力未知,执行前需确认";
+                    // 手机相册整理(2026-09-20):按动作给人类可读明细——用户审的就是
+                    // 将要执行的操作(移动/删除/彻底删除等),不用猜参数 JSON
+                    if (toolName.endsWith("__photos_manage")) {
+                        JsonNode a = parseArgsSafe(rawArgs);
+                        String action = a.path("action").asText("?").trim().toLowerCase();
+                        String ids = a.path("ids").asText("");
+                        String album = a.path("album").asText("");
+                        target = "手机相册(" + (ids.isBlank() ? "—" : ids) + ")";
+                        detail = switch (action) {
+                            case "move" -> "把 " + ids + " 移到相册「" + album + "」(可在系统相册里看到)";
+                            case "copy" -> "把 " + ids + " 复制到相册「" + album + "」(原件保留)";
+                            case "rename" -> "把 " + ids + " 重命名为「" + a.path("name").asText("?") + "」";
+                            case "delete" -> "把 " + ids + " 移入 App 回收站(相册里不再显示,可恢复)";
+                            case "trash_restore" -> "从回收站恢复 " + ids + " 到 Pictures/Nora 恢复/";
+                            case "trash_purge" -> "彻底删除回收站中的 " + ids + "(不可恢复!)";
+                            case "trash_list" -> "查看回收站内容";
+                            case "album_create" -> "新建相册「" + album + "」并移入 " + ids;
+                            default -> "相册整理操作: " + action + " ids=" + ids;
+                        };
+                        risk = switch (action) {
+                            case "trash_purge" -> "彻底删除手机上的照片/视频,不可恢复(仅回收站内文件可被彻底删除)";
+                            case "delete" -> "照片移入回收站(可在手机上恢复;不会立即销毁)";
+                            case "move", "rename" -> "将改动手机相册里的文件组织(可在系统相册中改回)";
+                            default -> "将操作手机相册中的文件";
+                        };
+                    } else {
+                        target = "MCP 服务器 " + serverName;
+                        detail = "工具: " + toolName + "\n参数: " + Texts.abbreviate(rawArgs == null ? "{}" : rawArgs, 400);
+                        risk = "外部 MCP 服务器提供的工具,能力未知,执行前需确认";
+                    }
                 } else {
                     actionType = toolName;
                     target = parsed.input().service() != null ? parsed.input().service()

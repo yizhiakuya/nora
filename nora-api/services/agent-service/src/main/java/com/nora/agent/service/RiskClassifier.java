@@ -160,6 +160,26 @@ final class RiskClassifier {
             return isOutsideWorkspace(folder) ? Risk.HIGH : Risk.LOW;
         }
         if (toolName != null && toolName.startsWith("mcp__")) {
+            // 手机相册整理(2026-09-20 photos_manage):写操作分级——
+            // trash_purge(彻底删除,不可恢复)与 album 结构操作外的破坏性动作
+            // 按 CRITICAL 处理(任何档位都需批准,无人值守通道直接拒绝);
+            // 其余写(move/copy/rename/delete→回收站/restore)可恢复,HIGH。
+            // delete 只是移入 App 回收站(可恢复),不是 CRITICAL。
+            if (toolName.endsWith("__photos_manage")) {
+                JsonNode a = parseObject(argsJson);
+                String action = a == null ? "" : a.path("action").asText("").trim().toLowerCase();
+                // trash_purge = 彻底删除(不可恢复):任何档位都需批准,无人值守直接拒绝
+                if ("trash_purge".equals(action)) {
+                    return Risk.CRITICAL;
+                }
+                // trash_list = 只读查看回收站:自动执行
+                if ("trash_list".equals(action)) {
+                    return Risk.LOW;
+                }
+                // move/copy/rename/delete(→回收站)/restore/album_create:
+                // 写操作但可恢复(delete 只是移入回收站),HIGH 跟随全局档位
+                return Risk.HIGH;
+            }
             // MCP 挂载工具:外部服务器能力未知,一律 HIGH——ASSIST 档询问、
             // FULL 档放行、无人值守通道按设计放行(见 CLAUDE.md 高风险工具节)
             return Risk.HIGH;
