@@ -109,15 +109,28 @@ public class TurnStreamController {
             // exactly-once:回放与实况可能短暂重叠(finish 后的新订阅),seq 去重兜底;
             // id 下发给客户端作断线续传游标
             if (seen.add(event.seq())) {
-                sendRaw(emitter, event.event(), event.json(), event.seq());
+                sendRaw(emitter, turn.turnId, event.event(), event.json(), event.seq());
             }
         };
         // 回放 drain 与实况订阅在同一把锁内原子完成:drain 里没有的事件必然
         // 会走订阅到达,实况事件不可能插队到更早的缓冲事件之前
-        java.util.List<TurnStreamRegistry.TurnEvent> backlog;
+        TurnStreamRegistry.Snapshot snapshot;
         try {
-            backlog = turn.subscribeDraining(afterSeq, forward);
-            for (TurnStreamRegistry.TurnEvent e : backlog) {
+            snapshot = turn.subscribeDraining(afterSeq, forward);
+            if (snapshot.gap()) {
+                // 游标落在滚动窗口之外:中间事件已淘汰,无法不重不漏续传。
+                // 显式告知客户端(而不是静默少回放),由前端从权威消息状态恢复。
+                // 注意不带 SSE id:不能让这条控制事件推进客户端游标。
+                log.info("turn replay gap detected for {}: cursor={} oldest={}", sessionId, afterSeq, snapshot.oldestSeq());
+                try {
+                    emitter.send(SseEmitter.event().name("gap")
+                            .data("{\"cursor\":" + afterSeq + ",\"oldestSeq\":" + snapshot.oldestSeq() + "}",
+                                    MediaType.APPLICATION_JSON));
+                } catch (IOException | IllegalStateException ignored) {
+                    // 客户端已离开
+                }
+            }
+            for (TurnStreamRegistry.TurnEvent e : snapshot.events()) {
                 forward.accept(e);
             }
         } catch (Exception e) {
@@ -137,12 +150,20 @@ public class TurnStreamController {
 
     /**
      * 发送已序列化的 JSON(TurnEvent 回放路径),不再二次 toJson。
-     * {@code id:<seq>} 供 EventSource 断线续传:浏览器重连时自动带上
-     * Last-Event-ID,服务端据此增量回放,不重不漏。
+     *
+     * <p>{@code id:<turnId>:<seq>} 供 EventSource 断线续传:浏览器重连时自动
+     * 带上 Last-Event-ID,服务端据此增量回放,不重不漏。
+     *
+     * <p><b>协议一致性(2026-09-20 修复)</b>:此前发送的 id 只有裸 seq,而
+     * 解析端要求 {@code turnId:seq}——浏览器自动重连传回的纯数字永远解析失败,
+     * 游标退回 0 全量回放,重复文本被再次追加。现在发送与解析使用同一格式。
      */
-    private void sendRaw(SseEmitter emitter, String event, String json, long seq) {
+    private void sendRaw(SseEmitter emitter, String turnId, String event, String json, long seq) {
         try {
-            emitter.send(SseEmitter.event().id(String.valueOf(seq)).name(event).data(json, MediaType.APPLICATION_JSON));
+            emitter.send(SseEmitter.event()
+                    .id(turnId + ":" + seq)
+                    .name(event)
+                    .data(json, MediaType.APPLICATION_JSON));
         } catch (IOException | IllegalStateException e) {
             log.debug("SSE replay send failed (client disconnected?): {}", e.getMessage());
         }

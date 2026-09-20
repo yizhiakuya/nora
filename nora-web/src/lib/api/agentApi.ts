@@ -527,11 +527,21 @@ export function attachLiveTurnStream(
     onDone?: (p?: unknown) => void;
     onError?: (msg: string) => void;
     onIdle?: () => void;
+    /**
+     * 回放缺口(2026-09-20):服务端滚动窗口已淘汰游标之前的中间事件,
+     * 本连接回放的事件序列不完整——已收到的增量内容不可信,应清空后
+     * 等 done 从权威消息状态恢复。缺失时忽略(旧后端不发送该事件)。
+     */
+    onGap?: (info: { cursor: number; oldestSeq: number }) => void;
   }
 ): () => void {
   // EventSource 只支持 GET,SSE 端点恰好是 GET;token 无需鉴权(本地单用户部署)
   // EventSource 无法自定义 header:令牌走 ?token=(服务端 filter 支持两种通道)
   const es = new EventSource(withAuthToken(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/stream`));
+  es.addEventListener("gap", (e) => {
+    const p = safeParse<{ cursor: number; oldestSeq: number }>((e as MessageEvent).data);
+    if (p) handlers.onGap?.(p);
+  });
   es.addEventListener("step", (e) => {
     const p = safeParse<StepPayload>((e as MessageEvent).data);
     if (p) handlers.onStep?.(p);

@@ -158,9 +158,13 @@ class ToolStepEmitter {
                     || permissionMode == PermissionMode.FULL && risk == RiskClassifier.Risk.CRITICAL;
             if (needApproval) {
                 ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, parsed, permissionMode, args);
-                ApprovalRequestDto ticket = approvalService.register(sessionId, toolStepId, request);
-                eventConsumer.approvalRequired(ticket);
-                boolean approved = approvalService.await(ticket.approvalToken());
+                // 持有注册句柄并等待其 future(2026-09-20 修复):不要把 token
+                // 传回 await(token) 查表——future 完成回调先删条目,查表等待会
+                // 把已批准的操作误判为拒绝(resolve=true → await=false)。
+                ApprovalService.Registered registered =
+                        approvalService.registerWithFuture(sessionId, toolStepId, request);
+                eventConsumer.approvalRequired(registered.ticket());
+                boolean approved = approvalService.awaitFuture(registered);
                 if (!approved) {
                     finishToolStep(toolStepId, name, title, input, toolStart,
                             new ChatStepDto.StepResult(null, "用户未批准", null, null, false,

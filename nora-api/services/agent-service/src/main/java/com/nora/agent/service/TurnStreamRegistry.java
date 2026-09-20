@@ -26,12 +26,31 @@ public class TurnStreamRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(TurnStreamRegistry.class);
 
-    /** 每轮缓冲上限:delta 很小,8000 足以覆盖带推理的长轮次。 */
+    /**
+     * 每轮缓冲上限:delta 很小,8000 足以覆盖带推理的长轮次。
+     *
+     * <p><b>滚动窗口(2026-09-20 修复)</b>:此前达到上限后**停止记录新事件**——
+     * 之后掉线期间的内容永远无法回放(隔离复现:lastSeq=8002 而
+     * snapshotAfter(8000) 返回 0 条)。现在满员时淘汰最旧事件、继续记录,
+     * 保证「最近 8000 条」永远可回放;被淘汰的范围由 {@link Snapshot#gap()}
+     * 显式告知调用方。
+     */
     private static final int MAX_BUFFERED_EVENTS = 8000;
 
     /** 一条缓冲的 SSE 事件:轮次内单调序号 + 名称 + 预序列化 JSON。
      *  序号即 SSE 事件 id——客户端用 Last-Event-ID 精确续传,回放也因此有全序。 */
     public record TurnEvent(long seq, String event, String json) {
+    }
+
+    /**
+     * 回放快照:游标之后仍可回放的事件 + 是否检测到缺口。
+     *
+     * @param events    严格在请求游标之后的事件(按序号升序)
+     * @param gap       请求游标早于最旧缓冲事件-1:中间事件已被滚动窗口淘汰,
+     *                  无法不重不漏地续传;调用方应把该情况显式告知客户端
+     * @param oldestSeq 当前缓冲中最早的序号(空缓冲时为 seqCounter+1)
+     */
+    public record Snapshot(List<TurnEvent> events, boolean gap, long oldestSeq) {
     }
 
     /** 一个运行中轮次的实时状态。方法线程安全(以 this 为监视器)。 */
@@ -58,9 +77,13 @@ public class TurnStreamRegistry {
                 return;
             }
             TurnEvent e = new TurnEvent(++seqCounter, event, json);
-            if (buffer.size() < MAX_BUFFERED_EVENTS) {
-                buffer.add(e);
+            // 滚动窗口:满员淘汰最旧、继续记录新事件——旧行为「停记」会让
+            // 掉线期间的全部新内容无法回放(2026-09-20 修复)。缺口由
+            // snapshotAfter 的 gap 标志显式上报,前端据此从权威消息状态恢复。
+            if (buffer.size() >= MAX_BUFFERED_EVENTS) {
+                buffer.remove(0);
             }
+            buffer.add(e);
             for (Consumer<TurnEvent> s : subscribers) {
                 try {
                     s.accept(e);
@@ -79,6 +102,20 @@ public class TurnStreamRegistry {
             return buffer.stream().filter(e -> e.seq() > afterSeq).toList();
         }
 
+        /**
+         * 带缺口检测的回放快照(2026-09-20):请求游标早于最旧缓冲事件-1 时,
+         * 中间事件已被滚动窗口淘汰——如实上报 gap,而不是静默少回放。
+         */
+        public synchronized Snapshot snapshotWithGap(long afterSeq) {
+            List<TurnEvent> events = snapshotAfter(afterSeq);
+            if (buffer.isEmpty()) {
+                return new Snapshot(events, false, seqCounter + 1);
+            }
+            long oldest = buffer.get(0).seq();
+            boolean gap = afterSeq > 0 && afterSeq < oldest - 1;
+            return new Snapshot(events, gap, oldest);
+        }
+
         public synchronized long lastSeq() {
             return seqCounter;
         }
@@ -92,15 +129,18 @@ public class TurnStreamRegistry {
          * ——两者都在轮次监视器内完成。追加因此绝不会落进「已排空」与「已订阅」
          * 之间的缝隙:不在返回积压里的事件必然以实况到达订阅者。调用方在锁外
          * 发送积压。
+         *
+         * <p>带缺口检测(2026-09-20):返回 {@link Snapshot},游标早于滚动窗口
+         * 起点时 gap=true,调用方据此告知客户端不可精确续传。
          */
-        public synchronized List<TurnEvent> subscribeDraining(long afterSeq, Consumer<TurnEvent> subscriber) {
-            List<TurnEvent> backlog = snapshotAfter(afterSeq);
+        public synchronized Snapshot subscribeDraining(long afterSeq, Consumer<TurnEvent> subscriber) {
+            Snapshot snapshot = snapshotWithGap(afterSeq);
             subscribers.add(subscriber);
-            return backlog;
+            return snapshot;
         }
 
         /** 测试用别名:全量积压 + 订阅一步原子完成。 */
-        public synchronized List<TurnEvent> subscribeDraining(Consumer<TurnEvent> subscriber) {
+        public synchronized Snapshot subscribeDraining(Consumer<TurnEvent> subscriber) {
             return subscribeDraining(0, subscriber);
         }
 

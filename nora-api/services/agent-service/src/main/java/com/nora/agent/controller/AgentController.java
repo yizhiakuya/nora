@@ -1,5 +1,6 @@
 package com.nora.agent.controller;
 
+import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,23 +121,78 @@ public class AgentController {
         if (request.content() == null || request.content().isBlank()) {
             throw new IllegalArgumentException("content is required");
         }
+        // 单会话单轮次(2026-09-20 修复):此前 activeTurns.put 直接覆盖句柄,
+        // 两个标签页并发发送会双轮并行执行、取消只控其一(隔离检查确认)。
+        // 现在用原子占位拒绝并发提交——重复请求返回冲突,不产生第二个编排线程。
+        java.util.concurrent.FutureTask<?> handle = new java.util.concurrent.FutureTask<>(() -> null);
+        java.util.concurrent.Future<?> existing = activeTurns.putIfAbsent(sessionId, handle);
+        if (existing != null) {
+            throw new com.nora.common.exception.BusinessException(
+                    com.nora.common.exception.ErrorCategory.CONFLICT,
+                    "TURN_IN_PROGRESS",
+                    "该会话已有进行中的轮次,请等待完成或先停止生成",
+                    "在界面上点击「停止生成」,或等当前回答结束后再发送");
+        }
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         // 轮次入口:sessionId + turnId 进 MDC(经 TraceContext.wrap 传播到 chatExecutor
         // 线程),本轮编排/落库/SSE 发送的全部日志自动携带,排障时按会话一屏串联
         String turnId = TraceContext.newTraceId();
         chatExecutor.execute(TraceContext.wrap(() -> {
-            TraceContext.setSessionId(sessionId);
-            TraceContext.setTurnId(turnId);
-            log.info(">> turn start (contentChars={})", request.content().length());
-            var handle = new java.util.concurrent.FutureTask<>(() -> {
-                turnRunner.runChatTurn(sessionId, request.content().trim(),
-                        request.model(), request.reasoningLevel(),
-                        PermissionMode.parse(request.permissionMode()), request.providerId(), emitter);
-                return null;
-            });
-            activeTurns.put(sessionId, handle);
+            // 兜底:无论哪条异常路径,占位/任务句柄都不残留——残留 = 该会话被
+            // 永久锁死(后续发送全部被并发闸拒绝)
             try {
-                handle.run();
+                TraceContext.setSessionId(sessionId);
+                TraceContext.setTurnId(turnId);
+                log.info(">> turn start (contentChars={})", request.content().length());
+                // ran 标记:区分「取消先于 run 到达(FutureTask.cancel 后 run 空转,
+                // 无任何事件发出)」与「运行中被取消(runChatTurn 自己发 done(stopped))」
+                java.util.concurrent.atomic.AtomicBoolean ran = new java.util.concurrent.atomic.AtomicBoolean();
+                java.util.concurrent.FutureTask<Void> task = new java.util.concurrent.FutureTask<>(() -> {
+                    ran.set(true);
+                    turnRunner.runChatTurn(sessionId, request.content().trim(),
+                            request.model(), request.reasoningLevel(),
+                            PermissionMode.parse(request.permissionMode()), request.providerId(), emitter);
+                    return null;
+                });
+                // 占位 → 真实任务的替换(取消端点按会话取句柄中断上游读)。
+                // 用 replace(期望值)做原子检查:占位仍在 = 无人取消,正常启动;
+                // 占位已被取消端点移除 = 取消先于编排启动到达,本轮不启动
+                // (此前直接 put 覆盖:取消拿到的是空转占位,编排照跑——「停不掉」)。
+                if (!activeTurns.replace(sessionId, handle, task)) {
+                    // 本轮在启动前被取消:不启动编排;消费掉取消标志(本轮已终止,
+                    // runChatTurn 的 finally 不会运行),并发终态让前端收敛 UI。
+                    if (turnCancellation != null) {
+                        turnCancellation.clear(sessionId);
+                    }
+                    try {
+                        emitter.send(SseEmitter.event().name("done")
+                                .data("{\"stopped\":true}", MediaType.APPLICATION_JSON));
+                    } catch (IOException | IllegalStateException ignored) {
+                        // 客户端已离开
+                    }
+                    emitter.complete();
+                    return;
+                }
+                try {
+                    task.run();
+                } finally {
+                    activeTurns.remove(sessionId, task);
+                    // 取消先于 run 到达:run 空转、编排从未启动,前端拿不到终态——
+                    // 这里补发 done(stopped) 让 UI 收敛(运行中被取消的场景由
+                    // runChatTurn 自己发终态,ran=true 时不重复发)
+                    if (!ran.get()) {
+                        if (turnCancellation != null) {
+                            turnCancellation.clear(sessionId);
+                        }
+                        try {
+                            emitter.send(SseEmitter.event().name("done")
+                                    .data("{\"stopped\":true}", MediaType.APPLICATION_JSON));
+                        } catch (IOException | IllegalStateException ignored) {
+                            // 客户端已离开
+                        }
+                        emitter.complete();
+                    }
+                }
             } finally {
                 activeTurns.remove(sessionId, handle);
                 TraceContext.clear();

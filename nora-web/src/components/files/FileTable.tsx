@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/ui/custom/States";
 import { SelectionResult } from "@/hooks/useSelection";
 import { FileItem } from "@/types";
 import { USE_BACKEND } from "@/lib/api/client";
+import { withAuthToken } from "@/lib/auth";
 
 type FileSelection = SelectionResult<number>;
 
@@ -189,7 +190,7 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
                       {/* 图片文件显示真实缩略图(小圆角);mock 模式无 raw 端点,退回类型图标 */}
                       {USE_BACKEND && isImageFile(file.name) ? (
                         <img
-                          src={`/api/files/${file.id}/raw`}
+                          src={withAuthToken(`/api/files/${file.id}/raw`)}
                           alt=""
                           loading="lazy"
                           className="w-8 h-8 rounded-md object-cover border border-border shrink-0 bg-muted"

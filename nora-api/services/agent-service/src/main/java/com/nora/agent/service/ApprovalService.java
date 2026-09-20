@@ -54,6 +54,18 @@ public class ApprovalService {
                           CompletableFuture<Boolean> future, Instant createdAt) {
     }
 
+    /**
+     * 注册句柄:票据(给 UI)+ 等待用 future。
+     *
+     * <p>为什么把 future 一并返回(2026-09-20 修复):此前 await(token) 走
+     * {@code pending.get(token)} 查表,而 future 完成回调会**先**把条目从表里
+     * 删除——「先 resolve(true)、后 await」的时序下 await 查到 null,把已批准
+     * 的操作误判为拒绝(隔离复现:resolve=true → await=false)。等待方必须持有
+     * 注册时的同一份 future,而不是依赖一张可被提前清空的 Map。
+     */
+    public record Registered(ApprovalRequestDto ticket, CompletableFuture<Boolean> future) {
+    }
+
     private final Map<String, PendingRequest> pending = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
     private final NoraRedis redis;
@@ -104,6 +116,17 @@ public class ApprovalService {
 
     /** 新注册的审批请求,含给 UI 的一次性 token。 */
     public ApprovalRequestDto register(String sessionId, String stepId, ApprovalRequestDto request) {
+        return registerWithFuture(sessionId, stepId, request).ticket();
+    }
+
+    /**
+     * 注册审批并返回**等待句柄**(ticket + future)。
+     *
+     * <p>等待方必须用它返回的 future 等待结果(见 {@link Registered} 说明);
+     * 不要把 ticket 再传回 {@code await(String)} 去查表——表条目在 future
+     * 完成回调里先被删除,查表等待会丢结果。
+     */
+    public Registered registerWithFuture(String sessionId, String stepId, ApprovalRequestDto request) {
         String token = UUID.randomUUID().toString();
         ApprovalRequestDto ticket = new ApprovalRequestDto(token, request.stepId(), request.actionType(),
                 request.target(), request.summary(), request.risk(), request.detail());
@@ -115,7 +138,7 @@ public class ApprovalService {
             pending.remove(token);
             clearRedisTicket(token, sessionId);
         });
-        return ticket;
+        return new Registered(ticket, future);
     }
 
     /** 把票据镜像到 Redis(有 TTL),供重启/跨实例可见。 */
@@ -143,13 +166,30 @@ public class ApprovalService {
         });
     }
 
-    /** 等待先前注册的票据,返回 approved/declined/timeout。 */
+    /**
+     * 等待先前注册的票据,返回 approved/declined/timeout。
+     *
+     * @deprecated 会因「future 先完成、条目已删」而丢结果(2026-09-20 修复项)。
+     *             新调用方用 {@link #registerWithFuture} 并直接等待其 future,
+     *             或 {@link #awaitFuture(Registered)}。
+     */
+    @Deprecated
     public boolean await(String approvalToken) {
         PendingRequest request = pending.get(approvalToken);
         if (request == null) return false;
-        return request.future().orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        return awaitFuture(request.future(), request.sessionId(), request.stepId());
+    }
+
+    /** 等待注册句柄的结果(推荐路径:不查表,future 一定拿得到)。 */
+    public boolean awaitFuture(Registered registered) {
+        return awaitFuture(registered.future(), null, null);
+    }
+
+    /** 等待 future 结算:超时/异常按拒绝。 */
+    private boolean awaitFuture(CompletableFuture<Boolean> future, String sessionId, String stepId) {
+        return future.orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .exceptionally(ex -> {
-                    log.info("approval timed out: session={} step={}", request.sessionId(), request.stepId());
+                    log.info("approval timed out: session={} step={}", sessionId, stepId);
                     return false;
                 }).join();
     }
@@ -159,8 +199,8 @@ public class ApprovalService {
      * (register + await),以便在阻塞前先把 token 发出去。
      */
     public CompletableFuture<Boolean> awaitApproval(String sessionId, String stepId, ApprovalRequestDto payload) {
-        ApprovalRequestDto ticket = register(sessionId, stepId, payload);
-        return CompletableFuture.supplyAsync(() -> await(ticket.approvalToken()));
+        Registered registered = registerWithFuture(sessionId, stepId, payload);
+        return CompletableFuture.supplyAsync(() -> awaitFuture(registered));
     }
 
     /** 仅当路径 session 与票据绑定的 session 一致时才结算。 */

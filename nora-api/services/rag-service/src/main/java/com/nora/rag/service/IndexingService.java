@@ -6,7 +6,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.nora.common.exception.BusinessException;
@@ -52,6 +51,17 @@ public class IndexingService {
      * 索引一个文档:分块 + 嵌入 + 落库。重复索引同一来源实体会替换其块
      * (ON DELETE CASCADE),更新不会留下陈旧块。
      *
+     * <p><b>事务阶段(2026-09-20 修复)</b>:不再整个方法一个 {@code @Transactional}
+     * ——嵌入 HTTP 在事务外执行(不长时间占用池连接),失败标记用独立事务提交,
+     * 不会被外层回滚撤销。三阶段:
+     * <ol>
+     *   <li>短事务:软删旧文档 + 插入 {@code processing} 新行(提交后失败才有行可标);</li>
+     *   <li>事务外:分块 + 嵌入 HTTP;</li>
+     *   <li>短事务:写块 + 标记 {@code indexed};失败则独立事务标 {@code failed}。</li>
+     * </ol>
+     * 此前单事务方案下,嵌入异常时 {@code markFailed} 与 processing 行一起回滚,
+     * 文档看似从未索引(与 {@code reindexChunks} 的既有语义对齐)。
+     *
      * <p>去重键:给了 sourceId 用 {@code (source, source_id)}(文件按
      * file-service fileId),否则用 {@code (source, name)}——后者让"重存同名
      * 文本即替换"对按名索引的来源(如对话保存)成立。经另一键可达的行不受
@@ -65,58 +75,74 @@ public class IndexingService {
      * @return 落库的文档 id
      * @throws BusinessException 嵌入未配置或失败时
      */
-    @Transactional
     public long indexDocument(String name, String source, Long sourceId, String size, String text) {
-        // 软删旧文档(含其 chunks):partial unique index 释放 (source, source_id) /
-        // (source, name) 去重键,新行才能插入;旧数据保留可审计
-        if (sourceId != null) {
-            jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
-                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id = ? AND deleted_at IS NULL)",
-                    source, sourceId);
-            jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id = ? AND deleted_at IS NULL",
-                    source, sourceId);
-        } else {
-            // 同名覆盖:name-keyed 源(如对话保存)重复入库会堆行,按 (source,name) 先清旧
-            jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
-                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL)",
-                    source, name);
-            jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL",
-                    source, name);
-        }
-
-        Long docId = jdbcTemplate.queryForObject(
-                "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size) VALUES (?, ?, ?, 'processing', ?) RETURNING id",
-                Long.class, name, source, sourceId, size);
+        // 阶段 1(短事务):软删旧文档(含其 chunks)+ 插入 processing 新行。
+        // partial unique index 需要先释放 (source, source_id) / (source, name)
+        // 去重键,新行才能插入;旧数据保留可审计。提交后失败标记有行可依。
+        Long docId = txTemplate.execute(txStatus -> {
+            if (sourceId != null) {
+                jdbcTemplate.update(
+                        "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
+                                + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id = ? AND deleted_at IS NULL)",
+                        source, sourceId);
+                jdbcTemplate.update(
+                        "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id = ? AND deleted_at IS NULL",
+                        source, sourceId);
+            } else {
+                // 同名覆盖:name-keyed 源(如对话保存)重复入库会堆行,按 (source,name) 先清旧
+                jdbcTemplate.update(
+                        "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
+                                + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL)",
+                        source, name);
+                jdbcTemplate.update(
+                        "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL",
+                        source, name);
+            }
+            return jdbcTemplate.queryForObject(
+                    "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size) VALUES (?, ?, ?, 'processing', ?) RETURNING id",
+                    Long.class, name, source, sourceId, size);
+        });
         if (docId == null) {
             throw new BusinessException(500, "failed to create knowledge_doc");
         }
 
         List<String> chunks = chunkingService.chunk(text);
         if (chunks.isEmpty()) {
-            jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET chunks = 0, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
-                    docId);
+            txTemplate.executeWithoutResult(tx ->
+                    jdbcTemplate.update(
+                            "UPDATE schema_rag.knowledge_doc SET chunks = 0, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+                            docId));
             return docId;
         }
 
+        // 阶段 2(事务外):嵌入 HTTP——不占用池连接数秒
+        List<float[]> embeddings;
         try {
-            List<float[]> embeddings = embeddingService.embedAll(chunks);
-            for (int i = 0; i < chunks.size(); i++) {
-                String content = chunks.get(i);
-                jdbcTemplate.update(
-                        "INSERT INTO schema_rag.knowledge_chunk (doc_id, chunk_index, content, embedding, token_count) VALUES (?, ?, ?, ?::vector, ?)",
-                        docId, i, content,
-                        RetrievalService.toPgVectorLiteral(embeddings.get(i)),
-                        content.length() / 4 // rough chars-per-token approximation
-                );
+            embeddings = embeddingService.embedAll(chunks);
+        } catch (RuntimeException e) {
+            markFailed(docId);
+            if (e instanceof BusinessException be) {
+                throw be;
             }
-            jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
-                    chunks.size(), docId);
+            throw new BusinessException(502, "embedding failed: " + e.getMessage());
+        }
+
+        // 阶段 3(短事务):写块 + 标记 indexed;失败独立事务标 failed(不回滚阶段 1)
+        try {
+            txTemplate.executeWithoutResult(tx -> {
+                for (int i = 0; i < chunks.size(); i++) {
+                    String content = chunks.get(i);
+                    jdbcTemplate.update(
+                            "INSERT INTO schema_rag.knowledge_chunk (doc_id, chunk_index, content, embedding, token_count) VALUES (?, ?, ?, ?::vector, ?)",
+                            docId, i, content,
+                            RetrievalService.toPgVectorLiteral(embeddings.get(i)),
+                            content.length() / 4 // rough chars-per-token approximation
+                    );
+                }
+                jdbcTemplate.update(
+                        "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+                        chunks.size(), docId);
+            });
             log.info("Indexed doc '{}' with {} chunks ({}d, model {})",
                     name, chunks.size(), embeddingProperties.dimensions(), embeddingProperties.model());
             return docId;
@@ -125,7 +151,7 @@ public class IndexingService {
             if (e instanceof BusinessException be) {
                 throw be;
             }
-            throw new BusinessException(502, "embedding failed: " + e.getMessage());
+            throw new BusinessException(502, "indexing failed: " + e.getMessage());
         }
     }
 

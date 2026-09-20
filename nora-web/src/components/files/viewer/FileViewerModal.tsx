@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Maximize2,
 import { FileViewerStatus } from "@/hooks/useFileViewer";
 import { FileItem, FilePreview } from "@/types";
 import { filesApi } from "@/lib/services/filesApi";
+import { withAuthToken } from "@/lib/auth";
 import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 import { PdfPreview } from "./preview/PdfPreview";
@@ -53,10 +54,12 @@ export function FileViewerModal({ file, preview, status, onClose, onNavigate, ha
     window.open(filesApi.downloadUrl([file.id]), "_blank");
   }, [file]);
 
-  /** 新窗口打开:raw 字节直连标签页(浏览器渲染 PDF/图片/视频)。 */
+  /** 新窗口打开:raw 字节直连标签页(浏览器渲染 PDF/图片/视频)。
+   *  window.open 无法带 header:令牌走 ?token=(2026-09-20 修复:此前裸 URL,
+   *  开启网关令牌后会被 401 拦截)。 */
   const handleOpenExternal = useCallback(() => {
     if (!file || !USE_BACKEND) return;
-    window.open(`/api/files/${file.id}/raw`, "_blank");
+    window.open(withAuthToken(`/api/files/${file.id}/raw`), "_blank");
   }, [file]);
 
   // 键盘:Esc 关闭、←/→ 切换、F 全屏(输入框聚焦时不拦截)。

@@ -12,8 +12,11 @@ const TRIGGER_OPTIONS = [
   { value: "manual", label: "手动触发" },
   { value: "daily", label: "每日定时" },
   { value: "weekly", label: "每周定时" },
-  { value: "file", label: "文件上传时" },
-  { value: "error", label: "服务异常时" },
+  // 未接通的事件触发(2026-09-20 按审查报告标注):后端 create 接受 file/error,
+  // 但调度只扫描 daily/weekly——没有事件驱动执行。开放选项会让用户建出
+  // 「看似有效但永不会自动运行」的规则;标为不可选,接通真实事件后再开放。
+  { value: "file", label: "文件上传时", disabled: true, hint: "即将支持" },
+  { value: "error", label: "服务异常时", disabled: true, hint: "即将支持" },
 ] as const;
 
 interface NewAutomationModalProps {
@@ -94,7 +97,9 @@ export function NewAutomationModal({ isOpen, onClose }: NewAutomationModalProps)
             </SelectTrigger>
             <SelectContent>
               {TRIGGER_OPTIONS.map((t) => (
-                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                <SelectItem key={t.value} value={t.value} disabled={"disabled" in t && t.disabled}>
+                  {"hint" in t && t.hint ? `${t.label}（${t.hint}）` : t.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>

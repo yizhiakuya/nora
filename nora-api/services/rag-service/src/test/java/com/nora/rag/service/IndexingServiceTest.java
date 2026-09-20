@@ -53,6 +53,11 @@ class IndexingServiceTest {
             cb.accept(null);
             return null;
         }).when(txTemplate).executeWithoutResult(any());
+        // 有返回值的事务(阶段 1:插 processing 行)同样内联执行回调
+        lenient().doAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
+            return cb.doInTransaction(null);
+        }).when(txTemplate).execute(any());
     }
 
     @Test

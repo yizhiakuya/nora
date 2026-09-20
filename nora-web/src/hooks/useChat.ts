@@ -305,6 +305,14 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
           setMessages((prev) => prev.filter((m) => m.id !== recoverId));
           setIsSending(false);
         },
+        onGap: () => {
+          // 回放缺口(2026-09-20):中间事件已被服务端滚动窗口淘汰,已流出的
+          // 增量内容不完整——清空占位内容/步骤,只保留 typing 态等 done 后
+          // 从权威消息状态恢复(避免把残缺片段拼成一条"完整"回答)。
+          setMessages((prev) => prev.map((m) => (m.id === recoverId
+            ? { ...m, content: "", steps: [] }
+            : m)));
+        },
       }) };
     })();
 

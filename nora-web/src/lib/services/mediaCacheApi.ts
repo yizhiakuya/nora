@@ -1,4 +1,5 @@
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { withAuthToken } from "@/lib/auth";
 
 /** 媒体缓存条目(后端 MediaCacheService.CachedItem)。 */
 export interface CachedMediaItem {
@@ -55,9 +56,11 @@ export const mediaCacheApi = {
       { method: "POST", body: JSON.stringify(filename ? { filename } : {}) }
     );
   },
-  /** 缓存条目的预览 URL(经 /api/media/cache 代理,命中即磁盘直出)。 */
+  /** 缓存条目的预览 URL(经 /api/media/cache 代理,命中即磁盘直出)。
+   *  img/video 标签无法带 header:令牌走 ?token=(2026-09-20 修复:此前裸 URL,
+   *  开启网关令牌后会被 401 拦截)。 */
   previewUrl(url: string): string {
-    return `/api/media/cache?url=${encodeURIComponent(url)}`;
+    return withAuthToken(`/api/media/cache?url=${encodeURIComponent(url)}`);
   },
 };
 

@@ -17,6 +17,7 @@ import { SelectionResult } from "@/hooks/useSelection";
 import { FileItem } from "@/types";
 import { Search } from "lucide-react";
 import { USE_BACKEND } from "@/lib/api/client";
+import { withAuthToken } from "@/lib/auth";
 import type { FolderRow } from "./FileTable";
 
 type FileSelection = SelectionResult<number>;
@@ -168,7 +169,7 @@ export function FileGrid({ files, selection, onOpen, folderRows, onDownload, onR
                 <div className="aspect-[4/3] bg-muted/50 flex items-center justify-center overflow-hidden">
                   {USE_BACKEND && isImageFile(file.name) ? (
                     <img
-                      src={`/api/files/${file.id}/raw`}
+                      src={withAuthToken(`/api/files/${file.id}/raw`)}
                       alt={file.name}
                       loading="lazy"
                       className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.04]"

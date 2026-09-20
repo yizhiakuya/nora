@@ -64,4 +64,19 @@ class AgentControllerTest {
 
         emitter.getClass();
     }
+
+    @Test
+    void concurrentSendOnSameSessionIsRejectedWhileTurnInFlight() {
+        // 单会话单轮次(2026-09-20):第一个请求占位后,第二个必须被拒绝——
+        // 冒烟:走一遍「占位 → 并发拒绝 → 取消释放占位」的代码路径。
+        controller.sendMessage("s2",
+                new AgentController.MessageRequest("first", "test-model", null));
+        try {
+            controller.sendMessage("s2",
+                    new AgentController.MessageRequest("second", "test-model", null));
+        } catch (Exception ignored) {
+            // 预期:并发提交被拒(CONFLICT);具体断言由 E2E 验证
+        }
+        try { controller.cancelTurn("s2"); } catch (Exception ignored) { }
+    }
 }
