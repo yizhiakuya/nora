@@ -138,6 +138,7 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
                 )}
                 <ChatMessageItem
                   msg={msg}
+                  sessionId={sessionId}
                   onRetry={retryMessage}
                   canRetry={!isSending}
                   onEdit={editAndResend}

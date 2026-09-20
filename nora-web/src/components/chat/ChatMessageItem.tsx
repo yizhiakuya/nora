@@ -13,6 +13,7 @@ import { workspaceApi } from "@/lib/services/workspaceApi";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
 import { USE_BACKEND } from "@/lib/api/client";
+import { contentKey, contentHashSuffix, getSavedRecord, markSaved } from "@/lib/saveState";
 
 /** 错误图标与配色(按 kind 微调,不喧宾夺主) */
 const ERROR_ICON: Record<string, React.ElementType> = {
@@ -110,8 +111,10 @@ function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["source
   );
 }
 
-function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
-  const [saved, setSaved] = useState(false);
+function SaveToKnowledgeButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: string }) {
+  // 已保存状态按 (会话+内容哈希) 持久化:刷新/切屏后恢复(2026-09-21 修复重复保存)
+  const key = contentKey(sessionId, msg.content);
+  const [saved, setSaved] = useState(() => getSavedRecord(key).knowledgeSaved === true);
   const addChatDoc = useKnowledgeDocs((s) => s.addChatDoc);
 
   const handleSave = async () => {
@@ -128,6 +131,7 @@ function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
       }
     }
     setSaved(true);
+    markSaved(key, { knowledgeSaved: true });
     toast.success(USE_BACKEND ? "已入库，可在知识库检索" : "已保存到本地知识库");
   };
 
@@ -147,9 +151,16 @@ function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
  * 「保存为文件」(M2-03,2026-09-20,方案 §4.1 S1):
  * 把回答写成工作区真实 Markdown 文件(返回验证过的路径),与「保存到知识库」
  * 是两个不同动作(分别说明):文件=可下载/可引用的资产;知识库=可被检索。
+ *
+ * 2026-09-21 修复重复生成:① 已保存状态按 (会话+内容哈希) 持久化,刷新/切屏
+ * 后恢复;② 文件名用内容哈希后缀替代时间戳——即使状态意外丢失再点,也只是
+ * 覆盖同一文件,不再产生副本(双保险)。
  */
-function SaveAsFileButton({ msg }: { msg: ChatMessage }) {
-  const [savedPath, setSavedPath] = useState<string | null>(null);
+function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: string }) {
+  const key = contentKey(sessionId, msg.content);
+  const [savedPath, setSavedPath] = useState<string | null>(
+    () => getSavedRecord(key).filePath ?? null
+  );
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -160,11 +171,11 @@ function SaveAsFileButton({ msg }: { msg: ChatMessage }) {
     }
     setSaving(true);
     try {
-      // 文件名:首行标题(去 Markdown 标记)+ 时间戳,确保不覆盖同名文件
+      // 文件名:首行标题(去 Markdown 标记)+ 内容哈希后缀——同一回答重复保存
+      // 命中同一路径(覆盖),不因时间戳变化产生副本
       const firstLine = msg.content.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find((l) => l.length > 0) ?? "回答";
       const base = firstLine.replace(/[\\/:*?"<>|]/g, "").slice(0, 40) || "回答";
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").slice(0, 12);
-      const path = `reports/${base}-${stamp}.md`;
+      const path = `reports/${base}-${contentHashSuffix(msg.content)}.md`;
       await workspaceApi.writeFile(path, msg.content);
       // 写后回读验证(方案要求"返回验证过的路径",不空口报成功)
       const check = await workspaceApi.readFile(path);
@@ -172,6 +183,7 @@ function SaveAsFileButton({ msg }: { msg: ChatMessage }) {
         throw new Error("写入后校验不一致");
       }
       setSavedPath(path);
+      markSaved(key, { filePath: path });
       toast.success(`已保存:工作区 ${path}`, { description: "可在「资料 → 工作区」中打开" });
     } catch (e) {
       toast.error(`保存失败：${(e as Error).message}`);
@@ -194,8 +206,12 @@ function SaveAsFileButton({ msg }: { msg: ChatMessage }) {
   );
 }
 
-export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit = true }: { msg: ChatMessage; onRetry?: (msgId: string) => void; canRetry?: boolean; onEdit?: (msgId: string, edited: string) => void; canEdit?: boolean }) {
-  const sessionId = useChatSessions((s) => s.activeId);
+export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRetry = true, onEdit, canEdit = true }: { msg: ChatMessage; /** 所属会话 id(由 ChatConversation 传入,权威值);不传时回落 store.activeId */ sessionId?: string; onRetry?: (msgId: string) => void; canRetry?: boolean; onEdit?: (msgId: string, edited: string) => void; canEdit?: boolean }) {
+  // 保存状态键必须用**渲染该消息的会话 id**(与 ChatConversation 一致)——
+  // 此前用 store.activeId,与 active.id(回落 sessions[0])可能不同,
+  // 导致保存时与刷新后的键不一致、状态恢复失败(2026-09-21 实测)
+  const storeActiveId = useChatSessions((s) => s.activeId);
+  const sessionId = sessionIdProp ?? storeActiveId;
   const [copied, setCopied] = useState(false);
   const [rawExpanded, setRawExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -438,8 +454,8 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
 
                   {!msg.isTyping && msg.content && (
                     <div className="relative pt-1 flex items-center gap-2 flex-wrap">
-                      <SaveToKnowledgeButton msg={msg} />
-                      <SaveAsFileButton msg={msg} />
+                      <SaveToKnowledgeButton msg={msg} sessionId={sessionId} />
+                      <SaveAsFileButton msg={msg} sessionId={sessionId} />
                     </div>
                   )}
 
