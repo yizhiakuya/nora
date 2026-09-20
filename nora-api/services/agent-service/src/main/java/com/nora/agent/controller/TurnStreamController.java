@@ -112,11 +112,12 @@ public class TurnStreamController {
                 sendRaw(emitter, turn.turnId, event.event(), event.json(), event.seq());
             }
         };
-        // 回放 drain 与实况订阅在同一把锁内原子完成:drain 里没有的事件必然
-        // 会走订阅到达,实况事件不可能插队到更早的缓冲事件之前
-        TurnStreamRegistry.Snapshot snapshot;
+        // R03(2026-09-20 修复):订阅用门闩——积压在锁内快照、锁外发送;
+        // 发送期间到达的实时事件先排队,排空后按序补发再切直发。此前直接
+        // subscribeDraining + 锁外发积压,实时事件会超车(隔离复现 [3,1,2])。
         try {
-            snapshot = turn.subscribeDraining(afterSeq, forward);
+            TurnStreamRegistry.LiveTurn.GatedSnapshot gated = turn.subscribeGated(afterSeq, forward);
+            TurnStreamRegistry.Snapshot snapshot = gated.snapshot();
             if (snapshot.gap()) {
                 // 游标落在滚动窗口之外:中间事件已淘汰,无法不重不漏续传。
                 // 显式告知客户端(而不是静默少回放),由前端从权威消息状态恢复。
@@ -132,6 +133,11 @@ public class TurnStreamController {
             }
             for (TurnStreamRegistry.TurnEvent e : snapshot.events()) {
                 forward.accept(e);
+            }
+            // 积压发送完毕:补发排队实时事件,切换直发(终态不超车)
+            int replayed = gated.gate().open();
+            if (replayed > 0) {
+                log.debug("turn {}: {} live events queued during replay, delivered in order", turn.turnId, replayed);
             }
         } catch (Exception e) {
             log.debug("turn replay failed for {}: {}", sessionId, e.getMessage());

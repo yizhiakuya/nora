@@ -6,7 +6,10 @@ import type { AutomationRule } from "@/types";
 import { useAutomations } from "@/hooks/useAutomations";
 
 const STATUS_MAP = {
-  active: { label: "运行中", cls: "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300" },
+  // M0-03(2026-09-20):active 是"规则已启用"而非"正在执行"——原文案
+  // 「运行中」让用户分不清规则启用与本次执行(审查报告 B08)。执行状态
+  // 在「执行历史」视图里看。
+  active: { label: "已启用", cls: "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300" },
   paused: { label: "已暂停", cls: "bg-muted text-muted-foreground" },
   error:  { label: "异常",   cls: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300" },
 };
@@ -16,18 +19,22 @@ export function AutomationList() {
   const toggleRule = useAutomations((s) => s.toggleRule);
   const markRun = useAutomations((s) => s.markRun);
 
-  const toggle = (id: number) => {
+  const toggle = async (id: number) => {
     const rule = rules.find((r) => r.id === id);
-    toggleRule(id);
-    if (rule) toast.success(`「${rule.name}」已${rule.enabled ? "暂停" : "启用"}`);
+    const ok = await toggleRule(id);
+    // R06(2026-09-20):只有后端确认成功才提示"已暂停/已启用";失败由 store
+    // 回滚 + toast 报错,这里不再重复报成功
+    if (ok && rule) toast.success(`「${rule.name}」已${rule.enabled ? "暂停" : "启用"}`);
   };
 
   const runNow = (rule: AutomationRule) => {
     toast.loading(`「${rule.name}」执行中…`, { id: `run-${rule.id}` });
     // 等真实执行结果(2026-09-19 修假成功):后端失败/未保存的乐观条目都不再报"已触发"
+    // M0-03(2026-09-20):「已触发」→「已完成」——markRun 返回时服务器已落
+    // 终态执行记录,文案与真实结果一致(审查报告 B08)
     void markRun(rule.id).then((ok) => {
       if (ok) {
-        toast.success(`「${rule.name}」已触发`, { id: `run-${rule.id}` });
+        toast.success(`「${rule.name}」已完成`, { id: `run-${rule.id}` });
       } else {
         toast.error(`「${rule.name}」执行未成功`, { id: `run-${rule.id}` });
       }

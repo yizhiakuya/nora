@@ -67,7 +67,7 @@ export default function KnowledgePage() {
           <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
             <div>
               <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" /> 知识库 (Context Pipeline)
+                <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" /> 知识库
               </h1>
               <p className="text-xs text-muted-foreground mt-1">
                 文件、数据库、代码、环境配置统一摄入 → 清洗 → 索引，为 AI 提供准确上下文。

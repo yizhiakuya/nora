@@ -59,6 +59,7 @@ function describeAction(actionJson: string): string {
 }
 
 function toExecution(e: BackendExecution): ExecutionRecord {
+  const detail = e.detail ?? "";
   return {
     id: e.id,
     ruleId: e.ruleId,
@@ -66,8 +67,17 @@ function toExecution(e: BackendExecution): ExecutionRecord {
     time: formatTime(e.startedAt),
     duration: e.durationMs != null ? `${(e.durationMs / 1000).toFixed(1)}s` : "—",
     status: e.status === "success" ? "success" : "failed",
-    detail: (e.detail ?? "").slice(0, 120),
+    // 全文保留(2026-09-20,M0-04):此前截为 120 字,「成功」之后拿不到报告。
+    // 列表用 detailSummary 展示摘要,详情面板读全文。
+    detail,
+    detailSummary: summarize(detail, 120),
   };
+}
+
+/** 摘要:取首个非空行,超长截断加省略号(仅列表展示用)。 */
+function summarize(detail: string, max: number): string {
+  const firstLine = detail.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  return firstLine.length > max ? firstLine.slice(0, max) + "…" : firstLine;
 }
 
 /**

@@ -224,7 +224,10 @@ export interface ExecutionRecord {
   time: string;
   duration: string;
   status: "success" | "failed" | "running";
+  /** 完整执行结果(不截断;列表 UI 自行用摘要展示,详情面板读全文) */
   detail: string;
+  /** 列表用摘要(首行,≤120 字;detail 的派生视图,不额外存储) */
+  detailSummary?: string;
 }
 
 export interface EnvVar {

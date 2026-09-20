@@ -116,6 +116,28 @@ public class KnowledgeDocService {
     // 调用这里,按 source='file' + source_id=fileId 联动处理。
 
     /**
+     * 乱序防护(R02,2026-09-20):仅当通知版本比已应用版本更新时推进记录。
+     *
+     * <p>HTTP 无顺序保证——「删除(v2)→恢复(v3)」时 v2 可能在 v3 之后到达;
+     * 无此检查会把已恢复的文档再删掉。版本单调递增,只前进不回退。
+     *
+     * @param fileId  文件 id
+     * @param version file-service 的单调版本
+     * @return true = 可以执行本次变更;false = 旧版本,应忽略
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public boolean applyIfNewerVersion(long fileId, long version) {
+        // upsert 条件推进:插入(首见)或仅当新版本更大时更新;返回实际推进的行数
+        int updated = jdbcTemplate.update(
+                "INSERT INTO schema_rag.rag_lifecycle_version (file_id, applied_version, updated_at) "
+                        + "VALUES (?, ?, now()) "
+                        + "ON CONFLICT (file_id) DO UPDATE SET applied_version = EXCLUDED.applied_version, updated_at = now() "
+                        + "WHERE schema_rag.rag_lifecycle_version.applied_version < EXCLUDED.applied_version",
+                fileId, version);
+        return updated > 0;
+    }
+
+    /**
      * 文件删除 → 联动软删其知识库文档(按 fileId)。
      *
      * @return 软删的文档数(0 = 该文件没索引过)

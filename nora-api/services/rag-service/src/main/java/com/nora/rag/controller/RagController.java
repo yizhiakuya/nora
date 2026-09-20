@@ -326,10 +326,21 @@ public class RagController {
      * <p>由 file-service 在文件生命周期事件上调用(内部端点):
      * {@code mode=soft}(软删,文件进回收站)/ {@code restore}(恢复)/
      * {@code purge}(永久删除)。幂等,按 source='file' + source_id 匹配。
+     *
+     * <p><b>乱序防护(R02,2026-09-20)</b>:{@code version} 为 file-service 的
+     * 单调版本号(每次生命周期变化 +1)。本端记录每文件已应用的最大版本;
+     * 版本 ≤ 已应用版本的在途旧请求直接忽略(返回 0),不复活旧状态——
+     * 「删除→恢复→删除」的乱序投递最终与文件状态一致。缺省(旧调用方不带
+     * version)按 0 处理,行为与旧版一致(无条件执行)。
      */
     @PostMapping("/docs/by-file/{fileId}")
     public ApiResponse<Integer> byFile(@PathVariable long fileId,
-                                       @RequestParam("mode") String mode) {
+                                       @RequestParam("mode") String mode,
+                                       @RequestParam(value = "version", defaultValue = "0") long version) {
+        if (version > 0 && !knowledgeDocService.applyIfNewerVersion(fileId, version)) {
+            log.info("stale lifecycle notify ignored: file {} mode={} v{} (already applied newer)", fileId, mode, version);
+            return ApiResponse.ok(0);
+        }
         int affected = switch (mode) {
             case "soft" -> knowledgeDocService.softDeleteByFileId(fileId);
             case "restore" -> knowledgeDocService.restoreByFileId(fileId);

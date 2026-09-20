@@ -103,16 +103,22 @@ public class TurnStreamRegistry {
         }
 
         /**
-         * 带缺口检测的回放快照(2026-09-20):请求游标早于最旧缓冲事件-1 时,
-         * 中间事件已被滚动窗口淘汰——如实上报 gap,而不是静默少回放。
+         * 带缺口检测的回放快照(R04,2026-09-20 修正):请求游标早于最旧缓冲
+         * 事件-1 时,中间事件已被滚动窗口淘汰——如实上报 gap。
+         *
+         * <p>此前只在 {@code afterSeq > 0} 时检测:初次接续(cursor=0)在缓冲
+         * 已被裁剪时(oldest>1)漏报 gap,客户端把残缺回放当成完整内容。
+         * 现在 cursor=0 同样检测:oldest>1 即意味着 1..oldest-1 已丢失。
          */
         public synchronized Snapshot snapshotWithGap(long afterSeq) {
             List<TurnEvent> events = snapshotAfter(afterSeq);
             if (buffer.isEmpty()) {
-                return new Snapshot(events, false, seqCounter + 1);
+                // 无任何缓冲:seqCounter=0 时无缺口;有计数但缓冲空(理论不可达)按缺口处理
+                return new Snapshot(events, afterSeq < seqCounter, seqCounter + 1);
             }
             long oldest = buffer.get(0).seq();
-            boolean gap = afterSeq > 0 && afterSeq < oldest - 1;
+            // afterSeq=0 表示"从开头全量":oldest>1 即前段已丢(含初次接续)
+            boolean gap = afterSeq < oldest - 1;
             return new Snapshot(events, gap, oldest);
         }
 
@@ -125,14 +131,19 @@ public class TurnStreamRegistry {
         }
 
         /**
-         * 原子地快照积压( {@code afterSeq} 之后的事件)并注册 {@code subscriber}
+         * 原子地快照积压( {@code afterSeq} 之后的事件)并注册订阅者
          * ——两者都在轮次监视器内完成。追加因此绝不会落进「已排空」与「已订阅」
-         * 之间的缝隙:不在返回积压里的事件必然以实况到达订阅者。调用方在锁外
-         * 发送积压。
+         * 之间的缝隙:不在返回积压里的事件必然经订阅者到达。
          *
-         * <p>带缺口检测(2026-09-20):返回 {@link Snapshot},游标早于滚动窗口
-         * 起点时 gap=true,调用方据此告知客户端不可精确续传。
+         * <p><b>R03(2026-09-20 修复)</b>:调用方随后要在锁外**发送**积压
+         * (网络 I/O 不能占着轮次锁),而 append 会在锁内回调订阅者——实时
+         * 事件因此可能超车积压(隔离复现 [3,1,2])。新调用方改用
+         * {@link #subscribeGated} 门闩:积压发送完成前,实时事件先排队,
+         * 排空后按序补发再切换直发。
+         *
+         * @deprecated 会超车(见上);保留仅供旧测试路径使用。
          */
+        @Deprecated
         public synchronized Snapshot subscribeDraining(long afterSeq, Consumer<TurnEvent> subscriber) {
             Snapshot snapshot = snapshotWithGap(afterSeq);
             subscribers.add(subscriber);
@@ -142,6 +153,67 @@ public class TurnStreamRegistry {
         /** 测试用别名:全量积压 + 订阅一步原子完成。 */
         public synchronized Snapshot subscribeDraining(Consumer<TurnEvent> subscriber) {
             return subscribeDraining(0, subscriber);
+        }
+
+        /**
+         * R03 门闩订阅:原子地快照积压并注册「排队订阅者」。
+         *
+         * <p>返回的 {@link GatedSnapshot#snapshot} 是积压事件(调用方在锁外
+         * 发送);这期间到达的实时事件被门闩按序排队,不直接发给消费者。
+         * 积压发送完成后调用 {@link GatedSnapshot#gate()}{@code .open()}:
+         * 按序补发排队事件,然后切换为直发。最终交付顺序 = 积压(升序)+
+         * 排队实时(升序)+ 后续实时,不重不漏。
+         *
+         * <p>终态不超车:done/error 在门闩未开时同样排队,open() 后按序到达,
+         * 不会先于早前事件关闭连接。
+         */
+        public synchronized GatedSnapshot subscribeGated(long afterSeq, Consumer<TurnEvent> consumer) {
+            Snapshot snapshot = snapshotWithGap(afterSeq);
+            ReplayGate gate = new ReplayGate(consumer);
+            subscribers.add(gate::onEvent);
+            return new GatedSnapshot(snapshot, gate);
+        }
+
+        /** 门闩订阅结果:积压快照 + 对应门闩。 */
+        public record GatedSnapshot(Snapshot snapshot, ReplayGate gate) {
+        }
+
+        /** 回放门闩:见 {@link #subscribeGated}。方法线程安全(以 this 为监视器)。 */
+        public static final class ReplayGate {
+            private final List<TurnEvent> queued = new ArrayList<>();
+            private final Consumer<TurnEvent> consumer;
+            private boolean open = false;
+
+            ReplayGate(Consumer<TurnEvent> consumer) {
+                this.consumer = consumer;
+            }
+
+            /** 实时事件入口(append 在轮次锁内调用)。 */
+            void onEvent(TurnEvent event) {
+                synchronized (this) {
+                    if (!open) {
+                        queued.add(event);
+                        return;
+                    }
+                }
+                consumer.accept(event);
+            }
+
+            /**
+             * 积压发送完成后调用:按序补发排队事件,然后切换直发。
+             * 返回补发条数(供调用方记录)。
+             */
+            public int open() {
+                synchronized (this) {
+                    int n = queued.size();
+                    for (TurnEvent e : queued) {
+                        consumer.accept(e);
+                    }
+                    queued.clear();
+                    open = true;
+                    return n;
+                }
+            }
         }
 
         public synchronized void unsubscribe(Consumer<TurnEvent> subscriber) {

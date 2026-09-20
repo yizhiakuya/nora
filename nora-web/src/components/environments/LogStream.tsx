@@ -115,20 +115,21 @@ export function LogStream() {
 
   const createFixTask = async () => {
     if (taskCreated || !selected) return;
-    // Phase 4.4:诊断结论 → 可执行的修复任务。prompt 携带真实出错日志,
-    // agent 运行时经工具循环(read_service_logs 等)真查日志给出分析,
-    // 不再是硬编码假任务
+    // Phase 4.4:诊断结论 → 可复用的诊断任务。prompt 携带真实出错日志,
+    // agent 运行时经工具循环(read_service_logs 等)真查日志给出分析。
+    // M0-03(2026-09-20):原按钮文案「创建修复任务」承诺与实际不一致——
+    // 该任务只分析不修改(审查报告 B07)。改为「诊断报告」措辞。
     const prompt =
       `自动化修复诊断:${selected.service} 服务出现以下 ERROR 日志:\n` +
       `${selected.time} ${selected.message}\n` +
       `请读取该服务最近日志定位根因,结合知识库(项目文档)给出修复建议;只分析,不要执行任何修改操作。`;
-    const saved = await addRule(`修复任务:${selected.service} 异常诊断`, "手动触发", prompt);
+    const saved = await addRule(`诊断任务:${selected.service} 异常分析`, "手动触发", prompt);
     if (!saved) {
       // 创建失败:store 已 toast 人话错误;不置"已创建"态,用户可重试(2026-09-19 修假成功)
       return;
     }
     setTaskCreated(true);
-    toast.success("修复任务已创建,到「自动任务」页运行");
+    toast.success("诊断任务已创建,到「自动任务」页运行");
   };
 
   return (
@@ -258,7 +259,7 @@ export function LogStream() {
               <p className="text-xs text-muted-foreground leading-relaxed break-all">
                 已选中 <code className="font-mono text-red-600 dark:text-red-400">{selected.service}</code> 的 {selected.level.toUpperCase()} 日志:
                 {selected.message.slice(0, 120)}{selected.message.length > 120 ? "…" : ""}
-                。创建修复任务后,Agent 将真实读取该服务最近日志定位根因并给出修复建议。
+                。创建诊断任务后,Agent 将真实读取该服务最近日志定位根因并给出修复建议(只分析,不修改)。
               </p>
               <button
                 type="button"
@@ -266,7 +267,7 @@ export function LogStream() {
                 className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${taskCreated ? "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800" : "bg-card text-muted-foreground border-border hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700"}`}
               >
                 {taskCreated ? <Check className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
-                {taskCreated ? "修复任务已创建" : "创建修复任务"}
+                {taskCreated ? "诊断任务已创建" : "生成诊断报告"}
               </button>
             </div>
           </div>

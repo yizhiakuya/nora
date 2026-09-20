@@ -19,7 +19,8 @@ interface AutomationsState {
   syncFromBackend: () => Promise<void>;
   /** 创建规则;后端模式失败返回 null(已提示,绝不产生"未创建却成功"的幽灵条目) */
   addRule: (name: string, trigger: string, action: string) => Promise<AutomationRule | null>;
-  toggleRule: (id: number) => void;
+  /** 启用/暂停规则;返回是否真实切换成功(后端模式等服务器结果,失败回滚) */
+  toggleRule: (id: number) => Promise<boolean>;
   /** 立即运行;返回是否真实执行成功(后端模式等待服务器结果) */
   markRun: (id: number) => Promise<boolean>;
   retryExecution: (id: number) => void;
@@ -114,17 +115,37 @@ export const useAutomations = create<AutomationsState>()(
         useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
         return rule;
       },
-      toggleRule: (id) => {
+      toggleRule: async (id) => {
         const target = get().rules.find((r) => r.id === id);
+        if (!target) return false;
+        const nextEnabled = !target.enabled;
+        const rollback = () => set((state) => ({
+          rules: state.rules.map((r) => (r.id === id ? { ...r, enabled: target.enabled } : r)),
+        }));
+        // 乐观更新(界面即时反馈)
         set((state) => ({
           rules: state.rules.map((r) =>
             r.id === id
-              ? { ...r, enabled: !r.enabled, status: r.enabled ? "paused" : "active" }
+              ? { ...r, enabled: nextEnabled, status: nextEnabled ? "active" : "paused" }
               : r
           ),
         }));
-        if (USE_BACKEND && target && id < 1e12) {
-          automationsApi.toggleRule(id).catch(() => { /* 乐观更新已生效 */ });
+        if (!USE_BACKEND) return true;
+        if (id >= 1e12) {
+          // 乐观条目(尚未保存成功):不能切;回滚并提示(与 markRun 同语义)
+          rollback();
+          toast.error(`「${target.name}」尚未保存成功，无法启用/暂停；请稍后重试或重新创建`);
+          return false;
+        }
+        // R06(2026-09-20 修复):等服务器真实结果——此前 fire-and-forget +
+        // 空 catch,后端失败界面仍显示成功。失败回滚并提示。
+        try {
+          await automationsApi.toggleRule(id);
+          return true;
+        } catch (e) {
+          rollback();
+          toast.error(`「${target.name}」${nextEnabled ? "启用" : "暂停"}失败：${friendly(e)}`);
+          return false;
         }
       },
       markRun: async (id) => {

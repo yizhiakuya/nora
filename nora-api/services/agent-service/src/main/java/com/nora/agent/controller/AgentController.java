@@ -155,12 +155,10 @@ public class AgentController {
                     return null;
                 });
                 // 占位 → 真实任务的替换(取消端点按会话取句柄中断上游读)。
-                // 用 replace(期望值)做原子检查:占位仍在 = 无人取消,正常启动;
-                // 占位已被取消端点移除 = 取消先于编排启动到达,本轮不启动
-                // (此前直接 put 覆盖:取消拿到的是空转占位,编排照跑——「停不掉」)。
+                // 用 replace(期望值)做原子检查:占位仍在 = 正常启动(R05 后
+                // 取消不再移除占位,该分支仅作防御)。
                 if (!activeTurns.replace(sessionId, handle, task)) {
-                    // 本轮在启动前被取消:不启动编排;消费掉取消标志(本轮已终止,
-                    // runChatTurn 的 finally 不会运行),并发终态让前端收敛 UI。
+                    // 占位已被外部移除(防御路径):不启动编排,发终态收敛 UI
                     if (turnCancellation != null) {
                         turnCancellation.clear(sessionId);
                     }
@@ -173,13 +171,30 @@ public class AgentController {
                     emitter.complete();
                     return;
                 }
+                // 取消先于启动到达(R05 修正):仅当**本轮占位句柄**被 cancelTurn
+                // 取消时才判"已取消"——句柄语义精确到本轮。不能用
+                // turnCancellation.isCancelled(sessionId):它是会话级标志,
+                // 上一轮收尾后可能残留(取消到达时上一轮刚好完成),会把**新轮**
+                // 误判为已取消(实测:sess-r05b 第二轮收到空 done(stopped))。
+                // 标志的清理与消费仍由 runChatTurn 的 begin/finally 负责。
+                if (handle.isCancelled()) {
+                    activeTurns.remove(sessionId, task);
+                    try {
+                        emitter.send(SseEmitter.event().name("done")
+                                .data("{\"stopped\":true}", MediaType.APPLICATION_JSON));
+                    } catch (IOException | IllegalStateException ignored) {
+                        // 客户端已离开
+                    }
+                    emitter.complete();
+                    return;
+                }
                 try {
                     task.run();
                 } finally {
+                    // R05:占位在轮次**实际结束**时释放(取消只中断、不移除);
+                    // 新轮在此之前仍被并发闸拒绝,不会与旧轮并行
                     activeTurns.remove(sessionId, task);
-                    // 取消先于 run 到达:run 空转、编排从未启动,前端拿不到终态——
-                    // 这里补发 done(stopped) 让 UI 收敛(运行中被取消的场景由
-                    // runChatTurn 自己发终态,ran=true 时不重复发)
+                    // 取消先于 run 到达(run 空转、编排从未启动):补发终态
                     if (!ran.get()) {
                         if (turnCancellation != null) {
                             turnCancellation.clear(sessionId);
@@ -281,15 +296,22 @@ public class AgentController {
      * 「上游阻塞读」类取消有效;大批量工具(fetch_media)里线程中断标志会被
      * 下游(JDBC/SSE)意外消费——所以同时置 {@link TurnCancellation} 会话
      * 标志,编排循环与批量下载器轮询它,保证「停止生成」一定生效。
-     * 二次点击(句柄已 remove)也置标志:即使 future 已不在表里,标志仍
-     * 能拦住还在跑的工具。
+     *
+     * <p><b>R05(2026-09-20 修复)</b>:此前立即 {@code activeTurns.remove} ——
+     * 新轮可在旧轮工作尚未完全退出前启动(并发占位形同虚设,且旧轮收尾的
+     * {@code remove(sessionId, handle)} 可能误清新轮的记录)。现在取消只
+     * **中断**句柄,占位保留;由轮次自己的 finally 在真正结束时移除
+     * (见 sendMessage 的收尾)。新轮在此期间仍会被并发闸以 409 拒绝,
+     * 用户需等旧轮退出(通常秒级;前端「正在停止」态即此语义)。
      */
     @PostMapping("/sessions/{sessionId}/cancel")
     public ApiResponse<Boolean> cancelTurn(@PathVariable String sessionId) {
         if (turnCancellation != null) {
             turnCancellation.request(sessionId);
         }
-        var future = activeTurns.remove(sessionId);
+        // 只中断、不移除:占位由轮次自身的 finally 释放(R05)。移除会让
+        // 新轮在旧轮工作退出前拿到占位并行执行,也让旧轮收尾误清新轮。
+        var future = activeTurns.get(sessionId);
         boolean cancelled = future != null;
         if (cancelled) {
             future.cancel(true);
