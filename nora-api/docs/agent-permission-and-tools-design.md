@@ -111,6 +111,14 @@ needApproval = mode == ASK
 | `mcp_manage`(call) | manage_mcp action=call | 服务器 + 工具名 + 参数（截断 400 字；2026-09-18 P2-9） |
 | `mcp_manage`(setPolicy) | manage_mcp action=setPolicy | 服务器 + 目标策略 + 挂载面影响 |
 
+## 6.4 MCP 调用重试与结果未知（2026-09-20）
+
+- 本地参数解析失败 = 可纠正错误,请求不发出(不是 unknown);
+- 连接建立失败(调用未发出)→ 重连一次(任何工具安全);
+- 调用中断(结果未知)→ 默认保留 unknown 不重放;仅当本地配置
+  `nora.agent.mcp.trust-readonly-hints=true`(默认 false)且工具声明
+  `readOnlyHint=true` 时才重连重试——远端注解只是参考,执行策略按本地信任(§6 原则)。
+
 ## 6.5 MCP 工具延迟加载（2026-09-18 P2-9）
 
 **问题**：76 工具（12 内置 + 64 挂载）≈9K tokens 每轮固定成本；github 44 工具 30 天仅用 3 个。
