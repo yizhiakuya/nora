@@ -308,6 +308,24 @@ public class ChatOrchestrationService {
                                             String sessionId,
                                             Long providerId,
                                             ChatEventConsumer eventConsumer) {
+        return chat(userMessage, history, reflections, requestedModel, requestedReasoningLevel,
+                permissionMode, sessionId, providerId, null, eventConsumer);
+    }
+
+    /**
+     * @param taskContext 结构化任务上下文(M2-01,可空);与正文旧引用行合并,
+     *                    结构化优先、旧格式回退
+     */
+    public CompletableFuture<ChatTurn> chat(String userMessage,
+                                            List<ChatStoreService.StoredMessage> history,
+                                            List<String> reflections,
+                                            String requestedModel,
+                                            String requestedReasoningLevel,
+                                            PermissionMode permissionMode,
+                                            String sessionId,
+                                            Long providerId,
+                                            com.nora.agent.dto.TaskContext taskContext,
+                                            ChatEventConsumer eventConsumer) {
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
@@ -328,9 +346,12 @@ public class ChatOrchestrationService {
         // 消息引用(📎/📄/@ 按钮)注入:真实内容排在语义检索命中之前——
         // 「用户明确引用的内容」优先级高于「检索到的相关片段」,且不受
         // 检索分数下限影响(引用是确定性输入,不是相似度猜测)。
+        // M2-01:结构化 context 与正文旧引用行合并解析(结构化优先,旧格式回退)。
         List<MessageRefResolver.Ref> messageRefs = MessageRefResolver.parse(userMessage);
-        List<CitationDto> refCitations = messageRefs.isEmpty()
-                ? List.of() : messageRefResolver.resolve(messageRefs);
+        List<CitationDto> refCitations = messageRefResolver.resolveContext(taskContext, messageRefs);
+        int refCount = taskContext != null && taskContext.refs() != null
+                ? Math.max(taskContext.refs().size(), messageRefs.size())
+                : messageRefs.size();
         if (!refCitations.isEmpty()) {
             List<CitationDto> merged = new java.util.ArrayList<>(refCitations);
             merged.addAll(citations);
@@ -341,7 +362,7 @@ public class ChatOrchestrationService {
         if (!citations.isEmpty()) {
             String summary = refCitations.isEmpty()
                     ? "召回 " + citations.size() + " 个相关片段（" + citations.get(0).docName() + " 等）"
-                    : "引用 " + messageRefs.size() + " 项 + 召回 "
+                    : "引用 " + refCount + " 项 + 召回 "
                             + (citations.size() - refCitations.size()) + " 个相关片段";
             eventConsumer.step(new ChatStepDto(
                     "s-rag", "tool", "检索知识库", summary,

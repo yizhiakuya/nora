@@ -151,7 +151,8 @@ public class AgentController {
                     ran.set(true);
                     turnRunner.runChatTurn(sessionId, request.content().trim(),
                             request.model(), request.reasoningLevel(),
-                            PermissionMode.parse(request.permissionMode()), request.providerId(), emitter);
+                            PermissionMode.parse(request.permissionMode()), request.providerId(),
+                            request.context(), emitter);
                     return null;
                 });
                 // 占位 → 真实任务的替换(取消端点按会话取句柄中断上游读)。
@@ -391,13 +392,15 @@ public class AgentController {
 
     /** POST /api/chat/sessions/{id}/messages body. providerId = 前端选定的渠道(同名模型跨渠道时精确定位)。 */
     public record MessageRequest(String content, String model, String reasoningLevel, String permissionMode,
-                                 Long providerId) {
+                                 Long providerId,
+                                 /** 结构化任务上下文(M2-01,可空):refs/output/origin/dataSelection。 */
+                                 com.nora.agent.dto.TaskContext context) {
         public MessageRequest(String content, String model, String reasoningLevel) {
-            this(content, model, reasoningLevel, null, null);
+            this(content, model, reasoningLevel, null, null, null);
         }
 
         public MessageRequest(String content, String model, String reasoningLevel, String permissionMode) {
-            this(content, model, reasoningLevel, permissionMode, null);
+            this(content, model, reasoningLevel, permissionMode, null, null);
         }
     }
 

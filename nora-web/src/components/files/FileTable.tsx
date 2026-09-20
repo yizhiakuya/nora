@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, Plus, Eye, ChevronRight, Pencil, FolderInput } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, Plus, Eye, ChevronRight, Pencil, FolderInput, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -288,11 +288,13 @@ export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex,
  * 批量操作栏(2026-09-17 提取):列表/网格两视图共用,由页面级渲染
  * (此前在 FileTable 内部,网格视图缺失批量操作)。
  */
-export function BatchActionBar({ selection, onDownloadSelected, onMoveSelected, onDeleteSelected }: {
+export function BatchActionBar({ selection, onDownloadSelected, onMoveSelected, onDeleteSelected, onAskAssistant }: {
   selection: FileSelection;
   onDownloadSelected?: () => void;
   onMoveSelected?: () => void;
   onDeleteSelected: () => void;
+  /** 交给助手(M2-02):选中文件作为结构化引用带入对话页 */
+  onAskAssistant?: () => void;
 }) {
   if (!selection.hasSelection) return null;
   return (
@@ -301,6 +303,11 @@ export function BatchActionBar({ selection, onDownloadSelected, onMoveSelected, 
         已选择 {selection.selectedIds.length} 个文件
       </div>
       <div className="flex items-center gap-2">
+        {onAskAssistant && (
+          <Button size="sm" className="h-7 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={onAskAssistant}>
+            <Sparkles className="w-3.5 h-3.5 mr-1" /> 交给助手
+          </Button>
+        )}
         {onDownloadSelected && (
           <Button variant="outline" size="sm" className="h-7 text-xs bg-card text-foreground" onClick={onDownloadSelected}>
             <Download className="w-3.5 h-3.5 mr-1" /> 下载{selection.selectedIds.length > 1 ? "（zip）" : ""}

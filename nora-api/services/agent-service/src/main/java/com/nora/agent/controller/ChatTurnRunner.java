@@ -68,6 +68,12 @@ class ChatTurnRunner {
 
     void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
                          PermissionMode permissionMode, Long providerId, SseEmitter emitter) {
+        runChatTurn(sessionId, content, model, reasoningLevel, permissionMode, providerId, null, emitter);
+    }
+
+    void runChatTurn(String sessionId, String content, String model, String reasoningLevel,
+                         PermissionMode permissionMode, Long providerId,
+                         com.nora.agent.dto.TaskContext taskContext, SseEmitter emitter) {
         // 每轮开始:清陈旧取消标志(上一轮遗留的信号作废,避免新轮被误杀)
         if (turnCancellation != null) {
             turnCancellation.begin(sessionId);
@@ -120,6 +126,7 @@ class ChatTurnRunner {
                     permissionMode,
                     sessionId,
                     providerId,
+                    taskContext,
                     new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {

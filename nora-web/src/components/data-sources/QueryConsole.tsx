@@ -143,11 +143,25 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
     // 失败:store 已 toast 人话错误(2026-09-19 修假成功),这里不再重复提示
   };
 
-  /** 让 AI 生成 SQL:跳到对话页预填(真实 agent 可读 schema 后写 SQL,不再本地假生成) */
+  /**
+   * 让 AI 生成/分析 SQL(M2-02 交接协议):跳到对话页预填指令 + **当前连接
+   * 作为结构化引用**(稳定 connectionId,而非只写库名——同名库切换顺序后
+   * 仍指向正确目标,方案 §4.1/§6.2)。
+   */
   const askAi = () => {
-    navigate(`/chat?prompt=${encodeURIComponent(isRedis
+    const refs = connectionId !== undefined
+      ? [{ kind: "datasource" as const, id: connectionId, name: database }]
+      : [];
+    // HandoffRef 目前支持 file/doc/skill/mcp;datasource 走独立参数(后端 context 已支持)
+    const prompt = isRedis
       ? `请基于 Redis 数据源「${database}」帮我写一条只读命令：`
-      : `请基于数据源「${database}」的表结构帮我写一条 SQL：`)}`);
+      : `请基于数据源「${database}」的表结构帮我写一条 SQL：`;
+    const params = new URLSearchParams();
+    params.set("prompt", prompt);
+    if (connectionId !== undefined) {
+      params.set("refs", JSON.stringify([{ kind: "datasource", id: connectionId, name: database }]));
+    }
+    navigate(`/chat?${params.toString()}`);
   };
 
   const displayColumns = backendMode ? result?.columns ?? [] : RESULT_COLUMNS;

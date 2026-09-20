@@ -167,8 +167,22 @@ export type ChatResponder = (
   /** 中断本轮流式响应（停止生成按钮）；responder 实现方持有对应 AbortController */
   signal?: AbortSignal,
   /** 模型服务商(渠道)id;同名模型跨渠道时后端据此精确定位实际请求的渠道 */
-  providerId?: number
+  providerId?: number,
+  /** 结构化任务上下文(M2-01):引用集合等;旧行格式仍随 content 持久化,此字段供后端精确解析 */
+  context?: TaskContextPayload
 ) => Promise<void>;
+
+/**
+ * 结构化任务上下文(M2-01,对齐后端 TaskContext):
+ * refs 由前端从待发送引用生成;输出/来源/数据选择供后续场景(M2/M4)使用。
+ */
+export interface TaskContextPayload {
+  version: 1;
+  refs: Array<{ kind: "file" | "doc" | "skill" | "mcp" | "datasource"; id: string; label: string }>;
+  output?: { kind: "workspace" | "fileFolder"; target: string };
+  origin?: { kind: "chat" | "query" | "log" | "file" | "automation"; id?: string };
+  dataSelection?: { mode: "fixed" | "relativeTime"; sourceId?: string; range?: "thisWeek" | "previousWeek" | "last7Days"; timezone?: string };
+}
 
 /**
  * 停止生成的结果约定：

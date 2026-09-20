@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { ChatMessage, type ChatResponder, type PermissionMode } from "@/lib/api/chatApi";
+import { ChatMessage, type ChatResponder, type PermissionMode, type TaskContextPayload } from "@/lib/api/chatApi";
 import { AgentAPI, attachLiveTurnStream, cancelTurnOnBackend, fetchAgentSettings, fetchLiveTurn, saveAgentSettings, truncateMessagesFrom, normalizeStep } from "@/lib/api/agentApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
@@ -56,6 +56,8 @@ interface UseChatOptions {
   initialMessages?: ChatMessage[];
   /** 初始输入框内容(如从数据源页「让 AI 帮我写 SQL」跳转预填);仅挂载时生效 */
   initialInput?: string;
+  /** 初始引用(跨页「交给助手」交接:M2-02);仅挂载时生效 */
+  initialRefs?: ChatRef[];
 /** 响应器：决定谁来回应用户消息（主对话 / 调试预览等场景） */
   responder?: ChatResponder;
   /** 传入时消息自动持久化到会话 store */
@@ -65,11 +67,12 @@ interface UseChatOptions {
 const formatTime = () =>
   new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function useChat({ initialMessages = [], initialInput = "", responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
+export function useChat({ initialMessages = [], initialInput = "", initialRefs = [], responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState(initialInput);
-  /** 待发送引用(附件/文件/知识库文档;2026-09-17):发送时序列化进消息尾部 */
-  const [refs, setRefs] = useState<ChatRef[]>([]);
+  /** 待发送引用(附件/文件/知识库文档;2026-09-17):发送时序列化进消息尾部。
+   *  initialRefs:跨页「交给助手」交接(M2-02)预填的引用集合。 */
+  const [refs, setRefs] = useState<ChatRef[]>(initialRefs);
   const [isSending, setIsSending] = useState(false);
   const model = useModelProviders((s) => s.defaultModel);
   // 生效渠道:与后端 activeProvider(providerId, model) 同一回落顺序(显式 id → 按名)。
@@ -327,7 +330,7 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
 
   /** 核心发送逻辑:复用于 sendMessage 与 regenerate */
   const runTurn = useCallback(
-    async (content: string, assistantMsgId: string) => {
+    async (content: string, assistantMsgId: string, context?: TaskContextPayload) => {
       stopRequestedRef.current = false; // 新一轮:解除「停止后不接续」守卫
       const controller = new AbortController();
       abortRef.current = controller;
@@ -342,7 +345,8 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
           reasoningLevel,
           permissionMode,
           controller.signal,
-          model === "未配置" ? undefined : effectiveProviderId ?? undefined
+          model === "未配置" ? undefined : effectiveProviderId ?? undefined,
+          context
         );
         // responder 正常返回:用户停止时保留部分文本并标记 stopped
         if (controller.signal.aborted && mountedRef.current) {
@@ -392,10 +396,20 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
     []
   );
 
+  /** 待发送引用 → 结构化上下文(M2-01);无引用返回 undefined(请求不带该字段)。 */
+  const contextFromRefs = useCallback((pending: ChatRef[]): TaskContextPayload | undefined => {
+    if (pending.length === 0) return undefined;
+    return {
+      version: 1,
+      refs: pending.map((r) => ({ kind: r.kind, id: String(r.id), label: r.name })),
+    };
+  }, []);
+
   const sendMessage = useCallback(async () => {
     if ((!input.trim() && refs.length === 0) || isSending) return;
 
     const content = composeWithRefs(input.trim(), refs);
+    const context = contextFromRefs(refs);
     const userMsg: ChatMessage = {
       id: randomId(),
       role: "user",
@@ -418,8 +432,8 @@ export function useChat({ initialMessages = [], initialInput = "", responder = A
     ]);
     setInput("");
     setRefs([]);
-    await runTurn(content, assistantMsgId);
-  }, [input, refs, isSending, runTurn, composeWithRefs]);
+    await runTurn(content, assistantMsgId, context);
+  }, [input, refs, isSending, runTurn, composeWithRefs, contextFromRefs]);
 
   /**
    * 重试失败的轮次:用原用户消息发起新一轮,失败的助手消息就地清空复用

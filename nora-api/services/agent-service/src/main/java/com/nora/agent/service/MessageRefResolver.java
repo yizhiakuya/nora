@@ -44,6 +44,9 @@ class MessageRefResolver {
             Pattern.compile("^\\[引用技能\\]\\s*(.+?)\\s*\\(skill_id=(\\d+)\\)");
     private static final Pattern MCP_REF =
             Pattern.compile("^\\[引用MCP服务器\\]\\s*(.+?)\\s*\\(server_id=(\\d+)\\)");
+    /** 数据源引用行(M2-02):连接 id 为稳定身份;正文旧格式兼容解析。 */
+    private static final Pattern DATASOURCE_REF =
+            Pattern.compile("^\\[引用数据源\\]\\s*(.+?)\\s*\\(connection_id=(\\d+)\\)");
 
     private final FileToolClient fileToolClient;
     private final RagRetrievalClient ragRetrievalClient;
@@ -94,6 +97,11 @@ class MessageRefResolver {
             m = MCP_REF.matcher(line);
             if (m.find()) {
                 out.add(new Ref("mcp", Long.parseLong(m.group(2)), m.group(1)));
+                continue;
+            }
+            m = DATASOURCE_REF.matcher(line);
+            if (m.find()) {
+                out.add(new Ref("datasource", Long.parseLong(m.group(2)), m.group(1)));
             }
         }
         return out;
@@ -118,6 +126,84 @@ class MessageRefResolver {
             }
         }
         return out;
+    }
+
+    /**
+     * 结构化上下文解析(M2-01,2026-09-20,方案 §6.2):
+     * 把请求里的 {@link com.nora.agent.dto.TaskContext} 转成待注入引用。
+     *
+     * <p>优先级与去重:结构化 refs **优先**;与正文旧引用行指向同一
+     * (kind,id) 时只保留结构化条目(旧格式仅作兼容回退)。支持 kinds:
+     * file/doc/skill/mcp(与旧格式同语义);datasource/service/workspace 是
+     * 上下文声明(输出/来源说明),不做内容注入——由工具层在需要时读取,
+     * 避免把无关内容塞进上下文。
+     *
+     * <p>失败可见:无法解析的 ref(缺失/删除/服务不可用)生成一条
+     * "(引用读取失败…)" 的 citation 而非静默丢弃——用户能看到"我选的资料
+     * 没进去"(方案 §6.2 约束)。
+     */
+    List<CitationDto> resolveContext(com.nora.agent.dto.TaskContext context, List<Ref> legacyRefs) {
+        List<CitationDto> out = new ArrayList<>();
+        java.util.Set<String> structuredKeys = new java.util.HashSet<>();
+        if (context != null && context.refs() != null) {
+            for (com.nora.agent.dto.TaskContext.ResourceRef r : context.refs()) {
+                if (r == null || r.kind() == null || r.id() == null) {
+                    continue;
+                }
+                String kind = r.kind().toLowerCase(java.util.Locale.ROOT);
+                String label = r.label() == null || r.label().isBlank() ? r.id() : r.label();
+                Long numericId = parseNumericId(r.id());
+                switch (kind) {
+                    case "file", "doc", "skill", "mcp" -> {
+                        if (numericId == null) {
+                            out.add(new CitationDto(null, label, "text", 0, 1.0,
+                                    "(引用读取失败:" + kind + " 的 id 必须是数字,收到 \"" + r.id() + "\")"));
+                            continue;
+                        }
+                        structuredKeys.add(kind + ":" + numericId);
+                        out.addAll(resolve(List.of(new Ref(kind, numericId, label))));
+                    }
+                    // 上下文声明类:不注入正文;输出一句可读的说明,让模型知道范围
+                    case "workspace" -> out.add(new CitationDto(null, label, "text", 0, 1.0,
+                            "【任务上下文】工作区路径:" + r.id() + "(需要内容时用 manage_workspace read 读取)"));
+                    case "datasource" -> out.add(new CitationDto(null, label, "text", 0, 1.0,
+                            "【任务上下文】本次任务指定数据源:「" + label + "」(需要查询时用 execute_sql 指定该数据源)"));
+                    case "service" -> out.add(new CitationDto(null, label, "text", 0, 1.0,
+                            "【任务上下文】本次任务涉及纳管服务:「" + label + "」"));
+                    default -> log.debug("unknown context ref kind: {}", kind);
+                }
+            }
+        }
+        // 旧格式回退:仅注入结构化未覆盖的 (kind,id)
+        if (legacyRefs != null) {
+            for (Ref ref : legacyRefs) {
+                if (structuredKeys.contains(ref.kind() + ":" + ref.id())) {
+                    continue;
+                }
+                try {
+                    switch (ref.kind()) {
+                        case "file" -> out.addAll(resolveFile(ref));
+                        case "skill" -> out.addAll(resolveSkill(ref));
+                        case "mcp" -> out.addAll(resolveMcp(ref));
+                        case "datasource" -> out.add(new CitationDto(null, ref.name(), "text", 0, 1.0,
+                                "【任务上下文】本次任务指定数据源:「" + ref.name() + "」(需要查询时用 execute_sql 指定该数据源)"));
+                        default -> out.addAll(resolveDoc(ref));
+                    }
+                } catch (Exception e) {
+                    log.warn("message ref resolve failed ({} id={}): {}", ref.kind(), ref.id(), e.getMessage());
+                }
+            }
+        }
+        return out;
+    }
+
+    /** id 字符串 → Long;非数字返回 null(调用方给可见失败条目)。 */
+    private static Long parseNumericId(String id) {
+        try {
+            return Long.parseLong(id.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private List<CitationDto> resolveFile(Ref ref) {

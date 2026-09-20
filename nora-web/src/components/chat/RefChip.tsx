@@ -1,9 +1,9 @@
-import { BookOpen, FileText, Wrench, X, Zap } from "lucide-react";
+import { BookOpen, Database, FileText, Wrench, X, Zap } from "lucide-react";
 import { refKey, type ChatRef } from "@/lib/chatRefs";
 
 /**
  * 引用 chip(2026-09-17):输入区待发送区与用户气泡共用。
- * 四类引用统一视觉:文件=蓝 / 知识库=紫 / 技能=绿 / MCP 工具=橙。
+ * 五类引用统一视觉:文件=蓝 / 知识库=紫 / 技能=绿 / MCP 工具=橙 / 数据源=青。
  */
 export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; label: string; Icon: React.ElementType }> = {
   file: {
@@ -29,6 +29,12 @@ export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; l
     iconCls: "text-orange-500 dark:text-orange-400",
     label: "MCP 工具",
     Icon: Wrench,
+  },
+  datasource: {
+    cls: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800",
+    iconCls: "text-cyan-500 dark:text-cyan-400",
+    label: "数据源",
+    Icon: Database,
   },
 };
 

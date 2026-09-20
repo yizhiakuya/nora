@@ -24,6 +24,22 @@ export default function ChatPage() {
   const [copied, setCopied] = useState(false);
   // 跨页跳转预填(如数据源页「让 AI 帮我写 SQL」带 ?prompt=...):只读一次,避免后续重挂载重复填入
   const [prefillPrompt] = useState(() => new URLSearchParams(window.location.search).get("prompt") ?? "");
+  // 跨页「交给助手」交接(M2-02):?refs=<JSON> 携带结构化引用(文件/文档等),
+  // 预填为引用 chip(用户可增删后再发送)。格式:[{kind,id,name}]。
+  const [prefillRefs] = useState<import("@/lib/chatRefs").ChatRef[]>(() => {
+    const raw = new URLSearchParams(window.location.search).get("refs");
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as Array<{ kind?: string; id?: number | string; name?: string }>;
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((r) => r && typeof r.kind === "string" && r.id != null && typeof r.name === "string")
+        .filter((r) => ["file", "doc", "skill", "mcp", "datasource"].includes(r.kind as string))
+        .map((r) => ({ kind: r.kind as "file" | "doc" | "skill" | "mcp" | "datasource", id: Number(r.id), name: r.name as string }));
+    } catch {
+      return [];
+    }
+  });
   // 指定会话(M1-02):助手首页「开始新需求」新建会话后带 ?session=<id> 进入,
   // 直接落到该会话而不是"最近一个活跃会话"。挂载时只应用一次。
   const [targetSessionId] = useState(() => new URLSearchParams(window.location.search).get("session") ?? "");
@@ -125,7 +141,7 @@ export default function ChatPage() {
       <div className="flex-1 flex overflow-hidden">
         {active ? (
           <div key={active.id} className="flex-1 relative flex flex-col min-w-0">
-            <ChatConversation sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} />
+            <ChatConversation sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} initialRefs={prefillRefs} />
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">

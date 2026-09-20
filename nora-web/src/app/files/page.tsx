@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { Search, FolderPlus, CloudUpload, Bot, HardDrive, Trash2, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,10 +26,12 @@ import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { usePreferences } from "@/hooks/usePreferences";
 import { filesApi, humanSize, type BackendFolder } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { buildAssistantHandoffUrl } from "@/lib/handoff";
 import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
 import { SavedResultsView } from "@/components/files/SavedResultsView";
 
 export default function FilesPage() {
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   /**
    * 资料页视图(M1-03,2026-09-20,方案 §4.2):files(全部文件,默认)/
@@ -262,6 +265,20 @@ export default function FilesPage() {
     if (selection.selectedIds.length === 0) return;
     setMoveTargetIds([...selection.selectedIds]);
     setMoveOpen(true);
+  };
+
+  /**
+   * 交给助手(M2-02):选中文件作为结构化引用带入对话页,预填指令与引用 chip。
+   * 用户可在输入区增删引用、编辑指令后再发送(不自动发送)。
+   */
+  const handleAskAssistant = () => {
+    if (selection.selectedIds.length === 0) return;
+    const selected = files.filter((f) => selection.selectedIds.includes(f.id));
+    const refs = selected.map((f) => ({ kind: "file" as const, id: f.id, name: f.name }));
+    const prompt = selected.length === 1
+      ? `请阅读并处理这份资料:${selected[0].name}`
+      : `请比较这 ${selected.length} 份资料的差异,给我一份报告。`;
+    navigate(buildAssistantHandoffUrl(prompt, refs));
   };
 
   /** 执行移动。 */
@@ -596,6 +613,7 @@ export default function FilesPage() {
                 onDownloadSelected={handleDownloadSelected}
                 onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
                 onDeleteSelected={handleDeleteSelected}
+                onAskAssistant={handleAskAssistant}
               />
 
               {effectiveView === "list" ? (
