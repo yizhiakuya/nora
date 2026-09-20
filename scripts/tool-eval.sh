@@ -51,9 +51,32 @@ with open(out, 'w', encoding='utf-8') as f:
 PYEOF
 
   out="$TMP/out-$i.txt"
+  # curl 失败不再被忽略(审查报告 2026-09-19:此前 `|| true` 吞掉失败,
+  # 空流被当成"没调工具"使负例误通过)。非零退出码 = 用例判 ERROR。
+  curl_rc=0
   curl -sS --noproxy '*' -N -X POST "$API/$session/messages" \
     -H "Content-Type: application/json; charset=utf-8" \
-    --data-binary @"$payload" --max-time 180 -o "$out" 2>/dev/null || true
+    --data-binary @"$payload" --max-time 180 -o "$out" 2>"$TMP/err-$i.txt" || curl_rc=$?
+
+  # 流完整性:必须见到终态事件(done/error)才算一次有效运行——
+  # 空流/截断流不进入工具选择判定,直接判 ERROR(避免"失败也 PASS")
+  stream_status=$(python -X utf8 - "$out" <<'PYEOF'
+import sys
+try:
+    text = open(sys.argv[1], encoding='utf-8').read()
+except Exception:
+    print('unreadable')
+    raise SystemExit
+has_done = 'event:done' in text or 'event:done' in text.replace('event: done', 'event:done')
+has_error = 'event:error' in text or 'event:error' in text.replace('event: error', 'event:error')
+if has_done:
+    print('done')
+elif has_error:
+    print('error')
+else:
+    print('incomplete')
+PYEOF
+)
 
   # 从 SSE 解析实际调用的工具名(去重、保序)
   called=$(python -X utf8 - "$out" <<'PYEOF'
@@ -73,6 +96,23 @@ except Exception:
 print(','.join(seen))
 PYEOF
 )
+
+  # 运行有效性门(先于工具选择判定):curl 非零 / 流不完整 / 服务端 error 事件
+  # 都不是"工具选择"结论,判 ERROR 并给出可操作的失败原因
+  if [ "$curl_rc" -ne 0 ]; then
+    FAIL=$((FAIL+1))
+    FAILED_CASES="$FAILED_CASES $name"
+    printf "ERROR %-32s curl 退出码=%s(请求失败,不算工具选择结论)  stderr=%s\n" \
+      "$name" "$curl_rc" "$(head -c 120 "$TMP/err-$i.txt" 2>/dev/null | tr '\n' ' ')"
+    continue
+  fi
+  if [ "$stream_status" != "done" ]; then
+    FAIL=$((FAIL+1))
+    FAILED_CASES="$FAILED_CASES $name"
+    printf "ERROR %-32s 流未正常结束(status=%s;空流/截断/服务端错误不作工具选择判定)  session=%s\n" \
+      "$name" "$stream_status" "$session"
+    continue
+  fi
 
   ok="FAIL"
   if [ "$expect_none" = "1" ]; then
