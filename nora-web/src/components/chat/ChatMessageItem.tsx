@@ -1,4 +1,4 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -9,6 +9,7 @@ import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { saveTextAsync } from "@/lib/services/ragService";
+import { workspaceApi } from "@/lib/services/workspaceApi";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
 import { USE_BACKEND } from "@/lib/api/client";
@@ -138,6 +139,57 @@ function SaveToKnowledgeButton({ msg }: { msg: ChatMessage }) {
     >
       {saved ? <Check className="w-3 h-3" /> : <BookOpen className="w-3 h-3" />}
       {saved ? "已保存到知识库" : "保存到知识库"}
+    </button>
+  );
+}
+
+/**
+ * 「保存为文件」(M2-03,2026-09-20,方案 §4.1 S1):
+ * 把回答写成工作区真实 Markdown 文件(返回验证过的路径),与「保存到知识库」
+ * 是两个不同动作(分别说明):文件=可下载/可引用的资产;知识库=可被检索。
+ */
+function SaveAsFileButton({ msg }: { msg: ChatMessage }) {
+  const [savedPath, setSavedPath] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (savedPath || saving) return;
+    if (!USE_BACKEND) {
+      toast.info("保存为文件需要连接后端服务");
+      return;
+    }
+    setSaving(true);
+    try {
+      // 文件名:首行标题(去 Markdown 标记)+ 时间戳,确保不覆盖同名文件
+      const firstLine = msg.content.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find((l) => l.length > 0) ?? "回答";
+      const base = firstLine.replace(/[\\/:*?"<>|]/g, "").slice(0, 40) || "回答";
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").slice(0, 12);
+      const path = `reports/${base}-${stamp}.md`;
+      await workspaceApi.writeFile(path, msg.content);
+      // 写后回读验证(方案要求"返回验证过的路径",不空口报成功)
+      const check = await workspaceApi.readFile(path);
+      if (check !== msg.content) {
+        throw new Error("写入后校验不一致");
+      }
+      setSavedPath(path);
+      toast.success(`已保存:工作区 ${path}`, { description: "可在「资料 → 工作区」中打开" });
+    } catch (e) {
+      toast.error(`保存失败：${(e as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleSave}
+      disabled={saving}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${savedPath ? "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800" : "bg-card text-muted-foreground border-border hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700"}`}
+      title={savedPath ? `已保存:${savedPath}` : "保存为工作区 Markdown 文件(可下载/引用)"}
+    >
+      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : savedPath ? <Check className="w-3 h-3" /> : <FileDown className="w-3 h-3" />}
+      {savedPath ? "已保存为文件" : "保存为文件"}
     </button>
   );
 }
@@ -378,8 +430,9 @@ export function ChatMessageItem({ msg, onRetry, canRetry = true, onEdit, canEdit
                   )}
 
                   {!msg.isTyping && msg.content && (
-                    <div className="relative pt-1">
+                    <div className="relative pt-1 flex items-center gap-2 flex-wrap">
                       <SaveToKnowledgeButton msg={msg} />
+                      <SaveAsFileButton msg={msg} />
                     </div>
                   )}
 

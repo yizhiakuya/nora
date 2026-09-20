@@ -31,6 +31,8 @@ class ChatContextAssembler {
     /** 环境摘要注入用(可为 null:测试场景)。 */
     private final DataSourceManageClient dataSourceManageClient;
     private final ServiceLogClient serviceLogClient;
+    /** 用户偏好读取(M2-05;可为 null = 测试场景,不注入)。 */
+    private final AppSettingStore appSettingStore;
 
     /** 最近一次 compactForRound 回收的旧图张数(可视化 step 用)。 */
     private int lastRecycledImages;
@@ -51,12 +53,24 @@ class ChatContextAssembler {
                          ChatToolsSpec toolsSpecBuilder,
                          DataSourceManageClient dataSourceManageClient,
                          ServiceLogClient serviceLogClient) {
+        this(objectMapper, agentWorkspaceService, agentSkillService, toolsSpecBuilder,
+                dataSourceManageClient, serviceLogClient, null);
+    }
+
+    ChatContextAssembler(ObjectMapper objectMapper,
+                         AgentWorkspaceService agentWorkspaceService,
+                         AgentSkillService agentSkillService,
+                         ChatToolsSpec toolsSpecBuilder,
+                         DataSourceManageClient dataSourceManageClient,
+                         ServiceLogClient serviceLogClient,
+                         AppSettingStore appSettingStore) {
         this.objectMapper = objectMapper;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
         this.toolsSpecBuilder = toolsSpecBuilder;
         this.dataSourceManageClient = dataSourceManageClient;
         this.serviceLogClient = serviceLogClient;
+        this.appSettingStore = appSettingStore;
     }
 
     int lastRecycledImages() {
@@ -561,6 +575,12 @@ class ChatContextAssembler {
         if (envSummary != null && !envSummary.isBlank()) {
             sb.append('\n').append(envSummary);
         }
+        // 用户结构化偏好(M2-05,方案 §9):报告语言/默认成果目录/命名习惯。
+        // 优先级:当前用户明确要求 > 本次任务配置 > 本偏好 > 工作区记忆中的通用偏好。
+        String prefs = userPreferencesSummary();
+        if (prefs != null && !prefs.isBlank()) {
+            sb.append('\n').append(prefs);
+        }
         if (!citations.isEmpty()) {
             sb.append("\n以下是知识库检索到的相关片段：\n");
             for (CitationDto c : citations) {
@@ -582,6 +602,40 @@ class ChatContextAssembler {
     /** 环境摘要缓存(名单变化不频繁;TTL 90s,避免每轮打下游服务)。 */
     private volatile String envSummaryCache;
     private volatile long envSummaryCacheAt;
+
+    /**
+     * 用户结构化偏好摘要(M2-05):报告语言/默认成果目录/命名习惯——
+     * 三项都是可执行设置(进入实际运行上下文),不是只改 UI 的摆设。
+     * best-effort:读取失败返回 null(不阻断对话)。
+     */
+    String userPreferencesSummary() {
+        if (appSettingStore == null) {
+            return null;
+        }
+        try {
+            java.util.Map<String, Object> prefs = appSettingStore.raw("user-preferences");
+            if (prefs == null || prefs.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder("用户偏好(优先级低于用户本次的明确要求):");
+            Object lang = prefs.get("reportLanguage");
+            if (lang != null && !String.valueOf(lang).isBlank()) {
+                sb.append("\n- 报告与成果默认使用语言:").append(lang);
+            }
+            Object dir = prefs.get("defaultOutputDir");
+            if (dir != null && !String.valueOf(dir).isBlank()) {
+                sb.append("\n- 默认成果目录:工作区 ").append(dir).append("(保存报告/导出文件时优先放这里)");
+            }
+            Object naming = prefs.get("namingStyle");
+            if (naming != null && !String.valueOf(naming).isBlank()) {
+                sb.append("\n- 文件命名习惯:").append(naming);
+            }
+            return sb.length() > "用户偏好(优先级低于用户本次的明确要求):".length() ? sb.toString() : null;
+        } catch (Exception e) {
+            log.debug("user preferences inject failed (ignored): {}", e.getMessage());
+            return null;
+        }
+    }
 
     /**
      * 环境摘要:数据源名单(名称+引擎+库)与纳管源名单(名称)。

@@ -131,7 +131,9 @@ public class ChatOrchestrationService {
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     AutomationManageClient automationManageClient,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
-                                    EnvironmentStatusClient environmentStatusClient) {
+                                    EnvironmentStatusClient environmentStatusClient,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    AppSettingStore appSettingStore) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
@@ -166,7 +168,7 @@ public class ChatOrchestrationService {
         this.upstreamClient = new UpstreamLlmClient(objectMapper, capabilityRegistry);
         this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
         this.contextAssembler = new ChatContextAssembler(objectMapper, agentWorkspaceService,
-                agentSkillService, toolsSpecBuilder, dataSourceManageClient, serviceLogClient);
+                agentSkillService, toolsSpecBuilder, dataSourceManageClient, serviceLogClient, appSettingStore);
         this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient, agentSkillService,
                 mcpServerService);
     }
@@ -199,7 +201,7 @@ public class ChatOrchestrationService {
                 dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService,
                 agentWorkspaceService, agentSkillService, terminalService, maxToolRounds, proxyProperties,
                 galleryPrefetcher, mediaFetchService, relayMediaRouter, turnCancellation,
-                null, null, null);
+                null, null, null, null);
     }
 
     public ChatOrchestrationService(LlmProperties llmProperties,
@@ -209,7 +211,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
                 null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null, null,
-                null, null, null);
+                null, null, null, null);
     }
 
     /** 测试入口:显式最大工具轮数,无 provider store。 */
@@ -221,7 +223,7 @@ public class ChatOrchestrationService {
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
                 null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null, null,
-                null, null, null);
+                null, null, null, null);
     }
 
     /**

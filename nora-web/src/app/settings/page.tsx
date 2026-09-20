@@ -13,6 +13,7 @@ import { NetworkSettings } from "@/components/settings/NetworkSettings";
 import { McpManager } from "@/components/settings/McpSettings";
 import { SkillsView } from "@/components/skills/SkillsView";
 import { ConnectionsView } from "@/components/settings/ConnectionsView";
+import { UserPreferencesSettings } from "@/components/settings/UserPreferencesSettings";
 
 /**
  * 设置中心(M1-04,2026-09-20,方案 §4.4):
@@ -106,7 +107,12 @@ export default function SettingsPage() {
             </div>
 
             <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              {activeTab === "general" && <GeneralSettings />}
+              {activeTab === "general" && (
+                <div className="space-y-6">
+                  <UserPreferencesSettings />
+                  <GeneralSettings />
+                </div>
+              )}
               {activeTab === "model" && <ModelSettings />}
               {activeTab === "connections" && <ConnectionsView />}
               {activeTab === "skills" && <SkillsView />}
