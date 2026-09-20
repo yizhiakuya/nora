@@ -38,13 +38,26 @@ public class AutomationManageClient {
      * @param prompt      自然语言指令(agent 动作;由无人值守通道执行)
      * @return 面向 LLM 的创建结果
      */
+    /** 兼容重载(无日程;manual 用)。 */
     public String create(String name, String triggerType, String prompt) {
+        return create(name, triggerType, prompt, null);
+    }
+
+    /**
+     * 创建规则(2026-09-21 补日程):daily/weekly 必须带 schedule JSON
+     * (frequency/localTime/dayOfWeek/timezone)——后端 M4 起强制校验,
+     * 此前 agent 侧不传导致 daily/weekly 创建必然 400(实测)。
+     */
+    public String create(String name, String triggerType, String prompt, String scheduleJson) {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("name", name);
             body.put("triggerType", triggerType == null || triggerType.isBlank() ? "manual" : triggerType);
             body.put("actionType", "agent");
             body.put("prompt", prompt);
+            if (scheduleJson != null && !scheduleJson.isBlank()) {
+                body.put("schedule", scheduleJson);
+            }
             Envelope<JsonNode> envelope = restClient.post()
                     .uri("/api/automations")
                     .contentType(MediaType.APPLICATION_JSON)

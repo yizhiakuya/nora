@@ -313,6 +313,11 @@ public class ChatStoreService {
         }
         jdbcTemplate.update(
                 "UPDATE chat_message SET deleted_at = now() WHERE session_id = ? AND deleted_at IS NULL", sessionId);
+        // 会话删除时把遗留的非终态运行收尾(2026-09-21):否则 running 行永远悬着
+        jdbcTemplate.update(
+                "UPDATE chat_run SET status = 'cancelled', finished_at = now(), updated_at = now() "
+                        + "WHERE session_id = ? AND status IN ('queued','running','awaiting_approval','cancelling')",
+                sessionId);
         return true;
     }
 
@@ -391,7 +396,7 @@ public class ChatStoreService {
         String placeholders = statuses == null || statuses.isEmpty()
                 ? null : String.join(",", statuses.stream().map(s -> "?").toList());
         String sql = "SELECT r.id, r.session_id, s.title, r.status, r.content, r.started_at, r.finished_at "
-                + "FROM chat_run r LEFT JOIN chat_session s ON s.id = r.session_id "
+                + "FROM chat_run r JOIN chat_session s ON s.id = r.session_id AND s.deleted_at IS NULL "
                 + (placeholders == null ? "" : "WHERE r.status IN (" + placeholders + ") ")
                 + "ORDER BY r.started_at DESC LIMIT ?";
         Object[] args = placeholders == null

@@ -43,7 +43,10 @@ public class AutomationConfig {
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(180_000); // agent run covers RAG + tool loop
+        // 300s(2026-09-21 放宽):agent 轮次可跑数分钟(fetch_media 批量下载、
+        // 长工具循环)——180s 对媒体类任务偏紧。超时后的错误消息会明确
+        // "结果未知、agent 可能仍在跑"(见 ActionExecutor),不冒充失败
+        factory.setReadTimeout(300_000);
         return RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
                 .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create()).build();
     }

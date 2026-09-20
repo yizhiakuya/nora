@@ -805,6 +805,12 @@ public class ChatOrchestrationService {
         if (t.isEmpty()) {
             return null;
         }
+        // 垃圾拦截(2026-09-21 实测):起标题的模型偶尔把工具调用标记当正文输出
+        // (DeepSeek 的 <｜｜DSML｜｜ invoke ...> 实测泄漏进侧栏标题),
+        // 含这类标记的输出不是标题——返回 null 保留占位标题,别把垃圾写进侧栏
+        if (t.contains("DSML") || t.contains("｜") || t.contains("invoke name")) {
+            return null;
+        }
         // 剥前缀：标题：/ 会话标题：/ title:
         t = t.replaceAll("(?i)^(会话)?(标题|title)\\s*[:：]\\s*", "");
         // 剥两端包裹：引号、书名号、方括号、星号（markdown 粗体）

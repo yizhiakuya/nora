@@ -289,7 +289,6 @@ public class AutomationService {
      * </ul>
      */
     public int runDueScheduled() {
-        java.time.LocalDateTime now = java.time.LocalDateTime.now();
         int ran = 0;
         for (RuleView rule : list()) {
             if (!rule.enabled() || !List.of("daily", "weekly").contains(rule.triggerType())) {
@@ -298,14 +297,21 @@ public class AutomationService {
             if (rule.nextRunAt() == null) {
                 continue;
             }
+            // 规则时区墙钟(2026-09-21 修复):nextRunAt 存的是规则时区墙钟,
+            // 用服务器墙钟(LocalDateTime.now())比较会引入整时区偏移的错误——
+            // 实测服务器上海/规则纽约时提前 60 分钟触发。
+            ScheduleCalculator.Schedule parsed = parseScheduleOf(rule);
+            if (parsed == null) {
+                continue; // schedule 不可解析:无法比较/推进,跳过
+            }
+            java.time.LocalDateTime now = ScheduleCalculator.nowIn(parsed);
             java.time.LocalDateTime scheduledAt = rule.nextRunAt().toLocalDateTime();
             if (now.isBefore(scheduledAt)) {
                 continue; // 未到点
             }
             // 领取计划点(原子):条件更新 nextRunAt(仅当仍等于本次读取值)——
             // 两个实例/重复扫描只有一个能领到(方案 §7.3 的 (ruleId, scheduledAt) 去重等效实现)
-            ScheduleCalculator.Schedule parsed = parseScheduleOf(rule);
-            java.time.LocalDateTime next = parsed == null ? null : ScheduleCalculator.nextAfter(parsed, now);
+            java.time.LocalDateTime next = ScheduleCalculator.nextAfter(parsed, now);
             int claimed = jdbcTemplate.update(
                     "UPDATE automation_rule SET next_run_at = ? WHERE id = ? AND next_run_at = ? AND deleted_at IS NULL",
                     next == null ? null : java.sql.Timestamp.valueOf(next),

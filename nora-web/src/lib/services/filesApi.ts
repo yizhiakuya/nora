@@ -231,7 +231,13 @@ export const filesApi = {
     const form = new FormData();
     form.append("file", file);
     if (folderId != null) form.append("folderId", String(folderId));
-    const item = await requestRaw<BackendFileItem>("/files/upload", { method: "POST", body: form });
+    // 上传超时放宽(2026-09-21):默认 30s 对 100MB 上限的文件(家宽上行
+    // 40-80s)会被中途掐断——上传不是"挂起请求",给 10 分钟传输窗口
+    const item = await requestRaw<BackendFileItem>("/files/upload", {
+      method: "POST",
+      body: form,
+      signal: defaultTimeoutSignal(10 * 60_000),
+    });
     return toFileItem(item);
   },
 

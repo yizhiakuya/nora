@@ -590,14 +590,16 @@ class ChatToolsSpec {
         autoTool.put("type", "function");
         ObjectNode autoFn = autoTool.putObject("function");
         autoFn.put("name", "manage_automation");
-        autoFn.put("description", "管理自动任务(定时执行的规则):"
-                + "list=列出全部规则(名称/触发方式/启停/上次运行);"
+                autoFn.put("description", "管理自动任务(定时执行的规则):"
+                + "list=列出全部规则(名称/触发方式/启停/下次运行时间);"
                 + "create=新建规则(参数 name + prompt 自然语言指令 + triggerType 触发方式;"
+                + "**daily/weekly 必须给时间**:localTime(HH:mm)与 weekly 的 dayOfWeek(1-7,1=周一),"
+                + "timezone 可选(默认 Asia/Shanghai;用户说「每天 9 点」这类本地时间时必须带用户时区);"
                 + "prompt 由无人值守通道执行——到点自动跑,没有审批门,写 prompt 时把动作写清楚);"
                 + "toggle=启用/暂停;remove=删除(执行历史保留);run=立即运行一次;executions=查看执行历史。"
                 + "用户说「每天帮我查一次 X/定时做 Y/建个自动任务」时用 create。"
                 + "示例:{\"action\": \"create\", \"name\": \"每日订单巡检\", \"triggerType\": \"daily\","
-                + " \"prompt\": \"查询今天的订单总量与异常状态订单,输出简短摘要\"}");
+                + " \"localTime\": \"09:00\", \"prompt\": \"查询今天的订单总量与异常状态订单,输出简短摘要\"}");
         ObjectNode autoParams = autoFn.putObject("parameters");
         autoParams.put("type", "object");
         autoParams.put("additionalProperties", false);
@@ -617,6 +619,15 @@ class ChatToolsSpec {
         autoTriggerProp.put("type", "string");
         autoTriggerProp.put("description", "create 时:触发方式(daily=每日一次 / weekly=每周一次 / manual=仅手动)");
         setEnum(autoTriggerProp, "daily", "weekly", "manual");
+        ObjectNode autoLocalTimeProp = autoProps.putObject("localTime");
+        autoLocalTimeProp.put("type", "string");
+        autoLocalTimeProp.put("description", "create 且 triggerType=daily/weekly 时必填:执行时刻 HH:mm(24 小时制,如 09:00)");
+        ObjectNode autoDowProp = autoProps.putObject("dayOfWeek");
+        autoDowProp.put("type", "integer");
+        autoDowProp.put("description", "create 且 triggerType=weekly 时必填:星期几(1=周一 … 7=周日)");
+        ObjectNode autoTzProp = autoProps.putObject("timezone");
+        autoTzProp.put("type", "string");
+        autoTzProp.put("description", "create 时可选:IANA 时区(如 Asia/Shanghai / America/New_York);省略默认 Asia/Shanghai");
         ObjectNode autoTargetProp = autoProps.putObject("target");
         autoTargetProp.put("type", "string");
         autoTargetProp.put("description", "toggle/remove/run 时:规则 id(list 结果里的数字 id)");

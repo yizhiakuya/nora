@@ -1522,7 +1522,38 @@ class ChatToolExecutor {
                         yield new ToolOutcome("ERROR: triggerType 只允许 daily / weekly / manual,收到: " + trigger,
                                 null, null, false);
                     }
-                    yield bounded(automationManageClient.create(rName, trigger, prompt), null);
+                    // 日程(daily/weekly 必填;2026-09-21 修复):后端 M4 起强制校验,
+                    // 此前 agent 不传 schedule 导致 daily/weekly 创建必然失败(实测 400)
+                    String scheduleJson = null;
+                    if ("daily".equals(trigger) || "weekly".equals(trigger)) {
+                        String localTime = a.path("localTime").asText("").trim();
+                        if (!localTime.matches("\\d{1,2}:\\d{2}")) {
+                            yield new ToolOutcome("ERROR: triggerType=" + trigger + " 需要 localTime 参数(HH:mm,如 09:00)"
+                                    + "。示例:{\"action\": \"create\", \"name\": \"每日巡检\", \"triggerType\": \"daily\","
+                                    + " \"localTime\": \"09:00\", \"prompt\": \"...\"}", null, null, false);
+                        }
+                        java.util.Map<String, Object> sched = new java.util.LinkedHashMap<>();
+                        sched.put("frequency", trigger);
+                        sched.put("localTime", localTime);
+                        if ("weekly".equals(trigger)) {
+                            int dow = a.path("dayOfWeek").asInt(0);
+                            if (dow < 1 || dow > 7) {
+                                yield new ToolOutcome("ERROR: triggerType=weekly 需要 dayOfWeek 参数(1=周一 … 7=周日),收到: "
+                                        + a.path("dayOfWeek").asText("(缺)"), null, null, false);
+                            }
+                            sched.put("dayOfWeek", dow);
+                        }
+                        String tz = a.path("timezone").asText("").trim();
+                        if (!tz.isBlank()) {
+                            sched.put("timezone", tz);
+                        }
+                        try {
+                            scheduleJson = objectMapper.writeValueAsString(sched);
+                        } catch (Exception e) {
+                            yield new ToolOutcome("ERROR: 日程参数序列化失败: " + e.getMessage(), null, null, false);
+                        }
+                    }
+                    yield bounded(automationManageClient.create(rName, trigger, prompt, scheduleJson), null);
                 }
                 default -> {
                     String target = a.path("target").asText(null);

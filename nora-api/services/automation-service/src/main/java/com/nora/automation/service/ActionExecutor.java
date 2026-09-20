@@ -157,10 +157,21 @@ public class ActionExecutor {
             return answer == null || answer.isBlank() ? "ERROR: agent returned empty answer" : answer;
         } catch (Exception e) {
             log.warn("agent action failed: {}", e.getMessage());
+            // 超时/断线时结果未知(2026-09-21):agent 那一轮可能仍在后台跑完并
+            // 落库——不能把"客户端断开"冒充成"任务失败"(语义对齐对话轮次的
+            // unknown 状态)。给"去会话里看结果"的可操作指引,不诱导盲目重跑。
+            boolean transport = e instanceof java.io.IOException
+                    || (e.getMessage() != null && (e.getMessage().contains("timed out")
+                        || e.getMessage().contains("Read timed out") || e.getMessage().contains("timeout")));
             // 错误体里的具体提示透传,错误才可操作(符合仓库「错误带 hint」约定)
             String hint = "";
             if (e instanceof org.springframework.web.client.RestClientResponseException restEx) {
                 hint = " | " + restEx.getResponseBodyAsString();
+            }
+            if (transport) {
+                return "ERROR: 与 agent 的连接中断(" + e.getMessage() + ")——结果未知:"
+                        + "该轮可能仍在后台运行,完成后会照常写入规则专属会话(「定时任务:规则名」)。"
+                        + "请到会话里确认是否已完成,确认未完成再手动重跑;不要直接假定失败";
             }
             return "ERROR: agent run failed: " + e.getMessage() + hint;
         }

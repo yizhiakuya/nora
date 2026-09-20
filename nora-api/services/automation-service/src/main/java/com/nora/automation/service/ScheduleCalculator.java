@@ -83,7 +83,24 @@ public final class ScheduleCalculator {
     }
 
     /**
+     * 规则时区下的当前墙钟——比较与推进的统一基准。
+     *
+     * <p>为什么必须用它而不是 {@code LocalDateTime.now()}(2026-09-21 修复):
+     * 服务器时区 ≠ 规则时区时,把服务器墙钟当作规则墙钟会引入整时区偏移的错误——
+     * 实测(服务器上海、规则纽约每日 09:00):扫描把上海 20:00 与纽约 09:00
+     * 直接比较,提前 60 分钟触发;nextAfter 则把上海 13:00 当纽约墙钟,
+     * 跳过一整天。nextRunAt 存的是规则时区墙钟,所有比较/推进都必须在
+     * 规则时区墙钟空间里做。
+     */
+    public static LocalDateTime nowIn(Schedule schedule) {
+        return ZonedDateTime.now(schedule.zone()).toLocalDateTime();
+    }
+
+    /**
      * 计算 {@code after} 之后的第一个计划点(规则时区,转本地挂钟返回)。
+     *
+     * <p>{@code after} 必须是**规则时区的墙钟**(用 {@link #nowIn} 取当前时刻,
+     * 或用上一次返回值的递增);传服务器墙钟会得到偏移一整个时差的错误结果。
      *
      * <p>DST 处理:目标本地时刻不存在时(春季跳变),顺延到当天第一个有效
      * 时刻(Java 的 {@code ZonedDateTime.of} 会自动前推);重复时刻取第一次。
