@@ -1,4 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "@/lib/api/client";
 import { authHeaders, withAuthToken } from "@/lib/auth";
 import type { ServiceInstance } from "@/types";
 
@@ -105,9 +105,13 @@ export const environmentApi = {
   },
 
   async analyzeSource(id: number, tail = 100): Promise<{ status: string; analysis: string }> {
+    // AI 诊断 = agent 完整轮次(RAG + 工具循环):env-service 给 agent 的读超时
+    // 是 180s——前端必须给同一量级窗口,默认 30s 会先断流报错而后端仍在分析
+    // (2026-09-21 修超时错配,同 refresh/runRule)。
     return requestJson(`/environment/sources/${id}/analyze`, {
       method: "POST",
       body: JSON.stringify({ tail }),
+      signal: defaultTimeoutSignal(3 * 60_000),
     });
   },
 

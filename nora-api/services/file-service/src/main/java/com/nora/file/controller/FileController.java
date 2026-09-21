@@ -284,6 +284,11 @@ public class FileController {
      * <p>为什么需要:文件中心此前"下载"按钮是假的(toast 提示)。批量场景
      * (一次导出整个项目资料)必须服务端打包——逐个下载会被浏览器拦截
      * 且体验割裂。zip 用流式写出,大文件不整包进内存。
+     *
+     * <p><b>单文件直出(2026-09-21 修复)</b>:此前单文件也套 zip 壳,但
+     * Content-Disposition 用的是原名(无 .zip 后缀)——浏览器保存出
+     * "xxx.txt" 而内容其实是 zip,双击打不开。现在单文件直接流式返回
+     * 原文件(mime/文件名都是本来的),只有多文件才打包。
      */
     @GetMapping("/download")
     public org.springframework.http.ResponseEntity<org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody> download(
@@ -296,9 +301,24 @@ public class FileController {
         if (items.isEmpty()) {
             throw new com.nora.common.exception.BusinessException(404, "没有可下载的文件");
         }
-        String filename = items.size() == 1
-                ? "download-" + items.get(0).name()
-                : "nora-files-" + items.size() + ".zip";
+        if (items.size() == 1) {
+            FileItem only = items.get(0);
+            java.nio.file.Path path = fileStorageService.resolveFile(only.id());
+            String encoded = java.net.URLEncoder.encode(only.name(), java.nio.charset.StandardCharsets.UTF_8)
+                    .replace("+", "%20");
+            String mime = only.mimeType() == null || only.mimeType().isBlank()
+                    ? org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE
+                    : only.mimeType();
+            return org.springframework.http.ResponseEntity.ok()
+                    .header("Content-Type", mime)
+                    .header("Content-Disposition", "attachment; filename*=UTF-8''" + encoded)
+                    .body(out -> {
+                        try (java.io.InputStream in = java.nio.file.Files.newInputStream(path)) {
+                            in.transferTo(out);
+                        }
+                    });
+        }
+        String filename = "nora-files-" + items.size() + ".zip";
         // 文件名含中文时 RFC 5987 编码,否则头值非法
         String encoded = java.net.URLEncoder.encode(filename, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");

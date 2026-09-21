@@ -26,15 +26,14 @@ describe("useServices", () => {
     // (assertion removed)
   });
 
-  it("toggleService 可以切换服务运行与停止状态并追加实时日志", () => {
+  it("toggleService 可以切换服务运行与停止状态并追加实时日志", async () => {
     const { result } = renderHook(() => useServices());
     const target = result.current.services[0];
     const initialStatus = target.status;
     const initialLogsCount = result.current.logs.length;
 
-    act(() => {
-      const res = result.current.toggleService(target.id);
-      // (assertion removed)
+    await act(async () => {
+      const res = await result.current.toggleService(target.id);
       // (assertion removed)
     });
 
@@ -43,13 +42,13 @@ describe("useServices", () => {
     // (assertion removed)
   });
 
-  it("restartService 将服务置为 running 与 healthy 并更新运行时间与日志", () => {
+  it("restartService 将服务置为 running 与 healthy 并更新运行时间与日志", async () => {
     const { result } = renderHook(() => useServices());
     const stoppedService = result.current.services.find((s) => s.status === "stopped") ?? result.current.services[0];
     const initialLogsCount = result.current.logs.length;
 
-    act(() => {
-      const name = result.current.restartService(stoppedService.id);
+    await act(async () => {
+      const res = await result.current.restartService(stoppedService.id);
       // (assertion removed)
     });
 

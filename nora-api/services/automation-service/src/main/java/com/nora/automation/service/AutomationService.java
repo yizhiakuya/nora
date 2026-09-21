@@ -145,7 +145,10 @@ public class AutomationService {
             if (parsed == null) {
                 return null;
             }
-            return ScheduleCalculator.nextAfter(parsed, java.time.LocalDateTime.now());
+            // 基准必须是规则时区墙钟(2026-09-21 补修):nextRunAt 存规则时区墙钟,
+            // 传服务器墙钟会整体偏移一个时差——实测服务器上海/规则纽约时,
+            // 创建时把上海 13:00 当纽约墙钟,首次执行被算到明天(跳过今天 09:00)。
+            return ScheduleCalculator.nextAfter(parsed, ScheduleCalculator.nowIn(parsed));
         } catch (Exception e) {
             return null;
         }
@@ -169,7 +172,9 @@ public class AutomationService {
         }
         int n = Math.min(Math.max(count, 1), 10);
         List<String> out = new java.util.ArrayList<>(n);
-        java.time.LocalDateTime cursor = java.time.LocalDateTime.now();
+        // 基准同样是规则时区墙钟(2026-09-21 补修):预览时间必须与创建/扫描
+        // 同一口径,否则跨时区时「预览显示的」与「实际执行的」不一致。
+        java.time.LocalDateTime cursor = ScheduleCalculator.nowIn(parsed);
         for (int i = 0; i < n; i++) {
             cursor = ScheduleCalculator.nextAfter(parsed, cursor);
             out.add(cursor.toString());

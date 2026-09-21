@@ -1,4 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "@/lib/api/client";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 
 /** 后端 automation_rule 行(M4-01 扩展日程字段) */
@@ -168,7 +168,14 @@ export const automationsApi = {
   },
 
   async runRule(id: number): Promise<ExecutionRecord> {
-    const item = await requestJson<BackendExecution>(`/automations/${id}/run`, { method: "POST" });
+    // 手动运行是**同步等待**执行完成的调用:agent 动作实测可跑 105s+,
+    // 后端(automation→agent)读超时 300s。前端若用默认 30s 会先断流报错,
+    // 而后端其实执行成功并落了成功记录——「明明成功却提示失败」(实测)。
+    // 给 6 分钟覆盖后端 5 分钟上限 + 网络余量。
+    const item = await requestJson<BackendExecution>(`/automations/${id}/run`, {
+      method: "POST",
+      signal: defaultTimeoutSignal(6 * 60_000),
+    });
     return toExecution(item);
   },
 

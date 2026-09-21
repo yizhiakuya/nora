@@ -18,8 +18,14 @@ interface ServicesState {
   addManaged: (input: { kind: "FILE" | "DOCKER" | "PROC"; name: string; fileLogPath?: string; containerName?: string; command?: string; workDir?: string }) => Promise<void>;
   /** 删除纳管源(不动容器/文件本身) */
   removeManaged: (id: number) => Promise<void>;
-  toggleService: (id: number) => { nextStatus: "running" | "stopped"; name: string };
-  restartService: (id: number) => string;
+  /**
+   * 启动/停止(后端模式等真实结果:失败回滚乐观状态并返回 ok=false;
+   * 2026-09-21 修「假成功」——此前后端以 status:"error" 返回失败时,
+   * UI 仍无条件提示「已启动/已停止」)。
+   */
+  toggleService: (id: number) => Promise<{ ok: boolean; nextStatus: "running" | "stopped"; name: string; detail?: string }>;
+  /** 重启(后端模式等真实结果;失败回滚并返回 ok=false)。 */
+  restartService: (id: number) => Promise<{ ok: boolean; name: string; detail?: string }>;
   addLog: (entry: Omit<LogEntry, "time">) => void;
   /** 将 docker 原始日志行合并进 store(日志流订阅用) */
   ingestDockerLog: (service: string, line: string) => void;
@@ -103,21 +109,34 @@ export const useServices = create<ServicesState>()(
           await environmentApi.deleteManaged(id).catch(() => { /* 乐观删除已生效 */ });
         }
       },
-      toggleService: (id) => {
+      toggleService: async (id) => {
         const target = get().services.find((s) => s.id === id);
-        if (!target) return { nextStatus: "running" as const, name: "" };
+        if (!target) return { ok: false, nextStatus: "running" as const, name: "" };
         const nextStatus: "running" | "stopped" =
           target.status === "running" ? "stopped" : "running";
 
-        if (USE_BACKEND) {
-          const action = nextStatus === "running"
-            ? environmentApi.startService(target.name)
-            : environmentApi.stopService(target.name);
-          action.then((result) => {
-            if (result.status === "error") return;
-            void useServices.getState().syncFromBackend();
-          }).catch(() => { /* 乐观更新已生效 */ });
-        }
+        // 乐观更新(界面即时反馈);后端失败时回滚(2026-09-21 修假成功)
+        const applyOptimistic = (status: "running" | "stopped") => set((state) => ({
+          services: state.services.map((s) =>
+            s.id === id
+              ? {
+                  ...s,
+                  status,
+                  health: status === "running" ? "healthy" : "down",
+                  uptime: status === "running" ? "刚刚" : "—",
+                }
+              : s
+          ),
+        }));
+        // 回滚:恢复完整原始字段(状态可能是 running/stopped/error 三态,逐字段还原)
+        const rollback = () => set((state) => ({
+          services: state.services.map((s) =>
+            s.id === id
+              ? { ...s, status: target.status, health: target.health, uptime: target.uptime }
+              : s
+          ),
+        }));
+        applyOptimistic(nextStatus);
 
         const newLogs: LogEntry[] = [
           {
@@ -129,30 +148,34 @@ export const useServices = create<ServicesState>()(
               : "Container stop requested via env-service.",
           },
         ];
-        set((state) => ({
-          services: state.services.map((s) =>
-            s.id === id
-              ? {
-                  ...s,
-                  status: nextStatus,
-                  health: nextStatus === "running" ? "healthy" : "down",
-                  uptime: nextStatus === "running" ? "刚刚" : "—",
-                }
-              : s
-          ),
-          logs: [...newLogs, ...state.logs].slice(0, 100),
-        }));
-        return { nextStatus, name: target.name };
-      },
-      restartService: (id) => {
-        const target = get().services.find((s) => s.id === id);
-        if (!target) return "";
-        if (USE_BACKEND) {
-          environmentApi.restartService(target.name)
-            .then(() => void useServices.getState().syncFromBackend())
-            .catch(() => { /* 乐观更新已生效 */ });
+        set((state) => ({ logs: [...newLogs, ...state.logs].slice(0, 100) }));
+
+        if (!USE_BACKEND) return { ok: true, nextStatus, name: target.name };
+
+        // 后端模式:等真实结果——后端以 code=0 + status:"error" 表达操作失败
+        // (docker 不可用/容器不存在/PROC 启动失败),必须检查 status 字段
+        try {
+          const result = nextStatus === "running"
+            ? await environmentApi.startService(target.name)
+            : await environmentApi.stopService(target.name);
+          if (result.status === "error") {
+            rollback();
+            return { ok: false, nextStatus, name: target.name, detail: result.detail };
+          }
+          // 成功后拉一次真实列表对齐(PROC 的 pid/uptime 等只有后端知道)
+          void useServices.getState().syncFromBackend();
+          return { ok: true, nextStatus, name: target.name, detail: result.detail };
+        } catch (e) {
+          rollback();
+          return { ok: false, nextStatus, name: target.name,
+            detail: e instanceof Error ? e.message : String(e) };
         }
-        const newLog: LogEntry = {
+      },
+      restartService: async (id) => {
+        const target = get().services.find((s) => s.id === id);
+        if (!target) return { ok: false, name: "" };
+        // 乐观更新(与旧行为一致:重启后运行中)
+        const restartLog: LogEntry = {
           time: getLogTime(),
           level: "info",
           service: target.name,
@@ -162,9 +185,30 @@ export const useServices = create<ServicesState>()(
           services: state.services.map((s) =>
             s.id === id ? { ...s, uptime: "刚刚", status: "running", health: "healthy" } : s
           ),
-          logs: [newLog, ...state.logs].slice(0, 100),
+          logs: [restartLog, ...state.logs].slice(0, 100),
         }));
-        return target.name;
+        if (!USE_BACKEND) return { ok: true, name: target.name };
+        try {
+          const result = await environmentApi.restartService(target.name);
+          if (result.status === "error") {
+            // 回滚到重启前状态
+            set((state) => ({
+              services: state.services.map((s) =>
+                s.id === id ? { ...s, status: target.status, health: target.health, uptime: target.uptime } : s
+              ),
+            }));
+            return { ok: false, name: target.name, detail: result.detail };
+          }
+          void useServices.getState().syncFromBackend();
+          return { ok: true, name: target.name, detail: result.detail };
+        } catch (e) {
+          set((state) => ({
+            services: state.services.map((s) =>
+              s.id === id ? { ...s, status: target.status, health: target.health, uptime: target.uptime } : s
+            ),
+          }));
+          return { ok: false, name: target.name, detail: e instanceof Error ? e.message : String(e) };
+        }
       },
       addLog: (entry) =>
         set((state) => ({

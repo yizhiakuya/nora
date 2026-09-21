@@ -34,7 +34,14 @@ public class TurnStreamController {
 
     private static final Logger log = LoggerFactory.getLogger(TurnStreamController.class);
 
-    private static final long SSE_TIMEOUT_MS = 180_000;
+    /**
+     * 接续流 SSE 超时(30 分钟;2026-09-21 与主对话流同步放宽)。
+     *
+     * <p>与 {@code AgentController.CHAT_SSE_TIMEOUT_MS} 同一理由:async 超时是
+     * 总时长,180s 会把长轮次的接续流中途切断(靠 EventSource 自动重连 + 游标
+     * 续传兜底虽可用,但频繁断连带来回放缺口风险)。30 分钟覆盖已知最长轮次。
+     */
+    private static final long SSE_TIMEOUT_MS = 30 * 60_000L;
 
     private final TurnStreamRegistry turnStreams;
     private final com.nora.agent.service.ChatStoreService chatStoreService;

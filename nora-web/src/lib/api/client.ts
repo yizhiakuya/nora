@@ -254,9 +254,14 @@ async function doRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
 /**
  * 默认请求超时(30s):网关挂起时让 UI 尽快失败而不是永久等待。
  * 调用方显式传 signal 时以其为准;超时错误文案便于 humanizeError 识别。
+ *
+ * <p>文案按实际窗口生成(2026-09-21 修复):此前无论传多少 ms 都写死「30s」,
+ * 上传(10 分钟)/手动运行任务(6 分钟)超时后提示「请求超时(30s)」误导排障。
  */
 export function defaultTimeoutSignal(ms = 30_000): AbortSignal {
   const controller = new AbortController();
-  setTimeout(() => controller.abort(new DOMException("请求超时(30s)", "TimeoutError")), ms);
+  const seconds = Math.round(ms / 1000);
+  const label = seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds}s`;
+  setTimeout(() => controller.abort(new DOMException(`请求超时(${label})`, "TimeoutError")), ms);
   return controller.signal;
 }

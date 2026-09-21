@@ -1,4 +1,4 @@
-import { requestJson, USE_BACKEND } from "./client";
+import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "./client";
 
 /** MCP 服务器视图(后端 ServerView;secrets 已脱敏) */
 export interface McpServer {
@@ -94,7 +94,13 @@ export async function setMcpServerToolPolicy(id: number, toolPolicy: "eager" | "
 
 export async function refreshMcpServer(id: number): Promise<McpRefreshResult> {
   if (!USE_BACKEND) return { status: "connected", error: null, tools: [] };
-  return requestJson(`/mcp/servers/${id}/refresh`, { method: "POST" });
+  // refresh 会真实连远端:STDIO 首次 npx 下载放宽 120s(见 McpClientPool)、
+  // 远程服务器慢时也可能超过默认 30s——前端必须给足窗口,否则先断流报错,
+  // 而后端连接其实成功并已缓存工具清单(2026-09-21 修超时错配)。
+  return requestJson(`/mcp/servers/${id}/refresh`, {
+    method: "POST",
+    signal: defaultTimeoutSignal(3 * 60_000),
+  });
 }
 
 // ---------- GitHub OAuth(设备码流程) ----------

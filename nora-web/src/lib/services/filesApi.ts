@@ -1,5 +1,6 @@
 import { FileItem, FilePreview, FilePreviewKind } from "@/types";
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
+import { invalidateForPath } from "@/lib/api/requestCache";
 import { authHeaders, withAuthToken } from "@/lib/auth";
 import { FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
 
@@ -238,6 +239,10 @@ export const filesApi = {
       body: form,
       signal: defaultTimeoutSignal(10 * 60_000),
     });
+    // 写后失效(2026-09-21 修复):requestRaw 不走 requestJson 的自动失效,
+    // 上传成功后 30s 内的 listFiles 会命中上传前的旧缓存——批量上传完成回调
+    // 的 syncFromBackend() 会把刚上传的文件从列表里"冲掉"(实测路径)。
+    invalidateForPath("/files/upload");
     return toFileItem(item);
   },
 

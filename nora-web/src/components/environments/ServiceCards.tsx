@@ -25,14 +25,25 @@ export function ServiceCards() {
   const [pendingRemove, setPendingRemove] = useState<{ id: number; name: string } | null>(null);
   const [removing, setRemoving] = useState(false);
 
-  const toggle = (id: number) => {
-    const { nextStatus, name } = toggleService(id);
-    toast.success(`${name} 已${nextStatus === "running" ? "启动" : "停止"}`);
+  const toggle = async (id: number) => {
+    // 等真实结果(2026-09-21 修假成功):后端失败(docker 不可用/容器不存在/
+    // PROC 启动失败)以 status:"error" 返回——此时 store 已回滚乐观状态,
+    // 这里提示真实失败原因,不再无条件「已启动/已停止」
+    const res = await toggleService(id);
+    if (res.ok) {
+      toast.success(`${res.name} 已${res.nextStatus === "running" ? "启动" : "停止"}`);
+    } else {
+      toast.error(`${res.name} ${res.nextStatus === "running" ? "启动" : "停止"}失败：${res.detail ?? "请查看服务日志"}`);
+    }
   };
 
-  const restart = (id: number) => {
-    const name = restartService(id);
-    toast.success(`${name} 已发送重启信号`);
+  const restart = async (id: number) => {
+    const res = await restartService(id);
+    if (res.ok) {
+      toast.success(`${res.name} 已发送重启信号`);
+    } else {
+      toast.error(`${res.name} 重启失败：${res.detail ?? "请查看服务日志"}`);
+    }
   };
 
   const confirmRemove = async () => {
@@ -128,15 +139,15 @@ export function ServiceCards() {
                 <div className="grid grid-cols-2 gap-1.5 pt-2 mt-auto border-t border-border/50">
                   {svc.status === "running" ? (
                     <>
-                      <Button variant="outline" size="sm" className="h-7 text-[10px] px-0 w-full" onClick={(e) => { e.stopPropagation(); toggle(svc.id); }}>
+                      <Button variant="outline" size="sm" className="h-7 text-[10px] px-0 w-full" onClick={(e) => { e.stopPropagation(); void toggle(svc.id); }}>
                         <Square className="w-3 h-3 mr-1" /> 停止
                       </Button>
-                      <Button variant="outline" size="sm" className="h-7 text-[10px] px-0 w-full" onClick={(e) => { e.stopPropagation(); restart(svc.id); }}>
+                      <Button variant="outline" size="sm" className="h-7 text-[10px] px-0 w-full" onClick={(e) => { e.stopPropagation(); void restart(svc.id); }}>
                         <RotateCw className="w-3 h-3 mr-1" /> 重启
                       </Button>
                     </>
                   ) : (
-                    <Button variant="outline" size="sm" className="col-span-2 h-7 text-[10px] px-0 w-full text-green-700 dark:text-green-300" onClick={(e) => { e.stopPropagation(); toggle(svc.id); }}>
+                    <Button variant="outline" size="sm" className="col-span-2 h-7 text-[10px] px-0 w-full text-green-700 dark:text-green-300" onClick={(e) => { e.stopPropagation(); void toggle(svc.id); }}>
                       <Play className="w-3 h-3 mr-1" /> 启动
                     </Button>
                   )}

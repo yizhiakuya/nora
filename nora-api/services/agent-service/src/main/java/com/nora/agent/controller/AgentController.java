@@ -50,8 +50,20 @@ public class AgentController {
 
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
 
-    /** SSE 心跳间隔;防止代理关闭空闲流。 */
-    private static final long SSE_TIMEOUT_MS = 180_000;
+    /**
+     * 对话轮次 SSE 流的超时(30 分钟;2026-09-21 从 180s 放宽)。
+     *
+     * <p>为什么:Spring/Tomcat 的 async 超时是**总时长**(不因持续写事件而重置),
+     * 此前 180s 会让长轮次(实测 fetch_media 批量任务跑了 470s)在 180s 处被
+     * 强制 complete——之后所有 step/delta/done 推送全部失败(日志实测
+     * "ResponseBodyEmitter has already completed"),主 SSE 流提前断开,只能靠
+     * 前端接续流兜底。30 分钟覆盖已知最长轮次并留足余量;更长的极端任务仍由
+     * TurnStreamRegistry 断线重连协议兜底。
+     */
+    private static final long CHAT_SSE_TIMEOUT_MS = 30 * 60_000L;
+
+    /** 一次性 agent 运行({@code /agent/run})的超时:同步机对机端点,调用方自带超时,保持 180s。 */
+    private static final long AGENT_RUN_TIMEOUT_MS = 180_000;
 
     private final ChatOrchestrationService orchestrationService;
     private final ChatStoreService chatStoreService;
@@ -133,7 +145,7 @@ public class AgentController {
                     "该会话已有进行中的轮次,请等待完成或先停止生成",
                     "在界面上点击「停止生成」,或等当前回答结束后再发送");
         }
-        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+        SseEmitter emitter = new SseEmitter(CHAT_SSE_TIMEOUT_MS);
         // 轮次入口:sessionId + turnId 进 MDC(经 TraceContext.wrap 传播到 chatExecutor
         // 线程),本轮编排/落库/SSE 发送的全部日志自动携带,排障时按会话一屏串联
         String turnId = TraceContext.newTraceId();
@@ -262,7 +274,7 @@ public class AgentController {
                         null,
                         SILENT_CONSUMER).join()));
         try {
-            ChatOrchestrationService.ChatTurn turn = future.get(SSE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            ChatOrchestrationService.ChatTurn turn = future.get(AGENT_RUN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("status", "completed");
             out.put("answer", turn.answer());
@@ -275,7 +287,7 @@ public class AgentController {
             return out;
         } catch (TimeoutException e) {
             future.cancel(true); // 中断编排线程 → 上游 LLM HTTP 读中止,不再白烧 token
-            throw new IllegalStateException("agent run timed out after " + SSE_TIMEOUT_MS + "ms");
+            throw new IllegalStateException("agent run timed out after " + AGENT_RUN_TIMEOUT_MS + "ms");
         } catch (CancellationException e) {
             throw new IllegalStateException("agent run was cancelled");
         } catch (InterruptedException e) {
