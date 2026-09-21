@@ -44,7 +44,11 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200" />
         <Dialog.Content
-          className={`fixed inset-0 m-auto z-50 h-fit max-h-[90vh] ${width} bg-card rounded-xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col relative`}
+          // 注意:不要再加 relative——它与 fixed 同为 position 工具类,生成
+          // 顺序上 relative 在后会覆盖 fixed,对话框会掉进文档流被推到页尾
+          // (2026-09-21 实测踩坑:只剩遮罩、弹窗在视口外)。fixed 本身就是
+          // 绝对定位子元素的包含块,关闭按钮的 absolute 定位不受影响。
+          className={`fixed inset-0 m-auto z-50 h-fit max-h-[90vh] ${width} bg-card rounded-xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col`}
           onPointerDownOutside={closeOnOutsideClick ? undefined : (e) => e.preventDefault()}
           onFocusOutside={closeOnOutsideClick ? undefined : (e) => e.preventDefault()}
           onEscapeKeyDown={closeOnEscape ? undefined : (e) => e.preventDefault()}
