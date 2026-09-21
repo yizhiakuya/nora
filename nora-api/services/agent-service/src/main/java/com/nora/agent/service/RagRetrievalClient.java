@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.nora.agent.dto.CitationDto;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 从 rag-service({@code POST /api/rag/search})检索知识块。
@@ -35,7 +36,7 @@ public class RagRetrievalClient {
      */
     public List<CitationDto> search(String query, int topK) {
         try {
-            Envelope<List<CitationDto>> envelope = restClient.post()
+            ApiResponse<List<CitationDto>> envelope = restClient.post()
                     .uri("/api/rag/search")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new SearchBody(query, topK))
@@ -58,17 +59,13 @@ public class RagRetrievalClient {
     record SearchBody(String query, Integer topK) {
     }
 
-    /** rag-service 返回的 ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
-    }
-
     /**
      * 拉取一篇知识库文档的 chunks(对话框 @ 引用注入用)。
      * GET /api/rag/docs/{id};失败/不存在返回 null(调用方降级)。
      */
     public DocChunks docChunks(long docId) {
         try {
-            Envelope<DocDetailPayload> envelope = restClient.get()
+            ApiResponse<DocDetailPayload> envelope = restClient.get()
                     .uri("/api/rag/docs/{id}", docId)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()

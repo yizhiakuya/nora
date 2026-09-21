@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 经 datasource-service({@code POST /api/datasources/{id}/execute})执行已批准
@@ -46,7 +47,7 @@ public class WriteSqlClient {
                 return "ERROR: no database connection is configured in the datasource service"
                         + (datasourceId == null ? "" : " (查询目标: " + datasourceId + ")");
             }
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/datasources/{id}/execute", connectionId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new WriteRequest(sql))
@@ -68,9 +69,5 @@ public class WriteSqlClient {
 
     /** POST 请求体。 */
     record WriteRequest(String sql) {
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }

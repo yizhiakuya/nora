@@ -10,6 +10,7 @@ import { QueryHistory } from "@/types";
 import { toast } from "sonner";
 import { datasourcesApi, type BackendQueryResult } from "@/lib/services/datasourcesApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { nowDate } from "@/lib/format";
 
 const AI_SUGGEST = "SELECT status, COUNT(*) as count FROM orders GROUP BY status ORDER BY count DESC;";
 
@@ -20,13 +21,24 @@ const RESULT_ROWS: string[][] = [
   ["pending", "826"],
 ];
 
+/**
+ * CSV \u5B57\u6BB5\u8F6C\u4E49(RFC 4180,2026-09-21 \u4FEE\u590D):\u542B\u9017\u53F7/\u5F15\u53F7/\u6362\u884C\u7684\u5355\u5143\u683C
+ * \u5FC5\u987B\u7528\u53CC\u5F15\u53F7\u5305\u88F9\u3001\u5185\u90E8\u5F15\u53F7\u7FFB\u500D\u2014\u2014\u6B64\u524D\u76F4\u63A5 join(","),\u67E5\u8BE2\u7ED3\u679C\u91CC
+ * \u4EFB\u4F55\u542B\u9017\u53F7\u7684\u6587\u672C(\u5982\u5730\u5740\u3001JSON)\u90FD\u4F1A\u628A\u5217\u62C6\u6563,\u542B\u5F15\u53F7/\u6362\u884C\u7684\u76F4\u63A5\u7834\u574F\u683C\u5F0F\u3002
+ */
+function csvEscape(value: string | null): string {
+  const s = value ?? "";
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 function downloadCsv(columns: string[], rows: (string | null)[][]) {
-  const csv = [columns.join(","), ...rows.map((r) => r.map((c) => c ?? "").join(","))].join("\n");
+  const csv = [columns.map(csvEscape).join(","), ...rows.map((r) => r.map(csvEscape).join(","))].join("\r\n");
   const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `query_result_${new Date().toISOString().slice(0, 10)}.csv`;
+  // 文件名日期用本地挂钟(此前 toISOString 是 UTC,凌晨导出文件名差一天)
+  a.download = `query_result_${nowDate()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

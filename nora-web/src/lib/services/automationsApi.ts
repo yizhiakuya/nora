@@ -1,4 +1,5 @@
 import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "@/lib/api/client";
+import { mdHmFromLocalIso } from "@/lib/format";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 
 /** 后端 automation_rule 行(M4-01 扩展日程字段) */
@@ -41,11 +42,6 @@ export interface BackendExecution {
   startedAt: string;
 }
 
-function formatTime(ts: string | null): string {
-  if (!ts) return "—";
-  return ts.slice(5, 16).replace("T", " ");
-}
-
 /** 日程摘要(列表展示):「每日 09:00(Asia/Shanghai)」/「每周五 09:00」。 */
 function describeSchedule(scheduleJson: string | null): string | null {
   if (!scheduleJson) return null;
@@ -70,9 +66,9 @@ function toRule(r: BackendRule): AutomationRule {
     trigger: scheduleText ?? r.triggerLabel ?? r.triggerType,
     action: describeAction(r.actionJson),
     enabled: r.enabled,
-    lastRun: formatTime(r.lastRunAt),
+    lastRun: mdHmFromLocalIso(r.lastRunAt),
     status: r.status === "error" ? "error" : r.enabled ? "active" : "paused",
-    nextRun: r.nextRunAt ? formatTime(r.nextRunAt) : undefined,
+    nextRun: r.nextRunAt ? mdHmFromLocalIso(r.nextRunAt) : undefined,
     needsConfig: r.configurationStatus === "needs_config",
   };
 }
@@ -100,7 +96,7 @@ function toExecution(e: BackendExecution): ExecutionRecord {
     id: e.id,
     ruleId: e.ruleId,
     ruleName: e.ruleName,
-    time: formatTime(e.startedAt),
+    time: mdHmFromLocalIso(e.startedAt),
     duration: e.durationMs != null ? `${(e.durationMs / 1000).toFixed(1)}s` : "—",
     status: e.status === "success" ? "success" : "failed",
     // 全文保留(2026-09-20,M0-04):此前截为 120 字,「成功」之后拿不到报告。

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Images, Play } from "lucide-react";
 import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
 import { mediaCacheUrl, originalVariant, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
+import { mdHm } from "@/lib/format";
 
 /**
  * media 画廊:相册/媒体展示(**恢复原版设计**,2026-09-18 用户要求)。
@@ -32,11 +33,10 @@ interface MediaItem {
 /** "2026-09-04T15:53:19.502+08:00[Asia/Shanghai]" → "09-04 15:53"(解析失败原样返回)。 */
 function formatTakenAt(takenAt?: string): string | undefined {
   if (!takenAt) return undefined;
+  // 带时区时间戳(EXIF):去掉 [Asia/Shanghai] 尾缀后正常走 Date,本地时区格式化
   const cleaned = takenAt.replace(/\[[^\]]*\]$/, "");
   const d = new Date(cleaned);
-  if (Number.isNaN(d.getTime())) return takenAt;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return Number.isNaN(d.getTime()) ? takenAt : mdHm(d);
 }
 
 export function MediaGallery({ data }: { data: Record<string, unknown> }) {

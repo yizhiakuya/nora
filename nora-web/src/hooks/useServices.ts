@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type { ServiceInstance, LogEntry } from "@/types";
 import { environmentApi } from "@/lib/services/environmentApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { nowHms } from "@/lib/format";
 
 interface ServicesState {
   services: ServiceInstance[];
@@ -31,9 +32,6 @@ interface ServicesState {
   ingestDockerLog: (service: string, line: string) => void;
 }
 
-const getLogTime = () =>
-  new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-
 /** docker 日志行 → level 粗分级(供前端着色) */
 function levelOf(line: string): LogEntry["level"] {
   const lower = line.toLowerCase();
@@ -48,7 +46,7 @@ function extractLogTime(line: string): string {
   if (iso) return iso[1];
   const plain = line.match(/\b(\d{2}:\d{2}:\d{2})(?:\.\d+)?\b/);   // 1:M 08 Sep 2026 01:16:41.510
   if (plain) return plain[1];
-  return getLogTime();
+  return nowHms();
 }
 
 /**
@@ -140,7 +138,7 @@ export const useServices = create<ServicesState>()(
 
         const newLogs: LogEntry[] = [
           {
-            time: getLogTime(),
+            time: nowHms(),
             level: nextStatus === "running" ? "info" : "warn",
             service: target.name,
             message: nextStatus === "running"
@@ -176,7 +174,7 @@ export const useServices = create<ServicesState>()(
         if (!target) return { ok: false, name: "" };
         // 乐观更新(与旧行为一致:重启后运行中)
         const restartLog: LogEntry = {
-          time: getLogTime(),
+          time: nowHms(),
           level: "info",
           service: target.name,
           message: "Container restart requested via env-service.",
@@ -212,7 +210,7 @@ export const useServices = create<ServicesState>()(
       },
       addLog: (entry) =>
         set((state) => ({
-          logs: [{ ...entry, time: getLogTime() }, ...state.logs].slice(0, 100),
+          logs: [{ ...entry, time: nowHms() }, ...state.logs].slice(0, 100),
         })),
       /** 将 docker 原始日志行合并进 store(日志流订阅用);时间取自行内真实时间戳 */
       ingestDockerLog: (service: string, line: string) =>

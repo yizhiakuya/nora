@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { usePreferences } from "./usePreferences";
 import { notificationsApi, type ServerNotification } from "@/lib/services/notificationsApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { nowHm, hmFromLocalIso } from "@/lib/format";
 
 export type NotificationEvent =
   | "taskDone"
@@ -41,22 +42,14 @@ interface NotificationsState {
   clearAll: () => void;
 }
 
-const now = () =>
-  new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-
 /** 服务端行 → 前端视图(时间取 HH:mm)。 */
 function toView(n: ServerNotification): AppNotification {
-  let time = "";
-  if (n.createdAt) {
-    // 后端 ISO 串(本地挂钟,无时区后缀):截 HH:mm,不用 new Date(会被贴错时区)
-    const m = /T(\d{2}:\d{2})/.exec(n.createdAt);
-    time = m ? m[1] : "";
-  }
   return {
     id: n.id,
     title: n.title,
     detail: n.detail ?? "",
-    time: time || now(),
+    // 后端 ISO 串是本地挂钟(无时区后缀):走 hmFromLocalIso 截取,不用 new Date(会被贴错时区)
+    time: hmFromLocalIso(n.createdAt) || nowHm(),
     read: n.read,
     event: (n.event as NotificationEvent) ?? "general",
   };
@@ -112,7 +105,7 @@ export const useNotifications = create<NotificationsState>()((set, get) => {
     const localId = -Date.now();
     set((state) => ({
       notifications: [
-        { id: localId, title, detail, time: now(), read: false, event },
+        { id: localId, title, detail, time: nowHm(), read: false, event },
         ...state.notifications,
       ].slice(0, 50),
     }));

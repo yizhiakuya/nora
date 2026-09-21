@@ -10,7 +10,7 @@ import org.springframework.web.client.RestClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 对 datasource-service 执行受控只读 SQL
@@ -58,7 +58,7 @@ public class SqlToolClient {
                         + (datasourceId == null ? "" : " (查询目标: " + datasourceId + ")"),
                         null, false);
             }
-            Envelope<QueryBody> envelope = restClient.post()
+            ApiResponse<QueryBody> envelope = restClient.post()
                     .uri("/api/datasources/{id}/query", connectionId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new QueryRequest(sql))
@@ -96,7 +96,7 @@ public class SqlToolClient {
      */
     public Long resolveConnectionId(String datasourceId) {
         try {
-            Envelope<ArrayNode> envelope = restClient.get()
+            ApiResponse<ArrayNode> envelope = restClient.get()
                     .uri("/api/datasources")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -188,13 +188,5 @@ public class SqlToolClient {
             int rowCount,
             long durationMs,
             Boolean truncated) {
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
-    }
-
-    /** list 端点的 ObjectNode 辅助。 */
-    record ObjectEnvelope(ObjectNode data) {
     }
 }

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 知识库主动检索与管理,供 agent 的 {@code search_knowledge}(只读检索)与
@@ -40,7 +41,7 @@ public class KnowledgeManageClient {
     public String search(String query, int topK) {
         try {
             int safeTopK = Math.max(1, Math.min(topK, 20));
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/rag/search")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("query", query, "topK", safeTopK))
@@ -71,7 +72,7 @@ public class KnowledgeManageClient {
     /** 文档列表(含状态/块数/来源;支持按名字过滤)。 */
     public String list(String filter) {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/rag/docs")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -122,7 +123,7 @@ public class KnowledgeManageClient {
             if (name != null && !name.isBlank()) {
                 body.put("name", name);
             }
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/rag/index")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
@@ -147,7 +148,7 @@ public class KnowledgeManageClient {
     /** 删除文档及其分块。 */
     public String remove(long docId) {
         try {
-            Envelope<JsonNode> envelope = restClient.delete()
+            ApiResponse<JsonNode> envelope = restClient.delete()
                     .uri("/api/rag/docs/{id}", docId)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -168,7 +169,7 @@ public class KnowledgeManageClient {
     /** 重建文档向量(嵌入模型变更后刷新 / 恢复失败文档)。 */
     public String reindex(long docId) {
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/rag/docs/{id}/reindex", docId)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -188,7 +189,7 @@ public class KnowledgeManageClient {
     /** 索引统计快照。 */
     public String stats() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/rag/index/stats")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -209,9 +210,5 @@ public class KnowledgeManageClient {
             log.warn("knowledge stats failed: {}", e.getMessage());
             return "ERROR: " + e.getMessage();
         }
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }

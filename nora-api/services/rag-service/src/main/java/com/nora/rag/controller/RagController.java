@@ -124,7 +124,7 @@ public class RagController {
     /** 文件是否仍存活(未被软删):按 ids 查 file-service,查不到视为已删。 */
     private boolean isFileAlive(Long fileId) {
         try {
-            Envelope<JsonNode> envelope = fileServiceRestClient.get()
+            ApiResponse<JsonNode> envelope = fileServiceRestClient.get()
                     .uri("/api/files?ids={fileId}", fileId)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -170,7 +170,7 @@ public class RagController {
     private FilePreviewBody fetchPreview(Long fileId) {
         try {
             // file-service 把载荷包在共享 ApiResponse 信封 {code,data,message} 里
-            Envelope<FilePreviewBody> envelope = fileServiceRestClient.get()
+            ApiResponse<FilePreviewBody> envelope = fileServiceRestClient.get()
                     .uri("/api/files/{fileId}/preview", fileId)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -370,7 +370,4 @@ public class RagController {
     public record FilePreviewBody(Long fileId, String type, String textContent, String name, String size) {
     }
 
-    /** file-service 返回的 ApiResponse 信封。 */
-    public record Envelope<T>(int code, T data, String message) {
-    }
 }

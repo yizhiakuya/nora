@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 管理 automation-service 的自动任务规则,供 agent 的 {@code manage_automation}
@@ -58,7 +59,7 @@ public class AutomationManageClient {
             if (scheduleJson != null && !scheduleJson.isBlank()) {
                 body.put("schedule", scheduleJson);
             }
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/automations")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
@@ -83,7 +84,7 @@ public class AutomationManageClient {
     /** 启用/暂停(取反)。 */
     public String toggle(long id) {
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/automations/{id}/toggle", id)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -103,7 +104,7 @@ public class AutomationManageClient {
     /** 删除规则(执行历史保留)。 */
     public String remove(long id) {
         try {
-            Envelope<Void> envelope = restClient.delete()
+            ApiResponse<Void> envelope = restClient.delete()
                     .uri("/api/automations/{id}", id)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -121,7 +122,7 @@ public class AutomationManageClient {
     /** 立即运行一次(执行可能跑数分钟,期间同规则不并发)。 */
     public String run(long id) {
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/automations/{id}/run", id)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -146,7 +147,7 @@ public class AutomationManageClient {
     /** 列出规则(最新在前)。 */
     public String list() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/automations")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -183,7 +184,7 @@ public class AutomationManageClient {
     public String executions(int limit) {
         try {
             int safeLimit = Math.max(1, Math.min(limit, 200));
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/automations/executions?limit={n}", safeLimit)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -215,7 +216,4 @@ public class AutomationManageClient {
         }
     }
 
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
-    }
 }

@@ -8,6 +8,7 @@ import { useChatSessions } from "./useChatSessions";
 import { useModelProviders, resolveDefaultProvider } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
 import { randomId } from "@/lib/utils";
+import { nowHm } from "@/lib/format";
 import { formatChatRefs, refKey, type ChatRef } from "@/lib/chatRefs";
 
 /**
@@ -69,9 +70,6 @@ interface UseChatOptions {
   /** 传入时消息自动持久化到会话 store */
   sessionId?: string;
 }
-
-const formatTime = () =>
-  new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
 export function useChat({ initialMessages = [], initialInput = "", initialRefs = [], autoSendInitial = false, responder = AgentAPI.sendMessage, sessionId }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -222,7 +220,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
           id: recoverId,
           role: "assistant",
           content: "",
-          timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          timestamp: nowHm(),
           isTyping: true,
           startedAtMs: info.startedAtMs ?? Date.now(),
           steps: [],
@@ -420,7 +418,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
       id: randomId(),
       role: "user",
       content,
-      timestamp: formatTime(),
+      timestamp: nowHm(),
     };
     const assistantMsgId = randomId();
 
@@ -431,7 +429,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
         id: assistantMsgId,
         role: "assistant",
         content: "",
-        timestamp: formatTime(),
+        timestamp: nowHm(),
         isTyping: true,
         startedAtMs: Date.now(),
       },
@@ -488,7 +486,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
       setMessages((prev) =>
         prev.map((m) =>
           m.id === failedMsgId
-            ? { id: assistantMsgId, role: "assistant", content: "", timestamp: formatTime(), isTyping: true, startedAtMs: Date.now() }
+            ? { id: assistantMsgId, role: "assistant", content: "", timestamp: nowHm(), isTyping: true, startedAtMs: Date.now() }
             : m
         )
       );
@@ -548,8 +546,8 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
       const assistantMsgId = randomId();
       setMessages([
         ...kept,
-        { id: randomId(), role: "user", content: edited.trim(), timestamp: formatTime() },
-        { id: assistantMsgId, role: "assistant", content: "", timestamp: formatTime(), isTyping: true, startedAtMs: Date.now() },
+        { id: randomId(), role: "user", content: edited.trim(), timestamp: nowHm() },
+        { id: assistantMsgId, role: "assistant", content: "", timestamp: nowHm(), isTyping: true, startedAtMs: Date.now() },
       ]);
       await runTurn(edited.trim(), assistantMsgId);
     },

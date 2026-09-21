@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { FileItem } from "@/types";
 import { filesApi } from "@/lib/services/filesApi";
+import { nowDateTime } from "@/lib/format";
 import { FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
 
 type PersistedFile = Omit<FileItem, "icon">;
@@ -71,7 +72,8 @@ export const useFiles = create<FilesState>()(
           name,
           type: meta.type,
           size,
-          date: new Date().toISOString().slice(0, 16).replace("T", " "),
+          // mock 时间戳:本地挂钟(此前 toISOString 是 UTC,中国时区差 8 小时)
+          date: nowDateTime(),
           icon: meta.icon,
           color: meta.color,
           indexed: false,

@@ -12,6 +12,7 @@ import {
 } from "@/lib/services/mediaCacheApi";
 import { toast } from "sonner";
 import { USE_BACKEND } from "@/lib/api/client";
+import { mdHm } from "@/lib/format";
 
 interface MediaCacheBrowserProps {
   /** 退出媒体缓存,回到文件中心根视图 */
@@ -24,13 +25,6 @@ function humanSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-/** 时间戳 → "MM-DD HH:mm"。 */
-function formatTime(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**
@@ -145,7 +139,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
                   <button
                     type="button"
                     className="absolute inset-0 cursor-zoom-in"
-                    title={`${cachedItemLabel(item)}\n${humanSize(item.size)} · ${formatTime(item.savedAt)}\n${item.url}`}
+                    title={`${cachedItemLabel(item)}\n${humanSize(item.size)} · ${mdHm(item.savedAt)}\n${item.url}`}
                     onClick={() => setViewing(item)}
                   >
                     {/* 统一用缩略图铺底:视频条目(播放流/原片)也改写为手机 /thumb

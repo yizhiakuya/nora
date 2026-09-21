@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 执行自动化动作。
@@ -76,7 +77,7 @@ public class ActionExecutor {
             if (connectionId == null) {
                 return "ERROR: no database connection configured — 请先在数据源页添加一个连接";
             }
-            Envelope<QueryBody> envelope = restClient.post()
+            ApiResponse<QueryBody> envelope = restClient.post()
                     .uri("/api/datasources/{id}/query", connectionId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new QueryRequest(sql))
@@ -235,7 +236,7 @@ public class ActionExecutor {
 
     private Long firstConnectionId() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/datasources")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -288,8 +289,5 @@ public class ActionExecutor {
             java.util.List<java.util.List<String>> rows,
             int rowCount,
             long durationMs) {
-    }
-
-    record Envelope<T>(int code, T data, String message) {
     }
 }

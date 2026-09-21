@@ -8,6 +8,7 @@ import { SkillTabs } from "@/components/skills/SkillTabs";
 import { SkillFormModal, SkillFormValues } from "@/components/skills/SkillFormModal";
 import { SkillDetailModal } from "@/components/skills/SkillDetailModal";
 import { useSkills } from "@/hooks/useSkills";
+import { nowDateTime } from "@/lib/format";
 import { Skill } from "@/types";
 import { toast } from "sonner";
 import { Braces } from "lucide-react";
@@ -68,7 +69,7 @@ export function SkillsView() {
         category: values.category,
         enabled: true,
         isOfficial: false,
-        createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+        createdAt: nowDateTime(),
         instructions: values.instructions,
       };
       addSkill(newSkill);

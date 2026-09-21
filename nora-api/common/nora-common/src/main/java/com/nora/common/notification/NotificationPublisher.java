@@ -1,7 +1,6 @@
 package com.nora.common.notification;
 
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -9,6 +8,8 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 通知事件发布门面(2026-09-19 Kafka 事件总线)。
@@ -25,6 +26,8 @@ import org.slf4j.LoggerFactory;
 public class NotificationPublisher implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationPublisher.class);
+    /** 序列化单例(无状态线程安全,静态复用避免每次 new)。 */
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final NotificationProperties properties;
     private volatile KafkaProducer<String, String> producer;
@@ -53,6 +56,9 @@ public class NotificationPublisher implements AutoCloseable {
         try {
             NotificationEvent payload = NotificationEvent.of(properties, event, title, detail);
             String json = toJson(payload);
+            if (json == null) {
+                return; // 序列化失败(理论不可达):放弃这条通知,不抛给业务线程
+            }
             producer().send(new ProducerRecord<>(properties.topic(), event, json),
                     (meta, err) -> {
                         if (err != null) {
@@ -64,47 +70,21 @@ public class NotificationPublisher implements AutoCloseable {
         }
     }
 
-    /** 极简 JSON 序列化:字段固定,手写避免依赖注入(ObjectMapper 在 common 里可用但没必要)。 */
+    /**
+     * JSON 序列化(Jackson,2026-09-21 从手写拼接替换)。
+     *
+     * <p>此前手写转义(quote/appendField)——字段固定时侥幸正确,但手写 JSON
+     * 转义是经典错误源(控制字符/代理对/未来加字段都要自己维护),Jackson
+     * 一行 writeValueAsString 覆盖全部边界。静态单例零成本。
+     */
     private static String toJson(NotificationEvent e) {
-        StringBuilder sb = new StringBuilder(160);
-        sb.append('{');
-        appendField(sb, "event", e.event());
-        sb.append(',');
-        appendField(sb, "title", e.title());
-        sb.append(',');
-        appendField(sb, "detail", e.detail());
-        sb.append(',');
-        appendField(sb, "source", e.source());
-        sb.append(',');
-        appendField(sb, "at", e.at());
-        sb.append('}');
-        return sb.toString();
-    }
-
-    private static void appendField(StringBuilder sb, String key, String value) {
-        sb.append('"').append(key).append("\":").append(value == null ? "null" : quote(value));
-    }
-
-    private static String quote(String s) {
-        StringBuilder sb = new StringBuilder(s.length() + 2).append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\r' -> sb.append("\\r");
-                case '\t' -> sb.append("\\t");
-                default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                }
-            }
+        try {
+            return MAPPER.writeValueAsString(e);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            // 理论不可达(record 全是 String);真发生则放弃这条通知,绝不抛给业务线程
+            log.debug("notification serialize failed: {}", ex.getMessage());
+            return null;
         }
-        return sb.append('"').toString();
     }
 
     /** 懒建 producer;失败静默降级(记一次日志,不抛)。 */

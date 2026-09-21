@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 经 datasource-service({@code POST/GET/DELETE /api/datasources})管理数据源
@@ -50,7 +51,7 @@ public class DataSourceManageClient {
             body.put("database", database);
             body.put("username", username);
             body.put("password", password == null ? "" : password);
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/datasources")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
@@ -79,7 +80,7 @@ public class DataSourceManageClient {
     /** 测试已存凭证;返回 ok/message/latency。 */
     public String test(long id) {
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/datasources/{id}/test", id)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -100,7 +101,7 @@ public class DataSourceManageClient {
     /** 移除连接(历史在服务端级联删除)。 */
     public String remove(long id) {
         try {
-            Envelope<JsonNode> envelope = restClient.delete()
+            ApiResponse<JsonNode> envelope = restClient.delete()
                     .uri("/api/datasources/{id}", id)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -122,7 +123,7 @@ public class DataSourceManageClient {
      */
     public String nameSummary() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/datasources")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -153,7 +154,7 @@ public class DataSourceManageClient {
      */
     public String list() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/datasources")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -198,7 +199,7 @@ public class DataSourceManageClient {
                 return "ERROR: no matching database connection" + (datasourceId == null ? "" : ": " + datasourceId)
                         + "。可用连接:\n" + list();
             }
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/datasources/{id}/schema", connectionId)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -246,9 +247,5 @@ public class DataSourceManageClient {
             log.warn("datasource schema failed: {}", e.getMessage());
             return "ERROR: " + e.getMessage();
         }
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }

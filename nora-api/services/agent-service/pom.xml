@@ -66,16 +66,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- LangChain4j (versions from langchain4j-bom 1.0.1 in parent) -->
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-open-ai</artifactId>
-        </dependency>
-
         <!-- MCP Java SDK (client): Streamable HTTP / SSE transports, JDK-based -->
         <dependency>
             <groupId>io.modelcontextprotocol.sdk</groupId>

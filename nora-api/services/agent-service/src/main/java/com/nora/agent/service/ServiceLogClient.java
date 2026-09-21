@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 从 env-service 取容器日志
@@ -36,7 +37,7 @@ public class ServiceLogClient {
      */
     public List<String> listServices() {
         try {
-            Envelope<List<JsonNode>> envelope = restClient.get()
+            ApiResponse<List<JsonNode>> envelope = restClient.get()
                     .uri("/api/environment/services")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -72,7 +73,7 @@ public class ServiceLogClient {
             }
             // 非流式按源 id tail 端点:立即返回 tail 行(流式 /sources/{id}/logs/stream
             // 会保持连接数分钟,工具路径不能调)
-            Envelope<List<String>> envelope = restClient.get()
+            ApiResponse<List<String>> envelope = restClient.get()
                     .uri("/api/environment/sources/{id}/logs?tail={n}", sourceId, safeLimit)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -102,7 +103,7 @@ public class ServiceLogClient {
      */
     private String findSourceId(String name) {
         try {
-            Envelope<List<JsonNode>> envelope = restClient.get()
+            ApiResponse<List<JsonNode>> envelope = restClient.get()
                     .uri("/api/environment/services")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -121,9 +122,5 @@ public class ServiceLogClient {
             log.warn("env-service lookup failed: {}", e.getMessage());
             return null;
         }
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }

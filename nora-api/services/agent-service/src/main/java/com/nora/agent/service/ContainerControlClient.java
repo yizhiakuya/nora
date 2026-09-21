@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 经 env-service({@code POST /api/environment/services/{id}/start|stop|restart})
@@ -32,7 +33,7 @@ public class ContainerControlClient {
     public String control(String container, String action) {
         String normalized = action == null ? "" : action.trim().toLowerCase();
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/environment/services/{id}/{op}", container, normalized)
                     .contentType(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -50,9 +51,5 @@ public class ContainerControlClient {
             return "ERROR: 容器 " + normalized + " 失败: "
                     + (e.getMessage() == null ? "unknown error" : e.getMessage());
         }
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 环境健康快照,供 agent 的 {@code environment_status} 工具:
@@ -34,7 +35,7 @@ public class EnvironmentStatusClient {
      */
     public String statusSummary() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/environment/services")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -87,7 +88,4 @@ public class EnvironmentStatusClient {
         }
     }
 
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
-    }
 }

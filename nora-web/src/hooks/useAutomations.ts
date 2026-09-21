@@ -6,6 +6,7 @@ import { useNotifications } from "./useNotifications";
 import { automationsApi } from "@/lib/services/automationsApi";
 import { USE_BACKEND } from "@/lib/api/client";
 import { humanizeError } from "@/lib/errorMessages";
+import { nowHm } from "@/lib/format";
 
 /** 错误 → 人话(优先按结构化分类;网关 JSON/网络异常走启发式兜底)。 */
 function friendly(e: unknown): string {
@@ -28,8 +29,6 @@ interface AutomationsState {
   retryExecution: (id: number) => void;
 }
 
-const getTime = () =>
-  new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
 /** 前端 trigger 标签 → 后端 triggerType */
 function triggerTypeFromLabel(label: string): string {
@@ -191,7 +190,7 @@ export const useAutomations = create<AutomationsState>()(
         const newExec: ExecutionRecord = {
           id: Date.now(),
           ruleName: rule.name,
-          time: getTime(),
+          time: nowHm(),
           duration: "1.2s",
           status: "success",
           detail: `${rule.action}（触发完成）`,

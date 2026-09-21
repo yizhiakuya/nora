@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 经 file-service({@code GET /api/files}、{@code GET /api/files/{id}/preview})
@@ -40,7 +41,7 @@ public class FileToolClient {
      */
     public String list() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/files")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -55,7 +56,7 @@ public class FileToolClient {
             // 文件夹名映射(拿不到就只显示 id——不阻断列表)
             Map<Long, String> folderNames = new java.util.HashMap<>();
             try {
-                Envelope<JsonNode> folders = restClient.get()
+                ApiResponse<JsonNode> folders = restClient.get()
                         .uri("/api/files/folders")
                         .accept(MediaType.APPLICATION_JSON)
                         .retrieve()
@@ -135,7 +136,7 @@ public class FileToolClient {
             wanted = wanted.substring("@center/".length());
         }
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/files")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -201,7 +202,7 @@ public class FileToolClient {
     /** 取预览元数据(不渲染;失败时 error 非空)。 */
     public PreviewInfo previewInfo(long fileId) {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/files/{id}/preview", fileId)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -246,7 +247,7 @@ public class FileToolClient {
      */
     public JsonNode meta(long id) {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/files?ids={id}", id)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -316,7 +317,7 @@ public class FileToolClient {
             org.springframework.util.LinkedMultiValueMap<String, Object> form =
                     new org.springframework.util.LinkedMultiValueMap<>();
             form.add("file", resource);
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/files/upload")
                     .contentType(MediaType.MULTIPART_FORM_DATA)
                     .body(form)
@@ -340,7 +341,7 @@ public class FileToolClient {
     /** 重命名文件(PUT /{id}/name)。 */
     public String rename(long fileId, String newName) {
         try {
-            Envelope<JsonNode> envelope = restClient.put()
+            ApiResponse<JsonNode> envelope = restClient.put()
                     .uri("/api/files/{id}/name", fileId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(java.util.Map.of("name", newName))
@@ -367,7 +368,7 @@ public class FileToolClient {
             java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("ids", fileIds);
             body.put("folderId", folderId);
-            Envelope<Integer> envelope = restClient.put()
+            ApiResponse<Integer> envelope = restClient.put()
                     .uri("/api/files/move")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
@@ -389,7 +390,7 @@ public class FileToolClient {
     public String delete(List<Long> fileIds) {
         try {
             String ids = fileIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
-            Envelope<Void> envelope = restClient.delete()
+            ApiResponse<Void> envelope = restClient.delete()
                     .uri("/api/files?ids={ids}", ids)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -407,7 +408,7 @@ public class FileToolClient {
     /** 列出文件夹(id/名称/文件数)。 */
     public String folders() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/files/folders")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -436,7 +437,7 @@ public class FileToolClient {
     /** 新建文件夹(POST /folders)。 */
     public String mkdir(String folderName) {
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/files/folders")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(java.util.Map.of("name", folderName))
@@ -466,9 +467,5 @@ public class FileToolClient {
             return String.format(java.util.Locale.ROOT, "%.1fKB", bytes / 1024.0);
         }
         return String.format(java.util.Locale.ROOT, "%.1fMB", bytes / (1024.0 * 1024));
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }

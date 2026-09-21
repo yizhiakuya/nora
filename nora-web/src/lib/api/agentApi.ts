@@ -5,6 +5,7 @@ import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";
 import type { Citation } from "@/types";
 import { parseSSEStream } from "./sse";
 import { cached, invalidateForPath } from "./requestCache";
+import { hmFromLocalIso } from "@/lib/format";
 
 /** 结构化工具结果(后端 ChatStepDto.StepResult) */
 interface StepResultPayload {
@@ -403,22 +404,8 @@ async function fetchSessionsUncached(): Promise<
   return Array.isArray(list) ? list : [];
 }
 
-/** GET /chat/sessions/{id}/messages → 完整消息历史(steps 合并后) */
-/** 后端 created_at 是本地挂钟时间的 ISO 串(无时区,如 2026-09-09T11:38:12);
- *  直接 new Date() 在部分浏览器会把无时区串按 UTC 解析,这里手动拆解保本地语义。 */
-function toHm(raw?: string): string {
-  if (!raw) return "";
-  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(raw);
-  if (m) return `${m[4]}:${m[5]}`;
-  const d = new Date(raw);
-  return isNaN(d.getTime())
-    ? ""
-    : d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
 /**
  * GET /chat/sessions/{id}/messages → 完整消息历史(steps 合并后)
- *
  * 走统一缓存：实测单次响应 123KB、被重复调用 27 次（切会话/重连各拉一遍），
  * 是本地最大的重复负载来源。历史只在发消息/截断时变化，那些写操作会失效缓存。
  */
@@ -453,7 +440,7 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     id: `${sessionId}-${i}`,
     role: m.role,
     content: m.content ?? "",
-    timestamp: toHm(m.createdAt),
+    timestamp: hmFromLocalIso(m.createdAt),
     sender: m.sender === "automation" ? "automation" as const : undefined,
     steps: (m.steps ?? []).map((s, j) => normalizeStep(s, j)),
     sources: normalizeSources(m.sources),

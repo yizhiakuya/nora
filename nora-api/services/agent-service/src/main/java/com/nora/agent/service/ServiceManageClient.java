@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nora.common.response.ApiResponse;
 
 /**
  * 管理 env-service 纳管源(FILE/DOCKER/PROC 注册表),供 agent 的
@@ -52,7 +53,7 @@ public class ServiceManageClient {
             if (containerName != null) body.put("containerName", containerName);
             if (command != null) body.put("command", command);
             if (workDir != null) body.put("workDir", workDir);
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/environment/managed")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
@@ -75,7 +76,7 @@ public class ServiceManageClient {
     /** 暂停(enabled=false)或恢复(enabled=true)纳管源。 */
     public String setEnabled(long id, boolean enabled) {
         try {
-            Envelope<JsonNode> envelope = restClient.post()
+            ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/environment/managed/{id}/enabled", id)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("enabled", enabled))
@@ -97,7 +98,7 @@ public class ServiceManageClient {
     /** 移除纳管源(不触碰容器/文件本身)。 */
     public String remove(long id) {
         try {
-            Envelope<JsonNode> envelope = restClient.delete()
+            ApiResponse<JsonNode> envelope = restClient.delete()
                     .uri("/api/environment/managed/{id}", id)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
@@ -119,7 +120,7 @@ public class ServiceManageClient {
      */
     public String list() {
         try {
-            Envelope<JsonNode> envelope = restClient.get()
+            ApiResponse<JsonNode> envelope = restClient.get()
                     .uri("/api/environment/managed")
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -150,9 +151,5 @@ public class ServiceManageClient {
             log.warn("service list failed: {}", e.getMessage());
             return "ERROR: " + e.getMessage();
         }
-    }
-
-    /** ApiResponse 信封。 */
-    record Envelope<T>(int code, T data, String message) {
     }
 }
