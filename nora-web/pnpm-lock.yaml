@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  sonner@2.0.8: d16ba3789f0caeeb0948e7f0f8293a945483e195ad933ec515ec8f386bd32acc
+
 importers:
 
   .:
@@ -64,7 +67,7 @@ importers:
         version: 4.0.1(supports-color@7.2.0)
       sonner:
         specifier: ^2.0.8
-        version: 2.0.8(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        version: 2.0.8(patch_hash=d16ba3789f0caeeb0948e7f0f8293a945483e195ad933ec515ec8f386bd32acc)(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
@@ -5972,7 +5975,7 @@ snapshots:
 
   siginfo@2.0.0: {}
 
-  sonner@2.0.8(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+  sonner@2.0.8(patch_hash=d16ba3789f0caeeb0948e7f0f8293a945483e195ad933ec515ec8f386bd32acc)(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)

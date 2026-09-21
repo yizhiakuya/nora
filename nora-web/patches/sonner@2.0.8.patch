@@ -1,0 +1,50 @@
+diff --git a/dist/index.js b/dist/index.js
+index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..86d6047b45798afa4512d94f7d0a1a68731d8ba2 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -671,7 +671,11 @@ const Toast = (props)=>{
+                 deleteToast();
+             }, remainingTime.current);
+         };
+-        if (expanded || interacting || isDocumentHidden) {
++        // Nora patch(2026-09-21):去掉「document.hidden 时暂停自动关闭」(同 index.mjs)。
++        // 内嵌预览环境(Claude Electron)会把正在显示的页面长期报成 hidden,
++        // 导致通知计时器永不恢复、消息堆在屏幕上不消失(实测挂 4 分钟+)。
++        // 自动关闭改为纯墙钟计时;悬停/拖拽暂停(expanded/interacting)保留。
++        if (expanded || interacting) {
+             pauseTimer();
+         } else {
+             startTimer();
+@@ -682,7 +686,6 @@ const Toast = (props)=>{
+         interacting,
+         toast,
+         toastType,
+-        isDocumentHidden,
+         deleteToast
+     ]);
+     React__default.default.useEffect(()=>{
+diff --git a/dist/index.mjs b/dist/index.mjs
+index c124f821a68f7070647a5a04441d0caa53689662..421cd49d34c293248d6ad9c4b9899486ebbb4ce7 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -664,7 +664,11 @@ const Toast = (props)=>{
+                 deleteToast();
+             }, remainingTime.current);
+         };
+-        if (expanded || interacting || isDocumentHidden) {
++        // Nora patch(2026-09-21):去掉「document.hidden 时暂停自动关闭」。
++        // 内嵌预览环境(Claude Electron)会把正在显示的页面长期报成 hidden,
++        // 导致通知计时器永不恢复、消息堆在屏幕上不消失(实测挂 4 分钟+)。
++        // 自动关闭改为纯墙钟计时;悬停/拖拽暂停(expanded/interacting)保留。
++        if (expanded || interacting) {
+             pauseTimer();
+         } else {
+             startTimer();
+@@ -675,7 +679,6 @@ const Toast = (props)=>{
+         interacting,
+         toast,
+         toastType,
+-        isDocumentHidden,
+         deleteToast
+     ]);
+     React.useEffect(()=>{

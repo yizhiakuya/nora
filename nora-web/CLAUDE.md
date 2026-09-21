@@ -27,10 +27,11 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - HMR 对重命名导出不可靠,报 "does not provide an export" 先整页 reload 再判断
 - Zustand persist 的 store 改字段结构时注意兼容旧 localStorage 数据
 - 链路追踪:`client.ts` 每页面会话生成 browserTraceId,随全部请求走 `X-Nora-Trace-Id`;全局错误经 `lib/errorReporter.ts` 上报 `POST /api/log/frontend`(10s 去重);500 错误消息带服务端 `[trace=…]`,可与后端日志交叉检索
+- **sonner 打了 pnpm 补丁(`patches/sonner@2.0.8.patch`,2026-09-21)**:去掉「`document.hidden` 时暂停自动关闭」——内嵌预览环境(Claude Electron)会把正在显示的页面长期报成 hidden,导致 toast 计时器永不恢复、通知堆屏不消失(实测挂 4 分钟+)。升级 sonner 时需重打补丁,或确认上游已有等价开关
 
 ## 测试
 
 ```bash
 pnpm exec tsc --noEmit
-pnpm exec vitest run   # 87 用例
+pnpm exec vitest run   # 126 用例
 ```
