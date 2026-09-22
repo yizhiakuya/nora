@@ -8,7 +8,7 @@ import { KnowledgeBase, KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
-import { createBase, fetchBases, fetchDocDetail, reindexDoc, setDocBase, setDocEnabled } from "@/lib/services/ragService";
+import { addChunk, createBase, deleteChunk, fetchBases, fetchDocDetail, reindexDoc, setChunkEnabled, setDocBase, setDocEnabled, updateChunk } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 
@@ -65,6 +65,69 @@ export function DocumentLibrary() {
   const [moving, setMoving] = useState<KnowledgeDoc | null>(null);
   const [newBaseName, setNewBaseName] = useState("");
   const [creatingBase, setCreatingBase] = useState(false);
+  /** 分段级管理(阶段 D):编辑/新增/操作中状态 */
+  const [editingChunkId, setEditingChunkId] = useState<number | null>(null);
+  const [editingChunkText, setEditingChunkText] = useState("");
+  const [addingChunk, setAddingChunk] = useState(false);
+  const [newChunkText, setNewChunkText] = useState("");
+  const [chunkBusy, setChunkBusy] = useState(false);
+
+  /** 分段操作后用返回列表原地刷新详情(避免整文档重拉)。 */
+  const applyChunks = (chunks: DocDetail["chunks"]) => {
+    setDetail((prev) => (prev ? { ...prev, chunks, doc: { ...prev.doc, chunks: chunks.length } } : prev));
+  };
+
+  const handleChunkSave = async (chunkId: number) => {
+    setChunkBusy(true);
+    try {
+      const chunks = await updateChunk(chunkId, editingChunkText);
+      applyChunks(chunks);
+      setEditingChunkId(null);
+      toast.success("分段已保存,向量已重算");
+    } catch (e) {
+      toast.error(`保存失败：${(e as Error).message}`);
+    } finally {
+      setChunkBusy(false);
+    }
+  };
+
+  const handleChunkToggle = async (chunkId: number, enabled: boolean) => {
+    setChunkBusy(true);
+    try {
+      applyChunks(await setChunkEnabled(chunkId, enabled));
+      toast.success(enabled ? "分段已启用" : "分段已停用(退出检索)");
+    } catch (e) {
+      toast.error(`操作失败：${(e as Error).message}`);
+    } finally {
+      setChunkBusy(false);
+    }
+  };
+
+  const handleChunkDelete = async (chunkId: number) => {
+    setChunkBusy(true);
+    try {
+      applyChunks(await deleteChunk(chunkId));
+      toast.success("分段已删除,剩余分段已重新编号");
+    } catch (e) {
+      toast.error(`删除失败：${(e as Error).message}`);
+    } finally {
+      setChunkBusy(false);
+    }
+  };
+
+  const handleChunkAdd = async (docId: number) => {
+    setChunkBusy(true);
+    try {
+      applyChunks(await addChunk(docId, newChunkText));
+      setAddingChunk(false);
+      setNewChunkText("");
+      toast.success("分段已添加,向量已重算");
+    } catch (e) {
+      toast.error(`添加失败：${(e as Error).message}`);
+    } finally {
+      setChunkBusy(false);
+    }
+  };
 
   const refreshBases = () => {
     if (!USE_BACKEND) return;
@@ -502,24 +565,83 @@ export function DocumentLibrary() {
           {detail && detail.chunks.length === 0 && (
             <div className="text-sm text-muted-foreground">该文档暂无分块。</div>
           )}
-          {detail?.chunks.map((c) => (
-            <div key={c.chunkIndex} className="border border-border rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-1.5 text-[10px] text-muted-foreground">
+          {detail?.chunks.map((c) => {
+            const isEditing = editingChunkId === c.id;
+            return (
+            <div key={c.id ?? c.chunkIndex} className={`border rounded-lg p-3 ${c.enabled === false ? "border-border/50 bg-muted/40" : "border-border"}`}>
+              <div className="flex items-center gap-2 mb-1.5 text-[10px] text-muted-foreground flex-wrap">
                 <span className="font-medium text-foreground">chunk #{c.chunkIndex}</span>
                 <span>· {c.length} 字</span>
                 <span>· ~{c.tokenCount} tokens</span>
+                {c.origin === "manual" && (
+                  <span className="px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300">手动</span>
+                )}
+                {c.edited && c.origin !== "manual" && (
+                  <span className="px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">已编辑</span>
+                )}
+                {c.enabled === false && (
+                  <span className="px-1.5 py-0.5 rounded border border-border bg-muted text-muted-foreground">已停用</span>
+                )}
                 {/* 父子模式标注(阶段 B):命中子块、返回父块——让用户理解检索行为 */}
                 {c.parentIndex != null && (
                   <span className="px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
                     章节 #{c.parentIndex}(命中后返回整章)
                   </span>
                 )}
+                {/* 分段级操作(阶段 D,Dify 同款) */}
+                {c.id != null && (
+                  <span className="ml-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingChunkId(c.id!); setEditingChunkText(c.content); }}
+                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                      title="编辑此分段（保存后自动重算向量）"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleChunkToggle(c.id!, c.enabled === false)}
+                      disabled={chunkBusy}
+                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+                      title={c.enabled === false ? "启用此分段" : "停用此分段（退出检索）"}
+                    >
+                      {c.enabled === false ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleChunkDelete(c.id!)}
+                      disabled={chunkBusy}
+                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-red-600 dark:hover:text-red-400 cursor-pointer disabled:opacity-50"
+                      title="删除此分段（剩余分段重新编号）"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
               </div>
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
-                {c.content}
-              </pre>
+              {isEditing ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={editingChunkText}
+                    onChange={(e) => setEditingChunkText(e.target.value)}
+                    rows={6}
+                    className="w-full px-2 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" className="h-6 text-[11px]" onClick={() => setEditingChunkId(null)}>取消</Button>
+                    <Button size="sm" className="h-6 text-[11px]" disabled={chunkBusy || !editingChunkText.trim()} onClick={() => void handleChunkSave(c.id!)}>
+                      {chunkBusy ? "保存中…" : "保存并重算向量"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
+                  {c.content}
+                </pre>
+              )}
               {/* 父块正文与子块不同时,折叠展示(默认收起,避免抽屉过长) */}
-              {c.parentContent && (
+              {c.parentContent && !isEditing && (
                 <details className="mt-2">
                   <summary className="text-[10px] text-blue-500 dark:text-blue-400 cursor-pointer hover:underline">
                     展开所属章节完整正文({c.parentContent.length} 字符)
@@ -530,7 +652,34 @@ export function DocumentLibrary() {
                 </details>
               )}
             </div>
-          ))}
+            );
+          })}
+          {/* 手动新增分段(阶段 D) */}
+          {detail && (
+            <div className="pt-1">
+              {addingChunk ? (
+                <div className="space-y-2 border border-dashed border-border rounded-lg p-3">
+                  <textarea
+                    value={newChunkText}
+                    onChange={(e) => setNewChunkText(e.target.value)}
+                    rows={4}
+                    placeholder="新分段的正文…（保存后自动重算向量并参与检索）"
+                    className="w-full px-2 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" className="h-6 text-[11px]" onClick={() => { setAddingChunk(false); setNewChunkText(""); }}>取消</Button>
+                    <Button size="sm" className="h-6 text-[11px]" disabled={chunkBusy || !newChunkText.trim()} onClick={() => void handleChunkAdd(detail.doc.id)}>
+                      {chunkBusy ? "添加中…" : "添加分段"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button variant="outline" size="sm" className="h-7 text-[11px] w-full border-dashed" onClick={() => setAddingChunk(true)}>
+                  <Plus className="w-3 h-3 mr-1" /> 手动新增分段
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </Modal>
 

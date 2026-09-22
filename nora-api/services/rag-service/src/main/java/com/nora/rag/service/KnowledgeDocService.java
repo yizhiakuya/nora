@@ -51,17 +51,48 @@ public class KnowledgeDocService {
     // ---------- 资料库(阶段 B,方案 §4) ----------
 
     /** 资料库视图(含文档数)。 */
-    public record BaseView(long id, String name, String description, boolean isDefault, long docCount) {
+    public record BaseView(long id, String name, String description, boolean isDefault, long docCount,
+                           /** 库级检索配置 JSON(阶段 D;null=用全局默认)。 */
+                           String retrievalConfig) {
+        /** 兼容构造(阶段 B 形态:无检索配置)。 */
+        public BaseView(long id, String name, String description, boolean isDefault, long docCount) {
+            this(id, name, description, isDefault, docCount, null);
+        }
     }
 
     /** 资料库列表(默认库在前)。 */
     public List<BaseView> listBases() {
         return jdbcTemplate.query(
-                "SELECT b.id, b.name, b.description, b.is_default, "
+                "SELECT b.id, b.name, b.description, b.is_default, b.retrieval_config, "
                         + "(SELECT count(*) FROM schema_rag.knowledge_doc d WHERE d.base_id = b.id AND d.deleted_at IS NULL) AS doc_count "
                         + "FROM schema_rag.knowledge_base b WHERE b.deleted_at IS NULL ORDER BY b.is_default DESC, b.id",
                 (rs, i) -> new BaseView(rs.getLong("id"), rs.getString("name"),
-                        rs.getString("description"), rs.getBoolean("is_default"), rs.getLong("doc_count")));
+                        rs.getString("description"), rs.getBoolean("is_default"), rs.getLong("doc_count"),
+                        rs.getString("retrieval_config")));
+    }
+
+    /**
+     * 保存资料库的检索配置(阶段 D;JSON 串,检索时覆盖全局默认)。
+     *
+     * @return 更新后的资料库;不存在返回 null
+     */
+    public BaseView setRetrievalConfig(long id, String config) {
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_base SET retrieval_config = ? WHERE id = ? AND deleted_at IS NULL",
+                config, id);
+        if (updated == 0) {
+            return null;
+        }
+        return listBases().stream().filter(b -> b.id() == id).findFirst().orElse(null);
+    }
+
+    /** 资料库的检索配置 JSON(null=未配置,用全局默认)。 */
+    public String retrievalConfigOf(long baseId) {
+        List<String> rows = jdbcTemplate.query(
+                "SELECT retrieval_config FROM schema_rag.knowledge_base WHERE id = ? AND deleted_at IS NULL",
+                (rs, i) -> rs.getString("retrieval_config"),
+                baseId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /** 新建资料库(重名 409)。 */
@@ -447,27 +478,148 @@ public class KnowledgeDocService {
                 trimmed, id) > 0;
     }
 
-    /** 文档的分块,按 index 序,供详情抽屉(阶段 B:带父块关系)。 */
+    /** 文档的分块,按 index 序,供详情抽屉(阶段 B:带父块关系;阶段 D:带 id/启停/编辑标记)。 */
     public List<ChunkView> listChunks(long id) {
         return jdbcTemplate.query(
-                "SELECT chunk_index, content, token_count, parent_index, parent_content FROM schema_rag.knowledge_chunk "
-                        + "WHERE doc_id = ? AND deleted_at IS NULL ORDER BY chunk_index",
+                "SELECT id, chunk_index, content, token_count, parent_index, parent_content, enabled, edited, origin "
+                        + "FROM schema_rag.knowledge_chunk WHERE doc_id = ? AND deleted_at IS NULL ORDER BY chunk_index",
                 (rs, rowNum) -> {
                     String content = rs.getString("content");
                     int parentIndex = rs.getInt("parent_index");
                     Integer parent = rs.wasNull() ? null : parentIndex;
                     String parentContent = parent == null ? null : rs.getString("parent_content");
                     return new ChunkView(
+                            rs.getLong("id"),
                             rs.getInt("chunk_index"),
                             content,
                             rs.getInt("token_count"),
                             content == null ? 0 : content.length(),
                             parent,
-                            parentContent == null || parentContent.equals(content) ? null : parentContent
+                            parentContent == null || parentContent.equals(content) ? null : parentContent,
+                            rs.getBoolean("enabled"),
+                            rs.getBoolean("edited"),
+                            rs.getString("origin")
                     );
                 },
                 id
         );
+    }
+
+    // ---------- 分段级管理(阶段 D,Dify 同款) ----------
+
+    /**
+     * 编辑分段正文(只改内容;向量由调用方重算——正文变了旧向量失效)。
+     *
+     * @return 该分段的 doc_id;分段不存在返回 null(调用方决定 404)
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Long updateChunkContent(long chunkId, String content) {
+        List<Long> docIds = jdbcTemplate.queryForList(
+                "SELECT doc_id FROM schema_rag.knowledge_chunk WHERE id = ? AND deleted_at IS NULL",
+                Long.class, chunkId);
+        if (docIds.isEmpty()) {
+            return null;
+        }
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET content = ?, edited = true, token_count = ?, embedding = NULL WHERE id = ? AND deleted_at IS NULL",
+                content, content == null ? 0 : content.length() / 4, chunkId);
+        return docIds.get(0);
+    }
+
+    /**
+     * 停用/启用分段(阶段 D):停用=退出检索(保留内容),与文档停用同语义。
+     *
+     * @return 该分段的 doc_id;分段不存在返回 null
+     */
+    public Long setChunkEnabled(long chunkId, boolean enabled) {
+        List<Long> docIds = jdbcTemplate.queryForList(
+                "SELECT doc_id FROM schema_rag.knowledge_chunk WHERE id = ? AND deleted_at IS NULL",
+                Long.class, chunkId);
+        if (docIds.isEmpty()) {
+            return null;
+        }
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET enabled = ? WHERE id = ? AND deleted_at IS NULL",
+                enabled, chunkId);
+        return docIds.get(0);
+    }
+
+    /**
+     * 删除分段(阶段 D):软删单段;剩余分段重新编号保持 0..n-1 连续。
+     *
+     * @return 该分段的 doc_id;分段不存在返回 null
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Long deleteChunk(long chunkId) {
+        List<Long> docIds = jdbcTemplate.queryForList(
+                "SELECT doc_id FROM schema_rag.knowledge_chunk WHERE id = ? AND deleted_at IS NULL",
+                Long.class, chunkId);
+        if (docIds.isEmpty()) {
+            return null;
+        }
+        long docId = docIds.get(0);
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL",
+                chunkId);
+        renumberChunks(docId);
+        refreshDocChunkCount(docId);
+        return docId;
+    }
+
+    /** 把文档的存活分段重新编号为 0..n-1(删除后保持连续)。 */
+    private void renumberChunks(long docId) {
+        List<Long> ids = jdbcTemplate.queryForList(
+                "SELECT id FROM schema_rag.knowledge_chunk WHERE doc_id = ? AND deleted_at IS NULL ORDER BY chunk_index",
+                Long.class, docId);
+        for (int i = 0; i < ids.size(); i++) {
+            jdbcTemplate.update(
+                    "UPDATE schema_rag.knowledge_chunk SET chunk_index = ? WHERE id = ?",
+                    i, ids.get(i));
+        }
+    }
+
+    /** 文档的存活分段数回写 knowledge_doc.chunks(删除/新增后保持统计一致)。 */
+    private void refreshDocChunkCount(long docId) {
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET chunks = (SELECT count(*) FROM schema_rag.knowledge_chunk WHERE doc_id = ? AND deleted_at IS NULL), updated_at = now() WHERE id = ?",
+                docId, docId);
+    }
+
+    /**
+     * 手动新增分段(阶段 D):插到文档末尾(origin=manual)。
+     *
+     * @return 新分段 id;文档不存在返回 null
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Long addChunk(long docId, String content) {
+        Integer exists = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
+                Integer.class, docId);
+        if (exists == null || exists == 0) {
+            return null;
+        }
+        Integer nextIndex = jdbcTemplate.queryForObject(
+                "SELECT coalesce(max(chunk_index) + 1, 0) FROM schema_rag.knowledge_chunk WHERE doc_id = ? AND deleted_at IS NULL",
+                Integer.class, docId);
+        Long chunkId = jdbcTemplate.queryForObject(
+                "INSERT INTO schema_rag.knowledge_chunk (doc_id, chunk_index, content, embedding, token_count, origin, edited) "
+                        + "VALUES (?, ?, ?, NULL, ?, 'manual', true) RETURNING id",
+                Long.class, docId, nextIndex, content, content == null ? 0 : content.length() / 4);
+        refreshDocChunkCount(docId);
+        return chunkId;
+    }
+
+    /** 取分段正文与所属文档(编辑后重算向量用)。 */
+    public ChunkContent chunkContent(long chunkId) {
+        List<ChunkContent> rows = jdbcTemplate.query(
+                "SELECT id, doc_id, content FROM schema_rag.knowledge_chunk WHERE id = ? AND deleted_at IS NULL",
+                (rs, i) -> new ChunkContent(rs.getLong("id"), rs.getLong("doc_id"), rs.getString("content")),
+                chunkId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** 分段正文行(编辑后重算向量用)。 */
+    public record ChunkContent(long id, long docId, String content) {
     }
 
     /**
@@ -486,6 +638,8 @@ public class KnowledgeDocService {
 
     /** 前端详情抽屉消费的单条分块。 */
     public record ChunkView(
+            /** knowledge_chunk.id(阶段 D:分段级管理的稳定标识)。 */
+            long id,
             int chunkIndex,
             String content,
             int tokenCount,
@@ -494,11 +648,23 @@ public class KnowledgeDocService {
             /** 父子模式:所属章节序号;null = 非父子模式(或旧数据)。 */
             Integer parentIndex,
             /** 父子模式:所属章节完整正文(与 content 不同才下发;供详情抽屉展开)。 */
-            String parentContent
+            String parentContent,
+            /** 分段启用状态(阶段 D;false=退出检索)。 */
+            Boolean enabled,
+            /** 人工编辑过(阶段 D;重新分段会覆盖)。 */
+            Boolean edited,
+            /** auto=自动分段;manual=手动新增。 */
+            String origin
     ) {
-        /** 兼容构造(旧调用点/测试:无父块字段)。 */
+        /** 兼容构造(旧调用点/测试:无父块与阶段 D 字段)。 */
         public ChunkView(int chunkIndex, String content, int tokenCount, int length) {
-            this(chunkIndex, content, tokenCount, length, null, null);
+            this(0, chunkIndex, content, tokenCount, length, null, null, true, false, "auto");
+        }
+
+        /** 兼容构造(阶段 B 形态:无阶段 D 字段)。 */
+        public ChunkView(int chunkIndex, String content, int tokenCount, int length,
+                         Integer parentIndex, String parentContent) {
+            this(0, chunkIndex, content, tokenCount, length, parentIndex, parentContent, true, false, "auto");
         }
     }
 

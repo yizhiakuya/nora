@@ -64,6 +64,7 @@ public class RetrievalService {
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
             WHERE c.embedding IS NOT NULL
               AND c.deleted_at IS NULL
+              AND c.enabled = true
               AND d.deleted_at IS NULL
               AND d.status = 'indexed'
               AND d.enabled = true
@@ -90,6 +91,7 @@ public class RetrievalService {
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
             WHERE c.content IS NOT NULL
               AND c.deleted_at IS NULL
+              AND c.enabled = true
               AND d.deleted_at IS NULL
               AND d.status = 'indexed'
               AND d.enabled = true
@@ -193,6 +195,60 @@ public class RetrievalService {
         return out;
     }
 
+    /**
+     * 一次检索的生效参数(阶段 D):全局默认 + 库级 retrieval_config 覆盖。
+     *
+     * <p>库配置字段(JSON,全部可选):{@code minScore} / {@code vectorWeight} /
+     * {@code keywordWeight} / {@code candidatePool} / {@code rerankEnabled}。
+     * 解析失败静默回退全局默认(坏配置不该让检索不可用)。
+     */
+    record EffectiveConfig(double minScore, int vectorWeight, int keywordWeight,
+                           int candidatePool, boolean rerankEnabled) {
+    }
+
+    /** 解析库级配置并合并全局默认(阶段 D)。 */
+    EffectiveConfig effectiveConfig(RetrievalScope scope) {
+        double minScore = properties.minScore();
+        int vectorWeight = properties.vectorWeight();
+        int keywordWeight = properties.keywordWeight();
+        int candidatePool = properties.candidatePool();
+        boolean rerankEnabled = true;
+        if (scope != null && scope.baseId() != null) {
+            try {
+                String configJson = jdbcTemplate.query(
+                        "SELECT retrieval_config FROM schema_rag.knowledge_base WHERE id = ? AND deleted_at IS NULL",
+                        (rs, i) -> rs.getString("retrieval_config"),
+                        scope.baseId()).stream().findFirst().orElse(null);
+                if (configJson != null && !configJson.isBlank()) {
+                    com.fasterxml.jackson.databind.JsonNode cfg = objectMapper.readTree(configJson);
+                    if (cfg.hasNonNull("minScore")) {
+                        minScore = cfg.path("minScore").asDouble(minScore);
+                    }
+                    if (cfg.hasNonNull("vectorWeight")) {
+                        vectorWeight = Math.max(0, cfg.path("vectorWeight").asInt(vectorWeight));
+                    }
+                    if (cfg.hasNonNull("keywordWeight")) {
+                        keywordWeight = Math.max(0, cfg.path("keywordWeight").asInt(keywordWeight));
+                    }
+                    if (cfg.hasNonNull("candidatePool")) {
+                        candidatePool = Math.max(1, cfg.path("candidatePool").asInt(candidatePool));
+                    }
+                    if (cfg.hasNonNull("rerankEnabled")) {
+                        rerankEnabled = cfg.path("rerankEnabled").asBoolean(true);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("base {} retrieval config parse failed (using global defaults): {}",
+                        scope.baseId(), e.getMessage());
+            }
+        }
+        return new EffectiveConfig(minScore, vectorWeight, keywordWeight, candidatePool, rerankEnabled);
+    }
+
+    /** 库配置解析用 ObjectMapper(纯读;线程安全)。 */
+    private static final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingService embeddingService;
     private final RetrievalProperties properties;
@@ -266,10 +322,14 @@ public class RetrievalService {
     /**
      * 带范围过滤的检索(阶段 B,方案 §6.1):范围条件同时进入两路候选查询;
      * 范围内无结果就返回无结果,不自动扩大到全部资料。
+     *
+     * <p>阶段 D:范围含 baseId 且该库配了 retrieval_config 时,配置覆盖
+     * 全局默认(阈值/权重/重排开关)——不同库可用不同检索策略。
      */
     public RetrievalOutcome searchWithStatus(String query, int topK, RetrievalScope scope) {
         long startedAt = System.currentTimeMillis();
-        int pool = Math.max(topK, properties.candidatePool());
+        EffectiveConfig cfg = effectiveConfig(scope);
+        int pool = Math.max(topK, cfg.candidatePool());
 
         // 通道 1:向量(嵌入可能失败——配错 key/网络不通/超限)
         List<RetrievalResult> vectorHits = null;
@@ -287,7 +347,7 @@ public class RetrievalService {
         }
 
         // 通道 2:关键词(独立执行——嵌入失败也照常尝试)
-        List<RetrievalResult> keywordHits = keywordSearch(query, pool, scope);
+        List<RetrievalResult> keywordHits = keywordSearch(query, pool, scope, cfg);
         RetrievalOutcome.ChannelStatus keywordStatus = keywordHits != null
                 ? RetrievalOutcome.ChannelStatus.up()
                 : RetrievalOutcome.ChannelStatus.down(
@@ -297,12 +357,13 @@ public class RetrievalService {
         }
 
         List<RetrievalResult> fused = fuse(vectorHits == null ? List.of() : vectorHits,
-                keywordHits, topK);
+                keywordHits, topK, cfg);
         // 标注命中通道与双通道原始分(预览围绕命中位置截取)
         fused = annotateChannels(fused, vectorHits == null ? List.of() : vectorHits, keywordHits, query);
-        // 可选重排(阶段 B,方案 §6.2):默认关闭;失败保留融合排序并标记降级
+        // 可选重排(阶段 B,方案 §6.2):默认关闭;失败保留融合排序并标记降级。
+        // 阶段 D:库配置可覆盖开关(per-base rerankEnabled)。
         RetrievalOutcome.RerankStatus rerankStatus = RetrievalOutcome.RerankStatus.disabled();
-        if (rerankClient.enabled() && !fused.isEmpty()) {
+        if (cfg.rerankEnabled() && rerankClient.enabled() && !fused.isEmpty()) {
             RerankClient.RerankOutcome rerankOutcome = rerankClient.rerank(query, fused);
             if (rerankOutcome.ok()) {
                 fused = rerankOutcome.results();
@@ -441,14 +502,14 @@ public class RetrievalService {
      */
     List<RetrievalResult> fuse(List<RetrievalResult> vectorHits,
                                List<RetrievalResult> keywordHits,
-                               int topK) {
+                               int topK, EffectiveConfig cfg) {
         Map<ChunkKey, Double> fused = new LinkedHashMap<>();
         Map<ChunkKey, RetrievalResult> payloads = new LinkedHashMap<>();
 
-        accumulate(vectorHits, fused, payloads, properties.vectorWeight());
-        accumulate(keywordHits, fused, payloads, properties.keywordWeight());
+        accumulate(vectorHits, fused, payloads, cfg.vectorWeight());
+        accumulate(keywordHits, fused, payloads, cfg.keywordWeight());
 
-        double floor = properties.minScore();
+        double floor = cfg.minScore();
         int dropped = 0;
         List<RetrievalResult> kept = new ArrayList<>();
 
@@ -471,7 +532,9 @@ public class RetrievalService {
 
     /** 测试接缝:两路排名融合,不做 top-K/下限裁剪。 */
     List<RetrievalResult> fuse(List<RetrievalResult> vectorHits, List<RetrievalResult> keywordHits) {
-        return fuse(vectorHits, keywordHits, Integer.MAX_VALUE);
+        return fuse(vectorHits, keywordHits, Integer.MAX_VALUE,
+                new EffectiveConfig(properties.minScore(), properties.vectorWeight(),
+                        properties.keywordWeight(), properties.candidatePool(), true));
     }
 
     private List<Map.Entry<ChunkKey, Double>> sortedByFusedScore(Map<ChunkKey, Double> fused) {
@@ -518,8 +581,8 @@ public class RetrievalService {
      * 短暂故障会永久降级到纯向量)。返回 null 表示通道失败(与"正常无命中"
      * 的空列表区分)。
      */
-    private List<RetrievalResult> keywordSearch(String query, int pool, RetrievalScope scope) {
-        if (properties.keywordWeight() <= 0) {
+    private List<RetrievalResult> keywordSearch(String query, int pool, RetrievalScope scope, EffectiveConfig cfg) {
+        if (cfg.keywordWeight() <= 0) {
             return List.of();
         }
         if (keywordDisabled && !keywordCooldownElapsed()) {
@@ -534,7 +597,7 @@ public class RetrievalService {
             // 阈值调参对关键词侧无效。set_config 走参数绑定防注入
             jdbcTemplate.queryForObject(
                     "SELECT set_config('pg_trgm.strict_word_similarity_threshold', ?, false)",
-                    String.class, String.valueOf(properties.minScore()));
+                    String.class, String.valueOf(cfg.minScore()));
             String sql = KEYWORD_SQL.replace("%SCOPE%", scopeClause(scope));
             List<RetrievalResult> hits = jdbcTemplate.query(sql, rowMapper(),
                     withScope(new Object[]{query, query}, scope, new Object[]{query, pool}));

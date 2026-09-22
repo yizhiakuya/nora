@@ -73,10 +73,10 @@ class IndexingServiceTest {
     @Test
     void indexesDocumentWithChunksAndMarksIndexed() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("doc.md"), eq("file"), eq(42L), eq("1 KB"), eq(1L), eq("plain")))
+                eq("doc.md"), eq("file"), eq(42L), eq("1 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(9L);
         List<ChunkingService.ChunkPiece> chunks = pieces("chunk one", "chunk two");
-        when(chunkingService.chunk(eq("full text"), anyString())).thenReturn(chunks);
+        when(chunkingService.chunk(eq("full text"), any(ChunkingService.ChunkConfig.class))).thenReturn(chunks);
         when(embeddingService.embedAll(List.of("chunk one", "chunk two"))).thenReturn(List.of(
                 new float[]{0.1f}, new float[]{0.2f}));
 
@@ -88,9 +88,9 @@ class IndexingServiceTest {
     @Test
     void duplicateNameDifferentSourceIdDoesNotEvictOldDoc() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("dup.txt"), eq("file"), eq(7L), eq("1 KB"), eq(1L), eq("plain")))
+                eq("dup.txt"), eq("file"), eq(7L), eq("1 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(11L);
-        when(chunkingService.chunk(eq("text b"), anyString())).thenReturn(pieces("chunk b"));
+        when(chunkingService.chunk(eq("text b"), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces("chunk b"));
         when(embeddingService.embedAll(List.of("chunk b"))).thenReturn(List.of(new float[]{0.3f}));
 
         service.indexDocument("dup.txt", "file", 7L, "1 KB", "text b");
@@ -101,9 +101,9 @@ class IndexingServiceTest {
     @Test
     void nullSourceIdDeducesByNameWithinSource() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("note.md"), eq("chat"), isNull(), eq("1 KB"), eq(1L), eq("plain")))
+                eq("note.md"), eq("chat"), isNull(), eq("1 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(5L);
-        when(chunkingService.chunk(eq("text"), anyString())).thenReturn(pieces());
+        when(chunkingService.chunk(eq("text"), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces());
 
         service.indexDocument("note.md", "chat", null, "1 KB", "text");
 
@@ -113,9 +113,9 @@ class IndexingServiceTest {
     @Test
     void nameKeyedDedupNeverTouchesOtherSources() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("dup.txt"), eq("text"), isNull(), eq("1 KB"), eq(1L), eq("plain")))
+                eq("dup.txt"), eq("text"), isNull(), eq("1 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(12L);
-        when(chunkingService.chunk(eq("x"), anyString())).thenReturn(pieces());
+        when(chunkingService.chunk(eq("x"), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces());
 
         service.indexDocument("dup.txt", "text", null, "1 KB", "x");
 
@@ -125,9 +125,9 @@ class IndexingServiceTest {
     @Test
     void emptyTextIndexesZeroChunks() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("empty.txt"), eq("file"), eq(3L), eq("0 KB"), eq(1L), eq("plain")))
+                eq("empty.txt"), eq("file"), eq(3L), eq("0 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(5L);
-        when(chunkingService.chunk(eq(""), anyString())).thenReturn(pieces());
+        when(chunkingService.chunk(eq(""), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces());
 
         long docId = service.indexDocument("empty.txt", "file", 3L, "0 KB", "");
 
@@ -137,9 +137,9 @@ class IndexingServiceTest {
     @Test
     void embeddingFailureMarksDocFailedAndRethrows() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("doc.md"), eq("file"), eq(42L), eq("1 KB"), eq(1L), eq("plain")))
+                eq("doc.md"), eq("file"), eq(42L), eq("1 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(6L);
-        when(chunkingService.chunk(eq("text"), anyString())).thenReturn(pieces("chunk one"));
+        when(chunkingService.chunk(eq("text"), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces("chunk one"));
         when(embeddingService.embedAll(List.of("chunk one")))
                 .thenThrow(new RuntimeException("jina timeout"));
         try { service.indexDocument("doc.md", "file", 42L, "1 KB", "text"); } catch (Exception ignored) { }
@@ -148,9 +148,9 @@ class IndexingServiceTest {
     @Test
     void notConfiguredFailureMarksDocFailedAndRethrowsOriginalCode() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("doc.md"), eq("file"), eq(42L), eq("1 KB"), eq(1L), eq("plain")))
+                eq("doc.md"), eq("file"), eq(42L), eq("1 KB"), eq(1L), eq("plain"), any()))
                 .thenReturn(7L);
-        when(chunkingService.chunk(eq("text"), anyString())).thenReturn(pieces("chunk one"));
+        when(chunkingService.chunk(eq("text"), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces("chunk one"));
         when(embeddingService.embedAll(any()))
                 .thenThrow(new BusinessException(500, "embedding not configured"));
         try { service.indexDocument("doc.md", "file", 42L, "1 KB", "text"); } catch (Exception ignored) { }
@@ -159,9 +159,9 @@ class IndexingServiceTest {
     @Test
     void nullSizeInsertsNullIntoDocRow() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("doc.md"), eq("file"), eq(42L), isNull(), eq(1L), eq("plain")))
+                eq("doc.md"), eq("file"), eq(42L), isNull(), eq(1L), eq("plain"), any()))
                 .thenReturn(8L);
-        when(chunkingService.chunk(eq("text"), anyString())).thenReturn(pieces());
+        when(chunkingService.chunk(eq("text"), any(ChunkingService.ChunkConfig.class))).thenReturn(pieces());
 
         service.indexDocument("doc.md", "file", 42L, null, "text");
     }
@@ -169,12 +169,12 @@ class IndexingServiceTest {
     @Test
     void parentChildModePersistsParentContext() {
         when(jdbcTemplate.queryForObject(contains("INSERT INTO schema_rag.knowledge_doc"), eq(Long.class),
-                eq("guide.md"), eq("text"), isNull(), eq("2 KB"), eq(1L), eq("parent_child")))
+                eq("guide.md"), eq("text"), isNull(), eq("2 KB"), eq(1L), eq("parent_child"), any()))
                 .thenReturn(13L);
         List<ChunkingService.ChunkPiece> chunks = List.of(
                 new ChunkingService.ChunkPiece("子块一", 0, "父章节完整正文一"),
                 new ChunkingService.ChunkPiece("子块二", 1, "父章节完整正文二"));
-        when(chunkingService.chunk(eq("guide body"), anyString())).thenReturn(chunks);
+        when(chunkingService.chunk(eq("guide body"), any(ChunkingService.ChunkConfig.class))).thenReturn(chunks);
         when(embeddingService.embedAll(List.of("子块一", "子块二"))).thenReturn(List.of(
                 new float[]{0.1f}, new float[]{0.2f}));
 

@@ -3,6 +3,7 @@ import {
   DocDetail,
   IndexStats,
   KnowledgeBase,
+  KnowledgeChunk,
   KnowledgeDoc,
   RetrievalLog,
   RetrievalOutcome,
@@ -199,6 +200,70 @@ export async function setDocBase(id: number, baseId: number | null): Promise<Kno
 export async function fetchRetrievalLogs(limit = 20): Promise<RetrievalLog[]> {
   if (!USE_BACKEND) return [];
   return requestJson<RetrievalLog[]>(`/rag/retrievals?limit=${limit}`);
+}
+
+// ==========================================
+// 阶段 D:分段管理 / 分段预览 / 库级配置
+// ==========================================
+
+/** PATCH /api/rag/chunks/{id} → 编辑分段正文（自动重算向量） */
+export async function updateChunk(chunkId: number, content: string): Promise<KnowledgeChunk[]> {
+  return requestJson<KnowledgeChunk[]>(`/rag/chunks/${chunkId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ content }),
+  });
+}
+
+/** POST /api/rag/chunks/{id}/enabled → 停用/启用分段 */
+export async function setChunkEnabled(chunkId: number, enabled: boolean): Promise<KnowledgeChunk[]> {
+  return requestJson<KnowledgeChunk[]>(`/rag/chunks/${chunkId}/enabled`, {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+/** DELETE /api/rag/chunks/{id} → 删除分段（剩余重新编号） */
+export async function deleteChunk(chunkId: number): Promise<KnowledgeChunk[]> {
+  return requestJson<KnowledgeChunk[]>(`/rag/chunks/${chunkId}`, { method: "DELETE" });
+}
+
+/** POST /api/rag/docs/{id}/chunks → 手动新增分段 */
+export async function addChunk(docId: number, content: string): Promise<KnowledgeChunk[]> {
+  return requestJson<KnowledgeChunk[]>(`/rag/docs/${docId}/chunks`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+/** 分段预览结果 */
+export interface ChunkPreview {
+  mode: string;
+  chunkSize: number;
+  overlap: number;
+  total: number;
+  chunks: { index: number; length: number; content: string; hasParent: boolean }[];
+}
+
+/** POST /api/rag/chunk-preview → 分段预览（不落库,导入前调参） */
+export async function previewChunks(input: {
+  text: string;
+  mode?: string;
+  chunkSize?: number;
+  overlap?: number;
+  separator?: string;
+}): Promise<ChunkPreview> {
+  return requestJson<ChunkPreview>("/rag/chunk-preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** PUT /api/rag/bases/{id}/retrieval-config → 库级检索配置（JSON 串） */
+export async function setBaseRetrievalConfig(id: number, config: Record<string, unknown>): Promise<KnowledgeBase> {
+  return requestJson<KnowledgeBase>(`/rag/bases/${id}/retrieval-config`, {
+    method: "PUT",
+    body: JSON.stringify({ config: JSON.stringify(config) }),
+  });
 }
 
 /** 索引统计：后端真实统计 / 本地文档推导 */

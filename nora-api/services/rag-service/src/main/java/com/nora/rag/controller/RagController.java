@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -23,6 +24,7 @@ import com.nora.common.exception.BusinessException;
 import com.nora.common.notification.NotificationPublisher;
 import com.nora.common.response.ApiResponse;
 import com.nora.rag.api.RetrievalOutcome;
+import com.nora.rag.service.ChunkingService;
 import com.nora.rag.service.IndexingService;
 import com.nora.rag.service.KnowledgeDocService;
 import com.nora.rag.service.RetrievalService;
@@ -40,10 +42,14 @@ public class RagController {
     private final RetrievalService retrievalService;
     private final KnowledgeDocService knowledgeDocService;
     private final IndexingService indexingService;
+    private final ChunkingService chunkingService;
     private final RestClient fileServiceRestClient;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
     /** 通知事件发布(可空:测试构造不接;Kafka 不可达时静默降级,2026-09-19) */
     private final NotificationPublisher notificationPublisher;
 
+    /** 测试构造(无通知发布器;Spring 用带 ChunkingService 的主构造器)。 */
     public RagController(RetrievalService retrievalService,
                          KnowledgeDocService knowledgeDocService,
                          IndexingService indexingService,
@@ -51,16 +57,30 @@ public class RagController {
         this(retrievalService, knowledgeDocService, indexingService, fileServiceRestClient, null);
     }
 
+    /** 测试构造(带通知发布器)。 */
+    public RagController(RetrievalService retrievalService,
+                         KnowledgeDocService knowledgeDocService,
+                         IndexingService indexingService,
+                         RestClient fileServiceRestClient,
+                         NotificationPublisher notificationPublisher) {
+        this(retrievalService, knowledgeDocService, indexingService, null,
+                fileServiceRestClient, notificationPublisher);
+    }
+
+    /** 主装配构造(Spring 唯一 @Autowired;ChunkingService 缺省新建=测试兼容)。 */
     @org.springframework.beans.factory.annotation.Autowired
     public RagController(RetrievalService retrievalService,
                          KnowledgeDocService knowledgeDocService,
                          IndexingService indexingService,
+                         @org.springframework.beans.factory.annotation.Autowired(required = false)
+                         ChunkingService chunkingService,
                          RestClient fileServiceRestClient,
                          @org.springframework.beans.factory.annotation.Autowired(required = false)
                          NotificationPublisher notificationPublisher) {
         this.retrievalService = retrievalService;
         this.knowledgeDocService = knowledgeDocService;
         this.indexingService = indexingService;
+        this.chunkingService = chunkingService != null ? chunkingService : new ChunkingService();
         this.fileServiceRestClient = fileServiceRestClient;
         this.notificationPublisher = notificationPublisher;
     }
@@ -332,10 +352,12 @@ public class RagController {
         }
         String name = (request.name() == null || request.name().isBlank())
                 ? "对话保存 " + java.time.LocalDate.now() : request.name();
-        // 分段模式(阶段 B):请求可带 chunkMode=parent_child(默认 plain)
+        // 分段配置(阶段 B 模式 / 阶段 D 完整参数):chunkSize/overlap/separator 可选
+        ChunkingService.ChunkConfig config = new ChunkingService.ChunkConfig(
+                request.chunkMode(), request.chunkSize(), request.overlap(), request.separator());
         long docId = indexingService.indexDocument(name, "text", null,
                 (request.text().length() / 1024) + " KB", request.text(),
-                request.chunkMode(), request.baseId());
+                config, request.baseId());
         return ApiResponse.ok(knowledgeDocService.getDoc(docId));
     }
 
@@ -419,6 +441,140 @@ public class RagController {
         return ApiResponse.ok(knowledgeDocService.getDoc(id));
     }
 
+    // ---------- 分段级管理(阶段 D,Dify 同款) ----------
+
+    /**
+     * 编辑分段正文:只改内容,向量由本端点重算(正文变了旧向量失效)。
+     *
+     * @return 更新后的分段列表(前端刷新详情抽屉)
+     */
+    @PatchMapping("/chunks/{chunkId}")
+    public ApiResponse<List<KnowledgeDocService.ChunkView>> updateChunk(@PathVariable long chunkId,
+                                                                        @RequestBody ChunkContentRequest request) {
+        if (request == null || request.content() == null || request.content().isBlank()) {
+            throw new BusinessException(400, "content is required");
+        }
+        Long docId = knowledgeDocService.updateChunkContent(chunkId, request.content());
+        if (docId == null) {
+            throw new BusinessException(404, "分段不存在: " + chunkId);
+        }
+        // 重算该段向量(单段嵌入,快);失败不阻断编辑(下次 reindex 可恢复)
+        try {
+            indexingService.reindexChunk(docId, chunkId, request.content());
+        } catch (Exception e) {
+            log.warn("chunk {} vector recompute failed (edit kept, reindex later): {}", chunkId, e.getMessage());
+        }
+        return ApiResponse.ok(knowledgeDocService.listChunks(docId));
+    }
+
+    /** 停用/启用分段(退出检索/恢复;与文档停用同语义)。 */
+    @PostMapping("/chunks/{chunkId}/enabled")
+    public ApiResponse<List<KnowledgeDocService.ChunkView>> setChunkEnabled(@PathVariable long chunkId,
+                                                                            @RequestBody EnabledRequest request) {
+        if (request == null) {
+            throw new BusinessException(400, "enabled is required");
+        }
+        Long docId = knowledgeDocService.setChunkEnabled(chunkId, request.enabled());
+        if (docId == null) {
+            throw new BusinessException(404, "分段不存在: " + chunkId);
+        }
+        return ApiResponse.ok(knowledgeDocService.listChunks(docId));
+    }
+
+    /** 删除分段(软删;剩余分段重新编号)。 */
+    @DeleteMapping("/chunks/{chunkId}")
+    public ApiResponse<List<KnowledgeDocService.ChunkView>> deleteChunk(@PathVariable long chunkId) {
+        Long docId = knowledgeDocService.deleteChunk(chunkId);
+        if (docId == null) {
+            throw new BusinessException(404, "分段不存在: " + chunkId);
+        }
+        return ApiResponse.ok(knowledgeDocService.listChunks(docId));
+    }
+
+    /** 手动新增分段(插到文档末尾;向量立即重算,失败保留待 reindex)。 */
+    @PostMapping("/docs/{id}/chunks")
+    public ApiResponse<List<KnowledgeDocService.ChunkView>> addChunk(@PathVariable long id,
+                                                                     @RequestBody ChunkContentRequest request) {
+        if (request == null || request.content() == null || request.content().isBlank()) {
+            throw new BusinessException(400, "content is required");
+        }
+        Long chunkId = knowledgeDocService.addChunk(id, request.content());
+        if (chunkId == null) {
+            throw new BusinessException(404, "知识库文档不存在: " + id);
+        }
+        try {
+            indexingService.reindexChunk(id, chunkId, request.content());
+        } catch (Exception e) {
+            log.warn("new chunk {} vector compute failed (reindex later): {}", chunkId, e.getMessage());
+        }
+        return ApiResponse.ok(knowledgeDocService.listChunks(id));
+    }
+
+    /**
+     * 分段预览(阶段 D,Dify 同款):不落库,用给定参数试切一段文本,
+     * 返回分段结果与统计——导入前调参用。
+     */
+    @PostMapping("/chunk-preview")
+    public ApiResponse<ChunkPreviewView> chunkPreview(@RequestBody ChunkPreviewRequest request) {
+        if (request == null || request.text() == null || request.text().isBlank()) {
+            throw new BusinessException(400, "text is required");
+        }
+        if (request.text().length() > 200_000) {
+            throw new BusinessException(400, "预览文本过长(上限 200,000 字符)");
+        }
+        ChunkingService.ChunkConfig config = new ChunkingService.ChunkConfig(
+                request.mode(), request.chunkSize(), request.overlap(), request.separator());
+        List<ChunkingService.ChunkPiece> pieces = chunkingService.chunk(request.text(), config);
+        List<ChunkPreviewItem> items = new java.util.ArrayList<>();
+        for (int i = 0; i < Math.min(pieces.size(), 50); i++) {
+            ChunkingService.ChunkPiece p = pieces.get(i);
+            items.add(new ChunkPreviewItem(i, p.content().length(), p.content(),
+                    p.parentIndex() != null));
+        }
+        return ApiResponse.ok(new ChunkPreviewView(
+                config.normalized().mode(), config.normalized().chunkSize(), config.normalized().overlap(),
+                pieces.size(), items));
+    }
+
+    /** POST /api/rag/chunk-preview 请求体。 */
+    public record ChunkPreviewRequest(String text, String mode, Integer chunkSize,
+                                      Integer overlap, String separator) {
+    }
+
+    /** 分段预览结果(前 50 段正文 + 总数;不落库)。 */
+    public record ChunkPreviewView(String mode, int chunkSize, int overlap, int total,
+                                   List<ChunkPreviewItem> chunks) {
+    }
+
+    /** 预览的单个分段。 */
+    public record ChunkPreviewItem(int index, int length, String content, boolean hasParent) {
+    }
+
+    // ---------- 库级检索配置(阶段 D,Dify 同款) ----------
+
+    /**
+     * 保存资料库的检索配置(JSON:{mode,topK,minScore,vectorWeight,keywordWeight,rerankEnabled})。
+     * 配置在检索时覆盖全局默认——不同库可用不同策略。
+     */
+    @PutMapping("/bases/{id}/retrieval-config")
+    public ApiResponse<KnowledgeDocService.BaseView> setBaseRetrievalConfig(@PathVariable long id,
+                                                                            @RequestBody RetrievalConfigRequest request) {
+        if (request == null || request.config() == null || request.config().isBlank()) {
+            throw new BusinessException(400, "config is required");
+        }
+        // 校验是合法 JSON(避免存进去在检索时才炸)
+        try {
+            objectMapper.readTree(request.config());
+        } catch (Exception e) {
+            throw new BusinessException(400, "config 必须是合法 JSON: " + e.getMessage());
+        }
+        KnowledgeDocService.BaseView view = knowledgeDocService.setRetrievalConfig(id, request.config());
+        if (view == null) {
+            throw new BusinessException(404, "资料库不存在: " + id);
+        }
+        return ApiResponse.ok(view);
+    }
+
     /** 文档及其分块(前端详情抽屉)。 */
     public record DocDetailView(
             KnowledgeDocService.KnowledgeDocView doc,
@@ -468,10 +624,16 @@ public class RagController {
     }
 
     /** POST /api/rag/index/text 请求体(阶段 B:可带 chunkMode 与 baseId)。 */
-    public record TextIndexRequest(String name, String text, String chunkMode, Long baseId) {
+    public record TextIndexRequest(String name, String text, String chunkMode, Long baseId,
+                                   Integer chunkSize, Integer overlap, String separator) {
         /** 兼容构造(阶段 A 调用方)。 */
         public TextIndexRequest(String name, String text) {
-            this(name, text, null, null);
+            this(name, text, null, null, null, null, null);
+        }
+
+        /** 兼容构造(阶段 B 形态:模式 + 库)。 */
+        public TextIndexRequest(String name, String text, String chunkMode, Long baseId) {
+            this(name, text, chunkMode, baseId, null, null, null);
         }
     }
 
@@ -503,6 +665,14 @@ public class RagController {
 
     /** POST /api/rag/docs/{id}/base 请求体(阶段 B 移库)。 */
     public record BaseMoveRequest(Long baseId) {
+    }
+
+    /** PATCH /api/rag/chunks/{id} 与 POST /api/rag/docs/{id}/chunks 请求体(阶段 D)。 */
+    public record ChunkContentRequest(String content) {
+    }
+
+    /** PUT /api/rag/bases/{id}/retrieval-config 请求体(阶段 D;config 为 JSON 串)。 */
+    public record RetrievalConfigRequest(String config) {
     }
 
     /** file-service 预览响应子集(ApiResponse 信封的 {@code data})。 */

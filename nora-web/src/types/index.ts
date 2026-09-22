@@ -89,13 +89,15 @@ export interface KnowledgeDoc {
   chunkMode?: string | null;
 }
 
-/** 资料库分组（阶段 B） */
+/** 资料库分组（阶段 B;阶段 D 加库级检索配置） */
 export interface KnowledgeBase {
   id: number;
   name: string;
   description: string | null;
   isDefault: boolean;
   docCount: number;
+  /** 库级检索配置 JSON 串（阶段 D;null=用全局默认）。 */
+  retrievalConfig?: string | null;
 }
 
 /** 检索记录（阶段 B;「为什么找不到」回溯） */
@@ -167,6 +169,8 @@ export interface RetrievalOutcome {
 
 /** 文档的一个分块(详情抽屉展示) */
 export interface KnowledgeChunk {
+  /** knowledge_chunk.id（阶段 D:分段级管理的稳定标识）。 */
+  id?: number;
   chunkIndex: number;
   content: string;
   tokenCount: number;
@@ -176,6 +180,12 @@ export interface KnowledgeChunk {
   parentIndex?: number | null;
   /** 父子模式:所属章节完整正文(供详情抽屉展开)。 */
   parentContent?: string | null;
+  /** 分段启用状态（阶段 D;false=退出检索）。 */
+  enabled?: boolean;
+  /** 人工编辑过（阶段 D;重新分段会覆盖）。 */
+  edited?: boolean;
+  /** auto=自动分段;manual=手动新增。 */
+  origin?: string;
 }
 
 /** GET /api/rag/docs/{id} 的返回:文档 + 它的 chunk 正文 */

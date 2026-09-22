@@ -88,21 +88,36 @@ public class IndexingService {
      */
     public long indexDocument(String name, String source, Long sourceId, String size, String text,
                               String chunkMode, Long baseId) {
-        String mode = chunkMode == null || chunkMode.isBlank() ? ChunkingService.MODE_PLAIN : chunkMode;
+        return indexDocument(name, source, sourceId, size, text,
+                new ChunkingService.ChunkConfig(chunkMode, null, null, null), baseId);
+    }
+
+    /**
+     * 带完整分段配置的索引(阶段 D,Dify 同款可调参数)。
+     *
+     * <p>分段参数快照存 {@code knowledge_doc.chunk_config}(重新分段时可换);
+     * 越界参数由 {@link ChunkingService.ChunkConfig#normalized()} 规范化。
+     */
+    public long indexDocument(String name, String source, Long sourceId, String size, String text,
+                              ChunkingService.ChunkConfig chunkConfig, Long baseId) {
+        ChunkingService.ChunkConfig cfg = chunkConfig == null
+                ? ChunkingService.ChunkConfig.DEFAULT : chunkConfig.normalized();
+        String mode = cfg.mode();
+        String configJson = toConfigJson(cfg);
         Long targetBase = baseId != null ? baseId : defaultBaseId();
         // 阶段 1(短事务):插入 processing 新行,并清理同键的旧 failed 行
         // (它们已被本次构建取代;旧 indexed 行保留到发布切换,先构建后发布)。
         Long docId = txTemplate.execute(txStatus -> {
             softDeleteStaleFailedRows(source, sourceId, name, targetBase);
             return jdbcTemplate.queryForObject(
-                    "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size, base_id, chunk_mode) VALUES (?, ?, ?, 'processing', ?, ?, ?) RETURNING id",
-                    Long.class, name, source, sourceId, size, targetBase, mode);
+                    "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size, base_id, chunk_mode, chunk_config) VALUES (?, ?, ?, 'processing', ?, ?, ?, ?) RETURNING id",
+                    Long.class, name, source, sourceId, size, targetBase, mode, configJson);
         });
         if (docId == null) {
             throw new BusinessException(500, "failed to create knowledge_doc");
         }
 
-        List<ChunkingService.ChunkPiece> pieces = chunkingService.chunk(text, mode);
+        List<ChunkingService.ChunkPiece> pieces = chunkingService.chunk(text, cfg);
         if (pieces.isEmpty()) {
             // 空文本:无块可嵌入,直接发布(0 块)。
             try {
@@ -267,6 +282,22 @@ public class IndexingService {
      * @return 重建的块数
      * @throws BusinessException 嵌入未配置或失败时
      */
+    /**
+     * 重算单个分段的向量(阶段 D:分段编辑/手动新增后调用)。
+     *
+     * <p>不经过发布流程:分段已存在(或刚插入),只更新它的 embedding。
+     * 嵌入失败上抛,调用方决定"编辑保留、稍后 reindex 恢复"。
+     */
+    public void reindexChunk(long docId, long chunkId, String content) {
+        List<float[]> vectors = embeddingService.embedAll(List.of(content));
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_chunk SET embedding = ?::vector, token_count = ? WHERE id = ? AND doc_id = ? AND deleted_at IS NULL",
+                RetrievalService.toPgVectorLiteral(vectors.get(0)),
+                content == null ? 0 : content.length() / 4,
+                chunkId, docId);
+        log.info("Re-embedded chunk {} of doc {}", chunkId, docId);
+    }
+
     public int reindexChunks(long docId, List<String> texts) {
         if (texts == null || texts.isEmpty()) {
             txTemplate.executeWithoutResult(tx -> jdbcTemplate.update(
@@ -353,6 +384,21 @@ public class IndexingService {
         jdbcTemplate.update(
                 "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', error = NULL, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                 chunkCount, docId);
+    }
+
+    /** 分段配置 → JSON 快照(chunk_config 列;手写避免再引 ObjectMapper 依赖注入)。 */
+    private static String toConfigJson(ChunkingService.ChunkConfig cfg) {
+        StringBuilder sb = new StringBuilder(120);
+        sb.append("{\"mode\":\"").append(cfg.mode()).append('"')
+          .append(",\"chunkSize\":").append(cfg.chunkSize())
+          .append(",\"overlap\":").append(cfg.overlap());
+        if (cfg.separator() != null) {
+            // 简单转义:引号/反斜杠/换行(分隔符一般很短)
+            String sep = cfg.separator().replace("\\", "\\\\").replace("\"", "\\\"")
+                    .replace("\n", "\\n").replace("\r", "\\r");
+            sb.append(",\"separator\":\"").append(sep).append('"');
+        }
+        return sb.append('}').toString();
     }
 
     /** 默认资料库 id(缓存;迁移保证存在)。 */
