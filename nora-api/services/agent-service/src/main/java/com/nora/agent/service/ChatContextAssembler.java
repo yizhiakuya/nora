@@ -599,12 +599,24 @@ class ChatContextAssembler {
         if (!citations.isEmpty()) {
             sb.append("\n以下是知识库检索到的相关片段：\n");
             for (CitationDto c : citations) {
+                // 2026-09-22(阶段 A):注入**完整块正文**(evidence),不再用
+                // 500 字符截断的 snippet——答案在块后半段时此前「命中却无法回答」。
+                // 单块证据上限 4K 字符(防单个超大块挤占上下文预算);截断时
+                // 附可操作提示,让模型知道内容不完整。
+                String body = c.evidence();
+                if (body != null && body.length() > EVIDENCE_CHARS) {
+                    body = body.substring(0, EVIDENCE_CHARS)
+                            + "\n…[该片段已截断,共 " + c.evidence().length() + " 字符]";
+                }
                 sb.append("[[").append(c.docName()).append("#chunk").append(c.chunkIndex())
-                        .append("]] ").append(c.snippet()).append('\n');
+                        .append("]] ").append(body).append('\n');
             }
         }
         return new SystemPromptResult(sb.toString(), workspaceBootstrap, skillCatalog);
     }
+
+    /** 单块注入证据上限(字符):完整块正文的封顶,防超大块挤占预算。 */
+    private static final int EVIDENCE_CHARS = 4_000;
 
     /** 系统提示文本 + 注入元数据(下发「注入上下文」步骤用;null = 该来源未注入)。 */
     record SystemPromptResult(String text,

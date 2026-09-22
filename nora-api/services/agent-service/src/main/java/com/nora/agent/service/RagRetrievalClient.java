@@ -28,15 +28,19 @@ public class RagRetrievalClient {
     }
 
     /**
-     * 在知识库中检索与查询相关的块。
+     * 在知识库中检索与查询相关的块(2026-09-22 阶段 A:带通道状态)。
+     *
+     * <p>此前检索异常折叠为空列表——「检索坏了」表现为「资料里没有」。
+     * 现在返回 {@link RetrievalPayload}:status + 通道状态 + 命中;
+     * 调用方(编排层)可把 degraded/unavailable 显式下发。
      *
      * @param query 自然语言查询
      * @param topK  最大块数
-     * @return 带分引用,最优在前;rag-service 不可用时为空
+     * @return 结果集;rag-service 不可用时 status=unavailable(绝不静默为空)
      */
-    public List<CitationDto> search(String query, int topK) {
+    public RetrievalPayload searchWithStatus(String query, int topK) {
         try {
-            ApiResponse<List<CitationDto>> envelope = restClient.post()
+            ApiResponse<RetrievalPayload> envelope = restClient.post()
                     .uri("/api/rag/search")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new SearchBody(query, topK))
@@ -46,17 +50,80 @@ public class RagRetrievalClient {
             if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
                 log.warn("rag-service search returned no usable payload for query '{}' (envelope={})",
                         query, envelope == null ? "null" : envelope.code());
-                return List.of();
+                return RetrievalPayload.unavailable("rag-service 返回异常: "
+                        + (envelope == null ? "空响应" : envelope.message()));
             }
             return envelope.data();
         } catch (Exception e) {
             log.warn("rag-service search failed for query '{}': {}", query, e.getMessage());
-            return List.of();
+            return RetrievalPayload.unavailable("rag-service 不可达: " + e.getMessage());
         }
+    }
+
+    /**
+     * 兼容入口(旧调用方):只要命中列表;异常时为空。
+     */
+    public List<CitationDto> search(String query, int topK) {
+        return searchWithStatus(query, topK).resultsOrEmpty();
     }
 
     /** POST /api/rag/search 请求体。 */
     record SearchBody(String query, Integer topK) {
+    }
+
+    /**
+     * rag-service 检索结果载荷(RetrievalOutcome 的消费侧镜像)。
+     *
+     * @param status  ok/no_match/degraded/unavailable
+     * @param results 命中(最优在前)
+     * @param vector  向量通道状态(ok/error 原因)
+     * @param keyword 关键词通道状态
+     */
+    public record RetrievalPayload(
+            String status,
+            List<CitationDto> results,
+            ChannelStatus vector,
+            ChannelStatus keyword
+    ) {
+        /** 单通道状态镜像。 */
+        public record ChannelStatus(boolean ok, String error) {
+        }
+
+        static RetrievalPayload unavailable(String reason) {
+            return new RetrievalPayload("unavailable", List.of(),
+                    new ChannelStatus(false, reason), new ChannelStatus(false, reason));
+        }
+
+        /** 命中列表;null 时为空。 */
+        public List<CitationDto> resultsOrEmpty() {
+            return results == null ? List.of() : results;
+        }
+
+        /** 是否全部通道不可用(调用方据此显示「检索暂不可用」)。 */
+        public boolean unavailable() {
+            return "unavailable".equals(status);
+        }
+
+        /** 是否降级(部分通道失败)。 */
+        public boolean degraded() {
+            return "degraded".equals(status);
+        }
+
+        /** 降级原因摘要(用户可见;无降级时 null)。 */
+        public String degradedReason() {
+            if (!degraded() && !unavailable()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            if (vector != null && !vector.ok() && vector.error() != null) {
+                sb.append("向量通道: ").append(vector.error());
+            }
+            if (keyword != null && !keyword.ok() && keyword.error() != null) {
+                if (sb.length() > 0) sb.append(";");
+                sb.append("关键词通道: ").append(keyword.error());
+            }
+            return sb.length() == 0 ? "部分检索通道不可用" : sb.toString();
+        }
     }
 
     /**

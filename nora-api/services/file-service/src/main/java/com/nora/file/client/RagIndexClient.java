@@ -95,16 +95,23 @@ public class RagIndexClient {
         };
         long version = 1;
         try {
-            // upsert:每文件一行;目标状态与版本同事务推进(version 单调 +1)
+            // 版本号来自独立计数器表(2026-09-22 阶段 A,方案 §5.4):此前版本
+            // 存在 pending 行上,送达成功删行后下次从 1 重来——「删除→恢复→
+            // 删除」的第 2、3 次通知被 rag 侧按「不更大」拒绝(实测 applied 停在 1)。
+            // 现在先原子分配全局单调版本,再 upsert 投递队列(version 只是本次快照)。
+            version = jdbcTemplate.queryForObject(
+                    "INSERT INTO file_lifecycle_version (file_id, next_version) VALUES (?, 2) "
+                            + "ON CONFLICT (file_id) DO UPDATE SET next_version = file_lifecycle_version.next_version + 1, updated_at = now() "
+                            + "RETURNING next_version - 1",
+                    Long.class, fileId);
+            // upsert:每文件一行;目标状态与版本同事务推进
             jdbcTemplate.update(
                     "INSERT INTO pending_rag_sync (file_id, mode, desired_state, version, attempts, next_attempt_at) "
-                            + "VALUES (?, ?, ?, 1, 0, now()) "
+                            + "VALUES (?, ?, ?, ?, 0, now()) "
                             + "ON CONFLICT (file_id) DO UPDATE SET mode = EXCLUDED.mode, "
-                            + "desired_state = EXCLUDED.desired_state, version = pending_rag_sync.version + 1, "
+                            + "desired_state = EXCLUDED.desired_state, version = EXCLUDED.version, "
                             + "attempts = 0, next_attempt_at = now(), last_error = NULL",
-                    fileId, mode, desired);
-            version = jdbcTemplate.queryForObject(
-                    "SELECT version FROM pending_rag_sync WHERE file_id = ?", Long.class, fileId);
+                    fileId, mode, desired, version);
         } catch (Exception e) {
             // 落库失败(极少):退回纯发后即忘,不阻断调用方
             log.warn("failed to persist pending rag sync for file {} mode {}: {}", fileId, mode, e.getMessage());

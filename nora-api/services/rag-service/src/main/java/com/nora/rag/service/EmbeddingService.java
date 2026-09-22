@@ -84,13 +84,18 @@ public class EmbeddingService {
     /**
      * 一次 provider 调用嵌入一批文本。
      *
+     * <p><b>自动分批(2026-09-22,阶段 A):</b>大批量(如 50 万字符文档 ≈ 278 块
+     * ≈ 27.8 万 tokens)一次性提交会撞 provider 的速率限制(实测 Jina
+     * 10 万 tokens/分钟 → 502 "Token rate limit exceeded")。按
+     * {@link #EMBED_BATCH_SIZE} 块分批提交,批间保持缓存语义。
+     *
      * @throws BusinessException 未配置 API key 时 "embedding not configured"
      */
     public List<float[]> embedAll(List<String> texts) {
         if (!properties.configured()) {
             throw new BusinessException(500, "embedding not configured");
         }
-        // 缓存命中项直接取;未命中项合并成一次 provider 调用(保持原批量语义)
+        // 缓存命中项直接取;未命中项合并成批量调用(保持原批量语义)
         List<float[]> out = new ArrayList<>(java.util.Collections.nCopies(texts.size(), null));
         List<Integer> misses = new ArrayList<>();
         for (int i = 0; i < texts.size(); i++) {
@@ -102,17 +107,83 @@ public class EmbeddingService {
             }
         }
         if (!misses.isEmpty()) {
-            List<String> missTexts = misses.stream().map(texts::get).toList();
-            List<Embedding> embeddings = model().embedAll(
-                    missTexts.stream().map(dev.langchain4j.data.segment.TextSegment::from).toList()
-            ).content();
-            for (int j = 0; j < misses.size(); j++) {
-                float[] vector = embeddings.get(j).vector();
-                out.set(misses.get(j), vector);
-                cachePut(missTexts.get(j), vector);
+            // 分批:每批最多 EMBED_BATCH_SIZE 块(大文档不再单次烧穿速率配额);
+            // 撞限速时退避重试(见 embedBatchWithRetry)
+            for (int from = 0; from < misses.size(); from += EMBED_BATCH_SIZE) {
+                int to = Math.min(from + EMBED_BATCH_SIZE, misses.size());
+                List<Integer> batch = misses.subList(from, to);
+                List<String> batchTexts = batch.stream().map(texts::get).toList();
+                List<Embedding> embeddings = embedBatchWithRetry(batchTexts);
+                for (int j = 0; j < batch.size(); j++) {
+                    float[] vector = embeddings.get(j).vector();
+                    out.set(batch.get(j), vector);
+                    cachePut(batchTexts.get(j), vector);
+                }
             }
         }
         return out;
+    }
+
+    /**
+     * 单次 provider 调用的最大块数。
+     *
+     * <p>取值依据:Jina 速率限制 10 万 tokens/分钟;块按 ~1000 tokens 估,
+     * 40 块 ≈ 4 万 tokens 留出安全余量(多文档并发索引时仍不叠加超限)。
+     */
+    static final int EMBED_BATCH_SIZE = 40;
+
+    /** 撞速率限制时的退避重试次数。 */
+    static final int RATE_LIMIT_MAX_RETRIES = 3;
+
+    /**
+     * 单批嵌入,撞速率限制时退避重试(2026-09-22,阶段 A)。
+     *
+     * <p>限速是**每分钟滚动窗口**——大文档(如 50 万字符 ≈ 278 块)即使分批,
+     * 总量也可能超出单分钟配额;不退避的话索引直接失败,用户要手等 1 分钟
+     * 再重试。这里识别 provider 的限速错误(消息含 rate limit / 429),
+     * 按 30s 递增退避(30/60/90s),最多 {@link #RATE_LIMIT_MAX_RETRIES} 次;
+     * 其它错误立即上抛(不掩盖真实故障)。
+     */
+    private List<Embedding> embedBatchWithRetry(List<String> batchTexts) {
+        RuntimeException last = null;
+        for (int attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
+            try {
+                return model().embedAll(
+                        batchTexts.stream().map(dev.langchain4j.data.segment.TextSegment::from).toList()
+                ).content();
+            } catch (RuntimeException e) {
+                if (!isRateLimited(e) || attempt == RATE_LIMIT_MAX_RETRIES) {
+                    throw e;
+                }
+                last = e;
+                long waitMs = 30_000L * (attempt + 1);
+                log.warn("embedding rate limited, backing off {}s before retry {}/{}: {}",
+                        waitMs / 1000, attempt + 1, RATE_LIMIT_MAX_RETRIES, e.getMessage());
+                try {
+                    Thread.sleep(waitMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+        throw last == null ? new IllegalStateException("embedding retry exhausted") : last;
+    }
+
+    /** 是否 provider 速率限制(消息启发式:Jina/OpenAI 兼容均含 rate limit / 429)。 */
+    private static boolean isRateLimited(Throwable e) {
+        Throwable cur = e;
+        while (cur != null) {
+            String message = cur.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase();
+                if (lower.contains("rate limit") || lower.contains("rate_limit") || lower.contains("429")) {
+                    return true;
+                }
+            }
+            cur = cur.getCause();
+        }
+        return false;
     }
 
     /** 从 Redis 缓存读一个向量;禁用/不可达/缺失时为空。 */

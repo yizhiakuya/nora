@@ -38,6 +38,18 @@ public class KnowledgeManageClient {
      * @param topK  最大结果数(1-20,默认 8)
      * @return 面向 LLM 的命中列表;无命中给可操作提示
      */
+    /**
+     * 主动语义检索(与自动注入同一检索通道,可换关键词/调 topK 重查)。
+     *
+     * <p>2026-09-22(阶段 A):rag-service 返回带通道状态的结果集——
+     * unavailable/degraded 明确告知模型(不要把自己的检索故障说成「资料里没有」);
+     * 证据用完整 content(单块上限 1500 字符,防超大块挤占工具结果预算),
+     * 而不是旧版 500 字符截断的 snippet。
+     *
+     * @param query 自然语言查询
+     * @param topK  最大结果数(1-20,默认 8)
+     * @return 面向 LLM 的命中列表;无命中/降级给可操作提示
+     */
     public String search(String query, int topK) {
         try {
             int safeTopK = Math.max(1, Math.min(topK, 20));
@@ -48,24 +60,49 @@ public class KnowledgeManageClient {
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
                     });
-            if (envelope == null || envelope.code() != 0 || envelope.data() == null || !envelope.data().isArray()) {
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
                 return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
             }
-            if (envelope.data().isEmpty()) {
-                return "(无命中)知识库中没有与「" + query + "」相关的片段——可换更具体的关键词重试,"
+            JsonNode payload = envelope.data();
+            String status = payload.path("status").asText("ok");
+            JsonNode results = payload.path("results");
+            if ("unavailable".equals(status)) {
+                return "ERROR: 知识库检索暂不可用(全部检索通道失败)——这是服务故障,"
+                        + "不是「资料里没有」;请如实告知用户检索服务异常,稍后重试。";
+            }
+            if (results.isMissingNode() || !results.isArray() || results.isEmpty()) {
+                String prefix = "degraded".equals(status)
+                        ? "(部分通道降级)按当前可用通道未找到相关片段——"
+                        : "(无命中)知识库中没有与「" + query + "」相关的片段——";
+                return prefix + "可换更具体的关键词重试,"
                         + "或用 manage_knowledge action=list 确认文档是否已入库";
             }
-            StringBuilder sb = new StringBuilder("知识库命中(共 " + envelope.data().size() + " 块,最优在前):\n");
-            for (JsonNode n : envelope.data()) {
+            StringBuilder sb = new StringBuilder("知识库命中(共 " + results.size() + " 块,最优在前"
+                    + ("degraded".equals(status) ? ";部分检索通道降级,结果可能不全" : "") + "):\n");
+            for (JsonNode n : results) {
                 sb.append("- [").append(n.path("docName").asText("?")).append("#")
-                        .append(n.path("chunkIndex").asInt()).append("] 分=")
-                        .append(String.format("%.3f", n.path("score").asDouble()))
-                        .append('\n').append("  ").append(n.path("snippet").asText("")).append('\n');
+                        .append(n.path("chunkIndex").asInt());
+                if (n.hasNonNull("chunkId")) {
+                    sb.append(" chunkId=").append(n.path("chunkId").asLong());
+                }
+                sb.append("] 分=").append(String.format("%.3f", n.path("score").asDouble()));
+                String channel = n.path("matchChannel").asText("");
+                if (!channel.isBlank()) {
+                    sb.append(" 命中=").append(channel);
+                }
+                sb.append('\n').append("  ");
+                // 完整证据(单块上限 1500 字符;旧版只有 500 字符 snippet)
+                String content = n.path("content").asText(n.path("snippet").asText(""));
+                if (content.length() > 1500) {
+                    content = content.substring(0, 1500) + "…(已截断,共 " + content.length() + " 字符)";
+                }
+                sb.append(content).append('\n');
             }
             return sb.toString().stripTrailing();
         } catch (Exception e) {
             log.warn("knowledge search failed: {}", e.getMessage());
-            return "ERROR: " + e.getMessage();
+            return "ERROR: 知识库检索失败: " + e.getMessage()
+                    + "(这是服务故障,不是「资料里没有」)";
         }
     }
 

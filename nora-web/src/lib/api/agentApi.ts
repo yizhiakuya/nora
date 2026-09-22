@@ -133,6 +133,11 @@ function normalizeSources(sources: Citation[] | undefined): Citation[] | undefin
     chunkIndex: source?.chunkIndex ?? 0,
     score: source?.score ?? 0,
     snippet: source?.snippet ?? "",
+    // 阶段 A 字段透传(稳定块标识/命中通道);旧历史消息为 undefined
+    chunkId: source?.chunkId ?? null,
+    matchChannel: source?.matchChannel ?? null,
+    vectorScore: source?.vectorScore ?? null,
+    keywordScore: source?.keywordScore ?? null,
   }));
 }
 

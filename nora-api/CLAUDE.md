@@ -4,6 +4,16 @@
 
 gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(8085) / automation(8086) / notification(8087)
 
+## rag-service(知识库检索,2026-09-22 阶段 A 改造)
+
+- **先构建后发布**:`indexDocument` 不再先删旧版——新行 processing(不动旧版)→ 分块正文先落库(嵌入失败可 `reindex` 恢复,不必重新上传)→ 嵌入 HTTP → 短事务**原子发布**(软删同键旧行 + 置 indexed)。发布守卫:构建期间行被生命周期软删时跳过发布并把状态收尾为 failed(V8 迁移把唯一索引收窄到只对 indexed 行生效)
+- **完整证据与预览分离**:`RetrievalResult.content` 是完整块正文(注入系统提示,单块 4K 封顶);`snippet` 是列表预览(围绕查询词命中位置截取,拆词定位);`chunkId` 稳定块标识;`matchChannel`/`vectorScore`/`keywordScore` 双通道细分。此前只注入 500 字符截断的 snippet——答案在块后半段时「命中却无法回答」
+- **通道独立与降级可见**:`RetrievalOutcome{status,results,vector,keyword}`——ok/no_match/degraded/unavailable;向量失败不阻断关键词;关键词通道失败 60s 冷却后自动重试(不再永久降级到重启);编排层把 degraded/unavailable 作为步骤事件下发,绝不把「检索坏了」折叠成「资料里没有」
+- **解析诊断**:Tika 提取返回 ok/empty/truncated/error(超限用 StringWriter+WriteOutContentHandler 拿部分内容,实测 BodyContentHandler 超限时已写内容不可达);`knowledge_doc.error/warning` 两列(V9),前端文档库显示失败原因与截断告警
+- **嵌入分批+退避**:`embedAll` 按 40 块分批(Jina 限速 10 万 tokens/分钟);撞 rate limit 按 30s 递增退避重试 3 次(50 万字符大文档实测单次提交烧穿配额)
+- **生命周期版本单调**:版本号存 `file_lifecycle_version` 计数表(file-service V8)——此前版本在 pending 行上、送达删除后从 1 重来,「删除→恢复→删除」第 2/3 步被 rag 侧拒绝(实测 applied 停在 1);rag 侧版本确认+状态变化同事务(`applyLifecycle`)
+- **批量删除修复**:`deleteDocs` 的 `IN (?)` 改占位符展开(此前传 List 给单占位符,PG 报 bad SQL grammar——单测 mock 掩盖,真实批量删除全失败)
+
 ## file-service(文件中心=统一文件系统入口,2026-09-17)
 
 - **架构原则**:所有文件相关能力(存储/缓存/组织/流转)都归这里或经这里——根 CLAUDE.md「核心架构原则」;新文件能力先想"它在这个体系里是什么"(文件夹/流转通道),不要另建存储

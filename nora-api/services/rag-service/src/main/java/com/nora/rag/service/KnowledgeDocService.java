@@ -30,7 +30,7 @@ public class KnowledgeDocService {
     /** 全部知识文档,最新在前,按前端 KnowledgeDoc 类型塑形。 */
     public List<KnowledgeDocView> listDocs() {
         return jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
+                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id, error, warning FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
                 (rs, rowNum) -> new KnowledgeDocView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -40,15 +40,29 @@ public class KnowledgeDocService {
                         rs.getString("size"),
                         format(rs.getTimestamp("updated_at")),
                         rs.getInt("quality"),
-                        rs.getObject("source_id") == null ? null : rs.getLong("source_id")
+                        rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
+                        rs.getString("error"),
+                        rs.getString("warning")
                 )
         );
     }
 
+    /**
+     * 记一条非致命解析告警(阶段 A:超限截断等;文档仍可检索)。
+     *
+     * @param id      文档 id
+     * @param warning 告警文案
+     */
+    public void setWarning(long id, String warning) {
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET warning = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+                warning == null ? null : (warning.length() > 2000 ? warning.substring(0, 2000) : warning),
+                id);
+    }
+
     /** 按 id 取单文档(索引端点响应用)。 */
-    public KnowledgeDocView getDoc(long id) {
-        List<KnowledgeDocView> docs = jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
+    public KnowledgeDocView getDoc(long id) {        List<KnowledgeDocView> docs = jdbcTemplate.query(
+                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id, error, warning FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
                 (rs, rowNum) -> new KnowledgeDocView(
                         rs.getLong("id"),
                         rs.getString("name"),
@@ -58,7 +72,9 @@ public class KnowledgeDocService {
                         rs.getString("size"),
                         format(rs.getTimestamp("updated_at")),
                         rs.getInt("quality"),
-                        rs.getObject("source_id") == null ? null : rs.getLong("source_id")
+                        rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
+                        rs.getString("error"),
+                        rs.getString("warning")
                 ),
                 id
         );
@@ -98,13 +114,17 @@ public class KnowledgeDocService {
         if (distinct.isEmpty()) {
             return 0;
         }
+        // IN 占位符展开(2026-09-22 修复):此前写 "IN (?)" 传 List——
+        // JdbcTemplate 把整个 List 当单个参数绑定,PG 驱动报
+        // "bad SQL grammar"(单测 mock 掩盖了这一点,真实批量删除全失败)。
+        String placeholders = String.join(",", distinct.stream().map(i -> "?").toList());
         int updated = jdbcTemplate.update(
-                "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE id IN (?) AND deleted_at IS NULL",
-                distinct);
+                "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE id IN (" + placeholders + ") AND deleted_at IS NULL",
+                distinct.toArray());
         if (updated > 0) {
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN (?) AND deleted_at IS NULL",
-                    distinct);
+                    "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN (" + placeholders + ") AND deleted_at IS NULL",
+                    distinct.toArray());
         }
         return updated;
     }
@@ -114,6 +134,30 @@ public class KnowledgeDocService {
     // 文件中心删除文件后,其索引进 RAG 的文档不应继续可检索(用户会困惑
     // 「我删了它 AI 怎么还知道」)。file-service 在删除/恢复/永久删除时
     // 调用这里,按 source='file' + source_id=fileId 联动处理。
+
+    /**
+     * 应用一次生命周期变更:版本确认 + 状态变化在**同一事务**内完成
+     * (2026-09-22 阶段 A,方案 §5.4)。
+     *
+     * <p>此前版本检查(applyIfNewerVersion)与状态变化(softDeleteByFileId 等)
+     * 是两个独立事务——检查通过后、状态变更前,更新的通知可能先应用,
+     * 随后旧通知的状态变更仍然落地,把状态改回旧值。同一事务 + 版本行锁
+     * 让同一文件的生命周期变更严格按版本序串行。
+     *
+     * @return -1 = 旧版本,忽略;>=0 = 实际影响行数
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public int applyLifecycle(long fileId, String mode, long version) {
+        if (version > 0 && !applyIfNewerVersion(fileId, version)) {
+            return -1;
+        }
+        return switch (mode) {
+            case "soft" -> softDeleteByFileId(fileId);
+            case "restore" -> restoreByFileId(fileId);
+            case "purge" -> purgeByFileId(fileId);
+            default -> throw new BusinessException(400, "mode 必须是 soft/restore/purge,收到: " + mode);
+        };
+    }
 
     /**
      * 乱序防护(R02,2026-09-20):仅当通知版本比已应用版本更新时推进记录。
@@ -161,12 +205,14 @@ public class KnowledgeDocService {
     /**
      * 文件恢复(回收站) → 联动恢复其知识库文档。
      *
-     * <p>只恢复**最近一次索引**的文档与**随本次文件删除一起软删**的 chunk：
+     * <p>只恢复**最近一次可用(indexed)版本**的文档与**随本次文件删除一起
+     * 软删**的 chunk:
      * <ul>
-     *   <li>同 fileId 可能有多行 doc(重复索引会软删旧行再插新行),全部恢复会撞
-     *       (source, source_id) 部分唯一索引 → 整条语句失败 → 文件恢复了但知识库
-     *       永远回不来;取 id 最大(最新)的一行;</li>
-     *   <li>chunk 同理:重建索引会软删旧版本 chunk,其 deleted_at 更早;文件删除时
+     *   <li>同 fileId 可能有多行 doc(更新发布时软删旧行、构建失败留 failed 行),
+     *       全部恢复会撞 (source, source_id) 部分唯一索引 → 整条语句失败 →
+     *       文件恢复了但知识库永远回不来;优先取 indexed 行(可用版本),
+     *       再按 id 最大(最新);</li>
+     *   <li>chunk 同理:更新发布会软删旧版本 chunk,其 deleted_at 更早;文件删除时
      *       软删的是当时存活的 chunk,deleted_at 与 doc 完全相同(同一事务 now())。
      *       按该时间戳精确恢复,旧版本 chunk 保持删除,避免同一内容检索出两份。</li>
      * </ul>
@@ -176,7 +222,8 @@ public class KnowledgeDocService {
     @org.springframework.transaction.annotation.Transactional
     public int restoreByFileId(long fileId) {
         List<Long> docIds = jdbcTemplate.queryForList(
-                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ? AND deleted_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+                "SELECT id FROM schema_rag.knowledge_doc WHERE source = 'file' AND source_id = ? AND deleted_at IS NOT NULL "
+                        + "ORDER BY (status = 'indexed') DESC, id DESC LIMIT 1",
                 Long.class, fileId);
         if (docIds.isEmpty()) {
             return 0;
@@ -322,8 +369,17 @@ public class KnowledgeDocService {
             String updatedAt,
             int quality,
             /** 来源文件 id(source='file' 时;前端可跳转文件中心)。 */
-            Long sourceId
+            Long sourceId,
+            /** 构建失败原因(status='failed' 时;阶段 A:失败可见可重试)。 */
+            String error,
+            /** 非致命解析告警(如超限截断;文档仍可检索)。 */
+            String warning
     ) {
+        /** 兼容构造(旧调用点/测试):无诊断字段。 */
+        public KnowledgeDocView(long id, String name, String source, int chunks, String status,
+                                String size, String updatedAt, int quality, Long sourceId) {
+            this(id, name, source, chunks, status, size, updatedAt, quality, sourceId, null, null);
+        }
     }
 
     /** 前端 IndexStatus.tsx 消费的 IndexStats 快照。 */

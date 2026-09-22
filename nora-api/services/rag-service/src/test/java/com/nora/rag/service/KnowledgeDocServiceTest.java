@@ -120,8 +120,8 @@ class KnowledgeDocServiceTest {
 
     @Test
     void deleteDocsCountsActualDeletionsInOneStatement() {
-        // 单条 IN 软删,返回值即真实标记行数;成功后联动软删 chunks
-        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(List.of(1L, 2L, 3L)))).thenReturn(2);
+        // 单条 IN 软删(占位符展开,2026-09-22 修复),返回值即真实标记行数;成功后联动软删 chunks
+        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(1L), eq(2L), eq(3L))).thenReturn(2);
 
         service.deleteDocs(List.of(1L, 2L, 3L));
 
@@ -129,7 +129,7 @@ class KnowledgeDocServiceTest {
 
     @Test
     void deleteDocsDedupesAndDropsNullIds() {
-        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(List.of(1L, 3L)))).thenReturn(2);
+        when(jdbcTemplate.update(contains("knowledge_doc SET deleted_at = now()"), eq(1L), eq(3L))).thenReturn(2);
 
         service.deleteDocs(java.util.Arrays.asList(1L, null, 3L, 1L));
         // 去重后的列表才应到达 SQL(重复 id 不该发两次;doc/chunk 各一条)

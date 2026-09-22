@@ -7,7 +7,7 @@ import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { searchDocsAsync } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
-import { KnowledgeSource, RetrievalResult } from "@/types";
+import { KnowledgeSource, RetrievalOutcome } from "@/types";
 
 const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
   file: File,
@@ -50,19 +50,23 @@ export function RetrievalTest() {
   const [query, setQuery] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const { schedule, cancelAll } = useTimedSequence();
-  const [searchResults, setSearchResults] = useState<RetrievalResult[]>([]);
+  const [outcome, setOutcome] = useState<RetrievalOutcome | null>(null);
   const [searchMs, setSearchMs] = useState(34);
+  /** 展开查看完整证据的条目序号(阶段 A:预览与模型证据分离) */
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const searchResults = outcome?.results ?? [];
 
   const handleSearch = async () => {
     if (!query.trim()) return;
     cancelAll();
     setIsSearching(true);
     setHasSearched(false);
+    setExpanded(new Set());
     const startedAt = performance.now();
     const run = async () => {
       try {
-        const results = await searchDocsAsync(query, 8);
-        setSearchResults(results);
+        const result = await searchDocsAsync(query, 8);
+        setOutcome(result);
         setLastQuery(query);
         setHasSearched(true);
         setSearchMs(Math.max(1, Math.round(performance.now() - startedAt)));
@@ -119,13 +123,26 @@ export function RetrievalTest() {
 
       {!isSearching && hasSearched && (
         <div className="space-y-3">
+          {/* 通道状态(阶段 A):degraded/unavailable 显式展示,不再「空结果」错觉 */}
+          {outcome && (outcome.status === "degraded" || outcome.status === "unavailable") && (
+            <div className={`text-xs rounded-lg border px-3 py-2 ${outcome.status === "unavailable"
+              ? "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300"
+              : "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300"}`}>
+              {outcome.status === "unavailable" ? "检索暂不可用（全部通道失败）" : "检索降级（部分通道失败,结果可能不全）"}
+              {!outcome.vector.ok && outcome.vector.error && <div className="mt-0.5 opacity-80">向量通道:{outcome.vector.error}</div>}
+              {!outcome.keyword.ok && outcome.keyword.error && <div className="mt-0.5 opacity-80">关键词通道:{outcome.keyword.error}</div>}
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             召回结果 <span className="font-bold text-foreground">{searchResults.length}</span> 条 ·
             耗时 <span className="tabular-nums">{searchMs}ms</span>
+            {outcome?.status === "no_match" && <span className="ml-2">· 没有过阈命中（可换关键词或降低 min-score 测试）</span>}
           </div>
           {searchResults.map((r, i) => {
             const Icon = SOURCE_ICONS[r.source];
             const meta = SOURCE_META[r.source];
+            const isExpanded = expanded.has(i);
+            const hasFullContent = !!(r.content && r.content !== r.snippet);
             return (
               <div
                 key={i}
@@ -134,18 +151,38 @@ export function RetrievalTest() {
               >
                 <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" style={{ opacity: r.score }} />
                 <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <Icon className={`w-3.5 h-3.5 ${meta.color}`} />
                     <span className="text-xs font-medium text-foreground">{r.docName}</span>
                     <span className="text-[10px] text-muted-foreground">chunk #{r.chunkIndex}</span>
+                    {r.chunkId != null && <span className="text-[10px] text-muted-foreground/70">#{r.chunkId}</span>}
+                    {r.matchChannel && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground"
+                        title={`向量分:${r.vectorScore != null ? r.vectorScore.toFixed(3) : "—"} · 关键词分:${r.keywordScore != null ? r.keywordScore.toFixed(3) : "—"}`}>
+                        {r.matchChannel === "both" ? "双通道" : r.matchChannel === "vector" ? "向量" : "关键词"}
+                      </span>
+                    )}
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border tabular-nums ${ScoreColor({ score: r.score })}`}>
-                    {(r.score * 100).toFixed(0)}%
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border tabular-nums shrink-0 ${ScoreColor({ score: r.score })}`}>
+                    {r.score.toFixed(3)}
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  <HighlightSnippet text={r.snippet} query={lastQuery} />
+                  <HighlightSnippet text={isExpanded && r.content ? r.content : r.snippet} query={lastQuery} />
                 </p>
+                {hasFullContent && (
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(i)) next.delete(i); else next.add(i);
+                      return next;
+                    })}
+                    className="mt-1.5 text-[10px] text-blue-500 dark:text-blue-400 hover:underline cursor-pointer"
+                  >
+                    {isExpanded ? "收起（回到命中预览）" : `展开完整证据（${r.content!.length} 字符,模型实际读到的内容）`}
+                  </button>
+                )}
               </div>
             );
           })}

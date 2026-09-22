@@ -3,6 +3,7 @@ import {
   DocDetail,
   IndexStats,
   KnowledgeDoc,
+  RetrievalOutcome,
   RetrievalResult,
 } from "@/types";
 import { requestJson, USE_BACKEND } from "@/lib/api/client";
@@ -140,12 +141,18 @@ export function generateCitations(query: string, docs: KnowledgeDoc[], topK = 2)
 // 后端接入层（USE_BACKEND 开关，异步）
 // ==========================================
 
-/** 检索：后端真实向量检索 / 本地 Mock 模拟 */
-export async function searchDocsAsync(query: string, topK = 8): Promise<RetrievalResult[]> {
+/** 检索：后端真实混合检索（带通道状态）/ 本地 Mock 模拟 */
+export async function searchDocsAsync(query: string, topK = 8): Promise<RetrievalOutcome> {
   if (!USE_BACKEND) {
-    return searchDocs(query, useKnowledgeDocs.getState().docs, topK);
+    const results = searchDocs(query, useKnowledgeDocs.getState().docs, topK);
+    return {
+      status: results.length > 0 ? "ok" : "no_match",
+      results,
+      vector: { ok: true, error: null },
+      keyword: { ok: true, error: null },
+    };
   }
-  return requestJson<RetrievalResult[]>("/rag/search", {
+  return requestJson<RetrievalOutcome>("/rag/search", {
     method: "POST",
     body: JSON.stringify({ query, topK }),
   });
@@ -164,10 +171,11 @@ export async function generateCitationsAsync(query: string, topK = 2): Promise<C
   if (!USE_BACKEND) {
     return generateCitations(query, useKnowledgeDocs.getState().docs, topK);
   }
-  return requestJson<Citation[]>("/rag/citations", {
+  const outcome = await requestJson<RetrievalOutcome>("/rag/citations", {
     method: "POST",
     body: JSON.stringify({ query, topK }),
   });
+  return outcome?.results ?? [];
 }
 
 /** POST /api/rag/index/text → 保存文本到知识库(name-keyed,同名覆盖重建索引) */

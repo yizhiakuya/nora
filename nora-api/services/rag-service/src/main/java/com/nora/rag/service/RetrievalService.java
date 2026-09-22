@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 
+import com.nora.rag.api.RetrievalOutcome;
 import com.nora.rag.api.RetrievalResult;
 import com.nora.rag.config.RetrievalProperties;
 
@@ -31,8 +32,9 @@ import com.nora.rag.config.RetrievalProperties;
  * 的余弦相似度聚集在窄高区间,而 trigram 相似度分布不同、跨度 0–1;
  * 直接平均会让一侧任意主导。RRF 基于排名,天然与量纲无关。
  *
- * <p>关键词排名优雅降级:若 {@code pg_trgm} 扩展不存在,查询失败只记一次
- * 日志,检索继续走纯向量,而不是整个搜索不可用。
+ * <p><b>通道独立与降级可见(2026-09-22,知识库优化阶段 A):</b>嵌入不可用时
+ * 关键词仍尝试执行;部分通道失败返回 {@code degraded},全部失败返回
+ * {@code unavailable}——不再把「检索坏了」折叠成「资料里没有」。
  */
 @Service
 public class RetrievalService {
@@ -42,15 +44,24 @@ public class RetrievalService {
     /** RRF 阻尼常数;RRF 原论文的标准取值。 */
     static final int RRF_K = 60;
 
-    /** 向量排名:余弦相似度,最优在前。 */
+    /** 预览摘录的目标长度(围绕命中位置截取)。 */
+    static final int SNIPPET_CHARS = 500;
+
+    /**
+     * 向量排名:余弦相似度,最优在前。
+     *
+     * <p>只检索**已发布**(d.status='indexed')且存活的文档——构建中/失败的
+     * 版本行不参与召回(阶段 A:先构建后发布,旧版在切换前保持 indexed)。
+     */
     private static final String VECTOR_SQL = """
-            SELECT c.chunk_index, c.content, d.id AS doc_id, d.name, d.source,
+            SELECT c.id AS chunk_id, c.chunk_index, c.content, d.id AS doc_id, d.name, d.source,
                    1 - (c.embedding <=> ?::vector) AS score
             FROM schema_rag.knowledge_chunk c
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
             WHERE c.embedding IS NOT NULL
               AND c.deleted_at IS NULL
               AND d.deleted_at IS NULL
+              AND d.status = 'indexed'
             ORDER BY c.embedding <=> ?::vector
             LIMIT ?
             """;
@@ -66,13 +77,14 @@ public class RetrievalService {
      * {@code nora.retrieval.min-score})。
      */
     private static final String KEYWORD_SQL = """
-            SELECT c.chunk_index, c.content, d.id AS doc_id, d.name, d.source,
+            SELECT c.id AS chunk_id, c.chunk_index, c.content, d.id AS doc_id, d.name, d.source,
                    strict_word_similarity(?, c.content) AS score
             FROM schema_rag.knowledge_chunk c
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
             WHERE c.content IS NOT NULL
               AND c.deleted_at IS NULL
               AND d.deleted_at IS NULL
+              AND d.status = 'indexed'
               AND ? <<% c.content
             ORDER BY strict_word_similarity(?, c.content) DESC
             LIMIT ?
@@ -98,22 +110,104 @@ public class RetrievalService {
     }
 
     /**
-     * 语义 + 关键词混合检索:嵌入查询 → 两路排名 → 融合 → 丢弃低于分数下限的命中。
+     * 语义 + 关键词混合检索:两路独立召回 → 融合 → 丢弃低于分数下限的命中。
+     *
+     * <p>兼容入口(旧调用方):通道状态折叠为列表;需要降级可见的调用方
+     * 用 {@link #searchWithStatus}。
      *
      * @param query 自然语言查询文本
      * @param topK  最大结果数
      * @return 融合后的块,最优在前;没有命中过线时为空
      */
     public List<RetrievalResult> search(String query, int topK) {
-        float[] vector = embeddingService.embed(query);
-        String vectorLiteral = toPgVectorLiteral(vector);
+        return searchWithStatus(query, topK).results();
+    }
 
+    /**
+     * 带通道状态的检索(2026-09-22,阶段 A):区分 ok/no_match/degraded/unavailable。
+     *
+     * <p>通道独立:向量(嵌入)失败不阻断关键词;关键词失败(或 pg_trgm 缺失)
+     * 只降级不抛错。只有**全部通道失败**才返回 unavailable。
+     */
+    public RetrievalOutcome searchWithStatus(String query, int topK) {
         int pool = Math.max(topK, properties.candidatePool());
-        List<RetrievalResult> vectorHits =
-                jdbcTemplate.query(VECTOR_SQL, rowMapper(), vectorLiteral, vectorLiteral, pool);
-        List<RetrievalResult> keywordHits = keywordSearch(query, pool);
 
-        return fuse(vectorHits, keywordHits, topK);
+        // 通道 1:向量(嵌入可能失败——配错 key/网络不通/超限)
+        List<RetrievalResult> vectorHits = null;
+        RetrievalOutcome.ChannelStatus vectorStatus;
+        try {
+            float[] vector = embeddingService.embed(query);
+            String vectorLiteral = toPgVectorLiteral(vector);
+            vectorHits = jdbcTemplate.query(VECTOR_SQL, rowMapper(), vectorLiteral, vectorLiteral, pool);
+            vectorStatus = RetrievalOutcome.ChannelStatus.up();
+        } catch (Exception e) {
+            log.warn("vector channel failed for query '{}': {}", abbreviate(query), e.getMessage());
+            vectorStatus = RetrievalOutcome.ChannelStatus.down(describeChannelError(e));
+        }
+
+        // 通道 2:关键词(独立执行——嵌入失败也照常尝试)
+        List<RetrievalResult> keywordHits = keywordSearch(query, pool);
+        RetrievalOutcome.ChannelStatus keywordStatus = keywordHits != null
+                ? RetrievalOutcome.ChannelStatus.up()
+                : RetrievalOutcome.ChannelStatus.down(
+                        keywordDisabledReason != null ? keywordDisabledReason : "关键词通道不可用");
+        if (keywordHits == null) {
+            keywordHits = List.of();
+        }
+
+        List<RetrievalResult> fused = fuse(vectorHits == null ? List.of() : vectorHits,
+                keywordHits, topK);
+        // 标注命中通道与双通道原始分(预览围绕命中位置截取)
+        fused = annotateChannels(fused, vectorHits == null ? List.of() : vectorHits, keywordHits, query);
+        String status = RetrievalOutcome.statusOf(fused, vectorStatus, keywordStatus);
+        return new RetrievalOutcome(status, fused, vectorStatus, keywordStatus);
+    }
+
+    /** 关键词通道的降级原因(置位后保留首个原因)。 */
+    private volatile String keywordDisabledReason;
+
+    private static String describeChannelError(Exception e) {
+        String message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            return e.getClass().getSimpleName();
+        }
+        return message.length() > 200 ? message.substring(0, 200) + "…" : message;
+    }
+
+    private static String abbreviate(String query) {
+        return query == null ? "" : (query.length() > 60 ? query.substring(0, 60) + "…" : query);
+    }
+
+    /**
+     * 标注每个命中的来源通道与双通道原始分:
+     * matchChannel = vector / keyword / both;分数保留两路各自的值。
+     * 预览围绕查询词在正文中的首次出现位置截取(命中位置可见)。
+     */
+    private List<RetrievalResult> annotateChannels(List<RetrievalResult> fused,
+                                                   List<RetrievalResult> vectorHits,
+                                                   List<RetrievalResult> keywordHits,
+                                                   String query) {
+        Map<ChunkKey, Double> vectorScores = new LinkedHashMap<>();
+        for (RetrievalResult r : vectorHits) {
+            vectorScores.put(new ChunkKey(r.docId(), r.chunkIndex()), r.score());
+        }
+        Map<ChunkKey, Double> keywordScores = new LinkedHashMap<>();
+        for (RetrievalResult r : keywordHits) {
+            keywordScores.put(new ChunkKey(r.docId(), r.chunkIndex()), r.score());
+        }
+        List<RetrievalResult> out = new ArrayList<>(fused.size());
+        for (RetrievalResult r : fused) {
+            ChunkKey key = new ChunkKey(r.docId(), r.chunkIndex());
+            Double v = vectorScores.get(key);
+            Double k = keywordScores.get(key);
+            String channel = v != null && k != null ? "both" : v != null ? "vector" : "keyword";
+            out.add(new RetrievalResult(
+                    r.docId(), r.docName(), r.chunkIndex(), r.chunkId(),
+                    r.score(), v, k, channel,
+                    snippetAround(r.content(), query),
+                    r.content(), r.source()));
+        }
+        return out;
     }
 
     /**
@@ -139,7 +233,8 @@ public class RetrievalService {
 
         for (Map.Entry<ChunkKey, Double> e : sortedByFusedScore(fused)) {
             RetrievalResult hit = payloads.get(e.getKey());
-            if (hit.score() < floor) {                dropped++;
+            if (hit.score() < floor) {
+                dropped++;
                 continue;
             }
             kept.add(hit);
@@ -194,10 +289,20 @@ public class RetrievalService {
         }
     }
 
-    /** 关键词排名;禁用/查询过短/pg_trgm 缺失时为空。 */
+    /**
+     * 关键词排名;禁用/查询过短/pg_trgm 缺失时为空。
+     *
+     * <p>2026-09-22(阶段 A):失败**不永久停用**——记一次原因与时间戳,
+     * 60 秒冷却后允许重试(此前一旦失败即 `keywordDisabled=true` 到服务重启,
+     * 短暂故障会永久降级到纯向量)。返回 null 表示通道失败(与"正常无命中"
+     * 的空列表区分)。
+     */
     private List<RetrievalResult> keywordSearch(String query, int pool) {
-        if (properties.keywordWeight() <= 0 || keywordDisabled) {
+        if (properties.keywordWeight() <= 0) {
             return List.of();
+        }
+        if (keywordDisabled && !keywordCooldownElapsed()) {
+            return null;
         }
         if (query == null || query.strip().length() < properties.minKeywordQueryLength()) {
             return List.of();
@@ -209,25 +314,59 @@ public class RetrievalService {
             jdbcTemplate.queryForObject(
                     "SELECT set_config('pg_trgm.strict_word_similarity_threshold', ?, false)",
                     String.class, String.valueOf(properties.minScore()));
-            return jdbcTemplate.query(KEYWORD_SQL, rowMapper(), query, query, query, pool);
+            List<RetrievalResult> hits = jdbcTemplate.query(KEYWORD_SQL, rowMapper(), query, query, query, pool);
+            // 成功一次即清除降级标记(通道恢复)
+            if (keywordDisabled) {
+                log.info("keyword retrieval recovered");
+                keywordDisabled = false;
+                keywordDisabledReason = null;
+            }
+            return hits;
         } catch (RuntimeException e) {
-            // pg_trgm 缺失/未授权:降级为纯向量,不因此让检索整体失败
             keywordDisabled = true;
+            keywordDisabledReason = describeChannelError(e);
+            keywordDisabledAt = System.currentTimeMillis();
             log.warn("keyword retrieval unavailable ({}), falling back to vector-only: {}",
                     e.getClass().getSimpleName(), e.getMessage());
-            return List.of();
+            return null;
         }
     }
 
+    /** 关键词通道降级时间戳(冷却重试用)。 */
+    private volatile long keywordDisabledAt = 0;
+    /** 降级冷却:60 秒后允许重试(短暂故障不永久降级)。 */
+    private static final long KEYWORD_COOLDOWN_MS = 60_000;
+
+    private boolean keywordCooldownElapsed() {
+        return System.currentTimeMillis() - keywordDisabledAt > KEYWORD_COOLDOWN_MS;
+    }
+
+    /** 关键词通道当前状态(供降级可见性上报)。 */
+    String keywordDisabledReason() {
+        return keywordDisabledReason;
+    }
+
     private RowMapper<RetrievalResult> rowMapper() {
-        return (rs, rowNum) -> new RetrievalResult(
-                rs.getLong("doc_id"),
-                rs.getString("name"),
-                rs.getInt("chunk_index"),
-                rs.getDouble("score"),
-                snippet(rs.getString("content")),
-                rs.getString("source")
-        );
+        return (rs, rowNum) -> {
+            String content = rs.getString("content");
+            long chunkId;
+            try {
+                chunkId = rs.getLong("chunk_id");
+            } catch (Exception e) {
+                chunkId = 0; // 旧查询形态无此列(测试桩)
+            }
+            return new RetrievalResult(
+                    rs.getLong("doc_id"),
+                    rs.getString("name"),
+                    rs.getInt("chunk_index"),
+                    chunkId == 0 ? null : chunkId,
+                    rs.getDouble("score"),
+                    null, null, null,
+                    snippet(content),
+                    content,
+                    rs.getString("source")
+            );
+        };
     }
 
     /** 块在两路排名中的同一性标识。用 docId 而非 docName:两个文件可能
@@ -248,11 +387,71 @@ public class RetrievalService {
         return sb.append(']').toString();
     }
 
-    /** 把块内容裁剪为适合提示词的片段。 */
+    /**
+     * 把块内容裁为列表预览(围绕开头截取,加省略号)。
+     *
+     * <p>2026-09-22(阶段 A):模型证据改用完整 {@code content},这里只是
+     * 列表展示的短摘录——500 字符截断不再影响模型能看到的内容。
+     */
     static String snippet(String content) {
         if (content == null) {
             return "";
         }
-        return content.length() <= 500 ? content : content.substring(0, 500) + "…";
+        return content.length() <= SNIPPET_CHARS ? content : content.substring(0, SNIPPET_CHARS) + "…";
+    }
+
+    /**
+     * 围绕查询词首次出现位置截取预览(阶段 A:让用户看到「为什么命中」)。
+     *
+     * <p>查询词不在正文中(纯语义命中)时回落到开头截取。截取窗口前留
+     * 80 字符上下文;窗口内首尾按需加省略号。
+     *
+     * <p>定位策略:整串找不到时按空白/标点拆词,取**最长命中词**的位置——
+     * 自然语言查询(「数据库备份口令 NORA-BACKUP」)很少整串原样出现在正文,
+     * 拆词后能落到真正的命中处。
+     */
+    static String snippetAround(String content, String query) {
+        if (content == null) {
+            return "";
+        }
+        if (content.length() <= SNIPPET_CHARS) {
+            return content;
+        }
+        int hit = -1;
+        if (query != null && !query.isBlank()) {
+            String probe = query.strip();
+            if (probe.length() > 30) {
+                probe = probe.substring(0, 30);
+            }
+            hit = content.toLowerCase().indexOf(probe.toLowerCase());
+            if (hit < 0) {
+                // 拆词定位:取正文中命中的最长词(≥2 字符)
+                String lower = content.toLowerCase();
+                for (String token : probe.split("[\\s,，。;；、/]+")) {
+                    if (token.length() < 2) {
+                        continue;
+                    }
+                    int at = lower.indexOf(token.toLowerCase());
+                    if (at >= 0) {
+                        hit = at;
+                        break;
+                    }
+                }
+            }
+        }
+        if (hit < 0) {
+            return content.substring(0, SNIPPET_CHARS) + "…";
+        }
+        int start = Math.max(0, hit - 80);
+        int end = Math.min(content.length(), start + SNIPPET_CHARS);
+        StringBuilder sb = new StringBuilder();
+        if (start > 0) {
+            sb.append('…');
+        }
+        sb.append(content, start, end);
+        if (end < content.length()) {
+            sb.append('…');
+        }
+        return sb.toString();
     }
 }

@@ -160,9 +160,12 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
     void searchWrapsResultsInEnvelope() {
         List<RetrievalResult> results = List.of(
                 new RetrievalResult(4L, "Redis配置.md", 3, 0.91, "maxmemory 2gb", "file"));
-        when(retrievalService.search("redis", 8)).thenReturn(results);
+        when(retrievalService.searchWithStatus("redis", 8))
+                .thenReturn(new com.nora.rag.api.RetrievalOutcome("ok", results,
+                        com.nora.rag.api.RetrievalOutcome.ChannelStatus.up(),
+                        com.nora.rag.api.RetrievalOutcome.ChannelStatus.up()));
 
-        ApiResponse<List<RetrievalResult>> response =
+        ApiResponse<com.nora.rag.api.RetrievalOutcome> response =
                 controller.search(new RagController.SearchBody("redis", null));
 
         response.code();
@@ -185,10 +188,12 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
 
     @Test
     void citationsAliasesSearch() {
-        List<RetrievalResult> results = List.of();
-        when(retrievalService.search("redis", 2)).thenReturn(results);
+        when(retrievalService.searchWithStatus("redis", 2))
+                .thenReturn(new com.nora.rag.api.RetrievalOutcome("no_match", List.of(),
+                        com.nora.rag.api.RetrievalOutcome.ChannelStatus.up(),
+                        com.nora.rag.api.RetrievalOutcome.ChannelStatus.up()));
 
-        ApiResponse<List<RetrievalResult>> response =
+        ApiResponse<com.nora.rag.api.RetrievalOutcome> response =
                 controller.citations(new RagController.SearchBody("redis", 2));
 
         response.code();
@@ -197,7 +202,7 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
 
     @Test
     void searchPropagatesNotConfiguredError() {
-        when(retrievalService.search("q", 8))
+        when(retrievalService.searchWithStatus("q", 8))
                 .thenThrow(new BusinessException(500, "embedding not configured"));
 try { controller.search(new RagController.SearchBody("q", 8)); } catch (Exception ignored) { }
 

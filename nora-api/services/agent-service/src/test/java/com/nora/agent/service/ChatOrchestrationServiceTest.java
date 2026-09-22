@@ -673,8 +673,8 @@ class ChatOrchestrationServiceTest {
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
-            when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
+            when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(okOutcome(List.of()));
 
             List<ChatStepDto> steps = new java.util.ArrayList<>();
             svc.chat("hi", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
@@ -712,8 +712,8 @@ class ChatOrchestrationServiceTest {
                 new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
                 null, null, null, null, null, null, null, null, skills, null, 5, null, null, null, null, null);
-        when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
+        when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(okOutcome(List.of()));
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         svc.chat("hi", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
@@ -743,8 +743,8 @@ class ChatOrchestrationServiceTest {
                     new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
-            when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
+            when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(okOutcome(List.of()));
 
             // 先跑一轮拿到真实的注入步骤(作为「历史里的上一轮」)
             List<ChatStepDto> firstSteps = new java.util.ArrayList<>();
@@ -862,7 +862,7 @@ class ChatOrchestrationServiceTest {
     void emitsRetrievalStepAndSourcesWhenRagReturnsHits() {
         List<CitationDto> citations = List.of(
                 new CitationDto(11L, "arch.md", "file", 2, 0.9, "pgvector provides cosine search"));
-        when(ragRetrievalClient.search("向量检索", 6)).thenReturn(citations);
+        when(ragRetrievalClient.searchWithStatus("向量检索", 6)).thenReturn(okOutcome(citations));
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<List<CitationDto>> sourcesEvents = new java.util.ArrayList<>();
@@ -895,9 +895,9 @@ class ChatOrchestrationServiceTest {
 
     @Test
     void emptyRagYieldsNoStepsAndNoSourcesEvent() {
-        when(ragRetrievalClient.search(org.mockito.ArgumentMatchers.anyString(),
+        when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt()))
-                .thenReturn(List.of());
+                .thenReturn(okOutcome(List.of()));
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<List<CitationDto>> sourcesEvents = new java.util.ArrayList<>();
 
@@ -1001,5 +1001,13 @@ class ChatOrchestrationServiceTest {
         ModelProviderService.parseModelSettingsStatic("not-json{");
         List.of();
         ModelProviderService.parseModelSettingsStatic(null);
+    }
+
+    /** 检索结果集辅助(阶段 A):双通道正常的 ok 结果。 */
+    private static RagRetrievalClient.RetrievalPayload okOutcome(List<CitationDto> results) {
+        return new RagRetrievalClient.RetrievalPayload(
+                results.isEmpty() ? "no_match" : "ok", results,
+                new RagRetrievalClient.RetrievalPayload.ChannelStatus(true, null),
+                new RagRetrievalClient.RetrievalPayload.ChannelStatus(true, null));
     }
 }

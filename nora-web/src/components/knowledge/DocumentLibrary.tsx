@@ -238,6 +238,18 @@ export function DocumentLibrary() {
                                 原文件
                               </a>
                             )}
+                            {/* 构建失败原因(阶段 A:失败可见可重试)——此前只有「失败」标签,原因不可见 */}
+                            {doc.status === "failed" && doc.error && (
+                              <div className="text-[10px] text-red-600 dark:text-red-400 mt-0.5 max-w-[360px] truncate" title={doc.error}>
+                                {doc.error}
+                              </div>
+                            )}
+                            {/* 解析告警(如超限截断;文档仍可检索) */}
+                            {doc.status !== "failed" && doc.warning && (
+                              <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 max-w-[360px] truncate" title={doc.warning}>
+                                ⚠ {doc.warning}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>

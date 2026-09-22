@@ -361,8 +361,11 @@ public class ChatOrchestrationService {
         }
         // 请求级等级优先,其次设置页为该模型配置的默认等级(在 resolveLlm 内合并)
         // 第 1 步:知识检索(尽力而为,在 LLM 调用之前)
+        // 2026-09-22(阶段 A):带通道状态——degraded/unavailable 显式下发,
+        // 不再把「检索坏了」折叠成「资料里没有」。
         long retrievalStart = System.currentTimeMillis();
-        List<CitationDto> citations = ragRetrievalClient.search(userMessage, 6);
+        RagRetrievalClient.RetrievalPayload retrieval = ragRetrievalClient.searchWithStatus(userMessage, 6);
+        List<CitationDto> citations = new java.util.ArrayList<>(retrieval.resultsOrEmpty());
         // 消息引用(📎/📄/@ 按钮)注入:真实内容排在语义检索命中之前——
         // 「用户明确引用的内容」优先级高于「检索到的相关片段」,且不受
         // 检索分数下限影响(引用是确定性输入,不是相似度猜测)。
@@ -378,6 +381,16 @@ public class ChatOrchestrationService {
             citations = merged;
         }
         long retrievalMs = System.currentTimeMillis() - retrievalStart;
+
+        // 检索降级可见(阶段 A):部分通道失败 → 步骤标 degraded + 原因;
+        // 全部失败 → failed,让用户看到「检索暂不可用」而不是空结果的错觉。
+        if (retrieval.unavailable() || retrieval.degraded()) {
+            String label = retrieval.unavailable() ? "检索暂不可用" : "检索降级(部分通道失败)";
+            eventConsumer.step(new ChatStepDto(
+                    "s-rag-degraded", "tool", label,
+                    retrieval.degradedReason(),
+                    retrievalMs, retrieval.unavailable() ? "failed" : "completed", null, null, null, 0));
+        }
 
         if (!citations.isEmpty()) {
             String summary = refCitations.isEmpty()

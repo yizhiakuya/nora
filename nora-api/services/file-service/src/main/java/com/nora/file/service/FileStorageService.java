@@ -409,22 +409,29 @@ public class FileStorageService {
     /**
      * 提取存储文件的纯文本预览(Apache Tika)。
      *
+     * <p>2026-09-22(阶段 A):携带解析诊断(ok/empty/truncated/error + 原因),
+     * 让 rag 索引能区分「空白」「损坏」「超限」,而不是统一当作「没有文本」。
+     *
      * @param id 文件 id
      * @return {@code type=text} 的预览与提取内容
      * @throws BusinessException id 未知时 404
      */
     public FilePreview preview(Long id) {
         FileItem item = getById(id);
-        String text = "";
+        TextExtractionService.ExtractionResult result;
         String filePath = filePathOf(id);
         if (filePath != null && Files.exists(Path.of(filePath))) {
             try (InputStream in = Files.newInputStream(Path.of(filePath))) {
-                text = textExtractionService.extract(in, item.name());
+                result = textExtractionService.extractWithStatus(in, item.name());
             } catch (IOException ex) {
                 log.warn("Preview extraction failed for file {}: {}", id, ex.getMessage());
+                result = TextExtractionService.ExtractionResult.error("读取文件失败: " + ex.getMessage());
             }
+        } else {
+            result = TextExtractionService.ExtractionResult.error("磁盘文件不存在(可能已被清理)");
         }
-        return new FilePreview(id, "text", text, item.name(), humanReadableSize(item.sizeBytes()));
+        return new FilePreview(id, "text", result.text(), item.name(), humanReadableSize(item.sizeBytes()),
+                result.status(), result.warning(), result.error());
     }
 
     /**

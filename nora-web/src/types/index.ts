@@ -77,6 +77,10 @@ export interface KnowledgeDoc {
   quality: number;
   /** 来源文件 id(source='file' 时;可跳转文件中心预览)。 */
   sourceId?: number | null;
+  /** 构建失败原因（status='failed' 时;阶段 A 起可用）。 */
+  error?: string | null;
+  /** 非致命解析告警（如超限截断;文档仍可检索）。 */
+  warning?: string | null;
 }
 
 /** 索引统计 */
@@ -97,15 +101,38 @@ export interface Citation {
   chunkIndex: number;
   score: number;
   snippet: string;
+  /** 稳定块 id（knowledge_chunk.id;用户引用为 null）。 */
+  chunkId?: number | null;
+  /** 命中通道：vector/keyword/both（用户引用为 null）。 */
+  matchChannel?: string | null;
+  /** 向量通道原始分；null = 未命中该通道。 */
+  vectorScore?: number | null;
+  /** 关键词通道原始分；null = 未命中该通道。 */
+  keywordScore?: number | null;
 }
 
-/** 检索测试结果 */
+/** 检索测试结果（含通道细分与完整证据;2026-09-22 阶段 A） */
 export interface RetrievalResult {
   docName: string;
   source: KnowledgeSource;
   chunkIndex: number;
   score: number;
   snippet: string;
+  chunkId?: number | null;
+  matchChannel?: string | null;
+  vectorScore?: number | null;
+  keywordScore?: number | null;
+  /** 完整块正文（模型证据;列表用 snippet 预览）。 */
+  content?: string | null;
+}
+
+/** 检索结果集（带通道状态;2026-09-22 阶段 A） */
+export interface RetrievalOutcome {
+  /** ok / no_match / degraded / unavailable */
+  status: "ok" | "no_match" | "degraded" | "unavailable";
+  results: RetrievalResult[];
+  vector: { ok: boolean; error: string | null };
+  keyword: { ok: boolean; error: string | null };
 }
 
 /** 文档的一个分块(详情抽屉展示) */

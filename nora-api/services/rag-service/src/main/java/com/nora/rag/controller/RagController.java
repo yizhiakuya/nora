@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.nora.common.exception.BusinessException;
 import com.nora.common.notification.NotificationPublisher;
 import com.nora.common.response.ApiResponse;
-import com.nora.rag.api.RetrievalResult;
+import com.nora.rag.api.RetrievalOutcome;
 import com.nora.rag.service.IndexingService;
 import com.nora.rag.service.KnowledgeDocService;
 import com.nora.rag.service.RetrievalService;
@@ -85,6 +85,16 @@ public class RagController {
 
         FilePreviewBody preview = fetchPreview(request.fileId());
         String text = preview.textContent();
+        String extractStatus = preview.extractStatus() == null ? "ok" : preview.extractStatus();
+        // 解析诊断(2026-09-22 阶段 A):区分空白/损坏/超限,不再统一「没有文本」
+        switch (extractStatus) {
+            case "error" -> throw BusinessException.dependency("FILE_PARSE_FAILED",
+                    "文件解析失败,无法入库: " + (preview.extractError() == null ? "未知原因" : preview.extractError()),
+                    "请检查文件是否损坏或加密;扫描件/图片型 PDF 需要 OCR(暂不支持)");
+            case "empty" -> throw new BusinessException(422,
+                    "文件没有可提取的文本(空白文档、纯二进制,或扫描件/图片型 PDF——需要 OCR,暂不支持)");
+            default -> { /* ok / truncated 继续 */ }
+        }
         if (text == null || text.isBlank()) {
             throw new BusinessException(422, "file has no extractable text: " + request.fileId());
         }
@@ -95,6 +105,13 @@ public class RagController {
         String size = preview.size() != null ? preview.size() : "—";
 
         long docId = indexingService.indexDocument(name, "file", request.fileId(), size, text);
+
+        // 超限截断:文档仍可检索,但记告警让用户知道内容不完整(阶段 A)
+        if ("truncated".equals(extractStatus)) {
+            knowledgeDocService.setWarning(docId, preview.extractWarning() != null
+                    ? preview.extractWarning()
+                    : "内容超长,仅索引了前部分字符");
+        }
 
         // 竞态补偿:索引耗时可观(embedding 数秒),期间文件可能已被删除
         // (用户点了「加入知识库」马上又删了它)。删除通知到达时文档行还不存在
@@ -151,19 +168,25 @@ public class RagController {
         return ApiResponse.ok(knowledgeDocService.getIndexStats());
     }
 
-    /** 语义检索(前端 RetrievalResult[])。 */
+    /**
+     * 语义检索(2026-09-22 阶段 A:返回带通道状态的结果集)。
+     *
+     * <p>此前检索异常被折叠为空列表,「检索坏了」与「资料里没有」不可区分。
+     * 现在返回 {@link RetrievalOutcome}:status=ok/no_match/degraded/unavailable
+     * + 每通道状态 + 完整证据(content)与预览(snippet)分离。
+     */
     @PostMapping("/search")
-    public ApiResponse<List<RetrievalResult>> search(@RequestBody SearchBody request) {
+    public ApiResponse<RetrievalOutcome> search(@RequestBody SearchBody request) {
         if (request.query() == null || request.query().isBlank()) {
             throw new BusinessException(400, "query is required");
         }
         int topK = request.topK() != null && request.topK() > 0 ? request.topK() : 8;
-        return ApiResponse.ok(retrievalService.search(request.query(), topK));
+        return ApiResponse.ok(retrievalService.searchWithStatus(request.query(), topK));
     }
 
-    /** /search 的引用别名(前端 Citation[])。 */
+    /** /search 的引用别名(前端 Citation[];返回同一结果集)。 */
     @PostMapping("/citations")
-    public ApiResponse<List<RetrievalResult>> citations(@RequestBody SearchBody request) {
+    public ApiResponse<RetrievalOutcome> citations(@RequestBody SearchBody request) {
         return search(request);
     }
 
@@ -337,16 +360,13 @@ public class RagController {
     public ApiResponse<Integer> byFile(@PathVariable long fileId,
                                        @RequestParam("mode") String mode,
                                        @RequestParam(value = "version", defaultValue = "0") long version) {
-        if (version > 0 && !knowledgeDocService.applyIfNewerVersion(fileId, version)) {
+        // 版本确认与状态变化在同一事务内(2026-09-22 阶段 A,方案 §5.4):
+        // 此前两者分离,检查通过后更新的通知可能先应用、旧通知随后仍落地。
+        int affected = knowledgeDocService.applyLifecycle(fileId, mode, version);
+        if (affected < 0) {
             log.info("stale lifecycle notify ignored: file {} mode={} v{} (already applied newer)", fileId, mode, version);
             return ApiResponse.ok(0);
         }
-        int affected = switch (mode) {
-            case "soft" -> knowledgeDocService.softDeleteByFileId(fileId);
-            case "restore" -> knowledgeDocService.restoreByFileId(fileId);
-            case "purge" -> knowledgeDocService.purgeByFileId(fileId);
-            default -> throw new BusinessException(400, "mode 必须是 soft/restore/purge,收到: " + mode);
-        };
         return ApiResponse.ok(affected);
     }
 
@@ -367,7 +387,8 @@ public class RagController {
     }
 
     /** file-service 预览响应子集(ApiResponse 信封的 {@code data})。 */
-    public record FilePreviewBody(Long fileId, String type, String textContent, String name, String size) {
+    public record FilePreviewBody(Long fileId, String type, String textContent, String name, String size,
+                                  String extractStatus, String extractWarning, String extractError) {
     }
 
 }
