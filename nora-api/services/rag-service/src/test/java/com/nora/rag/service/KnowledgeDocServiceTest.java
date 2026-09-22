@@ -146,7 +146,7 @@ class KnowledgeDocServiceTest {
 
     @Test
     void renameDocTrimsChecksClashAndBumpsUpdatedAt() {
-        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Integer.class), eq(5L), eq(5L), eq("新文档名")))
+        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Integer.class), eq(5L), eq("新文档名"), eq(5L), eq(5L), eq(5L)))
                 .thenReturn(0);
         when(jdbcTemplate.update(anyString(), eq("新文档名"), eq(5L))).thenReturn(1);
 
@@ -156,7 +156,7 @@ class KnowledgeDocServiceTest {
     @Test
     void renameDocRejectsSiblingWithSameName() {
         // 同 source 下已有同名 name-keyed 文档 → 409,不发 UPDATE
-        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Integer.class), eq(5L), eq(5L), eq("撞名")))
+        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Integer.class), eq(5L), eq("撞名"), eq(5L), eq(5L), eq(5L)))
                 .thenReturn(1);
 try { service.renameDoc(5L, "撞名"); } catch (Exception ignored) { }
 
@@ -165,7 +165,7 @@ try { service.renameDoc(5L, "撞名"); } catch (Exception ignored) { }
     @Test
     void renameDocReturnsFalseForUnknownId() {
         // 不存在的 id:clash 查询返回 0(子查询无 source),UPDATE 影响 0 行
-        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Integer.class), eq(99L), eq(99L), eq("x")))
+        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Integer.class), eq(99L), eq("x"), eq(99L), eq(99L), eq(99L)))
                 .thenReturn(0);
         when(jdbcTemplate.update(anyString(), anyString(), eq(99L))).thenReturn(0);
 

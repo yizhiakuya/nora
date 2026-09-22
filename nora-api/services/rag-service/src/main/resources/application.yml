@@ -57,6 +57,10 @@ nora:
     keyword-weight: ${NORA_RETRIEVAL_KEYWORD_WEIGHT:1}
     candidate-pool: ${NORA_RETRIEVAL_CANDIDATE_POOL:20}
     min-keyword-query-length: ${NORA_RETRIEVAL_MIN_KEYWORD_QUERY_LENGTH:4}
+    # 可选重排(阶段 B,方案 §6.2):默认关闭;开启需同时配置模型名。
+    # 用 Jina /v1/rerank(与嵌入同一 provider/key);失败保留融合排序并标记降级。
+    rerank-enabled: ${NORA_RETRIEVAL_RERANK_ENABLED:false}
+    rerank-model: ${NORA_RETRIEVAL_RERANK_MODEL:jina-reranker-v2-base-multilingual}
   file-service:
     base-url: http://localhost:8081
 

@@ -21,7 +21,11 @@ public record RetrievalProperties(
         /** 融合前每路排名的候选池大小。 */
         Integer candidatePool,
         /** 查询短于此值时跳过关键词排名(微小查询上 trigram 是噪音)。 */
-        Integer minKeywordQueryLength
+        Integer minKeywordQueryLength,
+        /** 可选重排(阶段 B,方案 §6.2):默认关闭,由质量与耗时评测决定是否开启。 */
+        Boolean rerankEnabled,
+        /** 重排模型名(如 jina-reranker-v2-base-multilingual);启用时必填。 */
+        String rerankModel
 ) {
 
     /**
@@ -34,6 +38,7 @@ public record RetrievalProperties(
     public static final int DEFAULT_KEYWORD_WEIGHT = 1;
     public static final int DEFAULT_CANDIDATE_POOL = 20;
     public static final int DEFAULT_MIN_KEYWORD_QUERY_LENGTH = 4;
+    public static final boolean DEFAULT_RERANK_ENABLED = false;
 
     public RetrievalProperties {
         if (minScore == null) {
@@ -50,6 +55,9 @@ public record RetrievalProperties(
         }
         if (minKeywordQueryLength == null || minKeywordQueryLength < 0) {
             minKeywordQueryLength = DEFAULT_MIN_KEYWORD_QUERY_LENGTH;
+        }
+        if (rerankEnabled == null) {
+            rerankEnabled = DEFAULT_RERANK_ENABLED;
         }
     }
 }

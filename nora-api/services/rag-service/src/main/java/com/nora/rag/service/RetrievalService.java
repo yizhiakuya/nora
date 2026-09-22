@@ -100,19 +100,33 @@ public class RetrievalService {
             """;
 
     /**
-     * 检索范围(阶段 B,方案 §6.1):资料库 / 指定文档。
+     * 检索范围(阶段 B,方案 §6.1):资料库 / 指定文档 / 来源 / 日期。
      *
      * <p>范围条件**同时**进入向量与关键词候选查询;范围内无结果就返回无结果,
-     * 不自动扩大到全部资料。
+     * 不自动扩大到全部资料。先提供常用字段(方案:项目/来源/日期),
+     * 暂不建设任意字段表达式平台。
      *
-     * @param baseId 资料库 id;null = 不限库
-     * @param docIds 指定文档 id 列表;null/空 = 不限文档
+     * @param baseId  资料库 id;null = 不限库
+     * @param docIds  指定文档 id 列表;null/空 = 不限文档
+     * @param sources 来源过滤(file/text/…);null/空 = 不限来源
+     * @param dateFrom 文档更新日期下界(含;yyyy-MM-dd);null = 不限
+     * @param dateTo   文档更新日期上界(含;yyyy-MM-dd);null = 不限
      */
-    public record RetrievalScope(Long baseId, java.util.List<Long> docIds) {
-        public static final RetrievalScope ALL = new RetrievalScope(null, null);
+    public record RetrievalScope(Long baseId, java.util.List<Long> docIds,
+                                 java.util.List<String> sources,
+                                 String dateFrom, String dateTo) {
+        public static final RetrievalScope ALL = new RetrievalScope(null, null, null, null, null);
+
+        /** 兼容构造(阶段 B 初版:仅库/文档)。 */
+        public RetrievalScope(Long baseId, java.util.List<Long> docIds) {
+            this(baseId, docIds, null, null, null);
+        }
 
         public boolean unrestricted() {
-            return baseId == null && (docIds == null || docIds.isEmpty());
+            return baseId == null && (docIds == null || docIds.isEmpty())
+                    && (sources == null || sources.isEmpty())
+                    && (dateFrom == null || dateFrom.isBlank())
+                    && (dateTo == null || dateTo.isBlank());
         }
     }
 
@@ -130,6 +144,18 @@ public class RetrievalService {
               .append(String.join(",", scope.docIds().stream().map(i -> "?").toList()))
               .append(")\n");
         }
+        if (scope.sources() != null && !scope.sources().isEmpty()) {
+            sb.append("AND d.source IN (")
+              .append(String.join(",", scope.sources().stream().map(s -> "?").toList()))
+              .append(")\n");
+        }
+        if (scope.dateFrom() != null && !scope.dateFrom().isBlank()) {
+            sb.append("AND d.updated_at >= ?::date\n");
+        }
+        if (scope.dateTo() != null && !scope.dateTo().isBlank()) {
+            // 上界含当天:updated_at < (dateTo + 1 天)
+            sb.append("AND d.updated_at < (?::date + interval '1 day')\n");
+        }
         return sb.toString();
     }
 
@@ -144,6 +170,15 @@ public class RetrievalService {
         }
         if (scope.docIds() != null) {
             args.addAll(scope.docIds());
+        }
+        if (scope.sources() != null) {
+            args.addAll(scope.sources());
+        }
+        if (scope.dateFrom() != null && !scope.dateFrom().isBlank()) {
+            args.add(scope.dateFrom());
+        }
+        if (scope.dateTo() != null && !scope.dateTo().isBlank()) {
+            args.add(scope.dateTo());
         }
         return args.toArray();
     }
@@ -161,6 +196,8 @@ public class RetrievalService {
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingService embeddingService;
     private final RetrievalProperties properties;
+    /** 可选重排(阶段 B;默认关闭,见 RerankClient)。 */
+    private final RerankClient rerankClient;
 
     /** 关键词通道确认不可用后置位,避免反复重试。 */
     private volatile boolean keywordDisabled = false;
@@ -171,10 +208,35 @@ public class RetrievalService {
     public RetrievalService(JdbcTemplate jdbcTemplate,
                             EmbeddingService embeddingService,
                             @Autowired(required = false) RetrievalProperties properties) {
+        this(jdbcTemplate, embeddingService, properties, null);
+    }
+
+    /**
+     * 主装配构造(Spring 用这个):带重排所需的嵌入配置与代理。
+     * {@code @Autowired} 显式标注——两个构造器都存在时 Spring 不会自动选,
+     * 会尝试无参构造并失败(实测启动崩溃)。
+     */
+    @Autowired
+    public RetrievalService(JdbcTemplate jdbcTemplate,
+                            EmbeddingService embeddingService,
+                            @Autowired(required = false) RetrievalProperties properties,
+                            @Autowired(required = false) com.nora.rag.config.EmbeddingProperties embeddingProperties,
+                            @Autowired(required = false) com.nora.common.http.ProxyProperties proxyProperties) {
         this.jdbcTemplate = jdbcTemplate;
         this.embeddingService = embeddingService;
         this.properties = properties != null
-                ? properties : new RetrievalProperties(null, null, null, null, null);
+                ? properties : new RetrievalProperties(null, null, null, null, null, null, null);
+        this.rerankClient = new RerankClient(this.properties,
+                embeddingProperties != null ? embeddingProperties : new com.nora.rag.config.EmbeddingProperties(null, null, null, null),
+                proxyProperties);
+    }
+
+    /** 兼容构造(测试:无嵌入配置与代理,重排不可用)。 */
+    public RetrievalService(JdbcTemplate jdbcTemplate,
+                            EmbeddingService embeddingService,
+                            RetrievalProperties properties,
+                            com.nora.rag.config.EmbeddingProperties embeddingProperties) {
+        this(jdbcTemplate, embeddingService, properties, embeddingProperties, null);
     }
 
     /**
@@ -238,12 +300,23 @@ public class RetrievalService {
                 keywordHits, topK);
         // 标注命中通道与双通道原始分(预览围绕命中位置截取)
         fused = annotateChannels(fused, vectorHits == null ? List.of() : vectorHits, keywordHits, query);
+        // 可选重排(阶段 B,方案 §6.2):默认关闭;失败保留融合排序并标记降级
+        RetrievalOutcome.RerankStatus rerankStatus = RetrievalOutcome.RerankStatus.disabled();
+        if (rerankClient.enabled() && !fused.isEmpty()) {
+            RerankClient.RerankOutcome rerankOutcome = rerankClient.rerank(query, fused);
+            if (rerankOutcome.ok()) {
+                fused = rerankOutcome.results();
+                rerankStatus = RetrievalOutcome.RerankStatus.applied(properties.rerankModel());
+            } else {
+                rerankStatus = RetrievalOutcome.RerankStatus.failed(rerankOutcome.error());
+            }
+        }
         // 父子合并(阶段 B):子块命中 → 返回父块上下文,同一父块的多个子命中合并
         fused = mergeParentContext(fused);
         String status = RetrievalOutcome.statusOf(fused, vectorStatus, keywordStatus);
         // 检索记录(阶段 B,方案 §6.3):供「为什么找不到」回溯
         logRetrieval(query, topK, scope, status, fused, System.currentTimeMillis() - startedAt);
-        return new RetrievalOutcome(status, fused, vectorStatus, keywordStatus);
+        return new RetrievalOutcome(status, fused, vectorStatus, keywordStatus, rerankStatus);
     }
 
     /**

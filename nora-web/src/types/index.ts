@@ -154,13 +154,15 @@ export interface RetrievalResult {
   content?: string | null;
 }
 
-/** 检索结果集（带通道状态;2026-09-22 阶段 A） */
+/** 检索结果集（带通道状态;2026-09-22 阶段 A/B） */
 export interface RetrievalOutcome {
   /** ok / no_match / degraded / unavailable */
   status: "ok" | "no_match" | "degraded" | "unavailable";
   results: RetrievalResult[];
   vector: { ok: boolean; error: string | null };
   keyword: { ok: boolean; error: string | null };
+  /** 可选重排状态（阶段 B:disabled/applied/failed）。 */
+  rerank?: { state: "disabled" | "applied" | "failed"; model: string | null; error: string | null } | null;
 }
 
 /** 文档的一个分块(详情抽屉展示) */

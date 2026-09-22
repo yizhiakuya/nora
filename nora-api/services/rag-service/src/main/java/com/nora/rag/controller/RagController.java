@@ -186,7 +186,9 @@ public class RagController {
         int topK = request.topK() != null && request.topK() > 0 ? request.topK() : 8;
         RetrievalService.RetrievalScope scope = new RetrievalService.RetrievalScope(
                 request.baseId(),
-                request.docIds() == null || request.docIds().isEmpty() ? null : request.docIds());
+                request.docIds() == null || request.docIds().isEmpty() ? null : request.docIds(),
+                request.sources() == null || request.sources().isEmpty() ? null : request.sources(),
+                request.dateFrom(), request.dateTo());
         return ApiResponse.ok(retrievalService.searchWithStatus(request.query(), topK, scope));
     }
 
@@ -458,11 +460,17 @@ public class RagController {
     public record IndexRequest(Long fileId, String name) {
     }
 
-    /** POST /api/rag/search 与 /api/rag/citations 请求体。 */
-    public record SearchBody(String query, Integer topK, Long baseId, List<Long> docIds) {
+    /** POST /api/rag/search 与 /api/rag/citations 请求体(阶段 B:范围参数)。 */
+    public record SearchBody(String query, Integer topK, Long baseId, List<Long> docIds,
+                             List<String> sources, String dateFrom, String dateTo) {
         /** 兼容构造(阶段 A 调用方)。 */
         public SearchBody(String query, Integer topK) {
-            this(query, topK, null, null);
+            this(query, topK, null, null, null, null, null);
+        }
+
+        /** 兼容构造(阶段 B 初版:仅库/文档)。 */
+        public SearchBody(String query, Integer topK, Long baseId, List<Long> docIds) {
+            this(query, topK, baseId, docIds, null, null, null);
         }
     }
 

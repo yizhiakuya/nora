@@ -13,10 +13,12 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **嵌入分批+退避**:`embedAll` 按 40 块分批(Jina 限速 10 万 tokens/分钟);撞 rate limit 按 30s 递增退避重试 3 次(50 万字符大文档实测单次提交烧穿配额)
 - **生命周期版本单调**:版本号存 `file_lifecycle_version` 计数表(file-service V8)——此前版本在 pending 行上、送达删除后从 1 重来,「删除→恢复→删除」第 2/3 步被 rag 侧拒绝(实测 applied 停在 1);rag 侧版本确认+状态变化同事务(`applyLifecycle`)
 - **批量删除修复**:`deleteDocs` 的 `IN (?)` 改占位符展开(此前传 List 给单占位符,PG 报 bad SQL grammar——单测 mock 掩盖,真实批量删除全失败)
-- **资料库分组(阶段 B,V10)**:`knowledge_base`(默认库收纳未分组文档)+ `knowledge_doc.base_id`;检索范围 `baseId`/`docIds` **同时进入两路候选查询**,范围内无结果不自动扩大;删除库=库内文档回默认库(不级联删除),默认库拒删 409。前端检索测试页可选库范围
+- **资料库分组(阶段 B,V10)**:`knowledge_base`(默认库收纳未分组文档)+ `knowledge_doc.base_id`;检索范围 `baseId`/`docIds`/`sources`/`dateFrom`/`dateTo` **同时进入两路候选查询**,范围内无结果不自动扩大;删除库=库内文档回默认库(不级联删除),默认库拒删 409。前端检索测试页可选库范围。**同名文档按库独立(V11)**:按名索引的去重键含 base_id——此前不同资料库的同名文档互相覆盖(实测:两个评测库放同名语料,后建的清空先建的)
 - **文档停用(阶段 B)**:`knowledge_doc.enabled`——停用=退出检索(保留数据与索引),`POST /api/rag/docs/{id}/enabled`;前端文档库停用/启用按钮(Eye/EyeOff),状态徽章显示「已停用」。与删除语义区分
 - **结构分段+父子模式(阶段 B)**:`ChunkingService` 两模式——plain 沿 Markdown 标题/空行段落/句末标点切分(超长才滑动窗口兜底);parent_child 章节作父块、内部切子块,子块落 `parent_index/parent_content`,检索 `mergeParentContext` 把命中子块的 content 换为父块完整上下文(同父多命中合并)。`index/text` 可带 `chunkMode`
+- **可选重排(阶段 B)**:`RerankClient` 走 Jina `/v1/rerank`(与嵌入同 provider/key);`nora.retrieval.rerank-enabled` 默认 **false**——实测当前语料重排无质量提升(均 12/12)且延迟增加,由评测决定是否开启;失败保留融合排序并在 `RetrievalOutcome.rerank` 标记 failed+原因;代理走注入的 `ProxyProperties`(与 EmbeddingService 同款,勿用未初始化的 ProxySettingsHolder)
 - **检索记录(阶段 B)**:`retrieval_log` 记录查询/范围/状态/结果标识/耗时(`GET /api/rag/retrievals`),供「为什么找不到」回溯;正文不入库(方案 §4)
+- **检索评测(阶段 B)**:`scripts/rag-eval.py`——固定语料(5 篇)+ 14 问题集(12 有答案 + 2 无答案),报告 hit@K/首个正确位置/无答案拒绝/延迟;`--rebuild --mode plain|parent_child` 重建两套对照库。**当前基线:两种模式 hit@5=12/12,无答案 2/2**
 - **agent 工具面(阶段 B)**:`search_knowledge` 加 `baseId`/`docIds` 范围参数;`manage_knowledge` 加 `bases`(列资料库)/`disable`/`enable` 动作——风险分级:bases=LOW、disable/enable=HIGH、remove 仍 CRITICAL;审批明细含停用后果说明
 
 ## file-service(文件中心=统一文件系统入口,2026-09-17)

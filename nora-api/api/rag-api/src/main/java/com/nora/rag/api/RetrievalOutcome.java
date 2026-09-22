@@ -17,13 +17,21 @@ package com.nora.rag.api;
  * @param results 融合后的命中(最优在前);unavailable 时为空
  * @param vector  向量通道状态
  * @param keyword 关键词通道状态
+ * @param rerank  可选重排状态(阶段 B;未启用/成功/失败)
  */
 public record RetrievalOutcome(
         String status,
         java.util.List<RetrievalResult> results,
         ChannelStatus vector,
-        ChannelStatus keyword
+        ChannelStatus keyword,
+        RerankStatus rerank
 ) {
+
+    /** 兼容构造(阶段 A 调用方):无重排状态。 */
+    public RetrievalOutcome(String status, java.util.List<RetrievalResult> results,
+                            ChannelStatus vector, ChannelStatus keyword) {
+        this(status, results, vector, keyword, RerankStatus.disabled());
+    }
 
     /** 单通道状态:{@code ok=false} 时 error 为可读原因。 */
     public record ChannelStatus(boolean ok, String error) {
@@ -33,6 +41,25 @@ public record RetrievalOutcome(
 
         public static ChannelStatus down(String error) {
             return new ChannelStatus(false, error);
+        }
+    }
+
+    /**
+     * 重排状态(阶段 B,方案 §6.2):
+     * {@code state=disabled}(未启用)/ {@code applied}(已重排,model=模型名)/
+     * {@code failed}(重排失败,保留融合排序,error=原因)。
+     */
+    public record RerankStatus(String state, String model, String error) {
+        public static RerankStatus disabled() {
+            return new RerankStatus("disabled", null, null);
+        }
+
+        public static RerankStatus applied(String model) {
+            return new RerankStatus("applied", model, null);
+        }
+
+        public static RerankStatus failed(String error) {
+            return new RerankStatus("failed", null, error);
         }
     }
 

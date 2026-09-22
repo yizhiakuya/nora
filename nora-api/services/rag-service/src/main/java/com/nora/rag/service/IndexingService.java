@@ -93,7 +93,7 @@ public class IndexingService {
         // 阶段 1(短事务):插入 processing 新行,并清理同键的旧 failed 行
         // (它们已被本次构建取代;旧 indexed 行保留到发布切换,先构建后发布)。
         Long docId = txTemplate.execute(txStatus -> {
-            softDeleteStaleFailedRows(source, sourceId, name, null);
+            softDeleteStaleFailedRows(source, sourceId, name, targetBase);
             return jdbcTemplate.queryForObject(
                     "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size, base_id, chunk_mode) VALUES (?, ?, ?, 'processing', ?, ?, ?) RETURNING id",
                     Long.class, name, source, sourceId, size, targetBase, mode);
@@ -106,7 +106,7 @@ public class IndexingService {
         if (pieces.isEmpty()) {
             // 空文本:无块可嵌入,直接发布(0 块)。
             try {
-                txTemplate.executeWithoutResult(tx -> publish(docId, source, sourceId, name, 0));
+                txTemplate.executeWithoutResult(tx -> publish(docId, source, sourceId, name, targetBase, 0));
             } catch (RuntimeException e) {
                 markFailed(docId, "发布失败: " + rootMessage(e));
                 throw wrap("indexing failed", e);
@@ -155,7 +155,7 @@ public class IndexingService {
                             "UPDATE schema_rag.knowledge_chunk SET embedding = ?::vector WHERE doc_id = ? AND chunk_index = ?",
                             RetrievalService.toPgVectorLiteral(embeddings.get(i)), docId, i);
                 }
-                publish(docId, source, sourceId, name, chunks.size());
+                publish(docId, source, sourceId, name, targetBase, chunks.size());
             });
             log.info("Indexed doc '{}' with {} chunks ({}d, model {})",
                     name, chunks.size(), embeddingProperties.dimensions(), embeddingProperties.model());
@@ -181,7 +181,7 @@ public class IndexingService {
      * 发布**——否则会软删掉刚被「恢复」恢复回来的旧版本,留下没有任何
      * 可用版本的悬空状态(方案 §8 场景「构建中删除源文件不能发布复活资料」)。
      */
-    private void publish(long docId, String source, Long sourceId, String name, int chunkCount) {
+    private void publish(long docId, String source, Long sourceId, String name, Long baseId, int chunkCount) {
         Integer alive = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
                 Integer.class, docId);
@@ -196,7 +196,10 @@ public class IndexingService {
             return;
         }
         // 1) 软删同键的其它存活行(旧 indexed 行被替换;旧 processing 行是
-        //    并发重复提交,以本次为准;旧 failed 行已被新版本取代)
+        //    并发重复提交,以本次为准;旧 failed 行已被新版本取代)。
+        //    2026-09-22(阶段 B 修复):按名索引(sourceId 为 NULL)的去重键
+        //    含 base_id——同名文档在**不同资料库**各自独立,不再跨库互相覆盖
+        //    (实测:两个评测库放同名语料,后建的库把先建的库清空了)。
         if (sourceId != null) {
             jdbcTemplate.update(
                     "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
@@ -208,11 +211,13 @@ public class IndexingService {
         } else {
             jdbcTemplate.update(
                     "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
-                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL AND id <> ?)",
-                    source, name, docId);
+                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? "
+                            + "AND (base_id = ? OR (base_id IS NULL AND ? IS NULL)) AND deleted_at IS NULL AND id <> ?)",
+                    source, name, baseId, baseId, docId);
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL AND id <> ?",
-                    source, name, docId);
+                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? "
+                            + "AND (base_id = ? OR (base_id IS NULL AND ? IS NULL)) AND deleted_at IS NULL AND id <> ?",
+                    source, name, baseId, baseId, docId);
         }
         // 2) 本行置 indexed(发布点)
         jdbcTemplate.update(
@@ -220,8 +225,8 @@ public class IndexingService {
                 chunkCount, docId);
     }
 
-    /** 软删同键的旧 failed 行(新构建取代它们;旧 indexed 行不动)。 */
-    private void softDeleteStaleFailedRows(String source, Long sourceId, String name, Long exceptId) {
+    /** 软删同键的旧 failed 行(新构建取代它们;旧 indexed 行不动;含 base 维度)。 */
+    private void softDeleteStaleFailedRows(String source, Long sourceId, String name, Long baseId) {
         if (sourceId != null) {
             jdbcTemplate.update(
                     "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
@@ -233,11 +238,13 @@ public class IndexingService {
         } else {
             jdbcTemplate.update(
                     "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
-                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? AND status = 'failed' AND deleted_at IS NULL)",
-                    source, name);
+                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? "
+                            + "AND (base_id = ? OR (base_id IS NULL AND ? IS NULL)) AND status = 'failed' AND deleted_at IS NULL)",
+                    source, name, baseId, baseId);
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? AND status = 'failed' AND deleted_at IS NULL",
-                    source, name);
+                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? "
+                            + "AND (base_id = ? OR (base_id IS NULL AND ? IS NULL)) AND status = 'failed' AND deleted_at IS NULL",
+                    source, name, baseId, baseId);
         }
     }
 
@@ -309,10 +316,11 @@ public class IndexingService {
     /** 重建后的发布:按本行的 (source, source_id/name) 软删其它存活行,再置 indexed。 */
     private void publishAfterRebuild(long docId, int chunkCount) {
         List<Object[]> rows = jdbcTemplate.query(
-                "SELECT source, source_id, name FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
+                "SELECT source, source_id, name, base_id FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
                 (rs, i) -> new Object[]{rs.getString("source"),
                         rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
-                        rs.getString("name")},
+                        rs.getString("name"),
+                        rs.getObject("base_id") == null ? null : rs.getLong("base_id")},
                 docId);
         if (rows.isEmpty()) {
             return;
@@ -321,6 +329,7 @@ public class IndexingService {
         String source = (String) row[0];
         Long sourceId = (Long) row[1];
         String name = (String) row[2];
+        Long baseId = (Long) row[3];
         if (sourceId != null) {
             jdbcTemplate.update(
                     "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
@@ -330,13 +339,16 @@ public class IndexingService {
                     "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id = ? AND deleted_at IS NULL AND id <> ?",
                     source, sourceId, docId);
         } else {
+            // 同库同名才算同键(阶段 B:不同资料库的同名文档各自独立)
             jdbcTemplate.update(
                     "UPDATE schema_rag.knowledge_chunk SET deleted_at = now() WHERE doc_id IN "
-                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL AND id <> ?)",
-                    source, name, docId);
+                            + "(SELECT id FROM schema_rag.knowledge_doc WHERE source = ? AND source_id IS NULL AND name = ? "
+                            + "AND (base_id = ? OR (base_id IS NULL AND ? IS NULL)) AND deleted_at IS NULL AND id <> ?)",
+                    source, name, baseId, baseId, docId);
             jdbcTemplate.update(
-                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? AND deleted_at IS NULL AND id <> ?",
-                    source, name, docId);
+                    "UPDATE schema_rag.knowledge_doc SET deleted_at = now() WHERE source = ? AND source_id IS NULL AND name = ? "
+                            + "AND (base_id = ? OR (base_id IS NULL AND ? IS NULL)) AND deleted_at IS NULL AND id <> ?",
+                    source, name, baseId, baseId, docId);
         }
         jdbcTemplate.update(
                 "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', error = NULL, updated_at = now() WHERE id = ? AND deleted_at IS NULL",

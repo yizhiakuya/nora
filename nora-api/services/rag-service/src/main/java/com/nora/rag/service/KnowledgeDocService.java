@@ -378,11 +378,14 @@ public class KnowledgeDocService {
      */
     public boolean renameDoc(long id, String name) {
         String trimmed = name.trim();
+        // 同库同名才算冲突(阶段 B:不同资料库的同名文档各自独立)
         Integer clash = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM schema_rag.knowledge_doc "
-                        + "WHERE id <> ? AND source = (SELECT source FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL) "
-                        + "AND source_id IS NULL AND name = ? AND deleted_at IS NULL",
-                Integer.class, id, id, trimmed);
+                "SELECT count(*) FROM schema_rag.knowledge_doc d1 "
+                        + "WHERE d1.id <> ? AND d1.source_id IS NULL AND d1.name = ? AND d1.deleted_at IS NULL "
+                        + "AND d1.source = (SELECT source FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL) "
+                        + "AND (d1.base_id = (SELECT base_id FROM schema_rag.knowledge_doc WHERE id = ?) "
+                        + "     OR (d1.base_id IS NULL AND (SELECT base_id FROM schema_rag.knowledge_doc WHERE id = ?) IS NULL))",
+                Integer.class, id, trimmed, id, id, id);
         if (clash != null && clash > 0) {
             throw new BusinessException(409, "同名文档已存在: " + trimmed);
         }
