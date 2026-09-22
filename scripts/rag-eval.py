@@ -85,31 +85,98 @@ CORPUS = [
             "问:如何把回答保存为文件?答:在回答下方点「保存为文件」,文件会进入工作区。\n"
         ),
     },
+    {
+        "name": "eval-配置表.md",
+        "text": (
+            "## 服务配置对照表\n\n"
+            "| 服务 | 端口 | 内存上限 | 副本数 |\n"
+            "|---|---|---|---|\n"
+            "| gateway | 8080 | 512MB | 1 |\n"
+            "| file | 8081 | 1GB | 1 |\n"
+            "| rag | 8082 | 2GB | 1 |\n"
+            "| agent | 8083 | 4GB | 1 |\n"
+            "| datasource | 8084 | 1GB | 1 |\n\n"
+            "备注:agent 服务因承载对话与工具循环,内存上限最高;"
+            "其余服务按负载从 512MB 到 2GB 不等。\n"
+        ),
+    },
+    {
+        "name": "eval-发布说明v1.md",
+        "text": (
+            "## 版本 1.0 发布说明\n\n"
+            "发布日期:2026-08-15。本次为首次正式发布。\n"
+            "默认监听端口为 8000,配置文件位于 /etc/nora/config.yml。\n"
+            "升级方式:重新拉取镜像并重启容器。\n"
+        ),
+    },
+    {
+        "name": "eval-发布说明v2.md",
+        "text": (
+            "## 版本 2.0 发布说明\n\n"
+            "发布日期:2026-09-20。本次为重大版本更新。\n"
+            "默认监听端口调整为 8080,配置文件迁移到 /etc/nora/config-v2.yml。\n"
+            "升级方式:先备份数据库,再执行迁移脚本 nora-migrate-v2。\n"
+        ),
+    },
 ]
 
 # ---------- 问题集(标注正确文档;expectNoMatch=应为无答案) ----------
+#
+# 覆盖类型(方案 §8):术语/编号、中文短问、语义改写、跨段、表格、
+# 多文档冲突、限定范围(scopeDoc 限定单文档)、无答案。
+# 期望标注:expect=正确文档名(命中前 K 即算);expectNone=应无命中。
 
 CASES = [
-    # 术语 / 编号
+    # ---- 术语 / 编号 ----
     {"q": "ERR-2077 是什么意思", "expect": "eval-错误码表.md", "note": "错误码字面命中"},
     {"q": "ERR-4402 报错怎么处理", "expect": "eval-错误码表.md", "note": "错误码+动词"},
+    {"q": "ERR-3105 一般是什么原因", "expect": "eval-错误码表.md", "note": "错误码+原因"},
+    {"q": "ERR-5501 代表什么", "expect": "eval-错误码表.md", "note": "错误码+定义"},
     {"q": "部署密钥是什么", "expect": "eval-部署手册.md", "note": "密钥在章节深处"},
-    # 中文短问
+    {"q": "DEPLOY-KEY 在哪份文档里", "expect": "eval-部署手册.md", "note": "密钥标识符"},
+    {"q": "shared_buffers 应该设多大", "expect": "eval-pg-tuning.md", "note": "英文术语"},
+    {"q": "work_mem 是干什么的", "expect": "eval-pg-tuning.md", "note": "英文参数+用途"},
+    {"q": "effective_cache_size 是什么", "expect": "eval-pg-tuning.md", "note": "英文参数+定义"},
+    {"q": "autovacuum 要关掉吗", "expect": "eval-pg-tuning.md", "note": "英文参数+问句"},
+    # ---- 中文短问 ----
     {"q": "怎么备份", "expect": "eval-运维SOP.md", "note": "中文短问"},
     {"q": "端口有哪些", "expect": "eval-部署手册.md", "note": "短问+列表型答案"},
-    # 语义改写(不含原文关键词)
+    {"q": "怎么启动", "expect": "eval-部署手册.md", "note": "短问+命令"},
+    {"q": "巡检做什么", "expect": "eval-运维SOP.md", "note": "短问+流程"},
+    {"q": "令牌忘了", "expect": "eval-FAQ.md", "note": "短问+FAQ"},
+    {"q": "内存多大", "expect": "eval-配置表.md", "note": "短问+表格"},
+    # ---- 语义改写(不含原文关键词) ----
     {"q": "数据库连不上怎么办", "expect": "eval-错误码表.md", "note": "语义改写→下游不可达"},
     {"q": "磁盘快满了", "expect": "eval-运维SOP.md", "note": "口语→容量规划"},
     {"q": "登录不了", "expect": "eval-FAQ.md", "note": "口语→忘记令牌"},
-    # 英文 / 跨语言
-    {"q": "shared_buffers 应该设多大", "expect": "eval-pg-tuning.md", "note": "英文术语"},
-    {"q": "autovacuum 要关掉吗", "expect": "eval-pg-tuning.md", "note": "英文参数+问句"},
-    # 跨段
+    {"q": "机器内存扛不住怎么办", "expect": "eval-运维SOP.md", "note": "口语→内存水位扩容"},
+    {"q": "怎么让数据库自动清理", "expect": "eval-pg-tuning.md", "note": "语义→autovacuum"},
+    {"q": "服务器挂了怎么查", "expect": "eval-部署手册.md", "note": "口语→健康检查排查"},
+    {"q": "东西太大传不上去", "expect": "eval-FAQ.md", "note": "口语→文件上限"},
+    # ---- 跨段 ----
     {"q": "部署分几步", "expect": "eval-部署手册.md", "note": "流程概述"},
     {"q": "文件大小限制", "expect": "eval-FAQ.md", "note": "限制类问题"},
-    # 无答案(必须无命中,方案 §8 正确性要求)
+    {"q": "恢复演练多久做一次", "expect": "eval-运维SOP.md", "note": "跨段(备份规程)"},
+    {"q": "备份保留多久", "expect": "eval-运维SOP.md", "note": "跨段(备份规程)"},
+    # ---- 表格 ----
+    {"q": "agent 服务的内存上限是多少", "expect": "eval-配置表.md", "note": "表格单元格"},
+    {"q": "哪些服务的端口在 8080 以上", "expect": "eval-配置表.md", "note": "表格跨行"},
+    {"q": "各服务的副本数", "expect": "eval-配置表.md", "note": "表格整列"},
+    # ---- 多文档冲突(两版发布说明;未指定版本时两版均算命中) ----
+    {"q": "发布说明里默认端口是多少", "expectAny": ["eval-发布说明v1.md", "eval-发布说明v2.md"], "note": "多文档冲突(未指定版本,两版均算命中)"},
+    {"q": "2.0 版本的配置文件路径", "expect": "eval-发布说明v2.md", "note": "多文档冲突(指定 v2)"},
+    {"q": "版本 1.0 的默认端口", "expect": "eval-发布说明v1.md", "note": "指定旧版本"},
+    {"q": "迁移脚本叫什么", "expect": "eval-发布说明v2.md", "note": "v2 独有内容"},
+    # ---- 限定范围(scopeDoc:只在指定文档内检索) ----
+    {"q": "端口 8082 是哪个服务", "expect": "eval-配置表.md", "scopeDoc": "eval-配置表.md", "note": "限定范围:配置表"},
+    {"q": "备份保留多少天", "expect": "eval-运维SOP.md", "scopeDoc": "eval-运维SOP.md", "note": "限定范围:SOP"},
+    {"q": "ERR-5501 是什么意思", "expect": "eval-错误码表.md", "scopeDoc": "eval-错误码表.md", "note": "限定范围:错误码表"},
+    # ---- 无答案(必须无命中,方案 §8 正确性要求) ----
     {"q": "今天天气怎么样", "expectNone": True, "note": "与知识库无关"},
     {"q": "股票行情如何", "expectNone": True, "note": "与知识库无关"},
+    {"q": "推荐几部电影", "expectNone": True, "note": "与知识库无关"},
+    {"q": "明天开会几点", "expectNone": True, "note": "与知识库无关"},
+    {"q": "帮我写一首诗", "expectNone": True, "note": "与知识库无关"},
 ]
 
 
@@ -176,13 +243,30 @@ def run_cases(base_id, top_k=5, verbose=False):
     first_pos_n = 0
     no_match_ok = 0
     no_match_total = 0
+    scope_ok = 0
+    scope_total = 0
     latencies = []
     rows = []
 
+    # 限定范围用例需要 docId:按名查文档 id(评测库内)
+    doc_ids = {}
+    for d in get("/rag/docs")["data"]:
+        if d.get("baseId") == base_id:
+            doc_ids[d["name"]] = d["id"]
+
     for c in CASES:
+        body_req = {"query": c["q"], "topK": top_k, "baseId": base_id}
+        scoped = False
+        if c.get("scopeDoc"):
+            doc_id = doc_ids.get(c["scopeDoc"])
+            if doc_id is None:
+                rows.append((c["q"], c["expect"], "FAIL", "限定文档缺失", 0, c.get("note", "")))
+                continue
+            body_req["docIds"] = [doc_id]
+            scoped = True
         t0 = time.time()
         try:
-            r = post("/rag/search", {"query": c["q"], "topK": top_k, "baseId": base_id})
+            r = post("/rag/search", body_req)
             body = r.get("data") or {}
             results = body.get("results") or []
             status = body.get("status")
@@ -200,17 +284,26 @@ def run_cases(base_id, top_k=5, verbose=False):
             continue
 
         pos = -1
+        expected = set(c.get("expectAny") or ([c["expect"]] if c.get("expect") else []))
         for i, h in enumerate(results):
-            if h.get("docName") == c["expect"]:
+            if h.get("docName") in expected:
                 pos = i + 1
                 break
         ok = pos > 0
+        # 限定范围用例额外校验:结果不得越出范围(方案 §8 范围外泄漏)
+        if scoped:
+            scope_total += 1
+            leaked = any(h.get("docName") != c["scopeDoc"] for h in results)
+            if ok and not leaked:
+                scope_ok += 1
+            if leaked:
+                ok = False
         if ok:
             hits += 1
             first_pos_sum += pos
             first_pos_n += 1
-        rows.append((c["q"], c["expect"], "PASS" if ok else "FAIL",
-                     f"位置 {pos}" if ok else "未命中", ms, c.get("note", "")))
+        rows.append((c["q"], c.get("expect") or "/".join(c.get("expectAny", [])), "PASS" if ok else "FAIL",
+                     f"位置 {pos}" if pos > 0 else "未命中", ms, c.get("note", "")))
 
     answered = total - no_match_total
     print(f"\n=== 检索评测结果(语料库 base_id={base_id}, topK={top_k}) ===")
@@ -224,6 +317,8 @@ def run_cases(base_id, top_k=5, verbose=False):
     if first_pos_n:
         print(f"首个正确证据平均位置: {first_pos_sum/first_pos_n:.2f}")
     print(f"无答案问题正确拒绝: {no_match_ok}/{no_match_total}")
+    if scope_total:
+        print(f"限定范围无泄漏: {scope_ok}/{scope_total}")
     if latencies:
         lat = sorted(latencies)
         print(f"延迟: 中位 {lat[len(lat)//2]}ms / 最大 {lat[-1]}ms")

@@ -29,11 +29,12 @@ public record RetrievalProperties(
 ) {
 
     /**
-     * 默认余弦下限。在本语料上对 jina-embeddings-v3 校准:相关块约 0.46–0.76,
-     * 不相关查询最高约 0.31–0.42,0.45 正好落在两带之间。低于该间隙,
-     * 检索会把噪音注入每一个提示词——包括在知识库里根本没有答案的问候语。
+     * 默认余弦下限。2026-09-22 评测复校(45 问题评测集):无关查询最高 0.476
+     * (「明天开会几点」→「每天上午检查」的语义漂移),相关查询最低 0.540
+     * (口语改写类,如「东西太大传不上去」→文件上限)——取两带中点 0.51。
+     * 旧值 0.45 会让无关问题以 0.46~0.48 越阈注入噪音。
      */
-    public static final double DEFAULT_MIN_SCORE = 0.45;
+    public static final double DEFAULT_MIN_SCORE = 0.51;
     public static final int DEFAULT_VECTOR_WEIGHT = 2;
     public static final int DEFAULT_KEYWORD_WEIGHT = 1;
     public static final int DEFAULT_CANDIDATE_POOL = 20;

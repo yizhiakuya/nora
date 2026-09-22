@@ -51,8 +51,10 @@ nora:
   # 混合检索调参(向量 + pg_trgm 关键词,RRF 融合)
   retrieval:
     # 余弦相似度下限:低于此值不注入 prompt,避免「问你好也召回一堆垃圾」。
-    # 0.45 取自实测:相关片段 0.46~0.76,无关查询 0.31~0.42,该值落在两带之间。
-    min-score: ${NORA_RETRIEVAL_MIN_SCORE:0.45}
+    # 0.51 取自 2026-09-22 评测复校(45 问题集):无关查询最高 0.476
+    # (「明天开会几点」的语义漂移),相关查询最低 0.540(口语改写类)——
+    # 取两带中点;旧值 0.45 会让无关问题以 0.46~0.48 越阈。
+    min-score: ${NORA_RETRIEVAL_MIN_SCORE:0.51}
     vector-weight: ${NORA_RETRIEVAL_VECTOR_WEIGHT:2}
     keyword-weight: ${NORA_RETRIEVAL_KEYWORD_WEIGHT:1}
     candidate-pool: ${NORA_RETRIEVAL_CANDIDATE_POOL:20}

@@ -18,7 +18,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **结构分段+父子模式(阶段 B)**:`ChunkingService` 两模式——plain 沿 Markdown 标题/空行段落/句末标点切分(超长才滑动窗口兜底);parent_child 章节作父块、内部切子块,子块落 `parent_index/parent_content`,检索 `mergeParentContext` 把命中子块的 content 换为父块完整上下文(同父多命中合并)。`index/text` 可带 `chunkMode`
 - **可选重排(阶段 B)**:`RerankClient` 走 Jina `/v1/rerank`(与嵌入同 provider/key);`nora.retrieval.rerank-enabled` 默认 **false**——实测当前语料重排无质量提升(均 12/12)且延迟增加,由评测决定是否开启;失败保留融合排序并在 `RetrievalOutcome.rerank` 标记 failed+原因;代理走注入的 `ProxyProperties`(与 EmbeddingService 同款,勿用未初始化的 ProxySettingsHolder)
 - **检索记录(阶段 B)**:`retrieval_log` 记录查询/范围/状态/结果标识/耗时(`GET /api/rag/retrievals`),供「为什么找不到」回溯;正文不入库(方案 §4)
-- **检索评测(阶段 B)**:`scripts/rag-eval.py`——固定语料(5 篇)+ 14 问题集(12 有答案 + 2 无答案),报告 hit@K/首个正确位置/无答案拒绝/延迟;`--rebuild --mode plain|parent_child` 重建两套对照库。**当前基线:两种模式 hit@5=12/12,无答案 2/2**
+- **检索评测(阶段 B)**:`scripts/rag-eval.py`——固定语料(7 篇:部署/错误码/运维/调优/FAQ/配置表/双版本发布说明)+ **45 问题集**(37 有答案,覆盖术语编号/中文短问/语义改写/跨段/表格/多文档冲突/限定范围;5 无答案),报告 hit@K/首个正确位置/无答案拒绝/范围泄漏/延迟;`--rebuild --mode plain|parent_child` 重建两套对照库。**当前基线:两种模式 hit@5=37/37 (100%),无答案 5/5,范围无泄漏 3/3**。评测同时完成 **min-score 校准复校**:无关查询最高 0.476(「明天开会几点」的语义漂移),相关查询最低 0.540(口语改写类)——阈值从 0.45 调到 **0.51**(两带中点)
 - **agent 工具面(阶段 B)**:`search_knowledge` 加 `baseId`/`docIds` 范围参数;`manage_knowledge` 加 `bases`(列资料库)/`disable`/`enable` 动作——风险分级:bases=LOW、disable/enable=HIGH、remove 仍 CRITICAL;审批明细含停用后果说明
 
 ## file-service(文件中心=统一文件系统入口,2026-09-17)
