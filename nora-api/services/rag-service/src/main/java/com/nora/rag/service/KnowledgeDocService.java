@@ -133,6 +133,59 @@ public class KnowledgeDocService {
         return updated == 0 ? null : getDoc(id);
     }
 
+    /**
+     * 把文档移入资料库(阶段 B 闭环)。
+     *
+     * <p>目标库已有同名同源(name-keyed)存活文档时 409——移库不能悄悄
+     * 顶掉库内另一篇文档。目标库必须存在(baseId=null 表示移回默认库)。
+     *
+     * @return 更新后的文档;文档不存在返回 null
+     * @throws BusinessException 目标库不存在 404 / 目标库同名冲突 409
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public KnowledgeDocView setBase(long id, Long baseId) {
+        List<Object[]> rows = jdbcTemplate.query(
+                "SELECT source, source_id, name, base_id FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
+                (rs, i) -> new Object[]{rs.getString("source"),
+                        rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
+                        rs.getString("name"),
+                        rs.getObject("base_id") == null ? null : rs.getLong("base_id")},
+                id);
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Long targetBase = baseId;
+        if (targetBase != null) {
+            Integer exists = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM schema_rag.knowledge_base WHERE id = ? AND deleted_at IS NULL",
+                    Integer.class, targetBase);
+            if (exists == null || exists == 0) {
+                throw new BusinessException(404, "目标资料库不存在: " + targetBase);
+            }
+        } else {
+            targetBase = jdbcTemplate.queryForObject(
+                    "SELECT id FROM schema_rag.knowledge_base WHERE is_default AND deleted_at IS NULL LIMIT 1",
+                    Long.class);
+        }
+        Object[] row = rows.get(0);
+        Long sourceId = (Long) row[1];
+        if (sourceId == null) {
+            // 按名索引:目标库同名存活文档冲突 → 409(不顶掉)
+            Integer clash = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM schema_rag.knowledge_doc d1 WHERE d1.id <> ? AND d1.source = ? "
+                            + "AND d1.source_id IS NULL AND d1.name = ? AND d1.deleted_at IS NULL "
+                            + "AND (d1.base_id = ? OR (d1.base_id IS NULL AND ? IS NULL))",
+                    Integer.class, id, (String) row[0], (String) row[2], targetBase, targetBase);
+            if (clash != null && clash > 0) {
+                throw new BusinessException(409, "目标资料库已有同名文档: " + row[2]);
+            }
+        }
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET base_id = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+                targetBase, id);
+        return getDoc(id);
+    }
+
     // ---------- 检索记录(阶段 B,方案 §6.3/§7) ----------
 
     /** 检索记录视图(供「为什么找不到」回溯)。 */
@@ -394,18 +447,23 @@ public class KnowledgeDocService {
                 trimmed, id) > 0;
     }
 
-    /** 文档的分块,按 index 序,供详情抽屉。 */
+    /** 文档的分块,按 index 序,供详情抽屉(阶段 B:带父块关系)。 */
     public List<ChunkView> listChunks(long id) {
         return jdbcTemplate.query(
-                "SELECT chunk_index, content, token_count FROM schema_rag.knowledge_chunk "
+                "SELECT chunk_index, content, token_count, parent_index, parent_content FROM schema_rag.knowledge_chunk "
                         + "WHERE doc_id = ? AND deleted_at IS NULL ORDER BY chunk_index",
                 (rs, rowNum) -> {
                     String content = rs.getString("content");
+                    int parentIndex = rs.getInt("parent_index");
+                    Integer parent = rs.wasNull() ? null : parentIndex;
+                    String parentContent = parent == null ? null : rs.getString("parent_content");
                     return new ChunkView(
                             rs.getInt("chunk_index"),
                             content,
                             rs.getInt("token_count"),
-                            content == null ? 0 : content.length()
+                            content == null ? 0 : content.length(),
+                            parent,
+                            parentContent == null || parentContent.equals(content) ? null : parentContent
                     );
                 },
                 id
@@ -431,8 +489,17 @@ public class KnowledgeDocService {
             int chunkIndex,
             String content,
             int tokenCount,
-            int length
+            /** 字符数(与 tokenCount 不同量纲,供 UI 展示)。 */
+            int length,
+            /** 父子模式:所属章节序号;null = 非父子模式(或旧数据)。 */
+            Integer parentIndex,
+            /** 父子模式:所属章节完整正文(与 content 不同才下发;供详情抽屉展开)。 */
+            String parentContent
     ) {
+        /** 兼容构造(旧调用点/测试:无父块字段)。 */
+        public ChunkView(int chunkIndex, String content, int tokenCount, int length) {
+            this(chunkIndex, content, tokenCount, length, null, null);
+        }
     }
 
     public IndexStatsView getIndexStats() {

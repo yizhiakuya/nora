@@ -178,6 +178,10 @@ try { service.renameDoc(5L, "撞名"); } catch (Exception ignored) { }
         when(rs.getInt("chunk_index")).thenReturn(2);
         when(rs.getString("content")).thenReturn("共享缓冲区建议设为内存的 25%");
         when(rs.getInt("token_count")).thenReturn(9);
+        // 阶段 B:parent_index 列(0 = 非空;wasNull=false)
+        when(rs.getInt("parent_index")).thenReturn(0);
+        when(rs.wasNull()).thenReturn(false);
+        when(rs.getString("parent_content")).thenReturn(null);
 
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq(4L)))
                 .thenAnswer(invocation -> {

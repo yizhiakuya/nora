@@ -5,9 +5,9 @@ import { SearchCode, Loader2, Database, FileCode, Server, MessageSquare, File } 
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
-import { fetchBases, searchDocsAsync } from "@/lib/services/ragService";
+import { fetchBases, fetchRetrievalLogs, searchDocsAsync } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
-import { KnowledgeBase, KnowledgeSource, RetrievalOutcome } from "@/types";
+import { KnowledgeBase, KnowledgeSource, RetrievalLog, RetrievalOutcome } from "@/types";
 
 const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
   file: File,
@@ -57,11 +57,15 @@ export function RetrievalTest() {
   /** 资料库范围(阶段 B;null=全部资料) */
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
   const [scopeBaseId, setScopeBaseId] = useState<number | null>(null);
+  /** 检索记录(阶段 B,方案 §7「检索测试与记录」):后端已存,这里展示最近 N 条 */
+  const [logs, setLogs] = useState<RetrievalLog[]>([]);
+  const [logsOpen, setLogsOpen] = useState(false);
   const searchResults = outcome?.results ?? [];
 
   useEffect(() => {
     if (!USE_BACKEND) return;
     fetchBases().then(setBases).catch(() => undefined);
+    fetchRetrievalLogs(10).then(setLogs).catch(() => undefined);
   }, []);
 
   const handleSearch = async () => {
@@ -78,6 +82,10 @@ export function RetrievalTest() {
         setLastQuery(query);
         setHasSearched(true);
         setSearchMs(Math.max(1, Math.round(performance.now() - startedAt)));
+        // 刷新检索记录(本次查询刚落库)
+        if (USE_BACKEND) {
+          fetchRetrievalLogs(10).then(setLogs).catch(() => undefined);
+        }
       } finally {
         setIsSearching(false);
       }
@@ -131,6 +139,49 @@ export function RetrievalTest() {
         </div>
       </div>
 
+      {/* 检索记录(阶段 B,方案 §7):为什么找不到——查过的查询、范围、通道状态与耗时 */}
+      {USE_BACKEND && logs.length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setLogsOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-muted-foreground hover:bg-muted/50 cursor-pointer"
+          >
+            <span>检索记录 · 最近 {logs.length} 条</span>
+            <span className="text-[10px]">{logsOpen ? "收起" : "展开"}</span>
+          </button>
+          {logsOpen && (
+            <div className="border-t border-border divide-y divide-border max-h-64 overflow-auto">
+              {logs.map((log) => (
+                <button
+                  key={log.id}
+                  type="button"
+                  onClick={() => setQuery(log.query)}
+                  title="点击回填该查询"
+                  className="w-full text-left px-4 py-2 hover:bg-muted/40 cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-foreground truncate flex-1">{log.query}</span>
+                    <span className={`text-[10px] shrink-0 ${log.status === "ok" ? "text-green-600 dark:text-green-400"
+                      : log.status === "no_match" ? "text-muted-foreground"
+                      : "text-amber-600 dark:text-amber-400"}`}>
+                      {log.status}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                      {log.resultCount} 条 · {log.durationMs ?? "—"}ms
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground/70 mt-0.5 flex gap-2">
+                    <span>{log.createdAt}</span>
+                    {log.scopeJson && <span className="truncate">范围 {log.scopeJson}</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {isSearching && (
         <div className="py-12 flex flex-col items-center text-muted-foreground gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500 dark:text-blue-400" />
@@ -157,10 +208,24 @@ export function RetrievalTest() {
               {!outcome.keyword.ok && outcome.keyword.error && <div className="mt-0.5 opacity-80">关键词通道:{outcome.keyword.error}</div>}
             </div>
           )}
-          <div className="text-xs text-muted-foreground">
-            召回结果 <span className="font-bold text-foreground">{searchResults.length}</span> 条 ·
-            耗时 <span className="tabular-nums">{searchMs}ms</span>
-            {outcome?.status === "no_match" && <span className="ml-2">· 没有过阈命中（可换关键词或降低 min-score 测试）</span>}
+          <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-2">
+            <span>
+              召回结果 <span className="font-bold text-foreground">{searchResults.length}</span> 条 ·
+              耗时 <span className="tabular-nums">{searchMs}ms</span>
+            </span>
+            {/* 重排状态(阶段 B):applied 标注模型;failed 显式提示已回退融合排序 */}
+            {outcome?.rerank?.state === "applied" && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300">
+                已重排 · {outcome.rerank.model}
+              </span>
+            )}
+            {outcome?.rerank?.state === "failed" && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300"
+                title={outcome.rerank.error ?? undefined}>
+                重排失败 · 已回退融合排序
+              </span>
+            )}
+            {outcome?.status === "no_match" && <span>· 没有过阈命中（可换关键词或降低 min-score 测试）</span>}
           </div>
           {searchResults.map((r, i) => {
             const Icon = SOURCE_ICONS[r.source];

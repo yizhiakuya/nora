@@ -1,14 +1,15 @@
 'use client';
 
-import { useMemo, useState } from "react";
-import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff, FolderInput, Plus } from "lucide-react";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
-import { KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types";
+import { KnowledgeBase, KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
-import { fetchDocDetail, reindexDoc, setDocEnabled } from "@/lib/services/ragService";
+import { createBase, fetchBases, fetchDocDetail, reindexDoc, setDocBase, setDocEnabled } from "@/lib/services/ragService";
+import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 
 const SOURCE_ORDER: KnowledgeSource[] = ["file", "database", "repo", "environment", "chat", "text"];
@@ -59,6 +60,51 @@ export function DocumentLibrary() {
   const [detail, setDetail] = useState<DocDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number[] | null>(null);
+  /** 资料库分组(阶段 B 闭环):建库/移库的 UI 状态 */
+  const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [moving, setMoving] = useState<KnowledgeDoc | null>(null);
+  const [newBaseName, setNewBaseName] = useState("");
+  const [creatingBase, setCreatingBase] = useState(false);
+
+  const refreshBases = () => {
+    if (!USE_BACKEND) return;
+    fetchBases().then(setBases).catch(() => undefined);
+  };
+  useEffect(refreshBases, []);
+
+  const handleMove = async (doc: KnowledgeDoc, baseId: number | null) => {
+    setMoving(null);
+    setBusyId(doc.id);
+    try {
+      const updated = await setDocBase(doc.id, baseId);
+      useKnowledgeDocs.setState((state) => ({
+        docs: state.docs.map((d) => (d.id === doc.id ? { ...d, ...updated } : d)),
+      }));
+      const target = baseId == null ? "默认资料库" : bases.find((b) => b.id === baseId)?.name ?? `#${baseId}`;
+      toast.success(`「${doc.name}」已移入「${target}」`);
+      refreshBases();
+    } catch (e) {
+      toast.error(`移动失败：${(e as Error).message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleCreateBase = async () => {
+    const name = newBaseName.trim();
+    if (!name) return;
+    setCreatingBase(true);
+    try {
+      await createBase(name);
+      toast.success(`资料库「${name}」已创建`);
+      setNewBaseName("");
+      refreshBases();
+    } catch (e) {
+      toast.error(`创建失败：${(e as Error).message}`);
+    } finally {
+      setCreatingBase(false);
+    }
+  };
 
   const grouped = useMemo(() => {
     const map = new Map<KnowledgeSource, KnowledgeDoc[]>();
@@ -173,6 +219,45 @@ export function DocumentLibrary() {
 
   return (
     <div className="space-y-6">
+      {/* 资料库管理(阶段 B 闭环):库列表 + 新建——建库后文档可用「移动到资料库」归组 */}
+      {USE_BACKEND && (
+        <div className="bg-card border border-border rounded-xl p-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground shrink-0">资料库:</span>
+            {bases.map((b) => (
+              <span
+                key={b.id}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] border ${b.isDefault
+                  ? "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300"
+                  : "bg-muted border-border text-foreground"}`}
+                title={b.description ?? undefined}
+              >
+                {b.name}
+                <span className="text-[10px] text-muted-foreground tabular-nums">{b.docCount}</span>
+              </span>
+            ))}
+            <div className="flex items-center gap-1 ml-auto">
+              <input
+                value={newBaseName}
+                onChange={(e) => setNewBaseName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void handleCreateBase(); }}
+                placeholder="新建资料库…"
+                className="w-32 px-2 py-1 text-[11px] bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-[11px]"
+                disabled={!newBaseName.trim() || creatingBase}
+                onClick={() => void handleCreateBase()}
+              >
+                <Plus className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {allDocs.length > 0 && (
         <div className="flex items-center gap-3 min-h-[28px]">
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
@@ -293,6 +378,18 @@ export function DocumentLibrary() {
                           >
                             {doc.enabled === false ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                           </button>
+                          {/* 移动到资料库(阶段 B 闭环;仅后端模式且已有多个库时显示) */}
+                          {USE_BACKEND && bases.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setMoving(doc)}
+                              disabled={busyId === doc.id}
+                              className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+                              title="移动到资料库"
+                            >
+                              <FolderInput className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleReindex(doc)}
@@ -411,12 +508,58 @@ export function DocumentLibrary() {
                 <span className="font-medium text-foreground">chunk #{c.chunkIndex}</span>
                 <span>· {c.length} 字</span>
                 <span>· ~{c.tokenCount} tokens</span>
+                {/* 父子模式标注(阶段 B):命中子块、返回父块——让用户理解检索行为 */}
+                {c.parentIndex != null && (
+                  <span className="px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
+                    章节 #{c.parentIndex}(命中后返回整章)
+                  </span>
+                )}
               </div>
               <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
                 {c.content}
               </pre>
+              {/* 父块正文与子块不同时,折叠展示(默认收起,避免抽屉过长) */}
+              {c.parentContent && (
+                <details className="mt-2">
+                  <summary className="text-[10px] text-blue-500 dark:text-blue-400 cursor-pointer hover:underline">
+                    展开所属章节完整正文({c.parentContent.length} 字符)
+                  </summary>
+                  <pre className="mt-1.5 text-[11px] text-muted-foreground/80 whitespace-pre-wrap break-words leading-relaxed border-l-2 border-blue-200 dark:border-blue-800 pl-2">
+                    {c.parentContent}
+                  </pre>
+                </details>
+              )}
             </div>
           ))}
+        </div>
+      </Modal>
+
+      {/* 移动到资料库(阶段 B 闭环) */}
+      <Modal
+        isOpen={moving !== null}
+        onClose={() => setMoving(null)}
+        title={moving ? `移动「${moving.name}」到…` : ""}
+        width="w-[420px]"
+      >
+        <div className="p-4 space-y-1.5">
+          {bases.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              disabled={moving?.baseId === b.id}
+              onClick={() => moving && void handleMove(moving, b.id)}
+              className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${moving?.baseId === b.id
+                ? "border-border bg-muted text-muted-foreground cursor-default"
+                : "border-border hover:bg-muted cursor-pointer text-foreground"}`}
+            >
+              {b.isDefault ? "📁 " : "📂 "}{b.name}
+              {moving?.baseId === b.id && <span className="text-[10px] ml-2">(当前所在)</span>}
+              <span className="text-[10px] text-muted-foreground ml-2">{b.docCount} 篇</span>
+            </button>
+          ))}
+          <p className="text-[11px] text-muted-foreground pt-1">
+            移动只改变检索范围归属,不影响分块与向量;目标库已有同名文档时会提示冲突。
+          </p>
         </div>
       </Modal>
     </div>

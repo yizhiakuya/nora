@@ -172,6 +172,10 @@ export interface KnowledgeChunk {
   tokenCount: number;
   /** 字符数(与 tokenCount 不同量纲,供 UI 展示) */
   length: number;
+  /** 父子模式:所属章节序号;null = 非父子模式(或旧数据)。 */
+  parentIndex?: number | null;
+  /** 父子模式:所属章节完整正文(供详情抽屉展开)。 */
+  parentContent?: string | null;
 }
 
 /** GET /api/rag/docs/{id} 的返回:文档 + 它的 chunk 正文 */

@@ -255,6 +255,25 @@ public class RagController {
         return ApiResponse.ok(view);
     }
 
+    /**
+     * 把文档移入资料库(阶段 B 闭环:建库后需要归库手段)。
+     *
+     * <p>目标库内已有同名同源文档(name-keyed)时返回 409——移库不能悄悄
+     * 顶掉库内的另一篇文档(用户应先处理冲突)。
+     */
+    @PostMapping("/docs/{id}/base")
+    public ApiResponse<KnowledgeDocService.KnowledgeDocView> setDocBase(@PathVariable long id,
+                                                                        @RequestBody BaseMoveRequest request) {
+        if (request == null) {
+            throw new BusinessException(400, "baseId is required");
+        }
+        KnowledgeDocService.KnowledgeDocView view = knowledgeDocService.setBase(id, request.baseId());
+        if (view == null) {
+            throw new BusinessException(404, "知识库文档不存在: " + id);
+        }
+        return ApiResponse.ok(view);
+    }
+
     /** 检索记录(阶段 B:最近 N 条,供「为什么找不到」回溯)。 */
     @GetMapping("/retrievals")
     public ApiResponse<List<KnowledgeDocService.RetrievalLogView>> retrievals(
@@ -480,6 +499,10 @@ public class RagController {
 
     /** POST /api/rag/docs/{id}/enabled 请求体。 */
     public record EnabledRequest(boolean enabled) {
+    }
+
+    /** POST /api/rag/docs/{id}/base 请求体(阶段 B 移库)。 */
+    public record BaseMoveRequest(Long baseId) {
     }
 
     /** file-service 预览响应子集(ApiResponse 信封的 {@code data})。 */

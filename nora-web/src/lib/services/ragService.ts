@@ -187,6 +187,14 @@ export async function setDocEnabled(id: number, enabled: boolean): Promise<Knowl
   });
 }
 
+/** POST /api/rag/docs/{id}/base → 把文档移入资料库（阶段 B;baseId=null 回默认库） */
+export async function setDocBase(id: number, baseId: number | null): Promise<KnowledgeDoc> {
+  return requestJson<KnowledgeDoc>(`/rag/docs/${id}/base`, {
+    method: "POST",
+    body: JSON.stringify({ baseId }),
+  });
+}
+
 /** GET /api/rag/retrievals → 检索记录（阶段 B;最近 N 条） */
 export async function fetchRetrievalLogs(limit = 20): Promise<RetrievalLog[]> {
   if (!USE_BACKEND) return [];
