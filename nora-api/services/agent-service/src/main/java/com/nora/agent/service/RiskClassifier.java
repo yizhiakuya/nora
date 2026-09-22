@@ -123,10 +123,12 @@ final class RiskClassifier {
             return Risk.LOW;
         }
         if ("manage_knowledge".equals(toolName)) {
-            // list/stats 只读 LOW;index 写知识库(可逆:可 remove 重来)HIGH;
-            // remove 删文档+分块不可逆 CRITICAL;reindex 重建向量(可重跑)HIGH
+            // list/bases/stats 只读 LOW;index 写知识库(可逆:可 remove 重来)HIGH;
+            // remove 删文档+分块不可逆 CRITICAL;reindex 重建向量(可重跑)HIGH;
+            // disable/enable 切换检索可见性(可逆,影响 AI 能检索到什么)HIGH
             String action = actionOf(argsJson);
-            if ("list".equalsIgnoreCase(action) || "stats".equalsIgnoreCase(action)) {
+            if ("list".equalsIgnoreCase(action) || "stats".equalsIgnoreCase(action)
+                    || "bases".equalsIgnoreCase(action)) {
                 return Risk.LOW;
             }
             if ("remove".equalsIgnoreCase(action)) {

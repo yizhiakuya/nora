@@ -527,6 +527,7 @@ class ChatToolsSpec {
         kbSearchFn.put("description", "主动检索知识库(与每轮自动注入同一检索通道):"
                 + "当自动注入的片段不够、或需要换关键词/换角度重查时使用——"
                 + "如用户追问「再找找有没有提到 X 的」、或你要核实某个事实在知识库中的出处。"
+                + "可用 baseId 限定资料库、docIds 限定文档(「只在这批资料里找」);"
                 + "只读,不改变知识库。示例:{\"query\": \"部署流程 端口配置\", \"topK\": 8}");
         ObjectNode kbSearchParams = kbSearchFn.putObject("parameters");
         kbSearchParams.put("type", "object");
@@ -538,6 +539,13 @@ class ChatToolsSpec {
         ObjectNode kbTopKProp = kbSearchProps.putObject("topK");
         kbTopKProp.put("type", "integer");
         kbTopKProp.put("description", "返回块数(默认 8,最大 20)");
+        ObjectNode kbBaseIdProp = kbSearchProps.putObject("baseId");
+        kbBaseIdProp.put("type", "integer");
+        kbBaseIdProp.put("description", "可选:限定在某个资料库内检索(manage_knowledge action=bases 查 id)");
+        ObjectNode kbDocIdsProp = kbSearchProps.putObject("docIds");
+        kbDocIdsProp.put("type", "array");
+        kbDocIdsProp.put("description", "可选:限定在这批文档 id 内检索(manage_knowledge action=list 查 id)");
+        kbDocIdsProp.putObject("items").put("type", "integer");
         ObjectNode kbSearchDescProp = kbSearchProps.putObject("description");
         kbSearchDescProp.put("type", "string");
         kbSearchDescProp.put("description", "一句话描述这次检索要做什么(5-12 个字,祈使句)");
@@ -551,10 +559,12 @@ class ChatToolsSpec {
         ObjectNode kbFn = kbTool.putObject("function");
         kbFn.put("name", "manage_knowledge");
         kbFn.put("description", "管理知识库文档:list=列出全部文档(可用 filter 按名过滤);"
+                + "bases=列出资料库分组(含 id 与文档数);"
                 + "index=把文件中心文件索引进知识库(参数 fileId,先 manage_file list 拿 id);"
                 + "remove=删除文档及其分块(不动文件中心原文件);reindex=重建文档向量(嵌入模型变更后刷新);"
+                + "disable=停用文档(退出检索,数据保留;与 remove 不同);enable=重新启用;"
                 + "stats=索引统计(文档/块数/模型)。"
-                + "用户说「把这份文档加进知识库/删掉那篇旧文档/知识库多大」时使用。"
+                + "用户说「把这份文档加进知识库/删掉那篇旧文档/先别让它被检索到/知识库多大」时使用。"
                 + "示例:{\"action\": \"index\", \"fileId\": \"12\"}");
         ObjectNode kbParams = kbFn.putObject("parameters");
         kbParams.put("type", "object");
@@ -562,8 +572,8 @@ class ChatToolsSpec {
         ObjectNode kbProps = kbParams.putObject("properties");
         ObjectNode kbActionProp = kbProps.putObject("action");
         kbActionProp.put("type", "string");
-        kbActionProp.put("description", "list / index / remove / reindex / stats");
-        setEnum(kbActionProp, "list", "index", "remove", "reindex", "stats");
+        kbActionProp.put("description", "list / bases / index / remove / reindex / disable / enable / stats");
+        setEnum(kbActionProp, "list", "bases", "index", "remove", "reindex", "disable", "enable", "stats");
         ObjectNode kbFilterProp = kbProps.putObject("filter");
         kbFilterProp.put("type", "string");
         kbFilterProp.put("description", "list 时可选:按文档名包含的子串过滤(如「周报」)");

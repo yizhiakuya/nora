@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SearchCode, Loader2, Database, FileCode, Server, MessageSquare, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
-import { searchDocsAsync } from "@/lib/services/ragService";
+import { fetchBases, searchDocsAsync } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
-import { KnowledgeSource, RetrievalOutcome } from "@/types";
+import { KnowledgeBase, KnowledgeSource, RetrievalOutcome } from "@/types";
 
 const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
   file: File,
@@ -54,7 +54,15 @@ export function RetrievalTest() {
   const [searchMs, setSearchMs] = useState(34);
   /** 展开查看完整证据的条目序号(阶段 A:预览与模型证据分离) */
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  /** 资料库范围(阶段 B;null=全部资料) */
+  const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [scopeBaseId, setScopeBaseId] = useState<number | null>(null);
   const searchResults = outcome?.results ?? [];
+
+  useEffect(() => {
+    if (!USE_BACKEND) return;
+    fetchBases().then(setBases).catch(() => undefined);
+  }, []);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
@@ -65,7 +73,7 @@ export function RetrievalTest() {
     const startedAt = performance.now();
     const run = async () => {
       try {
-        const result = await searchDocsAsync(query, 8);
+        const result = await searchDocsAsync(query, 8, scopeBaseId != null ? { baseId: scopeBaseId } : undefined);
         setOutcome(result);
         setLastQuery(query);
         setHasSearched(true);
@@ -87,7 +95,23 @@ export function RetrievalTest() {
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-foreground">检索测试</h3>
-          <span className="text-[10px] text-muted-foreground">{USE_BACKEND ? "pgvector 语义检索" : "模拟向量 + 关键词混合检索"}</span>
+          <div className="flex items-center gap-2">
+            {/* 范围选择(阶段 B):默认全库;选资料库后只在库内检索 */}
+            {USE_BACKEND && bases.length > 0 && (
+              <select
+                value={scopeBaseId ?? ""}
+                onChange={(e) => setScopeBaseId(e.target.value ? Number(e.target.value) : null)}
+                className="text-[10px] px-2 py-1 rounded border border-border bg-background text-muted-foreground focus:outline-none"
+                title="限定检索范围(资料库)"
+              >
+                <option value="">全部资料</option>
+                {bases.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}({b.docCount})</option>
+                ))}
+              </select>
+            )}
+            <span className="text-[10px] text-muted-foreground">{USE_BACKEND ? "pgvector 语义检索" : "模拟向量 + 关键词混合检索"}</span>
+          </div>
         </div>
         <div className="flex gap-2">
           <div className="relative flex-1">

@@ -18,15 +18,17 @@ package com.nora.rag.api;
  *
  * @param docId        knowledge_doc 行 id(融合排名中的块身份;文档名不唯一)
  * @param docName      被索引文档名
- * @param chunkIndex   块在文档内的 0 起位置
+ * @param chunkIndex   块在文档内的 0 起位置(父子模式下=子块位置)
  * @param chunkId      knowledge_chunk.id(稳定块标识;旧数据可能为 null)
  * @param score        展示用原始分(越大越好;向量=余弦,关键词=trigram)
  * @param vectorScore  向量通道原始分;null = 该通道未命中
  * @param keywordScore 关键词通道原始分;null = 该通道未命中
  * @param matchChannel 命中通道:vector / keyword / both
  * @param snippet      预览摘录(列表展示;围绕命中位置截取)
- * @param content      完整块正文(模型证据)
+ * @param content      完整块正文(模型证据);父子模式下是父块完整上下文
  * @param source       原文档的存储来源路径/URI
+ * @param parentIndex  父子模式:所属章节序号(父块内子块共享);null = 非父子
+ * @param parentContent 父子模式:所属章节完整正文(去重用;content 已是父块时为同值)
  */
 public record RetrievalResult(
         long docId,
@@ -39,12 +41,22 @@ public record RetrievalResult(
         String matchChannel,
         String snippet,
         String content,
-        String source
+        String source,
+        Integer parentIndex,
+        String parentContent
 ) {
 
     /** 兼容构造(旧调用点/测试):无通道细分,按分数来源推断。 */
     public RetrievalResult(long docId, String docName, int chunkIndex,
                            double score, String snippet, String source) {
-        this(docId, docName, chunkIndex, null, score, null, null, null, snippet, snippet, source);
+        this(docId, docName, chunkIndex, null, score, null, null, null, snippet, snippet, source, null, null);
+    }
+
+    /** 兼容构造(阶段 A 形态):无父子字段。 */
+    public RetrievalResult(long docId, String docName, int chunkIndex, Long chunkId,
+                           double score, Double vectorScore, Double keywordScore, String matchChannel,
+                           String snippet, String content, String source) {
+        this(docId, docName, chunkIndex, chunkId, score, vectorScore, keywordScore, matchChannel,
+                snippet, content, source, null, null);
     }
 }

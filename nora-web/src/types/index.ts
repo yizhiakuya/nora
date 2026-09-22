@@ -81,6 +81,34 @@ export interface KnowledgeDoc {
   error?: string | null;
   /** 非致命解析告警（如超限截断;文档仍可检索）。 */
   warning?: string | null;
+  /** 资料库 id（阶段 B;null = 未归库）。 */
+  baseId?: number | null;
+  /** 启用状态（阶段 B;false = 退出检索,数据保留）。 */
+  enabled?: boolean | null;
+  /** 分段模式（阶段 B:plain / parent_child）。 */
+  chunkMode?: string | null;
+}
+
+/** 资料库分组（阶段 B） */
+export interface KnowledgeBase {
+  id: number;
+  name: string;
+  description: string | null;
+  isDefault: boolean;
+  docCount: number;
+}
+
+/** 检索记录（阶段 B;「为什么找不到」回溯） */
+export interface RetrievalLog {
+  id: number;
+  query: string;
+  topK: number | null;
+  scopeJson: string | null;
+  status: string;
+  resultCount: number;
+  durationMs: number | null;
+  detailJson: string | null;
+  createdAt: string;
 }
 
 /** 索引统计 */

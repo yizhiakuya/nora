@@ -50,11 +50,15 @@ public class RetrievalService {
     /**
      * 向量排名:余弦相似度,最优在前。
      *
-     * <p>只检索**已发布**(d.status='indexed')且存活的文档——构建中/失败的
-     * 版本行不参与召回(阶段 A:先构建后发布,旧版在切换前保持 indexed)。
+     * <p>只检索**已发布**(d.status='indexed')、**启用**(d.enabled)且存活的
+     * 文档——构建中/失败/停用的版本行不参与召回(阶段 A/B)。
+     *
+     * <p>{@code %SCOPE%} 是范围过滤占位(资料库/指定文档;空串=全库),
+     * 由 {@link #scopeClause} 生成,条件同时进入向量与关键词候选查询。
      */
     private static final String VECTOR_SQL = """
             SELECT c.id AS chunk_id, c.chunk_index, c.content, d.id AS doc_id, d.name, d.source,
+                   c.parent_index, c.parent_content,
                    1 - (c.embedding <=> ?::vector) AS score
             FROM schema_rag.knowledge_chunk c
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
@@ -62,6 +66,8 @@ public class RetrievalService {
               AND c.deleted_at IS NULL
               AND d.deleted_at IS NULL
               AND d.status = 'indexed'
+              AND d.enabled = true
+              %SCOPE%
             ORDER BY c.embedding <=> ?::vector
             LIMIT ?
             """;
@@ -78,6 +84,7 @@ public class RetrievalService {
      */
     private static final String KEYWORD_SQL = """
             SELECT c.id AS chunk_id, c.chunk_index, c.content, d.id AS doc_id, d.name, d.source,
+                   c.parent_index, c.parent_content,
                    strict_word_similarity(?, c.content) AS score
             FROM schema_rag.knowledge_chunk c
             JOIN schema_rag.knowledge_doc d ON d.id = c.doc_id
@@ -85,10 +92,71 @@ public class RetrievalService {
               AND c.deleted_at IS NULL
               AND d.deleted_at IS NULL
               AND d.status = 'indexed'
+              AND d.enabled = true
               AND ? <<% c.content
+              %SCOPE%
             ORDER BY strict_word_similarity(?, c.content) DESC
             LIMIT ?
             """;
+
+    /**
+     * 检索范围(阶段 B,方案 §6.1):资料库 / 指定文档。
+     *
+     * <p>范围条件**同时**进入向量与关键词候选查询;范围内无结果就返回无结果,
+     * 不自动扩大到全部资料。
+     *
+     * @param baseId 资料库 id;null = 不限库
+     * @param docIds 指定文档 id 列表;null/空 = 不限文档
+     */
+    public record RetrievalScope(Long baseId, java.util.List<Long> docIds) {
+        public static final RetrievalScope ALL = new RetrievalScope(null, null);
+
+        public boolean unrestricted() {
+            return baseId == null && (docIds == null || docIds.isEmpty());
+        }
+    }
+
+    /** 生成范围过滤子句与参数(按占位顺序)。 */
+    private static String scopeClause(RetrievalScope scope) {
+        if (scope == null || scope.unrestricted()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (scope.baseId() != null) {
+            sb.append("AND d.base_id = ?\n");
+        }
+        if (scope.docIds() != null && !scope.docIds().isEmpty()) {
+            sb.append("AND d.id IN (")
+              .append(String.join(",", scope.docIds().stream().map(i -> "?").toList()))
+              .append(")\n");
+        }
+        return sb.toString();
+    }
+
+    /** 范围参数(与 {@link #scopeClause} 的占位顺序一致)。 */
+    private static Object[] scopeArgs(RetrievalScope scope) {
+        if (scope == null || scope.unrestricted()) {
+            return new Object[0];
+        }
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        if (scope.baseId() != null) {
+            args.add(scope.baseId());
+        }
+        if (scope.docIds() != null) {
+            args.addAll(scope.docIds());
+        }
+        return args.toArray();
+    }
+
+    /** 组装"前段参数 + 范围参数 + 后段参数"。 */
+    private static Object[] withScope(Object[] prefix, RetrievalScope scope, Object[] suffix) {
+        Object[] scopeArgs = scopeArgs(scope);
+        Object[] out = new Object[prefix.length + scopeArgs.length + suffix.length];
+        System.arraycopy(prefix, 0, out, 0, prefix.length);
+        System.arraycopy(scopeArgs, 0, out, prefix.length, scopeArgs.length);
+        System.arraycopy(suffix, 0, out, prefix.length + scopeArgs.length, suffix.length);
+        return out;
+    }
 
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingService embeddingService;
@@ -130,6 +198,15 @@ public class RetrievalService {
      * 只降级不抛错。只有**全部通道失败**才返回 unavailable。
      */
     public RetrievalOutcome searchWithStatus(String query, int topK) {
+        return searchWithStatus(query, topK, RetrievalScope.ALL);
+    }
+
+    /**
+     * 带范围过滤的检索(阶段 B,方案 §6.1):范围条件同时进入两路候选查询;
+     * 范围内无结果就返回无结果,不自动扩大到全部资料。
+     */
+    public RetrievalOutcome searchWithStatus(String query, int topK, RetrievalScope scope) {
+        long startedAt = System.currentTimeMillis();
         int pool = Math.max(topK, properties.candidatePool());
 
         // 通道 1:向量(嵌入可能失败——配错 key/网络不通/超限)
@@ -138,7 +215,9 @@ public class RetrievalService {
         try {
             float[] vector = embeddingService.embed(query);
             String vectorLiteral = toPgVectorLiteral(vector);
-            vectorHits = jdbcTemplate.query(VECTOR_SQL, rowMapper(), vectorLiteral, vectorLiteral, pool);
+            String sql = VECTOR_SQL.replace("%SCOPE%", scopeClause(scope));
+            vectorHits = jdbcTemplate.query(sql, rowMapper(),
+                    withScope(new Object[]{vectorLiteral}, scope, new Object[]{vectorLiteral, pool}));
             vectorStatus = RetrievalOutcome.ChannelStatus.up();
         } catch (Exception e) {
             log.warn("vector channel failed for query '{}': {}", abbreviate(query), e.getMessage());
@@ -146,7 +225,7 @@ public class RetrievalService {
         }
 
         // 通道 2:关键词(独立执行——嵌入失败也照常尝试)
-        List<RetrievalResult> keywordHits = keywordSearch(query, pool);
+        List<RetrievalResult> keywordHits = keywordSearch(query, pool, scope);
         RetrievalOutcome.ChannelStatus keywordStatus = keywordHits != null
                 ? RetrievalOutcome.ChannelStatus.up()
                 : RetrievalOutcome.ChannelStatus.down(
@@ -159,8 +238,76 @@ public class RetrievalService {
                 keywordHits, topK);
         // 标注命中通道与双通道原始分(预览围绕命中位置截取)
         fused = annotateChannels(fused, vectorHits == null ? List.of() : vectorHits, keywordHits, query);
+        // 父子合并(阶段 B):子块命中 → 返回父块上下文,同一父块的多个子命中合并
+        fused = mergeParentContext(fused);
         String status = RetrievalOutcome.statusOf(fused, vectorStatus, keywordStatus);
+        // 检索记录(阶段 B,方案 §6.3):供「为什么找不到」回溯
+        logRetrieval(query, topK, scope, status, fused, System.currentTimeMillis() - startedAt);
         return new RetrievalOutcome(status, fused, vectorStatus, keywordStatus);
+    }
+
+    /**
+     * 父子合并(阶段 B,方案 §5.2):命中子块时把 {@code content} 换为
+     * **父块完整正文**(模型上下文),记录实际命中的子块位置;
+     * 同一父块的多个子命中合并为一条(以最佳子命中排序),避免子块多的
+     * 长文档靠数量占满结果。
+     */
+    List<RetrievalResult> mergeParentContext(List<RetrievalResult> hits) {
+        java.util.LinkedHashMap<String, RetrievalResult> merged = new java.util.LinkedHashMap<>();
+        for (RetrievalResult r : hits) {
+            String parentContent = r.parentContent();
+            if (parentContent == null || parentContent.isBlank()) {
+                // 非父子模式(或旧数据):按 (docId, chunkIndex) 直接保留
+                merged.putIfAbsent(r.docId() + ":" + r.chunkIndex(), r);
+                continue;
+            }
+            String key = r.docId() + ":p" + r.parentIndex();
+            RetrievalResult existing = merged.get(key);
+            if (existing == null) {
+                // 首个子命中:content 换为父块正文(超长按段落裁选),标注命中位置
+                String parent = parentContent.length() <= ChunkingService.PARENT_MAX_CHARS
+                        ? parentContent
+                        : parentContent.substring(0, ChunkingService.PARENT_MAX_CHARS)
+                                + "\n…[父章节过长已截断,共 " + parentContent.length() + " 字符]";
+                merged.put(key, new RetrievalResult(
+                        r.docId(), r.docName(), r.chunkIndex(), r.chunkId(),
+                        r.score(), r.vectorScore(), r.keywordScore(), r.matchChannel(),
+                        r.snippet(), parent, r.source()));
+            }
+            // 后续同父子命中:保留首条(最佳子命中已因融合排序在前),不重复
+        }
+        return new java.util.ArrayList<>(merged.values());
+    }
+
+    /**
+     * 记录一次检索(阶段 B;尽力而为,失败静默——记录不是检索的一部分)。
+     * detail 里存结果标识(文档/块/通道/分),正文不入库(方案 §4)。
+     */
+    private void logRetrieval(String query, int topK, RetrievalScope scope,
+                              String status, List<RetrievalResult> results, long durationMs) {
+        try {
+            StringBuilder detail = new StringBuilder(256);
+            for (RetrievalResult r : results) {
+                if (detail.length() > 0) {
+                    detail.append(',');
+                }
+                detail.append("{\"docId\":").append(r.docId())
+                      .append(",\"chunkIndex\":").append(r.chunkIndex())
+                      .append(",\"chunkId\":").append(r.chunkId() == null ? "null" : r.chunkId())
+                      .append(",\"score\":").append(String.format(java.util.Locale.ROOT, "%.4f", r.score()))
+                      .append(",\"channel\":\"").append(r.matchChannel() == null ? "" : r.matchChannel())
+                      .append("\"}");
+            }
+            String scopeJson = scope == null || scope.unrestricted() ? null
+                    : "{\"baseId\":" + scope.baseId() + ",\"docIds\":" + scope.docIds() + "}";
+            jdbcTemplate.update(
+                    "INSERT INTO schema_rag.retrieval_log (query, top_k, scope_json, status, result_count, duration_ms, detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    query.length() > 2000 ? query.substring(0, 2000) : query,
+                    topK, scopeJson, status, results.size(), durationMs,
+                    "[" + detail + "]");
+        } catch (Exception e) {
+            log.debug("retrieval log write failed (ignored): {}", e.getMessage());
+        }
     }
 
     /** 关键词通道的降级原因(置位后保留首个原因)。 */
@@ -205,7 +352,8 @@ public class RetrievalService {
                     r.docId(), r.docName(), r.chunkIndex(), r.chunkId(),
                     r.score(), v, k, channel,
                     snippetAround(r.content(), query),
-                    r.content(), r.source()));
+                    r.content(), r.source(),
+                    r.parentIndex(), r.parentContent()));
         }
         return out;
     }
@@ -297,7 +445,7 @@ public class RetrievalService {
      * 短暂故障会永久降级到纯向量)。返回 null 表示通道失败(与"正常无命中"
      * 的空列表区分)。
      */
-    private List<RetrievalResult> keywordSearch(String query, int pool) {
+    private List<RetrievalResult> keywordSearch(String query, int pool, RetrievalScope scope) {
         if (properties.keywordWeight() <= 0) {
             return List.of();
         }
@@ -314,7 +462,9 @@ public class RetrievalService {
             jdbcTemplate.queryForObject(
                     "SELECT set_config('pg_trgm.strict_word_similarity_threshold', ?, false)",
                     String.class, String.valueOf(properties.minScore()));
-            List<RetrievalResult> hits = jdbcTemplate.query(KEYWORD_SQL, rowMapper(), query, query, query, pool);
+            String sql = KEYWORD_SQL.replace("%SCOPE%", scopeClause(scope));
+            List<RetrievalResult> hits = jdbcTemplate.query(sql, rowMapper(),
+                    withScope(new Object[]{query, query}, scope, new Object[]{query, pool}));
             // 成功一次即清除降级标记(通道恢复)
             if (keywordDisabled) {
                 log.info("keyword retrieval recovered");
@@ -355,6 +505,15 @@ public class RetrievalService {
             } catch (Exception e) {
                 chunkId = 0; // 旧查询形态无此列(测试桩)
             }
+            Integer parentIndex = null;
+            String parentContent = null;
+            try {
+                int pi = rs.getInt("parent_index");
+                parentIndex = rs.wasNull() ? null : pi;
+                parentContent = rs.getString("parent_content");
+            } catch (Exception e) {
+                // 旧查询形态无父子列(测试桩)
+            }
             return new RetrievalResult(
                     rs.getLong("doc_id"),
                     rs.getString("name"),
@@ -364,7 +523,9 @@ public class RetrievalService {
                     null, null, null,
                     snippet(content),
                     content,
-                    rs.getString("source")
+                    rs.getString("source"),
+                    parentIndex,
+                    parentContent
             );
         };
     }

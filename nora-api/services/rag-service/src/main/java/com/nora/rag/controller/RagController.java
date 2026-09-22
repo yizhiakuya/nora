@@ -169,11 +169,14 @@ public class RagController {
     }
 
     /**
-     * 语义检索(2026-09-22 阶段 A:返回带通道状态的结果集)。
+     * 语义检索(2026-09-22 阶段 A:返回带通道状态的结果集;阶段 B:范围过滤)。
      *
      * <p>此前检索异常被折叠为空列表,「检索坏了」与「资料里没有」不可区分。
      * 现在返回 {@link RetrievalOutcome}:status=ok/no_match/degraded/unavailable
      * + 每通道状态 + 完整证据(content)与预览(snippet)分离。
+     *
+     * <p>范围(baseId/docIds)同时进入两路候选查询;范围内无结果返回无结果,
+     * 不自动扩大到全部资料。
      */
     @PostMapping("/search")
     public ApiResponse<RetrievalOutcome> search(@RequestBody SearchBody request) {
@@ -181,13 +184,80 @@ public class RagController {
             throw new BusinessException(400, "query is required");
         }
         int topK = request.topK() != null && request.topK() > 0 ? request.topK() : 8;
-        return ApiResponse.ok(retrievalService.searchWithStatus(request.query(), topK));
+        RetrievalService.RetrievalScope scope = new RetrievalService.RetrievalScope(
+                request.baseId(),
+                request.docIds() == null || request.docIds().isEmpty() ? null : request.docIds());
+        return ApiResponse.ok(retrievalService.searchWithStatus(request.query(), topK, scope));
     }
 
     /** /search 的引用别名(前端 Citation[];返回同一结果集)。 */
     @PostMapping("/citations")
     public ApiResponse<RetrievalOutcome> citations(@RequestBody SearchBody request) {
         return search(request);
+    }
+
+    // ---------- 资料库(阶段 B,方案 §4) ----------
+
+    /** 资料库列表(含各库文档数)。 */
+    @GetMapping("/bases")
+    public ApiResponse<List<KnowledgeDocService.BaseView>> bases() {
+        return ApiResponse.ok(knowledgeDocService.listBases());
+    }
+
+    /** 新建资料库。 */
+    @PostMapping("/bases")
+    public ApiResponse<KnowledgeDocService.BaseView> createBase(@RequestBody BaseRequest request) {
+        if (request == null || request.name() == null || request.name().isBlank()) {
+            throw new BusinessException(400, "name is required");
+        }
+        return ApiResponse.ok(knowledgeDocService.createBase(request.name().trim(), request.description()));
+    }
+
+    /** 重命名/改描述资料库。 */
+    @PatchMapping("/bases/{id}")
+    public ApiResponse<KnowledgeDocService.BaseView> renameBase(@PathVariable long id,
+                                                                @RequestBody BaseRequest request) {
+        if (request == null || request.name() == null || request.name().isBlank()) {
+            throw new BusinessException(400, "name is required");
+        }
+        KnowledgeDocService.BaseView view = knowledgeDocService.renameBase(id, request.name().trim(), request.description());
+        if (view == null) {
+            throw new BusinessException(404, "资料库不存在: " + id);
+        }
+        return ApiResponse.ok(view);
+    }
+
+    /**
+     * 删除资料库(默认库不可删;库内文档移回默认库,不级联删除——方案 §4:
+     * 「从知识库移除不删除源文件」的同款语义)。
+     */
+    @DeleteMapping("/bases/{id}")
+    public ApiResponse<DeleteResult> deleteBase(@PathVariable long id) {
+        if (!knowledgeDocService.deleteBase(id)) {
+            throw BusinessException.conflict("默认资料库不可删除,或资料库不存在: " + id);
+        }
+        return ApiResponse.ok(new DeleteResult(1));
+    }
+
+    /** 文档停用/启用(阶段 B:停用=退出检索,保留数据与索引)。 */
+    @PostMapping("/docs/{id}/enabled")
+    public ApiResponse<KnowledgeDocService.KnowledgeDocView> setDocEnabled(@PathVariable long id,
+                                                                           @RequestBody EnabledRequest request) {
+        if (request == null) {
+            throw new BusinessException(400, "enabled is required");
+        }
+        KnowledgeDocService.KnowledgeDocView view = knowledgeDocService.setEnabled(id, request.enabled());
+        if (view == null) {
+            throw new BusinessException(404, "知识库文档不存在: " + id);
+        }
+        return ApiResponse.ok(view);
+    }
+
+    /** 检索记录(阶段 B:最近 N 条,供「为什么找不到」回溯)。 */
+    @GetMapping("/retrievals")
+    public ApiResponse<List<KnowledgeDocService.RetrievalLogView>> retrievals(
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        return ApiResponse.ok(knowledgeDocService.listRetrievalLogs(Math.max(1, Math.min(limit, 100))));
     }
 
     private FilePreviewBody fetchPreview(Long fileId) {
@@ -241,8 +311,10 @@ public class RagController {
         }
         String name = (request.name() == null || request.name().isBlank())
                 ? "对话保存 " + java.time.LocalDate.now() : request.name();
+        // 分段模式(阶段 B):请求可带 chunkMode=parent_child(默认 plain)
         long docId = indexingService.indexDocument(name, "text", null,
-                (request.text().length() / 1024) + " KB", request.text());
+                (request.text().length() / 1024) + " KB", request.text(),
+                request.chunkMode(), request.baseId());
         return ApiResponse.ok(knowledgeDocService.getDoc(docId));
     }
 
@@ -374,8 +446,12 @@ public class RagController {
     public record DeleteResult(int deleted) {
     }
 
-    /** POST /api/rag/index/text 请求体。 */
-    public record TextIndexRequest(String name, String text) {
+    /** POST /api/rag/index/text 请求体(阶段 B:可带 chunkMode 与 baseId)。 */
+    public record TextIndexRequest(String name, String text, String chunkMode, Long baseId) {
+        /** 兼容构造(阶段 A 调用方)。 */
+        public TextIndexRequest(String name, String text) {
+            this(name, text, null, null);
+        }
     }
 
     /** POST /api/rag/index 请求体。 */
@@ -383,7 +459,19 @@ public class RagController {
     }
 
     /** POST /api/rag/search 与 /api/rag/citations 请求体。 */
-    public record SearchBody(String query, Integer topK) {
+    public record SearchBody(String query, Integer topK, Long baseId, List<Long> docIds) {
+        /** 兼容构造(阶段 A 调用方)。 */
+        public SearchBody(String query, Integer topK) {
+            this(query, topK, null, null);
+        }
+    }
+
+    /** POST /api/rag/bases 与 PATCH /api/rag/bases/{id} 请求体。 */
+    public record BaseRequest(String name, String description) {
+    }
+
+    /** POST /api/rag/docs/{id}/enabled 请求体。 */
+    public record EnabledRequest(boolean enabled) {
     }
 
     /** file-service 预览响应子集(ApiResponse 信封的 {@code data})。 */

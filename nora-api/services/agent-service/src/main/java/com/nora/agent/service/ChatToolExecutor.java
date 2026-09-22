@@ -1438,7 +1438,19 @@ class ChatToolExecutor {
                         + "示例:{\"query\": \"部署流程 端口\", \"topK\": 8}", null, null, false);
             }
             int topK = a.path("topK").isInt() ? a.path("topK").asInt() : 8;
-            return bounded(knowledgeManageClient.search(query, topK), null);
+            // 范围(阶段 B):baseId=资料库;docIds=指定文档(「只在这批资料里找」)
+            Long baseId = a.hasNonNull("baseId") && a.path("baseId").canConvertToLong()
+                    ? a.path("baseId").asLong() : null;
+            java.util.List<Long> docIds = null;
+            if (a.hasNonNull("docIds") && a.path("docIds").isArray() && !a.path("docIds").isEmpty()) {
+                docIds = new java.util.ArrayList<>();
+                for (JsonNode n : a.path("docIds")) {
+                    if (n.canConvertToLong()) {
+                        docIds.add(n.asLong());
+                    }
+                }
+            }
+            return bounded(knowledgeManageClient.search(query, topK, baseId, docIds), null);
         } catch (Exception e) {
             return new ToolOutcome("ERROR: 知识库检索失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
         }
@@ -1451,14 +1463,16 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: 知识库管理能力未启用(服务未配置)", null, null, false);
         }
         String action = parsed.datasourceAction() == null ? "" : parsed.datasourceAction().trim().toLowerCase();
-        if (!java.util.Set.of("list", "index", "remove", "reindex", "stats").contains(action)) {
-            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 list / index / remove / reindex / stats",
+        if (!java.util.Set.of("list", "bases", "index", "remove", "reindex", "disable", "enable", "stats").contains(action)) {
+            return new ToolOutcome("ERROR: 拒绝执行「" + action + "」：action 只允许 "
+                    + "list / bases / index / remove / reindex / disable / enable / stats",
                     null, null, false);
         }
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
             return switch (action) {
                 case "list" -> bounded(knowledgeManageClient.list(a.path("filter").asText(null)), null);
+                case "bases" -> bounded(knowledgeManageClient.listBases(), null);
                 case "stats" -> bounded(knowledgeManageClient.stats(), null);
                 case "index" -> {
                     String fileIdRaw = a.path("fileId").asText(null);
@@ -1476,9 +1490,12 @@ class ChatToolExecutor {
                                 null, null, false);
                     }
                     long docId = Long.parseLong(target);
-                    yield bounded("remove".equals(action)
-                            ? knowledgeManageClient.remove(docId)
-                            : knowledgeManageClient.reindex(docId), null);
+                    yield bounded(switch (action) {
+                        case "remove" -> knowledgeManageClient.remove(docId);
+                        case "disable" -> knowledgeManageClient.setEnabled(docId, false);
+                        case "enable" -> knowledgeManageClient.setEnabled(docId, true);
+                        default -> knowledgeManageClient.reindex(docId);
+                    }, null);
                 }
             };
         } catch (Exception e) {

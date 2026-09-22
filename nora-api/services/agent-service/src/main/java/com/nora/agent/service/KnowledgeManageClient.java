@@ -51,12 +51,31 @@ public class KnowledgeManageClient {
      * @return 面向 LLM 的命中列表;无命中/降级给可操作提示
      */
     public String search(String query, int topK) {
+        return search(query, topK, null, null);
+    }
+
+    /**
+     * 带范围的检索(阶段 B):指定资料库或文档列表——「只在这批资料里找」。
+     *
+     * @param baseId 资料库 id;null = 不限库
+     * @param docIds 指定文档 id;null/空 = 不限文档
+     */
+    public String search(String query, int topK, Long baseId, java.util.List<Long> docIds) {
         try {
             int safeTopK = Math.max(1, Math.min(topK, 20));
+            java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("query", query);
+            body.put("topK", safeTopK);
+            if (baseId != null) {
+                body.put("baseId", baseId);
+            }
+            if (docIds != null && !docIds.isEmpty()) {
+                body.put("docIds", docIds);
+            }
             ApiResponse<JsonNode> envelope = restClient.post()
                     .uri("/api/rag/search")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("query", query, "topK", safeTopK))
+                    .body(body)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
                     });
@@ -245,6 +264,60 @@ public class KnowledgeManageClient {
                     + (d.path("vectorReady").asBoolean() ? "" : " / ⚠ 向量组件未就绪");
         } catch (Exception e) {
             log.warn("knowledge stats failed: {}", e.getMessage());
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    /** 资料库列表(阶段 B;含各库文档数)。 */
+    public String listBases() {
+        try {
+            ApiResponse<JsonNode> envelope = restClient.get()
+                    .uri("/api/rag/bases")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null || !envelope.data().isArray()) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            if (envelope.data().isEmpty()) {
+                return "(无资料库)";
+            }
+            StringBuilder sb = new StringBuilder("资料库(共 " + envelope.data().size() + " 个):\n");
+            for (JsonNode n : envelope.data()) {
+                sb.append("- id=").append(n.path("id").asLong())
+                        .append(" 「").append(n.path("name").asText("?")).append("」")
+                        .append(n.path("isDefault").asBoolean() ? " [默认]" : "")
+                        .append(" 文档 ").append(n.path("docCount").asLong()).append(" 篇");
+                if (n.hasNonNull("description")) {
+                    sb.append(" — ").append(n.path("description").asText(""));
+                }
+                sb.append('\n');
+            }
+            return sb.toString().stripTrailing();
+        } catch (Exception e) {
+            log.warn("knowledge bases failed: {}", e.getMessage());
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    /** 文档停用/启用(阶段 B;停用=退出检索,保留数据与索引)。 */
+    public String setEnabled(long docId, boolean enabled) {
+        try {
+            ApiResponse<JsonNode> envelope = restClient.post()
+                    .uri("/api/rag/docs/{id}/enabled", docId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("enabled", enabled))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
+                return "ERROR: " + (envelope == null ? "empty response" : envelope.message());
+            }
+            return "文档 id=" + docId + " 已" + (enabled ? "启用" : "停用(退出检索,数据保留)")
+                    + ":「" + envelope.data().path("name").asText("?") + "」";
+        } catch (Exception e) {
+            log.warn("knowledge setEnabled failed: {}", e.getMessage());
             return "ERROR: " + e.getMessage();
         }
     }

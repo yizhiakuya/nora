@@ -1,5 +1,7 @@
 package com.nora.rag.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -160,7 +162,7 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
     void searchWrapsResultsInEnvelope() {
         List<RetrievalResult> results = List.of(
                 new RetrievalResult(4L, "Redis配置.md", 3, 0.91, "maxmemory 2gb", "file"));
-        when(retrievalService.searchWithStatus("redis", 8))
+        when(retrievalService.searchWithStatus(eq("redis"), eq(8), any()))
                 .thenReturn(new com.nora.rag.api.RetrievalOutcome("ok", results,
                         com.nora.rag.api.RetrievalOutcome.ChannelStatus.up(),
                         com.nora.rag.api.RetrievalOutcome.ChannelStatus.up()));
@@ -188,7 +190,7 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
 
     @Test
     void citationsAliasesSearch() {
-        when(retrievalService.searchWithStatus("redis", 2))
+        when(retrievalService.searchWithStatus(eq("redis"), eq(2), any()))
                 .thenReturn(new com.nora.rag.api.RetrievalOutcome("no_match", List.of(),
                         com.nora.rag.api.RetrievalOutcome.ChannelStatus.up(),
                         com.nora.rag.api.RetrievalOutcome.ChannelStatus.up()));
@@ -202,7 +204,7 @@ try { controller.reindexDoc(12L); } catch (Exception ignored) { }
 
     @Test
     void searchPropagatesNotConfiguredError() {
-        when(retrievalService.searchWithStatus("q", 8))
+        when(retrievalService.searchWithStatus(eq("q"), eq(8), any()))
                 .thenThrow(new BusinessException(500, "embedding not configured"));
 try { controller.search(new RagController.SearchBody("q", 8)); } catch (Exception ignored) { }
 

@@ -794,6 +794,14 @@ class ToolStepEmitter {
                 } else if ("remove".equals(action)) {
                     detail = "文档 id: " + target + "\n后果: 文档及其全部分块/向量一并删除";
                     risk = "删除后该文档不再可检索,不可自动撤销(文件中心原文件不受影响)";
+                } else if ("disable".equals(action) || "enable".equals(action)) {
+                    detail = "文档 id: " + target
+                            + ("disable".equals(action)
+                                ? "\n后果: 文档退出检索(AI 不再引用),数据与索引保留,可随时重新启用"
+                                : "\n后果: 文档重新参与检索");
+                    risk = "disable".equals(action)
+                            ? "停用后 AI 检索不到该文档(可逆:enable 恢复)"
+                            : "重新启用该文档参与检索";
                 } else {
                     risk = "对知识库执行 " + action + " 操作";
                 }

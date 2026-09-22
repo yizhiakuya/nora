@@ -30,20 +30,8 @@ public class KnowledgeDocService {
     /** 全部知识文档,最新在前,按前端 KnowledgeDoc 类型塑形。 */
     public List<KnowledgeDocView> listDocs() {
         return jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id, error, warning FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
-                (rs, rowNum) -> new KnowledgeDocView(
-                        rs.getLong("id"),
-                        rs.getString("name"),
-                        rs.getString("source"),
-                        rs.getInt("chunks"),
-                        rs.getString("status"),
-                        rs.getString("size"),
-                        format(rs.getTimestamp("updated_at")),
-                        rs.getInt("quality"),
-                        rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
-                        rs.getString("error"),
-                        rs.getString("warning")
-                )
+                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id, error, warning, base_id, enabled, chunk_mode FROM schema_rag.knowledge_doc WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC",
+                (rs, rowNum) -> mapDoc(rs)
         );
     }
 
@@ -60,25 +48,140 @@ public class KnowledgeDocService {
                 id);
     }
 
+    // ---------- 资料库(阶段 B,方案 §4) ----------
+
+    /** 资料库视图(含文档数)。 */
+    public record BaseView(long id, String name, String description, boolean isDefault, long docCount) {
+    }
+
+    /** 资料库列表(默认库在前)。 */
+    public List<BaseView> listBases() {
+        return jdbcTemplate.query(
+                "SELECT b.id, b.name, b.description, b.is_default, "
+                        + "(SELECT count(*) FROM schema_rag.knowledge_doc d WHERE d.base_id = b.id AND d.deleted_at IS NULL) AS doc_count "
+                        + "FROM schema_rag.knowledge_base b WHERE b.deleted_at IS NULL ORDER BY b.is_default DESC, b.id",
+                (rs, i) -> new BaseView(rs.getLong("id"), rs.getString("name"),
+                        rs.getString("description"), rs.getBoolean("is_default"), rs.getLong("doc_count")));
+    }
+
+    /** 新建资料库(重名 409)。 */
+    public BaseView createBase(String name, String description) {
+        Integer clash = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM schema_rag.knowledge_base WHERE name = ? AND deleted_at IS NULL",
+                Integer.class, name);
+        if (clash != null && clash > 0) {
+            throw new BusinessException(409, "资料库已存在: " + name);
+        }
+        Long id = jdbcTemplate.queryForObject(
+                "INSERT INTO schema_rag.knowledge_base (name, description) VALUES (?, ?) RETURNING id",
+                Long.class, name, description);
+        return new BaseView(id == null ? -1 : id, name, description, false, 0);
+    }
+
+    /** 重命名/改描述;不存在返回 null。 */
+    public BaseView renameBase(long id, String name, String description) {
+        Integer clash = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM schema_rag.knowledge_base WHERE name = ? AND id <> ? AND deleted_at IS NULL",
+                Integer.class, name, id);
+        if (clash != null && clash > 0) {
+            throw new BusinessException(409, "资料库已存在: " + name);
+        }
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_base SET name = ?, description = ? WHERE id = ? AND deleted_at IS NULL",
+                name, description, id);
+        if (updated == 0) {
+            return null;
+        }
+        return listBases().stream().filter(b -> b.id() == id).findFirst().orElse(null);
+    }
+
+    /**
+     * 删除资料库:默认库拒绝;库内文档移回默认库(不级联删除)。
+     *
+     * @return false = 不存在或默认库
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public boolean deleteBase(long id) {
+        List<Boolean> isDefault = jdbcTemplate.queryForList(
+                "SELECT is_default FROM schema_rag.knowledge_base WHERE id = ? AND deleted_at IS NULL",
+                Boolean.class, id);
+        if (isDefault.isEmpty() || Boolean.TRUE.equals(isDefault.get(0))) {
+            return false;
+        }
+        Long fallback = jdbcTemplate.queryForObject(
+                "SELECT id FROM schema_rag.knowledge_base WHERE is_default AND deleted_at IS NULL LIMIT 1",
+                Long.class);
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET base_id = ? WHERE base_id = ? AND deleted_at IS NULL",
+                fallback, id);
+        jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_base SET deleted_at = now() WHERE id = ? AND deleted_at IS NULL", id);
+        return true;
+    }
+
+    // ---------- 文档停用(阶段 B,方案 §7) ----------
+
+    /**
+     * 停用/启用文档:停用=退出检索(保留数据与索引),与删除不同。
+     *
+     * @return 更新后的文档;不存在返回 null
+     */
+    public KnowledgeDocView setEnabled(long id, boolean enabled) {
+        int updated = jdbcTemplate.update(
+                "UPDATE schema_rag.knowledge_doc SET enabled = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+                enabled, id);
+        return updated == 0 ? null : getDoc(id);
+    }
+
+    // ---------- 检索记录(阶段 B,方案 §6.3/§7) ----------
+
+    /** 检索记录视图(供「为什么找不到」回溯)。 */
+    public record RetrievalLogView(long id, String query, Integer topK, String scopeJson,
+                                   String status, int resultCount, Long durationMs,
+                                   String detailJson, String createdAt) {
+    }
+
+    /** 最近 N 条检索记录(最新在前)。 */
+    public List<RetrievalLogView> listRetrievalLogs(int limit) {
+        return jdbcTemplate.query(
+                "SELECT id, query, top_k, scope_json, status, result_count, duration_ms, detail_json, created_at "
+                        + "FROM schema_rag.retrieval_log ORDER BY id DESC LIMIT ?",
+                (rs, i) -> new RetrievalLogView(
+                        rs.getLong("id"), rs.getString("query"), rs.getObject("top_k") == null ? null : rs.getInt("top_k"),
+                        rs.getString("scope_json"), rs.getString("status"), rs.getInt("result_count"),
+                        rs.getObject("duration_ms") == null ? null : rs.getLong("duration_ms"),
+                        rs.getString("detail_json"), format(rs.getTimestamp("created_at"))),
+                limit);
+    }
+
     /** 按 id 取单文档(索引端点响应用)。 */
-    public KnowledgeDocView getDoc(long id) {        List<KnowledgeDocView> docs = jdbcTemplate.query(
-                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id, error, warning FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
-                (rs, rowNum) -> new KnowledgeDocView(
-                        rs.getLong("id"),
-                        rs.getString("name"),
-                        rs.getString("source"),
-                        rs.getInt("chunks"),
-                        rs.getString("status"),
-                        rs.getString("size"),
-                        format(rs.getTimestamp("updated_at")),
-                        rs.getInt("quality"),
-                        rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
-                        rs.getString("error"),
-                        rs.getString("warning")
-                ),
+    public KnowledgeDocView getDoc(long id) {
+        List<KnowledgeDocView> docs = jdbcTemplate.query(
+                "SELECT id, name, source, chunks, status, size, quality, updated_at, source_id, error, warning, base_id, enabled, chunk_mode FROM schema_rag.knowledge_doc WHERE id = ? AND deleted_at IS NULL",
+                (rs, rowNum) -> mapDoc(rs),
                 id
         );
         return docs.isEmpty() ? null : docs.get(0);
+    }
+
+    /** 行 → 视图(含阶段 A 诊断与阶段 B 归属/停用/分段模式)。 */
+    private KnowledgeDocView mapDoc(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new KnowledgeDocView(
+                rs.getLong("id"),
+                rs.getString("name"),
+                rs.getString("source"),
+                rs.getInt("chunks"),
+                rs.getString("status"),
+                rs.getString("size"),
+                format(rs.getTimestamp("updated_at")),
+                rs.getInt("quality"),
+                rs.getObject("source_id") == null ? null : rs.getLong("source_id"),
+                rs.getString("error"),
+                rs.getString("warning"),
+                rs.getObject("base_id") == null ? null : rs.getLong("base_id"),
+                rs.getBoolean("enabled"),
+                rs.getString("chunk_mode")
+        );
     }
 
     /**
@@ -373,12 +476,25 @@ public class KnowledgeDocService {
             /** 构建失败原因(status='failed' 时;阶段 A:失败可见可重试)。 */
             String error,
             /** 非致命解析告警(如超限截断;文档仍可检索)。 */
-            String warning
+            String warning,
+            /** 资料库 id(阶段 B;null = 未归库)。 */
+            Long baseId,
+            /** 启用状态(阶段 B;false = 退出检索)。 */
+            Boolean enabled,
+            /** 分段模式(阶段 B:plain / parent_child)。 */
+            String chunkMode
     ) {
         /** 兼容构造(旧调用点/测试):无诊断字段。 */
         public KnowledgeDocView(long id, String name, String source, int chunks, String status,
                                 String size, String updatedAt, int quality, Long sourceId) {
-            this(id, name, source, chunks, status, size, updatedAt, quality, sourceId, null, null);
+            this(id, name, source, chunks, status, size, updatedAt, quality, sourceId, null, null, null, null, null);
+        }
+
+        /** 兼容构造(阶段 A 形态):无阶段 B 字段。 */
+        public KnowledgeDocView(long id, String name, String source, int chunks, String status,
+                                String size, String updatedAt, int quality, Long sourceId,
+                                String error, String warning) {
+            this(id, name, source, chunks, status, size, updatedAt, quality, sourceId, error, warning, null, null, null);
         }
     }
 

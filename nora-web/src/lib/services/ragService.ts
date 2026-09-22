@@ -2,7 +2,9 @@ import {
   Citation,
   DocDetail,
   IndexStats,
+  KnowledgeBase,
   KnowledgeDoc,
+  RetrievalLog,
   RetrievalOutcome,
   RetrievalResult,
 } from "@/types";
@@ -141,8 +143,8 @@ export function generateCitations(query: string, docs: KnowledgeDoc[], topK = 2)
 // 后端接入层（USE_BACKEND 开关，异步）
 // ==========================================
 
-/** 检索：后端真实混合检索（带通道状态）/ 本地 Mock 模拟 */
-export async function searchDocsAsync(query: string, topK = 8): Promise<RetrievalOutcome> {
+/** 检索：后端真实混合检索（带通道状态+范围）/ 本地 Mock 模拟 */
+export async function searchDocsAsync(query: string, topK = 8, scope?: { baseId?: number; docIds?: number[] }): Promise<RetrievalOutcome> {
   if (!USE_BACKEND) {
     const results = searchDocs(query, useKnowledgeDocs.getState().docs, topK);
     return {
@@ -154,8 +156,41 @@ export async function searchDocsAsync(query: string, topK = 8): Promise<Retrieva
   }
   return requestJson<RetrievalOutcome>("/rag/search", {
     method: "POST",
-    body: JSON.stringify({ query, topK }),
+    body: JSON.stringify({ query, topK, ...(scope ?? {}) }),
   });
+}
+
+/** GET /api/rag/bases → 资料库列表（阶段 B） */
+export async function fetchBases(): Promise<KnowledgeBase[]> {
+  if (!USE_BACKEND) return [];
+  return requestJson<KnowledgeBase[]>("/rag/bases");
+}
+
+/** POST /api/rag/bases → 新建资料库 */
+export async function createBase(name: string, description?: string): Promise<KnowledgeBase> {
+  return requestJson<KnowledgeBase>("/rag/bases", {
+    method: "POST",
+    body: JSON.stringify({ name, description }),
+  });
+}
+
+/** DELETE /api/rag/bases/{id} → 删除资料库（默认库拒绝;库内文档回默认库） */
+export async function deleteBase(id: number): Promise<void> {
+  await requestJson(`/rag/bases/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/rag/docs/{id}/enabled → 文档停用/启用（阶段 B;停用=退出检索） */
+export async function setDocEnabled(id: number, enabled: boolean): Promise<KnowledgeDoc> {
+  return requestJson<KnowledgeDoc>(`/rag/docs/${id}/enabled`, {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+/** GET /api/rag/retrievals → 检索记录（阶段 B;最近 N 条） */
+export async function fetchRetrievalLogs(limit = 20): Promise<RetrievalLog[]> {
+  if (!USE_BACKEND) return [];
+  return requestJson<RetrievalLog[]>(`/rag/retrievals?limit=${limit}`);
 }
 
 /** 索引统计：后端真实统计 / 本地文档推导 */

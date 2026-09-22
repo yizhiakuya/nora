@@ -76,20 +76,34 @@ public class IndexingService {
      * @throws BusinessException 嵌入未配置或失败时
      */
     public long indexDocument(String name, String source, Long sourceId, String size, String text) {
+        return indexDocument(name, source, sourceId, size, text,
+                ChunkingService.MODE_PLAIN, defaultBaseId());
+    }
+
+    /**
+     * 带分段模式与资料库的索引(阶段 B,2026-09-22)。
+     *
+     * @param chunkMode plain / parent_child(方案 §5.2)
+     * @param baseId    资料库 id;null = 默认库
+     */
+    public long indexDocument(String name, String source, Long sourceId, String size, String text,
+                              String chunkMode, Long baseId) {
+        String mode = chunkMode == null || chunkMode.isBlank() ? ChunkingService.MODE_PLAIN : chunkMode;
+        Long targetBase = baseId != null ? baseId : defaultBaseId();
         // 阶段 1(短事务):插入 processing 新行,并清理同键的旧 failed 行
         // (它们已被本次构建取代;旧 indexed 行保留到发布切换,先构建后发布)。
         Long docId = txTemplate.execute(txStatus -> {
             softDeleteStaleFailedRows(source, sourceId, name, null);
             return jdbcTemplate.queryForObject(
-                    "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size) VALUES (?, ?, ?, 'processing', ?) RETURNING id",
-                    Long.class, name, source, sourceId, size);
+                    "INSERT INTO schema_rag.knowledge_doc (name, source, source_id, status, size, base_id, chunk_mode) VALUES (?, ?, ?, 'processing', ?, ?, ?) RETURNING id",
+                    Long.class, name, source, sourceId, size, targetBase, mode);
         });
         if (docId == null) {
             throw new BusinessException(500, "failed to create knowledge_doc");
         }
 
-        List<String> chunks = chunkingService.chunk(text);
-        if (chunks.isEmpty()) {
+        List<ChunkingService.ChunkPiece> pieces = chunkingService.chunk(text, mode);
+        if (pieces.isEmpty()) {
             // 空文本:无块可嵌入,直接发布(0 块)。
             try {
                 txTemplate.executeWithoutResult(tx -> publish(docId, source, sourceId, name, 0));
@@ -102,13 +116,16 @@ public class IndexingService {
 
         // 阶段 2(短事务):分块正文先落库(embedding 为 NULL)——解析产物
         // 持久化:嵌入失败后 reindexChunks 可用已存正文恢复,不必重新上传。
+        // 父子模式同时落父块信息(parent_index/parent_content)。
         try {
             txTemplate.executeWithoutResult(tx -> {
-                for (int i = 0; i < chunks.size(); i++) {
-                    String content = chunks.get(i);
+                for (int i = 0; i < pieces.size(); i++) {
+                    ChunkingService.ChunkPiece piece = pieces.get(i);
+                    String content = piece.content();
                     jdbcTemplate.update(
-                            "INSERT INTO schema_rag.knowledge_chunk (doc_id, chunk_index, content, embedding, token_count) VALUES (?, ?, ?, NULL, ?)",
-                            docId, i, content, content.length() / 4 // rough chars-per-token approximation
+                            "INSERT INTO schema_rag.knowledge_chunk (doc_id, chunk_index, content, embedding, token_count, parent_index, parent_content) VALUES (?, ?, ?, NULL, ?, ?, ?)",
+                            docId, i, content, content.length() / 4, // rough chars-per-token approximation
+                            piece.parentIndex(), piece.parentContent()
                     );
                 }
             });
@@ -118,6 +135,7 @@ public class IndexingService {
         }
 
         // 阶段 3(事务外):嵌入 HTTP——不占用池连接数秒
+        List<String> chunks = pieces.stream().map(ChunkingService.ChunkPiece::content).toList();
         List<float[]> embeddings;
         try {
             embeddings = embeddingService.embedAll(chunks);
@@ -323,6 +341,27 @@ public class IndexingService {
         jdbcTemplate.update(
                 "UPDATE schema_rag.knowledge_doc SET chunks = ?, status = 'indexed', error = NULL, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
                 chunkCount, docId);
+    }
+
+    /** 默认资料库 id(缓存;迁移保证存在)。 */
+    private volatile Long defaultBaseIdCache;
+
+    /** 默认资料库 id;查询失败返回 null(该文档不进任何库,列表仍可见)。 */
+    Long defaultBaseId() {
+        Long cached = defaultBaseIdCache;
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            Long id = jdbcTemplate.queryForObject(
+                    "SELECT id FROM schema_rag.knowledge_base WHERE is_default AND deleted_at IS NULL LIMIT 1",
+                    Long.class);
+            defaultBaseIdCache = id;
+            return id;
+        } catch (Exception e) {
+            log.warn("default knowledge base lookup failed: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**

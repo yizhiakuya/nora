@@ -2,66 +2,240 @@ package com.nora.rag.service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
 
 /**
- * 按字符近似分块(每块约 2000 字符,重叠 200 字符),对中英混排友好:
- * 无分词器依赖,尽量在空白处切分,不把英文单词拦腰剪断。
+ * 文档分块(阶段 B,2026-09-22 结构优先升级)。
+ *
+ * <p>两种模式(方案 §5.2):
+ * <ul>
+ *   <li><b>plain</b>(默认):结构优先分段——沿 Markdown 标题、空行段落、
+ *       句末标点切分,超过目标长度才按空白回退;比"纯 2000 字符滑动窗口"
+ *       更少把标题与内容分离、把句子拦腰截断。</li>
+ *   <li><b>parent_child</b>:章节(标题到下一个同级/更高级标题)作为父块,
+ *       父块内再按 plain 规则切子块;匹配子块、返回父块(子块用于命中,
+ *       父块提供完整上下文)。</li>
+ * </ul>
+ *
+ * <p>为什么用字符而不是 token 计数:项目没有引入 tokenizer 依赖(嵌入与
+ * LLM 各自的 tokenizer 不同),字符数对 CJK 是稳定的近似(中文≈1 字/token)。
+ * 分段参数随版本保存;换参数即重新处理。
  */
 @Service
 public class ChunkingService {
 
     /** 每块目标字符数。 */
     static final int CHUNK_SIZE = 2000;
-    /** 相邻块共享的字符数。 */
+    /** 相邻块共享的字符数(仅 plain 模式滑动窗口时使用)。 */
     static final int OVERLAP = 200;
+    /** 父块(章节)超过此长度时,父上下文返回时按段落裁选。 */
+    static final int PARENT_MAX_CHARS = 6_000;
+
+    /** 分段模式常量。 */
+    public static final String MODE_PLAIN = "plain";
+    public static final String MODE_PARENT_CHILD = "parent_child";
+
+    /** 一个子块及其所属父块(父子模式;plain 模式下 parent 为 null)。 */
+    public record ChunkPiece(String content, Integer parentIndex, String parentContent) {
+    }
 
     /**
-     * 把文本切成带重叠的块。
+     * 把文本切成带重叠的块(兼容入口,plain 模式)。
      *
      * @param text 原始文档文本
      * @return 按文档序的块;空白输入为空列表
      */
     public List<String> chunk(String text) {
-        List<String> chunks = new ArrayList<>();
-        if (text == null || text.isBlank()) {
-            return chunks;
-        }
-
-        String normalized = text.strip();
-        int length = normalized.length();
-        int step = CHUNK_SIZE - OVERLAP;
-        int start = 0;
-
-        while (start < length) {
-            int end = Math.min(start + CHUNK_SIZE, length);
-            // 非末块回退到最后一个空白处,不让英文单词被剪半;至少保留半块。
-            if (end < length) {
-                int spaceBoundary = lastWhitespace(normalized, end);
-                if (spaceBoundary > start + CHUNK_SIZE / 2) {
-                    end = spaceBoundary;
-                }
-            }
-            String chunk = normalized.substring(start, end).strip();
-            if (!chunk.isEmpty()) {
-                chunks.add(chunk);
-            }
-            if (end >= length) {
-                break;
-            }
-            start = Math.max(end - OVERLAP, start + 1);
-        }
-
-        return chunks;
+        return chunk(text, MODE_PLAIN).stream().map(ChunkPiece::content).toList();
     }
 
-    private int lastWhitespace(String text, int from) {
-        for (int i = from; i > from - OVERLAP && i > 0; i--) {
-            if (Character.isWhitespace(text.charAt(i - 1))) {
-                return i;
+    /**
+     * 按模式切块(阶段 B)。
+     *
+     * @param text 原始文档文本
+     * @param mode plain / parent_child
+     * @return 块序列(父子模式下每块带父块信息);空白输入为空列表
+     */
+    public List<ChunkPiece> chunk(String text, String mode) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        String normalized = text.strip();
+        if (MODE_PARENT_CHILD.equalsIgnoreCase(mode)) {
+            return chunkParentChild(normalized);
+        }
+        return structureAwareSplit(normalized).stream()
+                .map(c -> new ChunkPiece(c, null, null))
+                .toList();
+    }
+
+    // ---------- plain:结构优先分段 ----------
+
+    /**
+     * 结构优先切分:先按 Markdown 标题分段(标题开启新段,不把标题与正文
+     * 分离),段内超长再按空行/句边界/空白回退。产出块 ≤ {@link #CHUNK_SIZE}。
+     */
+    List<String> structureAwareSplit(String text) {
+        List<String> sections = splitByHeadings(text);
+        List<String> out = new ArrayList<>();
+        for (String section : sections) {
+            if (section.length() <= CHUNK_SIZE) {
+                if (!section.isBlank()) {
+                    out.add(section.strip());
+                }
+                continue;
+            }
+            out.addAll(splitLongSection(section));
+        }
+        return out;
+    }
+
+    /** 按 Markdown 标题行切段(标题行保留在所属段首)。无标题时整体为一段。 */
+    List<String> splitByHeadings(String text) {
+        List<String> sections = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            boolean heading = HEADING.matcher(line).matches();
+            if (heading && current.length() > 0) {
+                sections.add(current.toString());
+                current.setLength(0);
+            }
+            current.append(line).append('\n');
+        }
+        if (current.length() > 0) {
+            sections.add(current.toString());
+        }
+        return sections;
+    }
+
+    private static final Pattern HEADING = Pattern.compile("^#{1,6}\\s+.*$");
+
+    /**
+     * 超长段内切分:优先空行(段落边界)→ 句末标点 → 空白 → 硬切。
+     * 与旧实现不同:非首块不强行重叠(结构边界本身已保语义连续性),
+     * 仅当找不到任何自然边界时才用滑动窗口兜底。
+     */
+    List<String> splitLongSection(String section) {
+        List<String> paragraphs = splitParagraphs(section);
+        List<String> out = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String para : paragraphs) {
+            if (current.length() > 0 && current.length() + para.length() > CHUNK_SIZE) {
+                out.add(current.toString().strip());
+                current.setLength(0);
+            }
+            if (para.length() > CHUNK_SIZE) {
+                // 单段超长:按句子边界切
+                for (String piece : splitBySentences(para)) {
+                    if (current.length() > 0 && current.length() + piece.length() > CHUNK_SIZE) {
+                        out.add(current.toString().strip());
+                        current.setLength(0);
+                    }
+                    if (piece.length() > CHUNK_SIZE) {
+                        // 句子也超长(无标点长文):滑动窗口兜底
+                        if (current.length() > 0) {
+                            out.add(current.toString().strip());
+                            current.setLength(0);
+                        }
+                        out.addAll(slidingWindow(piece));
+                    } else {
+                        current.append(piece);
+                    }
+                }
+            } else {
+                current.append(para);
             }
         }
-        return -1;
+        if (current.length() > 0 && !current.toString().isBlank()) {
+            out.add(current.toString().strip());
+        }
+        return out;
+    }
+
+    /** 按空行切段落(保留段落内换行)。 */
+    private List<String> splitParagraphs(String text) {
+        List<String> out = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            if (line.isBlank()) {
+                if (current.length() > 0) {
+                    out.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(line).append('\n');
+            }
+        }
+        if (current.length() > 0) {
+            out.add(current.toString());
+        }
+        return out;
+    }
+
+    /** 按句末标点切分(中英)。 */
+    private List<String> splitBySentences(String text) {
+        List<String> out = new ArrayList<>();
+        int start = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '。' || c == '！' || c == '？' || c == '；'
+                    || (c == '.' && i + 1 < text.length() && (text.charAt(i + 1) == ' ' || text.charAt(i + 1) == '\n'))
+                    || c == '\n') {
+                out.add(text.substring(start, i + 1));
+                start = i + 1;
+            }
+        }
+        if (start < text.length()) {
+            out.add(text.substring(start));
+        }
+        return out;
+    }
+
+    /** 无任何自然边界的超长文本:按 CHUNK_SIZE-OVERLAP 滑动窗口兜底。 */
+    private List<String> slidingWindow(String text) {
+        List<String> out = new ArrayList<>();
+        int step = CHUNK_SIZE - OVERLAP;
+        for (int start = 0; start < text.length(); start += step) {
+            int end = Math.min(start + CHUNK_SIZE, text.length());
+            String piece = text.substring(start, end).strip();
+            if (!piece.isEmpty()) {
+                out.add(piece);
+            }
+            if (end >= text.length()) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    // ---------- parent_child:章节父块 + 子块 ----------
+
+    /**
+     * 父子模式:每个标题章节(或首段)是父块;父块内用 plain 规则切子块。
+     *
+     * <p>父块超 {@link #PARENT_MAX_CHARS} 时返回时按段落裁选(注入侧负责),
+     * 这里原样保留完整父块(用户可能想看到全章节)。
+     */
+    List<ChunkPiece> chunkParentChild(String text) {
+        List<String> sections = splitByHeadings(text);
+        List<ChunkPiece> out = new ArrayList<>();
+        int parentIndex = 0;
+        for (String section : sections) {
+            String parentContent = section.strip();
+            if (parentContent.isEmpty()) {
+                continue;
+            }
+            List<String> children = parentContent.length() <= CHUNK_SIZE
+                    ? List.of(parentContent)
+                    : splitLongSection(parentContent);
+            for (String child : children) {
+                out.add(new ChunkPiece(child, parentIndex, parentContent));
+            }
+            parentIndex++;
+        }
+        return out;
     }
 }

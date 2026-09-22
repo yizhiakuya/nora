@@ -1,14 +1,14 @@
 'use client';
 
 import { useMemo, useState } from "react";
-import { Search, Trash2, Pencil, RefreshCw, Loader2 } from "lucide-react";
+import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff } from "lucide-react";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
-import { fetchDocDetail, reindexDoc } from "@/lib/services/ragService";
+import { fetchDocDetail, reindexDoc, setDocEnabled } from "@/lib/services/ragService";
 import { toast } from "sonner";
 
 const SOURCE_ORDER: KnowledgeSource[] = ["file", "database", "repo", "environment", "chat", "text"];
@@ -19,7 +19,11 @@ function DocIcon({ source }: { source: KnowledgeSource }) {
   return <Icon className={`w-4 h-4 shrink-0 ${meta.color}`} />;
 }
 
-function StatusBadge({ status }: { status: KnowledgeDoc["status"] }) {
+function StatusBadge({ status, enabled }: { status: KnowledgeDoc["status"]; enabled?: boolean | null }) {
+  // 停用态优先展示(阶段 B:停用=退出检索,数据保留——与失败/正常都不同)
+  if (enabled === false) {
+    return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-muted-foreground border-border">已停用</span>;
+  }
   const map = {
     indexed:    { label: "已索引", cls: "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800" },
     processing: { label: "处理中", cls: "bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800" },
@@ -109,6 +113,25 @@ export function DocumentLibrary() {
       toast.success(`「${doc.name}」已重建索引`);
     } catch (e) {
       toast.error(`重建索引失败：${(e as Error).message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** 停用/启用(阶段 B):停用=退出检索,数据与索引保留。 */
+  const handleToggleEnabled = async (doc: KnowledgeDoc) => {
+    const next = doc.enabled === false;
+    setBusyId(doc.id);
+    try {
+      const updated = await setDocEnabled(doc.id, next);
+      useKnowledgeDocs.setState((state) => ({
+        docs: state.docs.map((d) => (d.id === doc.id ? { ...d, ...updated } : d)),
+      }));
+      toast.success(next
+        ? `「${doc.name}」已启用,重新参与检索`
+        : `「${doc.name}」已停用(退出检索,数据保留;可随时启用)`);
+    } catch (e) {
+      toast.error(`操作失败：${(e as Error).message}`);
     } finally {
       setBusyId(null);
     }
@@ -256,10 +279,20 @@ export function DocumentLibrary() {
                       <td className="p-3 text-muted-foreground text-xs tabular-nums hidden md:table-cell">{doc.chunks}</td>
                       <td className="p-3 text-muted-foreground text-xs hidden lg:table-cell">{doc.size}</td>
                       <td className="p-3 hidden lg:table-cell"><QualityBar score={doc.quality} /></td>
-                      <td className="p-3"><StatusBadge status={doc.status} /></td>
+                      <td className="p-3"><StatusBadge status={doc.status} enabled={doc.enabled} /></td>
                       <td className="p-3 text-right text-muted-foreground text-xs whitespace-nowrap hidden md:table-cell">{doc.updatedAt}</td>
                       <td className="p-3 pr-4">
                         <div className="flex items-center justify-end gap-1">
+                          {/* 停用/启用(阶段 B):停用=退出检索,数据保留——比删除轻的操作 */}
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleEnabled(doc)}
+                            disabled={busyId === doc.id}
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+                            title={doc.enabled === false ? "重新启用（参与检索）" : "停用（退出检索，数据保留）"}
+                          >
+                            {doc.enabled === false ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleReindex(doc)}
