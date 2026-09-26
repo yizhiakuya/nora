@@ -13,6 +13,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - `components/settings/model/ReasoningLevelConfig.tsx` — per-model 推理等级配置
 - `hooks/useSkills` — 技能唯一数据源(列表走 /api/skills 不带正文;详情按需 loadDetail 拉正文——渐进披露);后端模式 CRUD 乐观更新+失败回滚
 - `components/files/WorkspaceBrowser.tsx` — 文件页内的「Agent 工作区」文件夹浏览器(文件系统一体化:普通文件夹形态,点击进入/面包屑导航/文件编辑器);`app/files/page.tsx` 持 `workspaceDir` 状态(null=根视图)
+- `components/files/IndexToKnowledgeModal.tsx` — 「加入知识库」配置弹窗(F5,2026-09-26):目标资料库/分段模式(结构分段·父块-子块)/高级参数(chunkSize/overlap/separator)/**试切预览**(`previewChunks` + `filesApi.fetchPreviewText`);确认后 `indexFileFromBackend(fileId, name, chunkConfig, baseId)` 带参提交(此前只发 fileId/name,后端参数被忽略)
 - `lib/services/workspaceApi.ts` — 工作区 API 接入层(stats/files/read/write/delete)
 
 ## 约定

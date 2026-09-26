@@ -60,21 +60,44 @@ PYEOF
 
   # 流完整性:必须见到终态事件(done/error)才算一次有效运行——
   # 空流/截断流不进入工具选择判定,直接判 ERROR(避免"失败也 PASS")
+  # F4(2026-09-26):同时提取 done 的业务终态(status 字段,F3 同源)。
+  # 此前 `if has_done ... elif has_error` 让 error+done 组合被视为正常——
+  # F3 异常路径恰好产生「error + done」,模型最后失败也可能被计为 PASS。
+  # 现在:error 事件与 done.status(completed 以外)都算「运行失败」,
+  # 不进入工具选择判定,与「工具选择失败」分开展示。
   stream_status=$(python -X utf8 - "$out" <<'PYEOF'
-import sys
+import json, sys
 try:
     text = open(sys.argv[1], encoding='utf-8').read()
 except Exception:
     print('unreadable')
     raise SystemExit
-has_done = 'event:done' in text or 'event:done' in text.replace('event: done', 'event:done')
-has_error = 'event:error' in text or 'event:error' in text.replace('event: error', 'event:error')
+norm = text.replace('event: ', 'event:')
+has_done = 'event:done' in norm
+has_error = 'event:error' in norm
+done_status = ''
 if has_done:
-    print('done')
+    # 取最后一个 done 事件里的 status(F3 统一终态字段;旧后端可能没有)
+    for block in norm.split('event:done'):
+        for line in block.splitlines():
+            line = line.strip()
+            if line.startswith('data:'):
+                try:
+                    payload = json.loads(line[5:].strip())
+                    if isinstance(payload, dict) and payload.get('status'):
+                        done_status = payload['status']
+                except Exception:
+                    pass
+                break
+if not has_done and not has_error:
+    print('incomplete')
 elif has_error:
     print('error')
+elif done_status and done_status != 'completed':
+    # partial/failed/cancelled:轮次未正常完成,不算工具选择结论
+    print('failed:' + done_status)
 else:
-    print('incomplete')
+    print('done')
 PYEOF
 )
 
@@ -97,8 +120,8 @@ print(','.join(seen))
 PYEOF
 )
 
-  # 运行有效性门(先于工具选择判定):curl 非零 / 流不完整 / 服务端 error 事件
-  # 都不是"工具选择"结论,判 ERROR 并给出可操作的失败原因
+  # 运行有效性门(先于工具选择判定):curl 非零 / 流不完整 / 服务端 error 事件 /
+  # done.status != completed 都不是"工具选择"结论,判 ERROR 并给出可操作的失败原因
   if [ "$curl_rc" -ne 0 ]; then
     FAIL=$((FAIL+1))
     FAILED_CASES="$FAILED_CASES $name"
@@ -109,7 +132,7 @@ PYEOF
   if [ "$stream_status" != "done" ]; then
     FAIL=$((FAIL+1))
     FAILED_CASES="$FAILED_CASES $name"
-    printf "ERROR %-32s 流未正常结束(status=%s;空流/截断/服务端错误不作工具选择判定)  session=%s\n" \
+    printf "ERROR %-32s 流未正常结束(status=%s;空流/截断/服务端错误/轮次失败不作工具选择判定)  session=%s\n" \
       "$name" "$stream_status" "$session"
     continue
   fi

@@ -17,6 +17,7 @@ import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { WorkspaceBrowser } from "@/components/files/WorkspaceBrowser";
 import { MediaCacheBrowser } from "@/components/files/MediaCacheBrowser";
 import { TrashBrowser } from "@/components/files/TrashBrowser";
+import { IndexToKnowledgeModal } from "@/components/files/IndexToKnowledgeModal";
 import { toast } from "sonner";
 import { FileItem } from "@/types";
 import { useFiles } from "@/hooks/useFiles";
@@ -357,20 +358,14 @@ export default function FilesPage() {
     addNotification("上传完成", `「${newFile.name}」已保存到文件中心，可在列表中查看。`);
   };
 
+  const [indexTarget, setIndexTarget] = useState<FileItem | null>(null);
+  const [indexSubmitting, setIndexSubmitting] = useState(false);
+
   const handleIndexFile = (file: FileItem) => {
     if (USE_BACKEND) {
-      indexFileFromBackend(file.id, file.name)
-        .then(() => {
-          // 索引是异步的:file-service 触发 rag-service,完成后回调置位;这里先乐观标记
-          markIndexed(file.id);
-          addNotification(
-            "文件索引入库",
-            `「${file.name}」已开始解析与向量化，完成后 AI 即可检索其内容。`,
-            "indexed"
-          );
-          toast.success(`「${file.name}」索引任务已提交`);
-        })
-        .catch((e: Error) => toast.error(`索引失败：${e.message}`));
+      // F5(2026-09-26):先进配置弹窗(目标资料库 + 分段参数 + 预览),
+      // 确认后再带参数提交——此前固定只发 fileId/name,后端参数被忽略
+      setIndexTarget(file);
       return;
     }
     indexFile(file.name);
@@ -381,6 +376,25 @@ export default function FilesPage() {
       "indexed"
     );
     toast.success(`「${file.name}」已加入知识库`);
+  };
+
+  /** 配置弹窗确认:带分段配置与目标资料库真实提交(F5)。 */
+  const handleIndexConfirm = (file: FileItem, chunkConfig: { mode?: string; chunkSize?: number; overlap?: number; separator?: string }, baseId: number | null) => {
+    setIndexSubmitting(true);
+    indexFileFromBackend(file.id, file.name, chunkConfig, baseId)
+      .then(() => {
+        // 索引是异步的:file-service 触发 rag-service,完成后回调置位;这里先乐观标记
+        markIndexed(file.id);
+        addNotification(
+          "文件索引入库",
+          `「${file.name}」已开始解析与向量化，完成后 AI 即可检索其内容。`,
+          "indexed"
+        );
+        toast.success(`「${file.name}」索引任务已提交`);
+        setIndexTarget(null);
+      })
+      .catch((e: Error) => toast.error(`索引失败：${e.message}`))
+      .finally(() => setIndexSubmitting(false));
   };
 
   /** 共享的文件夹行数据(列表/网格两视图共用同一来源与动作)。 */
@@ -739,6 +753,13 @@ export default function FilesPage() {
             refreshFolders();
           }
         }}
+      />
+      {/* 加入知识库配置弹窗(F5:目标资料库 + 分段参数 + 预览) */}
+      <IndexToKnowledgeModal
+        file={indexTarget}
+        onClose={() => setIndexTarget(null)}
+        onConfirm={handleIndexConfirm}
+        submitting={indexSubmitting}
       />
       <FileViewerModal
         file={viewer.activeFile}

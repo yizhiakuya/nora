@@ -98,12 +98,29 @@ function toExecution(e: BackendExecution): ExecutionRecord {
     ruleName: e.ruleName,
     time: mdHmFromLocalIso(e.startedAt),
     duration: e.durationMs != null ? `${(e.durationMs / 1000).toFixed(1)}s` : "—",
-    status: e.status === "success" ? "success" : "failed",
+    // 终态直通(F2,2026-09-26):后端执行器返回 completed/partial/failed/
+    // cancelled/unknown,映射后原样透传;未知值兜底 failed(不冒充成功)。
+    status: toExecutionStatus(e.status),
     // 全文保留(2026-09-20,M0-04):此前截为 120 字,「成功」之后拿不到报告。
     // 列表用 detailSummary 展示摘要,详情面板读全文。
     detail,
     detailSummary: summarize(detail, 120),
   };
+}
+
+/** 后端 execution_record.status → 前端展示终态(未知值兜底 failed,绝不冒充成功)。 */
+function toExecutionStatus(status: string): ExecutionRecord["status"] {
+  switch (status) {
+    case "success":
+    case "partial":
+    case "cancelled":
+    case "unknown":
+    case "running":
+    case "missed_schedule":
+      return status;
+    default:
+      return "failed";
+  }
 }
 
 /** 摘要:取首个非空行,超长截断加省略号(仅列表展示用)。 */

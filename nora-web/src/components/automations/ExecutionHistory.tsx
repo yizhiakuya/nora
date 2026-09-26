@@ -1,16 +1,23 @@
 'use client';
 
 import { useState } from "react";
-import { RotateCw, CheckCircle2, XCircle, Loader2, History, ChevronRight } from "lucide-react";
+import { RotateCw, CheckCircle2, XCircle, Loader2, History, ChevronRight, AlertTriangle, CircleSlash, HelpCircle, CalendarX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
 import type { ExecutionRecord } from "@/types";
 import { useAutomations } from "@/hooks/useAutomations";
 
+// 终态展示(F2,2026-09-26):partial/cancelled/unknown/missed_schedule 各自
+// 有独立视觉——不再把非 success 一律画成红色「失败」(取消/未知/错过计划
+// 都不是执行失败,混在一起用户无法区分)。
 const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; cls: string; label: string }> = {
-  success: { icon: CheckCircle2, cls: "text-green-600 dark:text-green-400", label: "成功" },
-  failed:  { icon: XCircle,      cls: "text-red-600 dark:text-red-400",     label: "失败" },
-  running: { icon: Loader2,      cls: "text-blue-600 dark:text-blue-400",   label: "执行中" },
+  success:         { icon: CheckCircle2,  cls: "text-green-600 dark:text-green-400",   label: "成功" },
+  partial:         { icon: AlertTriangle, cls: "text-amber-600 dark:text-amber-400",   label: "部分完成" },
+  failed:          { icon: XCircle,       cls: "text-red-600 dark:text-red-400",       label: "失败" },
+  cancelled:       { icon: CircleSlash,   cls: "text-gray-500 dark:text-gray-400",     label: "已取消" },
+  unknown:         { icon: HelpCircle,    cls: "text-orange-600 dark:text-orange-400", label: "结果未知" },
+  running:         { icon: Loader2,       cls: "text-blue-600 dark:text-blue-400",     label: "执行中" },
+  missed_schedule: { icon: CalendarX,     cls: "text-amber-600 dark:text-amber-400",   label: "错过计划点" },
 };
 
 /**

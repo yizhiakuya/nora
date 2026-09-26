@@ -12,6 +12,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **解析诊断**:Tika 提取返回 ok/empty/truncated/error(超限用 StringWriter+WriteOutContentHandler 拿部分内容,实测 BodyContentHandler 超限时已写内容不可达);`knowledge_doc.error/warning` 两列(V9),前端文档库显示失败原因与截断告警
 - **嵌入分批+退避**:`embedAll` 按 40 块分批(Jina 限速 10 万 tokens/分钟);撞 rate limit 按 30s 递增退避重试 3 次(50 万字符大文档实测单次提交烧穿配额)
 - **生命周期版本单调**:版本号存 `file_lifecycle_version` 计数表(file-service V8)——此前版本在 pending 行上、送达删除后从 1 重来,「删除→恢复→删除」第 2/3 步被 rag 侧拒绝(实测 applied 停在 1);rag 侧版本确认+状态变化同事务(`applyLifecycle`)
+- **文件索引参数闭环(F5,2026-09-26)**:`POST /api/rag/index` 的 `IndexRequest` 支持 `chunkMode/chunkSize/overlap/separator/baseId`(与 `/index/text` 对齐)——此前只有 fileId/name,前端发的参数被静默忽略;显式传不存在的 baseId 返回 404(`countBase` 校验),不再静默落默认库。前端文件页「入知识库」现在弹配置窗(选库/分段模式/高级参数/试切预览,`IndexToKnowledgeModal`),确认后带参数提交
 - **批量删除修复**:`deleteDocs` 的 `IN (?)` 改占位符展开(此前传 List 给单占位符,PG 报 bad SQL grammar——单测 mock 掩盖,真实批量删除全失败)
 - **资料库分组(阶段 B,V10)**:`knowledge_base`(默认库收纳未分组文档)+ `knowledge_doc.base_id`;检索范围 `baseId`/`docIds`/`sources`/`dateFrom`/`dateTo` **同时进入两路候选查询**,范围内无结果不自动扩大;删除库=库内文档回默认库(不级联删除),默认库拒删 409。**移库闭环**:`POST /api/rag/docs/{id}/base`(目标库同名 name-keyed 冲突 409,不顶掉);前端文档库页有资料库管理条(建库)+ 文档行「移动到资料库」(多库时显示)。前端检索测试页可选库范围。**同名文档按库独立(V11)**:按名索引的去重键含 base_id——此前不同资料库的同名文档互相覆盖(实测:两个评测库放同名语料,后建的清空先建的)
 - **文档停用(阶段 B)**:`knowledge_doc.enabled`——停用=退出检索(保留数据与索引),`POST /api/rag/docs/{id}/enabled`;前端文档库停用/启用按钮(Eye/EyeOff),状态徽章显示「已停用」。与删除语义区分
@@ -27,6 +28,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **表**:`file_item`(含 `folder_id`;软删除 deleted_at)+ `file_folder`(单层文件夹;删除文件夹时文件回根,不级联删文件);migration V5
 - **端点**:`GET/POST /api/files`(list 支持 ids/folderId)、`POST /upload`(可选 folderId)、`DELETE ?ids=`(软删)、`GET /{id}/preview|raw`(raw 支持 Range)、`POST /{id}/index`(RAG 索引,回调 `/{id}/indexed`)、`PUT /{id}/name`(重命名)、`PUT /move`(批量移动, folderId null=根)、`GET /download?ids=`(**zip 打包流式下载**,中文名 RFC 5987)、`GET/POST /folders`、`PUT/DELETE /folders/{id}`
 - **前端**:文件页=统一文件系统视图——「Agent 工作区」「媒体缓存」与用户文件夹并列显示(FileTable folderRows);用户文件夹可进入(面包屑)、重命名、删除;文件行操作:预览/下载/重命名/移动到…/删除(菜单);批量:下载(zip)/移动/删除;上传目标跟随当前文件夹
+- **生命周期提交边界(F1,2026-09-26)**:`FileLifecycleService` 把「文件状态变更 + RAG 通知入队(版本分配 + pending 行)」放进**同一事务**(delete/restore 用 `RETURNING id` 只对真实变化的文件入队;purge 的磁盘删除也在提交后),HTTP 投递在事务外(`RagIndexClient.deliverPendingAsync(fileId, traceId)`,读回最新行投递,失败由定时重试兜底)。pending upsert 带 `WHERE EXCLUDED.version > pending_rag_sync.version` 单调守卫——低版本晚到不覆盖高版本(此前旧删除 v1 会顶掉恢复 v2 并清除,恢复永久丢失)
 - **媒体缓存 → 文件中心流转**:`POST /api/media/cached/{key}/save`(agent-service 侧,服务端直传 file-service)把派生缓存转为正式资产——用户可见的"保存到文件中心"按钮在媒体缓存页
 - **跨服务约定**:其他服务读文件元数据走 REST(file-service `GET /api/files?ids=`);`api/file-api` 模块只承载共享 DTO(`FileItem` record 带 `folderId`,构造点增删参数要同步 api/file-api 测试与 file-service 测试)。**Dubbo 未接线**(2026-09-19 审计):6 个 `*Service` 死接口已删,api 模块正名为共享 DTO 契约;服务间调用一律 RestClient + envelope
 
@@ -41,6 +43,7 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 ## agent-service 关键链路
 
 - **对话入口** `AgentController POST /api/chat/sessions/{id}/messages`,body `{content, model, reasoningLevel, permissionMode}`;SSE 事件:`step`/`delta`/`reasoning_delta`/`sources`/`approval_required`/`done`/`error`
+- **统一轮次终态(F3,2026-09-26)**:`done` 事件带 `status` 字段(completed/partial/failed/cancelled),与 `chat_run` 落库**同源同一判定**(ChatTurnRunner 收尾一次算出)——异常轮有可用成果(回答文本或**带 toolName 的已完成工具调用**;检索/上下文注入步骤不算成果)为 partial,否则 failed;取消轮 cancelled。此前 `whenComplete` 发完 error 仍按步骤状态标 completed/partial,真失败被当正常完成。消费方(前端/automation/tool-eval)一律读 `done.status`,不再按文本前缀猜测
 - **消息引用注入(2026-09-17;MCP 行格式 2026-09-18 修正)**:前端输入框三触发符(对齐 Claude Code:`@` 文件 · `#` 知识库 · `/` 技能与 MCP 工具)把引用序列化为消息尾部固定行(`[引用文件] 名 (file_id=N)` / `[引用知识库] 名 (doc_id=N)` / `[引用技能] 名 (skill_id=N)` / `[引用MCP服务器] 名 (server_id=N)`)——**MCP 以服务器为单位引用**(工具名随远端变化,不展开);`MessageRefResolver` 在 RAG 检索前解析,把真实内容转 CitationDto 注入检索结果**头部**(score=1.0,排在语义命中前,不受 min-score 下限影响)——文件走 file-service 预览(8K 截断)、文档走 `RagRetrievalClient.docChunks`(12K 预算)、技能注入正文(8K,强化"用户指定用此技能")、MCP 服务器**按 tool_policy 生成指引**(eager 指向 mcp__ 挂载名 / lazy 指向 tools+call 流程);合并结果进 systemPrompt 与 sources 事件。引用行随 content 持久化,历史加载后仍生效;行格式契约与前端 `chatRefs.ts` 两端同步(前端只写中性文案,具体指引由后端按策略生成)
 - **注入可见性(dsh 模式)**:在检索步骤后下发 `type=context` 步骤——`s-context-memory`(form=instructions,工作区引导 SOUL/AGENTS/USER/MEMORY 逐文件元数据+注入正文 + 日记清单)、`s-context-skills`(form=catalog,启用技能条目);**降噪(2026-09-12):步骤仅在首轮或内容较上次下发有变化时下发**——注入本身仍每轮发生(系统提示必须随每次请求携带,LLM 无状态),但不变的轮次不再重复展示(与历史里最近一次同名步骤逐字段对比,一致则跳过;agent 自演化编辑记忆后会重新下发);`ChatStepDto.context` 携带 `{form,kind,files|entries,dailyNotes}`,form 是 producer 声明的信息形态,前端按 form 渲染、未知 form 降级通用展示。文件 `bytes` 为实际注入的 **UTF-8 字节数**(非字符数),`content` 是模型实际读到的注入正文(前端文件行点击展开可见)。注入内容仍进系统提示(`systemPromptWith`),context 步骤只是让注入对用户可见
 - **断线重连(后台持续运行)**:SSE 断开不影响编排线程;每轮注册 `TurnStreamRegistry`(内存事件缓冲,step/delta/sources/approval 全量,上限 8000),事件双写(直发+入缓冲)。`GET /sessions/{id}/turn/live` 探测进行中轮次(含缓冲事件数/最后事件),`GET /sessions/{id}/turn/stream`(SSE)先回放缓冲再实时续推直至 done/error,无轮次发 `idle` 即关。前端卸载**不 abort**(切页后端照跑),挂载时探测 live 轮接流恢复;「停止生成」仍走 cancel(真中断)
@@ -57,6 +60,10 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **持久化**:会话/消息/step 落 schema_agent;reasoning 聚合后一次性保存(`s-reasoning-{round}`)
 - **工作区/记忆(文件系统一体化,对齐 OpenClaw/Hermes)**:agent 的目录(默认 `D:/claude/Nora/agent-workspace`,可配 `nora.agent.workspace`)既是**默认 cwd**也是记忆载体。引导注入按 **Hermes 三层提示词结构**(stable 身份 → context 约定 → volatile 快照):`SOUL.md`(可演化人格:agent 自己改它就改变下轮行为)/`AGENTS.md`(使用约定,从经验中补充)/`USER.md`(偏好)/`MEMORY.md`(耐久事实)——每轮自动注入,逐文件 6k 字+总量 16k 字双预算截断;`memory/YYYY-MM-DD.md` 日记只列清单不注入,按需 `read`。**SYSTEM_PROMPT 只留协议层**(引用标记/行动而非空谈/自演化声明/工作台操作员定位——第 6 条要求「问工作台功能先读手册技能」),人格与任务习惯全部下放到可演化文件(改文件即进化,不改代码)。**「工作台使用手册」技能**(id=7,分类=工作台):九个功能面逐项说明(用户视角+工具映射+常见任务操作指引),用户问工作台能力时 agent `manage_skill read` 读取后回答——改工作台功能时应同步更新该技能正文。「记住…」= 落盘(无隐藏状态)。**工作区是默认目录而非硬沙箱**(OpenClaw 语义):相对路径=区内,**绝对路径=整机**(agent 可读/写项目文件);风险分级 `manage_workspace`——区内写=LOW 自动、区外写=HIGH(ASSIST 询问)、区外删=CRITICAL(任何档位确认),系统目录(Windows/Program Files/盘根)写删硬拒;管理 API `/api/workspace`(GET stats/files/file,PUT file,DELETE file——**仅限区内**,前端管理通道不开放整机)。前端:文件页把工作区渲染为**普通文件夹**「Agent 工作区」(点击进入/面包屑导航/文件编辑器,与真实文件系统一体),非独立页面
 - **指令型技能**:`agent_skill` 表(名称/描述/分类/正文),启用技能的**目录**(名称+描述)注入系统提示,正文由 `manage_skill action=read` 按需拉取(渐进披露,不占每轮预算);CRUD API `/api/skills`(列表不返回正文,详情才返回);agent 可在对话中 create/update 沉淀技能(闭环自管)
+
+## automation-service(自动任务)
+
+- **动作执行结果状态化(F2,2026-09-26)**:`ActionExecutor.execute` 返回 `ActionResult(detail, status)`——agent 动作的终态来自对话 `done.status`(F3 同源),不再按 `detail.startsWith("ERROR")` 或「有文字」推断;`partial/cancelled/unknown` 落执行记录并**不发成功通知**(unknown = 连接中断、该轮可能仍在后台跑,文案指引去会话确认);旧后端无 status 时按 stopped/error/无终态兼容推断。前端 `ExecutionHistory` 按终态分别展示(成功/部分完成/失败/已取消/结果未知/错过计划点)
 
 ## 模型/推理注入规则
 

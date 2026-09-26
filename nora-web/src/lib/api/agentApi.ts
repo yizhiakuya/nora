@@ -75,6 +75,10 @@ interface DonePayload {
   contextWindow?: number | null;
   promptTokens?: number | null;
   ttftMs?: number | null;
+  /** 用户主动停止的取消轮(F3;缺省 = 正常完成) */
+  stopped?: boolean;
+  /** 统一业务终态(F3,2026-09-26):completed/partial/failed/cancelled;旧后端无该字段 */
+  status?: string;
 }
 
 /** SSE `title` 事件载荷：AI 异步起好的会话标题（见后端 AgentController.TitlePayload）。 */

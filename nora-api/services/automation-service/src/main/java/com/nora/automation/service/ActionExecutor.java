@@ -23,6 +23,13 @@ import com.nora.common.response.ApiResponse;
  *       (RAG + 工具循环,FULL 权限档);回答即执行详情</li>
  * </ul>
  * 执行详情存储在执行记录上。
+ *
+ * <p><b>结果状态化(F2,2026-09-26)</b>:此前调用方按 {@code detail.startsWith("ERROR")}
+ * 推断成败,且 SSE 解析把「有文字」当「已完成」——部分输出后报错、无终态 EOF、
+ * {@code done.stopped} 都被误判为 success。现在执行器返回
+ * {@link ActionResult}(正文 + 统一终态),终态来自对话链路的 done 事件
+ * (F3 同源:completed/partial/failed/cancelled),无终态时为 unknown;
+ * 错误、取消、未知结果不再由自然语言前缀推断。
  */
 @Service
 public class ActionExecutor {
@@ -41,12 +48,37 @@ public class ActionExecutor {
     }
 
     /**
+     * 动作执行结果(正文 + 统一业务终态,F2)。
+     *
+     * <p>{@code status} 取值与对话运行状态同源:{@code completed} / {@code partial}
+     * (有成果但有未完成项)/ {@code failed} / {@code cancelled}(用户取消)/
+     * {@code unknown}(无终态/连接中断,该轮可能仍在后台运行)。
+     */
+    public record ActionResult(String detail, String status) {
+
+        /** 成功完成。 */
+        static ActionResult completed(String detail) {
+            return new ActionResult(detail, "completed");
+        }
+
+        /** 失败:正文带 ERROR 前缀(保持历史执行记录的可读约定)。 */
+        static ActionResult failed(String message) {
+            return new ActionResult("ERROR: " + message, "failed");
+        }
+
+        /** 结果未知(连接中断/无终态):不冒充成功,也不冒充失败。 */
+        static ActionResult unknown(String message) {
+            return new ActionResult("ERROR: " + message, "unknown");
+        }
+    }
+
+    /**
      * 运行动作载荷。
      *
      * @param actionJson 存储的 JSONB 动作,如 {@code {"type":"sql","sql":"SELECT ..."}}
-     * @return 执行细节(成功渲染或 ERROR: 行);绝不抛异常
+     * @return 执行结果(正文 + 终态);绝不抛异常
      */
-    public String execute(String actionJson) {
+    public ActionResult execute(String actionJson) {
         return execute(actionJson, null, null);
     }
 
@@ -56,7 +88,7 @@ public class ActionExecutor {
      * AI 回答/步骤照常持久化——用户在会话列表就能看到定时任务的完整记录。
      * sessionId 为空时保持旧行为(无会话静默运行)。
      */
-    public String execute(String actionJson, String sessionId, String sessionTitle) {
+    public ActionResult execute(String actionJson, String sessionId, String sessionTitle) {
         try {
             JsonNode action = objectMapper.readTree(actionJson);
             String type = action.path("type").asText("sql");
@@ -64,18 +96,18 @@ public class ActionExecutor {
                 return executeAgent(action.path("prompt").asText(""), sessionId, sessionTitle);
             }
             if (!"sql".equals(type)) {
-                return "ERROR: unsupported action type " + type;
+                return ActionResult.failed("unsupported action type " + type);
             }
             String sql = action.path("sql").asText("");
             if (sql.isBlank()) {
-                return "ERROR: action sql is empty";
+                return ActionResult.failed("action sql is empty");
             }
             // 显式 Long:三元两分支类型不一致时会自动拆箱,null 会当场 NPE,
             // 让下面的判空形同虚设(真实踩过的坑)
             Long connectionId = action.hasNonNull("connectionId")
                     ? Long.valueOf(action.get("connectionId").asLong()) : firstConnectionId();
             if (connectionId == null) {
-                return "ERROR: no database connection configured — 请先在数据源页添加一个连接";
+                return ActionResult.failed("no database connection configured — 请先在数据源页添加一个连接");
             }
             ApiResponse<QueryBody> envelope = restClient.post()
                     .uri("/api/datasources/{id}/query", connectionId)
@@ -86,12 +118,12 @@ public class ActionExecutor {
                     });
             if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
                 String message = envelope == null ? "empty response" : envelope.message();
-                return "ERROR: " + message;
+                return ActionResult.failed(message);
             }
-            return render(envelope.data());
+            return ActionResult.completed(render(envelope.data()));
         } catch (Exception e) {
             log.warn("action execution failed: {}", e.getMessage());
-            return "ERROR: " + e.getMessage();
+            return ActionResult.failed(e.getMessage());
         }
     }
 
@@ -99,14 +131,19 @@ public class ActionExecutor {
      * 执行自然语言指令(定时任务=往会话发消息,2026-09-20 用户明确语义):
      * **直接复用正常对话端点** {@code POST /sessions/{id}/messages}(SSE)——步骤
      * 收集、推理聚合、消息落库、运行生命周期全部走 ChatTurnRunner 同一套引擎,
-     * 本方法只做「发一条消息(sender=automation)+ 取回最终回答」。
+     * 本方法只做「发一条消息(sender=automation)+ 取回最终回答与终态」。
+     *
+     * <p><b>F2(2026-09-26)</b>:终态来自 done 事件的 {@code status} 字段
+     * (F3 统一口径:completed/partial/failed/cancelled)——「部分输出后报错」
+     * 「无终态 EOF」「done.stopped」不再被误判为成功。无 done 终态 = unknown
+     * (该轮可能仍在后台运行,不冒充失败也不冒充成功)。
      *
      * <p>sessionId 非空时必走对话端点;为空(旧调用方/无会话场景)回退
      * {@code /agent/run} 无会话静默运行(不落库)。
      */
-    private String executeAgent(String prompt, String sessionId, String sessionTitle) {
+    private ActionResult executeAgent(String prompt, String sessionId, String sessionTitle) {
         if (prompt.isBlank()) {
-            return "ERROR: action prompt is empty";
+            return ActionResult.failed("action prompt is empty");
         }
         if (sessionId == null || sessionId.isBlank()) {
             return executeAgentUnattended(prompt);
@@ -117,8 +154,9 @@ public class ActionExecutor {
             body.put("sender", "automation");
             body.put("unattended", true);
             body.put("sessionTitle", sessionTitle == null ? "定时任务" : sessionTitle);
-            // SSE 响应:逐行解析,收集 delta 拼最终回答、error 取错误
-            String answer = agentRestClient.post()
+            // SSE 响应:逐行解析——收集 delta 拼正文、error 取首条错误、
+            // done 取统一终态(status 字段;旧后端无该字段时按 stopped 兼容推断)
+            var parsed = agentRestClient.post()
                     .uri("/api/chat/sessions/{id}/messages", sessionId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.TEXT_EVENT_STREAM)
@@ -133,6 +171,9 @@ public class ActionExecutor {
                         }
                         StringBuilder answerBuf = new StringBuilder();
                         StringBuilder errorBuf = new StringBuilder();
+                        // done 终态:null = 没收到 done 事件
+                        String[] doneStatus = {null};
+                        boolean[] doneStopped = {false};
                         String event = "";
                         try (var reader = new java.io.BufferedReader(
                                 new java.io.InputStreamReader(res.getBody(), java.nio.charset.StandardCharsets.UTF_8))) {
@@ -146,16 +187,60 @@ public class ActionExecutor {
                                         answerBuf.append(extractContent(data));
                                     } else if ("error".equals(event) && errorBuf.length() == 0) {
                                         errorBuf.append(extractMessage(data));
+                                    } else if ("done".equals(event)) {
+                                        doneStatus[0] = extractDoneStatus(data);
+                                        doneStopped[0] = extractDoneStopped(data);
                                     }
                                 }
                             }
                         }
-                        if (errorBuf.length() > 0 && answerBuf.length() == 0) {
-                            throw new IllegalStateException(errorBuf.toString());
-                        }
-                        return answerBuf.toString();
+                        return new java.util.HashMap<>(java.util.Map.of(
+                                "answer", answerBuf.toString(),
+                                "error", errorBuf.toString(),
+                                "doneStatus", doneStatus[0] == null ? "" : doneStatus[0],
+                                "doneStopped", doneStopped[0] ? "1" : "0"));
                     });
-            return answer == null || answer.isBlank() ? "ERROR: agent returned empty answer" : answer;
+            String answer = (String) parsed.get("answer");
+            String error = (String) parsed.get("error");
+            String doneStatus = (String) parsed.get("doneStatus");
+            boolean doneStopped = "1".equals(parsed.get("doneStopped"));
+            // 终态判定(F2,唯一口径):done.status 权威;旧后端没有该字段时
+            // 按 done 是否收到 + stopped 兼容推断(绝不按「有文字」推断成功)
+            String status;
+            if (!doneStatus.isBlank()) {
+                status = doneStatus;
+            } else if (doneStopped) {
+                status = "cancelled";
+            } else if (!error.isBlank()) {
+                // 收到 error 但没有 done 终态:流在错误处结束
+                status = "failed";
+            } else {
+                // 没有 done 事件:无终态 EOF,结果未知(agent 可能仍在后台跑)
+                status = "unknown";
+            }
+            String detail;
+            if (answer != null && !answer.isBlank()) {
+                detail = answer;
+                // 有错误但仍有部分回答(partial/失败收场):错误必须可见,
+                // 否则执行记录只剩半截正文、用户看不到为什么停下
+                if (!error.isBlank()) {
+                    detail = answer + "\n\n[本轮错误] " + error;
+                }
+            } else if (!error.isBlank()) {
+                detail = "ERROR: " + error;
+            } else {
+                detail = "";
+            }
+            // 无正文时给出可操作说明(详情即执行记录的用户可见文本)
+            if (detail.isBlank()) {
+                detail = switch (status) {
+                    case "cancelled" -> "ERROR: 本轮被取消,未产生回答(会话中可查看已记录内容)";
+                    case "unknown" -> "ERROR: 与 agent 的连接在收到终态前结束——结果未知:该轮可能仍在后台运行,"
+                            + "完成后会照常写入规则专属会话(「定时任务:规则名」)。请到会话里确认,不要直接假定失败";
+                    default -> "ERROR: agent returned empty answer";
+                };
+            }
+            return new ActionResult(detail, status);
         } catch (Exception e) {
             log.warn("agent action failed: {}", e.getMessage());
             // 超时/断线时结果未知(2026-09-21):agent 那一轮可能仍在后台跑完并
@@ -170,16 +255,16 @@ public class ActionExecutor {
                 hint = " | " + restEx.getResponseBodyAsString();
             }
             if (transport) {
-                return "ERROR: 与 agent 的连接中断(" + e.getMessage() + ")——结果未知:"
+                return ActionResult.unknown("与 agent 的连接中断(" + e.getMessage() + ")——结果未知:"
                         + "该轮可能仍在后台运行,完成后会照常写入规则专属会话(「定时任务:规则名」)。"
-                        + "请到会话里确认是否已完成,确认未完成再手动重跑;不要直接假定失败";
+                        + "请到会话里确认是否已完成,确认未完成再手动重跑;不要直接假定失败");
             }
-            return "ERROR: agent run failed: " + e.getMessage() + hint;
+            return ActionResult.failed("agent run failed: " + e.getMessage() + hint);
         }
     }
 
     /** 无会话一次性运行(旧路径,env-service 诊断同款;不落库)。 */
-    private String executeAgentUnattended(String prompt) {
+    private ActionResult executeAgentUnattended(String prompt) {
         try {
             java.util.Map<String, Object> out = agentRestClient.post()
                     .uri("/api/chat/agent/run")
@@ -189,22 +274,23 @@ public class ActionExecutor {
                     .body(new ParameterizedTypeReference<java.util.Map<String, Object>>() {
                     });
             if (out == null) {
-                return "ERROR: empty agent response";
+                return ActionResult.failed("empty agent response");
             }
             if (!"completed".equals(out.get("status"))) {
                 Object error = out.get("error");
-                return "ERROR: agent run failed: "
-                        + (error == null ? "no status in response" : error);
+                return ActionResult.failed("agent run failed: "
+                        + (error == null ? "no status in response" : error));
             }
             Object answer = out.get("answer");
-            return answer == null ? "ERROR: agent returned null answer" : answer.toString();
+            return answer == null ? ActionResult.failed("agent returned null answer")
+                    : ActionResult.completed(answer.toString());
         } catch (Exception e) {
             log.warn("agent action failed: {}", e.getMessage());
             String hint = "";
             if (e instanceof org.springframework.web.client.RestClientResponseException restEx) {
                 hint = " | " + restEx.getResponseBodyAsString();
             }
-            return "ERROR: agent run failed: " + e.getMessage() + hint;
+            return ActionResult.failed("agent run failed: " + e.getMessage() + hint);
         }
     }
 
@@ -228,6 +314,26 @@ public class ActionExecutor {
             return message.isBlank() ? data : message;
         } catch (Exception e) {
             return data;
+        }
+    }
+
+    /** 从 SSE done JSON 里提取统一终态(status 字段,F3);缺失/失败返回空串。 */
+    private static String extractDoneStatus(String data) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = MAPPER.readTree(data);
+            return node.path("status").asText("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 从 SSE done JSON 里提取 stopped 标记(取消轮);缺失/失败返回 false。 */
+    private static boolean extractDoneStopped(String data) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = MAPPER.readTree(data);
+            return node.path("stopped").asBoolean(false);
+        } catch (Exception e) {
+            return false;
         }
     }
 

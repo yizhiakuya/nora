@@ -238,23 +238,41 @@ public class AutomationService {
             } catch (Exception e) {
                 log.debug("session id persist failed for rule {}: {}", rule.id(), e.getMessage());
             }
-            String detail = actionExecutor.execute(rule.actionJson(), sessionId, sessionTitle);
+            ActionExecutor.ActionResult actionResult = actionExecutor.execute(rule.actionJson(), sessionId, sessionTitle);
+            String detail = actionResult.detail();
             long duration = System.currentTimeMillis() - start;
-            boolean ok = !detail.startsWith("ERROR");
+            // 终态直接来自执行器(F2,2026-09-26):不再按 detail 文本前缀推断——
+            // partial(有成果但有未完成项)/ unknown(连接中断,结果未知)不再被
+            // 当成成功发通知,cancelled 单独呈现。
+            String status = switch (actionResult.status()) {
+                case "completed" -> "success";
+                case "partial" -> "partial";
+                case "cancelled" -> "cancelled";
+                case "unknown" -> "unknown";
+                default -> "failed";
+            };
+            boolean ok = "success".equals(status);
             jdbcTemplate.update(
                     "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, ?, ?, ?)",
-                    rule.id(), duration, ok ? "success" : "failed", detail);
+                    rule.id(), duration, status, detail);
             jdbcTemplate.update(
                     "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ? AND deleted_at IS NULL",
                     ok ? "active" : "error", rule.id());
             // 通知事件(Kafka,2026-09-19):自动任务执行完成/失败——用户在任何页面
             // 都能从通知中心看到(此前只有页面级轮询,切页就丢)。发布失败静默,
-            // 不影响执行记录落库。
+            // 不影响执行记录落库。partial/cancelled/unknown 不发「成功」通知。
             if (notificationPublisher != null) {
+                String detailText = switch (status) {
+                    case "success" -> "执行成功";
+                    case "partial" -> "部分完成(存在未完成项,详情见执行历史)";
+                    case "cancelled" -> "已取消(未产生完整结果)";
+                    case "unknown" -> "结果未知(连接中断,该轮可能仍在后台运行)";
+                    default -> "执行失败";
+                };
                 notificationPublisher.publish(
                         ok ? "taskDone" : "taskFail",
-                        ok ? "任务执行完成" : "任务执行失败",
-                        "自动任务「" + rule.name() + "」" + (ok ? "执行成功" : "执行失败")
+                        ok ? "任务执行完成" : ("unknown".equals(status) ? "任务结果未知" : "任务执行失败"),
+                        "自动任务「" + rule.name() + "」" + detailText
                                 + ",耗时 " + String.format("%.1fs", duration / 1000.0) + "。");
             }
             return latestExecution(rule.id());

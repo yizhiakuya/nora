@@ -296,7 +296,12 @@ export interface ExecutionRecord {
   ruleName: string;
   time: string;
   duration: string;
-  status: "success" | "failed" | "running";
+  /**
+   * 终态(F2,2026-09-26):后端统一口径——
+   * success / partial(有成果但有未完成项)/ failed / cancelled / unknown(结果未知)
+   * / running / missed_schedule(计划点错过未补跑)。
+   */
+  status: "success" | "partial" | "failed" | "cancelled" | "unknown" | "running" | "missed_schedule";
   /** 完整执行结果(不截断;列表 UI 自行用摘要展示,详情面板读全文) */
   detail: string;
   /** 列表用摘要(首行,≤120 字;detail 的派生视图,不额外存储) */

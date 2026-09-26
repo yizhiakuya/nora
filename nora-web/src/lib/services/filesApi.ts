@@ -260,6 +260,12 @@ export const filesApi = {
     return toPreview(p, id, name);
   },
 
+  /** 提取纯文本原文(分段预览等场景用;不经过形态判定,PDF 也能拿到文本)。 */
+  async fetchPreviewText(id: number): Promise<string> {
+    const p = await requestJson<BackendFilePreview>(`/files/${id}/preview`);
+    return p.textContent ?? "";
+  },
+
   /** 重命名文件。 */
   async renameFile(id: number, name: string): Promise<FileItem> {
     const item = await requestJson<BackendFileItem>(`/files/${id}/name`, {

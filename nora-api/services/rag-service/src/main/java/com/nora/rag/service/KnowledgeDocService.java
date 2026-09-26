@@ -95,6 +95,13 @@ public class KnowledgeDocService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    /** 存活资料库计数(F5:文件索引入口校验显式传入的 baseId 是否存在)。 */
+    public Integer countBase(long id) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM schema_rag.knowledge_base WHERE id = ? AND deleted_at IS NULL",
+                Integer.class, id);
+    }
+
     /** 新建资料库(重名 409)。 */
     public BaseView createBase(String name, String description) {
         Integer clash = jdbcTemplate.queryForObject(

@@ -12,7 +12,15 @@ interface KnowledgeDocsState {
   /** 文件加入知识库（来源 = file） */
   indexFile: (name: string) => KnowledgeDoc;
   syncFromBackend: () => Promise<void>;
-  indexFileFromBackend: (fileId: number, name: string) => Promise<KnowledgeDoc>;
+  /**
+   * 文件索引进知识库（阶段 D:可带分段配置与资料库）。
+   *
+   * @param chunkConfig 分段配置(可选):{mode, chunkSize, overlap, separator}
+   * @param baseId      目标资料库;null=默认库
+   */
+  indexFileFromBackend: (fileId: number, name: string,
+                         chunkConfig?: { mode?: string; chunkSize?: number; overlap?: number; separator?: string },
+                         baseId?: number | null) => Promise<KnowledgeDoc>;
   /** 重命名（后端模式走 PATCH，mock 模式直接改本地） */
   renameDoc: (id: number, name: string) => Promise<void>;
   /** 删除单条；失败时抛错由调用方提示 */
@@ -44,11 +52,17 @@ export const useKnowledgeDocs = create<KnowledgeDocsState>()(
         const docs = await requestJson<BackendKnowledgeDoc[]>("/rag/docs");
         set({ docs });
       },
-      indexFileFromBackend: async (fileId, name) => {
+      indexFileFromBackend: async (fileId, name, chunkConfig, baseId) => {
         if (!USE_BACKEND) return get().indexFile(name);
+        const body: Record<string, unknown> = { fileId, name };
+        if (chunkConfig?.mode) body.chunkMode = chunkConfig.mode;
+        if (chunkConfig?.chunkSize != null) body.chunkSize = chunkConfig.chunkSize;
+        if (chunkConfig?.overlap != null) body.overlap = chunkConfig.overlap;
+        if (chunkConfig?.separator) body.separator = chunkConfig.separator;
+        if (baseId != null) body.baseId = baseId;
         const doc = await requestJson<BackendKnowledgeDoc>("/rag/index", {
           method: "POST",
-          body: JSON.stringify({ fileId, name }),
+          body: JSON.stringify(body),
         });
         set((state) => ({ docs: [doc, ...state.docs.filter((d) => d.id !== doc.id && d.name !== doc.name)] }));
         return doc;

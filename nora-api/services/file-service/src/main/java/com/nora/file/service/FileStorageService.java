@@ -291,16 +291,20 @@ public class FileStorageService {
      * 按 ids 软删文件条目;磁盘文件保留
      * (数据绝不物理销毁;查询过滤已删行)。未知 id 静默跳过。
      *
+     * <p>返回**实际被软删**的 id(F1,2026-09-26):调用方据此入队 RAG 通知——
+     * 对未发生变化的 id 发通知会让版本号空转,也可能把「已删」重复上报。
+     *
      * @param ids 要删除的 id;不得为空
-     * @return 软删的行数
+     * @return 实际软删的 id 列表
      */
-    public int delete(List<Long> ids) {
+    public List<Long> delete(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new BusinessException(400, "ids parameter is required");
         }
         String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
-        return jdbcTemplate.update(
-                "UPDATE file_item SET deleted_at = now() WHERE id IN (" + placeholders + ") AND deleted_at IS NULL",
+        return jdbcTemplate.query(
+                "UPDATE file_item SET deleted_at = now() WHERE id IN (" + placeholders + ") AND deleted_at IS NULL RETURNING id",
+                (rs, i) -> rs.getLong(1),
                 ids.toArray());
     }
 
@@ -319,35 +323,50 @@ public class FileStorageService {
                         rs.getTimestamp("deleted_at") == null ? null : rs.getTimestamp("deleted_at").toInstant()));
     }
 
-    /** 从回收站恢复文件(回到根目录,避免原文件夹已删除的悬空引用)。 */
-    public int restore(List<Long> ids) {
+    /**
+     * 从回收站恢复文件(回到根目录,避免原文件夹已删除的悬空引用)。
+     *
+     * <p>返回**实际被恢复**的 id(F1,2026-09-26):只有状态真正变化的文件
+     * 才值得通知 rag-service(未在回收站的 id 恢复无效果,不该发通知)。
+     *
+     * @return 实际恢复的 id 列表
+     */
+    public List<Long> restore(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new BusinessException(400, "ids parameter is required");
         }
         String placeholders = String.join(",", ids.stream().map(i -> "?").toList());
-        return jdbcTemplate.update(
-                "UPDATE file_item SET deleted_at = NULL, folder_id = NULL WHERE id IN (" + placeholders + ") AND deleted_at IS NOT NULL",
+        return jdbcTemplate.query(
+                "UPDATE file_item SET deleted_at = NULL, folder_id = NULL WHERE id IN (" + placeholders + ") AND deleted_at IS NOT NULL RETURNING id",
+                (rs, i) -> rs.getLong(1),
                 ids.toArray());
     }
 
+    /** 永久删除的事务内产物:已清除的行 id 与其磁盘路径(磁盘清理在事务提交后执行)。 */
+    public record PurgedItem(long id, String path) {
+    }
+
     /**
-     * 永久删除(从回收站清空):软删除行 + 磁盘文件一并删除。不可恢复。
+     * 永久删除的**事务内部分**(回收站清空):带守卫删除 DB 行,返回 (id, 磁盘路径)。
      *
-     * <p>原子性:purge 的 DELETE 必须带 {@code deleted_at IS NOT NULL} 守卫——
+     * <p>磁盘文件删除不在本方法内——由调用方在事务提交后执行
+     * ({@link #deleteFromDisk}),避免「事务回滚但磁盘文件已删」。
+     *
+     * <p>原子性:DELETE 必须带 {@code deleted_at IS NOT NULL} 守卫——
      * 先查后删之间存在竞态(另一客户端此刻「恢复」该文件),无守卫的 DELETE
      * 会把已恢复的存活文件连磁盘一起删掉(用户看到"恢复成功"但文件消失)。
      *
-     * <p>返回**实际被清除**的 id 列表:调用方(RAG 联动通知)必须只对这份列表
+     * <p>返回**实际被清除**的行:调用方(RAG 联动通知)必须只对这份列表
      * 发通知——对未删除的 id(已恢复/不在回收站)发 purge 通知会把存活文件的
      * 知识库文档物理删除(不可恢复)。
      *
-     * @return 实际删除的 id 列表
+     * @return 实际删除的行(id + 磁盘路径)
      */
-    public List<Long> purge(List<Long> ids) {
+    public List<PurgedItem> purgeRows(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new BusinessException(400, "ids parameter is required");
         }
-        List<Long> purged = new ArrayList<>();
+        List<PurgedItem> purged = new ArrayList<>();
         for (Long id : ids) {
             if (id == null) {
                 continue;
@@ -367,17 +386,25 @@ public class FileStorageService {
                 // 查询后被恢复:不删磁盘、不计入
                 continue;
             }
-            purged.add(id);
-            // 磁盘文件删除失败不阻断(数据行已清;残留文件后续可人工回收)
-            try {
-                if (paths.get(0) != null) {
-                    Files.deleteIfExists(Path.of(paths.get(0)));
-                }
-            } catch (Exception e) {
-                log.warn("purge: could not delete file on disk for id {}: {}", id, e.getMessage());
-            }
+            purged.add(new PurgedItem(id, paths.get(0)));
         }
         return purged;
+    }
+
+    /**
+     * 事务提交后清理已清除文件的磁盘副本(best-effort)。
+     * 磁盘删除失败不阻断(数据行已清;残留文件后续可人工回收)。
+     */
+    public void deleteFromDisk(List<PurgedItem> items) {
+        for (PurgedItem item : items) {
+            try {
+                if (item.path() != null) {
+                    Files.deleteIfExists(Path.of(item.path()));
+                }
+            } catch (Exception e) {
+                log.warn("purge: could not delete file on disk for id {}: {}", item.id(), e.getMessage());
+            }
+        }
     }
 
     /** 只读取给定 id 的 {@code file_path} 列。 */

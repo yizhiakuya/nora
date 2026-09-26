@@ -30,11 +30,14 @@ class FileControllerTest {
     @Mock
     private RagIndexClient ragIndexClient;
 
+    @Mock
+    private com.nora.file.service.FileLifecycleService fileLifecycleService;
+
     private FileController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new FileController(fileStorageService, ragIndexClient);
+        controller = new FileController(fileStorageService, ragIndexClient, fileLifecycleService);
     }
 
     private FileItem item(long id, boolean indexed) {

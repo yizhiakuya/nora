@@ -13,6 +13,17 @@ function friendly(e: unknown): string {
   return humanizeError(e).message;
 }
 
+/** 执行终态 → 通知文案(F2:partial/cancelled/unknown 不再冒充成功或失败)。 */
+function execStatusText(status: ExecutionRecord["status"]): string {
+  switch (status) {
+    case "success": return "执行成功";
+    case "partial": return "部分完成(存在未完成项,详情见执行历史)";
+    case "cancelled": return "已取消(未产生完整结果)";
+    case "unknown": return "结果未知(连接中断,该轮可能仍在后台运行)";
+    default: return "执行失败";
+  }
+}
+
 interface AutomationsState {
   rules: AutomationRule[];
   executions: ExecutionRecord[];
@@ -164,8 +175,8 @@ export const useAutomations = create<AutomationsState>()(
             const exec = await automationsApi.runRule(id);
             useNotifications.getState().addNotification(
               "任务执行完成",
-              `自动任务「${rule.name}」执行${exec.status === "success" ? "成功" : "失败"}，耗时 ${exec.duration}。`,
-              "taskDone"
+              `自动任务「${rule.name}」${execStatusText(exec.status)}，耗时 ${exec.duration}。`,
+              exec.status === "success" ? "taskDone" : "taskFail"
             );
             set((state) => ({
               rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
@@ -216,8 +227,8 @@ export const useAutomations = create<AutomationsState>()(
           .then((fresh) => {
             useNotifications.getState().addNotification(
               "任务执行完成",
-              `自动任务「${exec.ruleName}」重试${fresh.status === "success" ? "成功" : "失败"},耗时 ${fresh.duration}。`,
-              "taskDone");
+              `自动任务「${exec.ruleName}」重试${execStatusText(fresh.status)},耗时 ${fresh.duration}。`,
+              fresh.status === "success" ? "taskDone" : "taskFail");
             set((state) => ({
               executions: [fresh, ...state.executions].slice(0, 50),
             }));

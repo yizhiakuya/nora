@@ -340,6 +340,27 @@ class ChatTurnRunner {
                             log.warn("failed to persist assistant message for session {}: {}",
                                     sessionId, e.getMessage());
                         }
+                        // 唯一终态(F3,2026-09-26):SSE done、chat_run 落库、任务列表
+                        // 与自动任务通知共用这一结果,不再各自推断——
+                        //  - 用户取消 → cancelled;
+                        //  - 轮次异常(error 非空) → 有可用成果(回答文本或已完成工具调用)
+                        //    为 partial,否则 failed——此前无差别标 completed/partial,
+                        //    真失败(如编排器先发 s-error 再返回 failed future)被当成
+                        //    正常完成/部分成功;
+                        //  - 无异常 → 有失败/未知/部分成功步骤为 partial,否则 completed。
+                        // 「成果」必须是有 toolName 的真实工具调用或回答文本:检索/上下文
+                        // 注入步骤(type=tool 但 toolName=null)是预备动作,不算成果
+                        // (实测:坏模型轮 s-rag completed 会把零成果失败误标 partial)。
+                        boolean anyStepFailed = steps.stream()
+                                .anyMatch(s -> "failed".equals(s.status())
+                                        || "unknown".equals(s.status())
+                                        || "partial".equals(s.status()));
+                        boolean hasUsableOutcome = !answerText.isBlank()
+                                || steps.stream().anyMatch(s -> "tool".equals(s.type())
+                                        && "completed".equals(s.status()) && s.toolName() != null);
+                        String terminal = userCancelled ? "cancelled"
+                                : (error != null ? (hasUsableOutcome ? "partial" : "failed")
+                                        : (anyStepFailed ? "partial" : "completed"));
                         // done 携带轮次指标(harness 模式:服务端打时间戳,客户端绝不重算);
                         // usage 是 provider 真实 token 统计,跨工具轮累加(中继省略时为 null);
                         // contextWindow/promptTokens 供前端上下文计量表。
@@ -353,20 +374,14 @@ class ChatTurnRunner {
                                 turn != null ? turn.contextWindow() : null,
                                 turn != null ? turn.promptTokens() : null,
                                 turn != null ? turn.ttftMs() : null,
-                                userCancelled);
+                                userCancelled,
+                                terminal);
                         turnStreams.publish(liveTurn, "done", toJson(done));
                         send(emitter, "done", done);
                         emitter.complete();
-                        // 运行生命周期终态(M3-01):取消轮 = cancelled;正常完成 =
-                        // completed(有失败/未知/部分成功工具步骤时为 partial——
-                        // 有可用成果但存在未完成/待核对项,方案 §6.3)。
+                        // 运行生命周期终态(M3-01):与 done.status 同源(F3)。
                         // 更新同一行,不插重复行。
                         if (runStarted[0]) {
-                            boolean anyStepFailed = steps.stream()
-                                    .anyMatch(s -> "failed".equals(s.status())
-                                            || "unknown".equals(s.status())
-                                            || "partial".equals(s.status()));
-                            String terminal = userCancelled ? "cancelled" : (anyStepFailed ? "partial" : "completed");
                             try {
                                 chatStoreService.finishRun(runId, terminal);
                             } catch (Exception e) {
@@ -487,12 +502,15 @@ class ChatTurnRunner {
                               Long contextWindow, Integer promptTokens, Long ttftMs,
                               /** 用户主动停止的取消轮:true;正常完成 null(缺省不序列化时前端视为 false)。
                                   接续流据此保留半截内容并标「已停止」,而非误当正常完成。 */
-                              Boolean stopped) {
+                              Boolean stopped,
+                              /** 统一业务终态(F3,2026-09-26):completed/partial/failed/cancelled。
+                                  与 chat_run 落库同源;automation 等消费方据此判定,不再按文本前缀猜测。 */
+                              String status) {
 
-        /** 兼容构造器:正常完成轮(stopped 缺省)。 */
+        /** 兼容构造器:正常完成轮(stopped/status 缺省)。 */
         public DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
                            Long contextWindow, Integer promptTokens, Long ttftMs) {
-            this(messageId, durationMs, usage, answerChars, contextWindow, promptTokens, ttftMs, null);
+            this(messageId, durationMs, usage, answerChars, contextWindow, promptTokens, ttftMs, null, null);
         }
 
         /** provider 的 token 统计(harness:usage 是 done 的一等字段)。 */

@@ -34,10 +34,13 @@ public class FileController {
 
     private final FileStorageService fileStorageService;
     private final RagIndexClient ragIndexClient;
+    private final com.nora.file.service.FileLifecycleService fileLifecycleService;
 
-    public FileController(FileStorageService fileStorageService, RagIndexClient ragIndexClient) {
+    public FileController(FileStorageService fileStorageService, RagIndexClient ragIndexClient,
+                          com.nora.file.service.FileLifecycleService fileLifecycleService) {
         this.fileStorageService = fileStorageService;
         this.ragIndexClient = ragIndexClient;
+        this.fileLifecycleService = fileLifecycleService;
     }
 
     /**
@@ -71,18 +74,16 @@ public class FileController {
      * 按 ids 删除文件并从磁盘移除底层文件。
      *
      * <p>联动(2026-09-17):同步通知 rag-service 软删对应知识库文档——
-     * 删除的文件不应继续被 AI 检索到。
+     * 删除的文件不应继续被 AI 检索到。**提交边界(2026-09-26,F1)**:
+     * 文件状态变更与通知入队在 FileLifecycleService 的同一事务内原子提交,
+     * 投递在提交后进行(失败由待发送队列重试)。
      *
      * @param ids 逗号分隔 id 列表(必填)
      * @return {@code ok(null)}
      */
     @DeleteMapping
     public ApiResponse<Void> delete(@RequestParam("ids") String ids) {
-        List<Long> idList = parseIds(ids);
-        fileStorageService.delete(idList);
-        for (Long id : idList) {
-            ragIndexClient.notifyLifecycleAsync(id, "soft");
-        }
+        fileLifecycleService.delete(parseIds(ids));
         return ApiResponse.ok();
     }
 
@@ -157,7 +158,7 @@ public class FileController {
         return ApiResponse.ok(fileStorageService.listTrash());
     }
 
-    /** 从回收站恢复文件(回到根目录;联动恢复知识库文档)。 */
+    /** 从回收站恢复文件(回到根目录;联动恢复知识库文档;F1:状态与通知入队同事务)。 */
     @PostMapping("/trash/restore")
     public ApiResponse<Integer> restore(@RequestBody MoveRequest request) {
         if (request == null || request.ids() == null || request.ids().isEmpty()) {
@@ -168,16 +169,12 @@ public class FileController {
         if (idList.isEmpty()) {
             throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
         }
-        int restored = fileStorageService.restore(idList);
-        for (Long id : idList) {
-            ragIndexClient.notifyLifecycleAsync(id, "restore");
-        }
-        return ApiResponse.ok(restored);
+        return ApiResponse.ok(fileLifecycleService.restore(idList).size());
     }
 
     /**
      * 永久删除(回收站清空):数据库行 + 磁盘文件一并删除。不可恢复。
-     * 联动永久删除知识库文档与 chunk。
+     * 联动永久删除知识库文档与 chunk(F1:行删除与通知入队同事务,磁盘清理在提交后)。
      *
      * <p>只对**实际被清除**的 id 发联动通知——未删除的 id(列表过期/已被
      * 其他客户端恢复)若发 purge 通知,会把存活文件的知识库文档物理删除。
@@ -188,11 +185,7 @@ public class FileController {
         if (idList.isEmpty()) {
             throw new com.nora.common.exception.BusinessException(400, "ids 不能为空");
         }
-        List<Long> purged = fileStorageService.purge(idList);
-        for (Long id : purged) {
-            ragIndexClient.notifyLifecycleAsync(id, "purge");
-        }
-        return ApiResponse.ok(purged.size());
+        return ApiResponse.ok(fileLifecycleService.purge(idList).size());
     }
 
     /**

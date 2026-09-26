@@ -11,8 +11,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClient;
 
+import com.nora.common.logging.TraceContext;
 import com.nora.file.api.FileItem;
 
 /**
@@ -23,6 +25,17 @@ import com.nora.file.api.FileItem;
  * 的通知失败不再永远丢失——先落 {@code pending_rag_sync} 表,成功即删,
  * 失败由 {@link #retryPending()} 定时重试(指数退避)。覆盖「文档早已索引,
  * 删除时 RAG 不可用,随后 RAG 恢复」的场景:通知会在 RAG 恢复后送达。
+ *
+ * <p><b>提交边界修复(2026-09-26,F1)</b>:此前「文件状态变更」与「通知入队」
+ * 是两次独立提交,进程在两者之间退出会永久丢通知;且待发送行的 upsert 无条件
+ * 覆盖 version,旧动作(已分配低版本)晚落库会顶掉更新的目标状态(实测:
+ * 恢复通知 v2 被旧删除 v1 覆盖后清除,恢复永久丢失)。现在:
+ * <ul>
+ *   <li>{@link #enqueueLifecycle} 由文件变更方在**同一事务内**调用(版本分配 +
+ *       待发送行写入原子提交,见 FileLifecycleService);</li>
+ *   <li>upsert 带版本单调条件——低版本永不覆盖高版本;</li>
+ *   <li>HTTP 投递({@link #deliverPendingAsync})留在事务外,失败由重试兜底。</li>
+ * </ul>
  */
 @Component
 public class RagIndexClient {
@@ -31,11 +44,15 @@ public class RagIndexClient {
 
     private final String ragBaseUrl;
     private final JdbcTemplate jdbcTemplate;
+    /** 入队事务(与文件状态变更同一提交边界;REQUIRED 加入调用方已有事务)。 */
+    private final TransactionTemplate txTemplate;
 
     public RagIndexClient(@Value("${nora.rag.base-url:http://localhost:8082}") String ragBaseUrl,
-                          JdbcTemplate jdbcTemplate) {
+                          JdbcTemplate jdbcTemplate,
+                          TransactionTemplate txTemplate) {
         this.ragBaseUrl = ragBaseUrl;
         this.jdbcTemplate = jdbcTemplate;
+        this.txTemplate = txTemplate;
     }
 
     /**
@@ -70,54 +87,100 @@ public class RagIndexClient {
     }
 
     /**
-     * 文件生命周期联动(2026-09-17;2026-09-20 R02 重构)。
+     * 文件生命周期联动(2026-09-17;2026-09-20 R02 重构;2026-09-26 F1 提交边界修复)。
      *
-     * <p>语义:先**持久化**待处理通知(失败也不会丢),再尝试立即送达;
-     * 成功即删,失败留给 {@link #retryPending()} 重试——文件操作本身永不因
-     * rag 不可达而失败。
+     * <p>语义:调用方(FileLifecycleService)已把文件状态变更与本次入队放进
+     * **同一事务**——版本分配 + 待发送行写入随文件变更一起提交,进程在投递前
+     * 退出也不会丢通知(行在库里,重启后由 {@link #retryPending()} 送达)。
      *
-     * <p><b>最终状态一致性(R02 修复)</b>:表按 {@code file_id} 唯一,保存
-     * **最新目标状态**(desired_state)+ **单调版本**(version,每次变化 +1)。
-     * 送达时携带 version;接收端(rag)按版本条件确认——「删除→恢复→删除」
-     * 时在途的旧请求(版本落后)不会复活旧状态。重试只投递当前行的最新
-     * 目标状态,而不是历史上出现过的任意 mode。
+     * <p><b>版本单调(F1)</b>:upsert 带 {@code WHERE EXCLUDED.version > pending_rag_sync.version}
+     * 条件——乱序调用(旧动作拿到低版本后晚落库)不会覆盖更新的目标状态,
+     * 也不会把待发送行错误清除。
+     *
+     * <p>本方法自身开启 REQUIRED 事务:调用方已在事务中则加入,未在事务中
+     * (兼容旧调用点)则独立提交。落库失败**抛异常**——调用方事务(含文件
+     * 状态变更)一并回滚,绝不出现「状态变了但通知未入队」的裂缝。
      *
      * @param fileId 文件 id
      * @param mode   soft(文件删除)/ restore(回收站恢复)/ purge(永久删除)
+     * @return 入队后的版本号(投递用)
      */
-    @Async
-    public void notifyLifecycleAsync(long fileId, String mode) {
+    public long enqueueLifecycle(long fileId, String mode) {
         String desired = switch (mode) {
             case "soft" -> "deleted";
             case "restore" -> "present";
             case "purge" -> "purged";
             default -> mode;
         };
-        long version = 1;
-        try {
+        Long version = txTemplate.execute(txStatus -> {
             // 版本号来自独立计数器表(2026-09-22 阶段 A,方案 §5.4):此前版本
             // 存在 pending 行上,送达成功删行后下次从 1 重来——「删除→恢复→
             // 删除」的第 2、3 次通知被 rag 侧按「不更大」拒绝(实测 applied 停在 1)。
             // 现在先原子分配全局单调版本,再 upsert 投递队列(version 只是本次快照)。
-            version = jdbcTemplate.queryForObject(
+            // 版本计数器行锁使并发的生命周期事务串行化:版本顺序 == 提交顺序。
+            Long assigned = jdbcTemplate.queryForObject(
                     "INSERT INTO file_lifecycle_version (file_id, next_version) VALUES (?, 2) "
                             + "ON CONFLICT (file_id) DO UPDATE SET next_version = file_lifecycle_version.next_version + 1, updated_at = now() "
                             + "RETURNING next_version - 1",
                     Long.class, fileId);
-            // upsert:每文件一行;目标状态与版本同事务推进
+            // upsert:每文件一行;仅当本次版本更新时覆盖(F1 版本单调守卫——
+            // 低版本晚到不覆盖高版本,「恢复 v2 已入队后被旧删除 v1 覆盖」不再发生)
             jdbcTemplate.update(
                     "INSERT INTO pending_rag_sync (file_id, mode, desired_state, version, attempts, next_attempt_at) "
                             + "VALUES (?, ?, ?, ?, 0, now()) "
                             + "ON CONFLICT (file_id) DO UPDATE SET mode = EXCLUDED.mode, "
                             + "desired_state = EXCLUDED.desired_state, version = EXCLUDED.version, "
-                            + "attempts = 0, next_attempt_at = now(), last_error = NULL",
-                    fileId, mode, desired, version);
-        } catch (Exception e) {
-            // 落库失败(极少):退回纯发后即忘,不阻断调用方
-            log.warn("failed to persist pending rag sync for file {} mode {}: {}", fileId, mode, e.getMessage());
+                            + "attempts = 0, next_attempt_at = now(), last_error = NULL "
+                            + "WHERE EXCLUDED.version > pending_rag_sync.version",
+                    fileId, mode, desired, assigned);
+            return assigned;
+        });
+        if (version == null) {
+            throw new IllegalStateException("failed to assign lifecycle version for file " + fileId);
         }
-        if (deliverLifecycle(fileId, mode, version)) {
-            clearPendingIfCurrent(fileId, version);
+        return version;
+    }
+
+    /**
+     * 事务提交后投递一次生命周期通知(异步,发后即忘语义)。
+     *
+     * <p>从 {@code pending_rag_sync} 读回该文件当前待发送行——保证投递的
+     * 始终是**最新目标状态与版本**(即使本方法被旧动作调用、或期间又有新变化)。
+     * 失败不清行,留给 {@link #retryPending()} 重试。
+     *
+     * @param fileId  文件 id
+     * @param traceId 请求线程的 traceId(异步线程 MDC 不继承,显式透传保持链路)
+     */
+    @Async
+    public void deliverPendingAsync(long fileId, String traceId) {
+        // 异步线程恢复 MDC(日志按 traceId 串联);结束清理,线程可复用
+        if (traceId != null && !traceId.isBlank()) {
+            TraceContext.setTraceId(traceId);
+        }
+        try {
+            List<Object[]> rows;
+            try {
+                rows = jdbcTemplate.query(
+                        "SELECT mode, version FROM pending_rag_sync WHERE file_id = ?",
+                        (rs, rowNum) -> new Object[]{rs.getString("mode"), rs.getLong("version")},
+                        fileId);
+            } catch (Exception e) {
+                log.warn("failed to read pending rag sync for file {}: {}", fileId, e.getMessage());
+                return;
+            }
+            if (rows.isEmpty()) {
+                return; // 已被更早的投递送达清除,无需重复发送
+            }
+            String mode = (String) rows.get(0)[0];
+            long version = (Long) rows.get(0)[1];
+            if (mode == null) {
+                return;
+            }
+            if (deliverLifecycle(fileId, mode, version)) {
+                clearPendingIfCurrent(fileId, version);
+            }
+        } finally {
+            TraceContext.clear();
         }
     }
 

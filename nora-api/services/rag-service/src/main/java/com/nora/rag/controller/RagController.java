@@ -94,13 +94,26 @@ public class RagController {
      * 触发上传文件的索引:从 file-service 拉提取文本 → 分块 + 嵌入 + 落库,
      * 然后回调 {@code POST /api/files/{fileId}/indexed}。Phase 1 同步执行。
      *
-     * @param request {@code {fileId}} 加可选展示名
+     * <p><b>分段配置与资料库接线(F5,2026-09-26)</b>:请求可带
+     * {@code chunkMode/chunkSize/overlap/separator}(与 {@code /index/text} 同款,
+     * 阶段 D 完整参数)与 {@code baseId}(目标资料库)。此前文件接口只有
+     * fileId/name——前端发的参数被静默忽略,「文件按指定分段方式进入指定库」
+     * 没有闭环。
+     *
+     * @param request {@code {fileId, name?, chunkMode?, chunkSize?, overlap?, separator?, baseId?}}
      * @return 落库的 KnowledgeDoc
      */
     @PostMapping("/index")
     public ApiResponse<KnowledgeDocService.KnowledgeDocView> index(@RequestBody IndexRequest request) {
         if (request.fileId() == null) {
             throw new BusinessException(400, "fileId is required");
+        }
+        // 目标资料库校验(F5):显式传了不存在的库要 404,不能静默落默认库
+        if (request.baseId() != null) {
+            Integer baseExists = knowledgeDocService.countBase(request.baseId());
+            if (baseExists == null || baseExists == 0) {
+                throw new BusinessException(404, "目标资料库不存在: " + request.baseId());
+            }
         }
 
         FilePreviewBody preview = fetchPreview(request.fileId());
@@ -124,7 +137,11 @@ public class RagController {
                 : preview.name() != null ? preview.name() : "file-" + request.fileId();
         String size = preview.size() != null ? preview.size() : "—";
 
-        long docId = indexingService.indexDocument(name, "file", request.fileId(), size, text);
+        // 分段配置(F5):与 /index/text 同款完整参数;缺省走默认(plain + 默认尺寸)
+        ChunkingService.ChunkConfig config = new ChunkingService.ChunkConfig(
+                request.chunkMode(), request.chunkSize(), request.overlap(), request.separator());
+        long docId = indexingService.indexDocument(name, "file", request.fileId(), size, text,
+                config, request.baseId());
 
         // 超限截断:文档仍可检索,但记告警让用户知道内容不完整(阶段 A)
         if ("truncated".equals(extractStatus)) {
@@ -637,8 +654,13 @@ public class RagController {
         }
     }
 
-    /** POST /api/rag/index 请求体。 */
-    public record IndexRequest(Long fileId, String name) {
+    /** POST /api/rag/index 请求体(F5:分段配置与资料库与 /index/text 对齐)。 */
+    public record IndexRequest(Long fileId, String name, String chunkMode, Integer chunkSize,
+                               Integer overlap, String separator, Long baseId) {
+        /** 兼容构造(旧调用方:仅 fileId/name)。 */
+        public IndexRequest(Long fileId, String name) {
+            this(fileId, name, null, null, null, null, null);
+        }
     }
 
     /** POST /api/rag/search 与 /api/rag/citations 请求体(阶段 B:范围参数)。 */
