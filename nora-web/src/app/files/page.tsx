@@ -56,7 +56,7 @@ export default function FilesPage() {
     const qs = params.toString();
     window.history.replaceState(null, "", `/files${qs ? `?${qs}` : ""}`);
   };
-  /** 工作区导航状态:null=文件中心根视图;""=工作区根目录;"memory/..."=子目录。
+  /** 工作区导航状态:null=资料根视图;""=工作区根目录;"memory/..."=子目录。
    *  工作区是文件系统的一部分——像普通文件夹一样进入,而不是独立 Tab。 */
   const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
   /** 媒体缓存文件夹视图(与工作区互斥)。 */
@@ -337,7 +337,7 @@ export default function FilesPage() {
     if (uploadedFile) {
       syncFile(uploadedFile);
       addRecent(uploadedFile.name, uploadedFile.type);
-      addNotification("上传完成", `「${uploadedFile.name}」已保存到文件中心，可在列表中查看。`);
+      addNotification("上传完成", `「${uploadedFile.name}」已保存到资料，可在列表中查看。`);
       refreshFolders();
       // 上传后自动入库(2026-09-19 接线):「设置 → 知识库与 AI」的开关
       // 此前存了没人消费——现在真正生效(仅对可提取文本的文件有意义,
@@ -356,7 +356,7 @@ export default function FilesPage() {
     const defaultName = `上传文档_${Date.now().toString().slice(-4)}.pdf`;
     const newFile = addFile(fileName ?? defaultName);
     addRecent(newFile.name, newFile.type);
-    addNotification("上传完成", `「${newFile.name}」已保存到文件中心，可在列表中查看。`);
+    addNotification("上传完成", `「${newFile.name}」已保存到资料，可在列表中查看。`);
   };
 
   const [indexTarget, setIndexTarget] = useState<FileItem | null>(null);
@@ -458,9 +458,10 @@ export default function FilesPage() {
         breadcrumbs={[
           { label: "工作台", href: "/", isCurrent: false },
           {
-            label: "文件中心",
+            // §7 评审:导航叫「资料」,面包屑原叫「文件中心」——名称随导航统一
+            label: "资料",
             isCurrent: inRootView,
-            // 非根视图(文件夹/工作区/媒体缓存/回收站内)时点击回退到文件中心根
+            // 非根视图(文件夹/工作区/媒体缓存/回收站内)时点击回退到资料根
             onClick: inRootView ? undefined : () => {
               setCurrentFolder(null);
               setWorkspaceDir(null);
@@ -565,7 +566,7 @@ export default function FilesPage() {
                     className="text-muted-foreground hover:text-foreground transition-colors"
                     onClick={() => setCurrentFolder(null)}
                   >
-                    文件中心
+                    资料
                   </button>
                   <span className="text-muted-foreground/50">/</span>
                   <span className="text-foreground font-medium">{currentFolder.name}</span>
@@ -753,7 +754,7 @@ export default function FilesPage() {
       />
       <UploadModal
         upload={upload}
-        title={currentFolder ? `上传到「${currentFolder.name}」` : "上传到文件中心"}
+        title={currentFolder ? `上传到「${currentFolder.name}」` : "上传到资料"}
         onUploadComplete={handleUploadComplete}
         onBatchComplete={(ok) => {
           // 多文件批量完成:刷新列表与文件夹计数(逐个 sync 已在 onUploadComplete 做过,

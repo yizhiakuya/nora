@@ -4,6 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
 import { NotificationWatcher } from "@/components/layout/NotificationWatcher";
+import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { useBackendHealth } from "@/hooks/useBackendHealth";
 import { installGlobalErrorReporting } from "@/lib/errorReporter";
 import { GlobalRouteError, reportRenderError } from "@/app/error";
@@ -26,6 +27,8 @@ const EnvironmentsPage = lazy(() => import("@/app/environments/page"));
 const TasksPage = lazy(() => import("@/app/tasks/page"));
 const SettingsPage = lazy(() => import("@/app/settings/page"));
 const LoginPage = lazy(() => import("@/app/login/page"));
+// 全局搜索面板只在打开时加载(主入口包体门禁:静态引入会进主包)
+const CommandPalette = lazy(() => import("@/components/home/CommandPalette").then(m => ({ default: m.CommandPalette })));
 
 const TITLES: Record<string, string> = {
   "/": "助手",
@@ -45,10 +48,27 @@ function RouteShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const startPolling = useBackendHealth((s) => s.startPolling);
   const online = useBackendHealth((s) => s.online);
+  // 全局搜索快捷键(§7 评审:此前 Cmd+K 注册在首页组件里,离开首页后
+  // 按同一方式打不开「全局搜索」)。提到 RouteShell——任何页面都可呼出;
+  // 开关走 useCommandPalette 共享 store(首页搜索框点击也打开同一实例)。
+  const isCmdKOpen = useCommandPalette((s) => s.isOpen);
+  const toggleCmdK = useCommandPalette((s) => s.toggle);
+  const closeCmdK = useCommandPalette((s) => s.close);
   // 全局后端健康探测:离线时所有路由替换为服务不可用页
   useEffect(() => {
     startPolling();
   }, [startPolling]);
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        toggleCmdK();
+      }
+      if (e.key === "Escape") closeCmdK();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleCmdK, closeCmdK]);
   useEffect(() => {
     const title = TITLES[location.pathname];
     document.title = title ? `${title} · Nora 个人工作台` : "Nora 个人工作台";
@@ -61,6 +81,13 @@ function RouteShell({ children }: { children: React.ReactNode }) {
     <div className="h-screen flex overflow-hidden text-gray-800 dark:text-gray-100 bg-background dark:bg-background">
       {/* 全局后台事件观察器:自动任务执行/PROC 守护事件在任何页面都能进通知中心 */}
       <NotificationWatcher />
+      {/* 全局搜索(Cmd+K):任何页面可呼出;首页搜索框复用同一实例。
+          懒加载 + 仅打开时渲染(面板关闭时不挂载,避免无谓 chunk 拉取) */}
+      {isCmdKOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette isOpen onClose={closeCmdK} />
+        </Suspense>
+      )}
       <Sidebar />
       <main className="flex-1 flex flex-col overflow-hidden bg-background relative">
         {children}

@@ -25,7 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
   interrupted: "已中断(进程重启,需手动决定是否重试)",
 };
 
-export function RunningTasks() {
+export function RunningTasks({ compact = false }: { compact?: boolean } = {}) {
   const navigate = useNavigate();
   const setActive = useChatSessions((s) => s.setActive);
   const [runs, setRuns] = useState<ChatRunInfo[]>([]);
@@ -60,6 +60,16 @@ export function RunningTasks() {
   }
 
   if (runs.length === 0) {
+    // 空态压缩(§7 评审:没有运行任务时大卡片把常用操作推下去):
+    // 收成一行说明,保留「去助手发起」的指引;compact=false(任务页)保留卡片。
+    if (compact) {
+      return (
+        <div className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5 px-1">
+          <Inbox className="w-3 h-3 shrink-0" />
+          当前没有正在处理的任务——在「助手」中提出需求,未完成的轮次会出现在这里。
+        </div>
+      );
+    }
     return (
       <div className="bg-card border border-border rounded-xl py-16 text-center space-y-2">
         <Inbox className="w-8 h-8 mx-auto text-muted-foreground/40" />

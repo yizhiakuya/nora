@@ -15,6 +15,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - `components/files/WorkspaceBrowser.tsx` — 文件页内的「Agent 工作区」文件夹浏览器(文件系统一体化:普通文件夹形态,点击进入/面包屑导航/文件编辑器);`app/files/page.tsx` 持 `workspaceDir` 状态(null=根视图)
 - `components/files/IndexToKnowledgeModal.tsx` — 「加入知识库」配置弹窗(F5,2026-09-26):目标资料库/分段模式(结构分段·父块-子块)/高级参数(chunkSize/overlap/separator)/**试切预览**(`previewChunks` + `filesApi.fetchPreviewText`);确认后 `indexFileFromBackend(fileId, name, chunkConfig, baseId)` 带参提交(此前只发 fileId/name,后端参数被忽略)
 - `lib/executionStatus.ts` — **执行终态统一展示映射(B5,2026-09-27)**:`EXECUTION_STATUS_META`/`executionStatusMeta(status)`(icon/cls/label/actionHint 四元组)——执行历史、首页「最近任务结果」、资料页共用同一份,改状态语义只改这里(此前首页/成果页 `success ? 成功 : 失败` 二分,同一条记录在不同入口状态不一致)
+- `hooks/useCommandPalette.ts` + App 的 RouteShell — **全局搜索(§7,2026-09-27)**:面板实例与 Cmd+K 监听挂 RouteShell(任何页面可呼出),开关走共享 store(首页搜索框点击打开同一实例);面板懒加载 + 仅打开时渲染(主入口包体门禁,静态引入会进主包)
 - `lib/services/savedArtifactsApi.ts` + `components/files/SavedArtifactsView.tsx` — **已保存成果(B1,2026-09-27)**:对话保存(文件/知识库)成功后登记服务端(`POST /api/saved-artifacts`),资料页「已保存成果」tab 读它渲染——类型徽章/打开(工作区深链 `?workspace=`)/回到来源会话(`/chat?session=`);执行记录留在任务页,不混入成果
 - `components/shared/HandoffChoiceDialog.tsx` + `lib/handoff.ts` — **跨页交接去向选择(B6,2026-09-27)**:`buildAssistantHandoffUrl(prompt, refs, newSession=true)` 默认带 `new=1`(跨页发起=新建处理);文件页批量栏弹「新建处理/加入当前对话」选择;chat 页消费 `new=1` 建新会话(用后清参数)。`TaskContextPayload.retrievalScope`(B4):「限定检索」开关开启时随 context 下发 docIds
 - `lib/services/workspaceApi.ts` — 工作区 API 接入层(stats/files/read/write/delete)

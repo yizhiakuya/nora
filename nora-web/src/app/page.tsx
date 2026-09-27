@@ -7,7 +7,7 @@ import { usePreferences } from "@/hooks/usePreferences";
 import { Search, ArrowUp, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CommandPalette } from "@/components/home/CommandPalette";
+import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { QuickActions } from "@/components/home/QuickActions";
 import { RunningTasks } from "@/components/automations/RunningTasks";
 import { RecentResults } from "@/components/home/RecentResults";
@@ -28,24 +28,14 @@ export default function Home() {
   const hour = new Date().getHours();
   const greeting = hour < 6 ? "夜深了" : hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
   const greetLine = accountName.trim() ? `${greeting}，${accountName.trim()}` : greeting;
-  const [isCmdKOpen, setIsCmdKOpen] = useState(false);
   const [demand, setDemand] = useState("");
   const [starting, setStarting] = useState(false);
   const navigate = useNavigate();
   const createSession = useChatSessions((s) => s.createSession);
 
-  // Global Cmd+K / Escape listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setIsCmdKOpen(true);
-      }
-      if (e.key === "Escape") setIsCmdKOpen(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  // 全局搜索(Cmd+K)监听与面板实例已提到 RouteShell(§7 评审);
+  // 首页搜索框点击打开同一实例
+  const openCmdK = useCommandPalette((s) => s.open);
 
   /** 开始新需求:创建会话,带输入内容跳转对话页并自动发送(autosend=1) */
   const startDemand = () => {
@@ -58,14 +48,14 @@ export default function Home() {
 
   const headerActions = (
     <>
-      <div className="relative w-full max-w-[12rem] md:w-64 hidden sm:block" onClick={() => setIsCmdKOpen(true)}>
+      <div className="relative w-full max-w-[12rem] md:w-64 hidden sm:block" onClick={openCmdK}>
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
         <Input readOnly placeholder="搜索..." className="pl-9 pr-4 py-1.5 h-8 bg-muted border-border text-xs focus-visible:ring-1 focus-visible:ring-blue-500 cursor-pointer w-full" />
         <div className="absolute right-2 top-1/2 transform -translate-y-1/2 hidden md:flex items-center gap-1 cursor-pointer">
           <kbd className="border border-border rounded px-1 text-[9px] text-muted-foreground bg-card">⌘K</kbd>
         </div>
       </div>
-      <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={() => setIsCmdKOpen(true)}>
+      <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={openCmdK}>
         <Search className="w-4 h-4" />
       </Button>
     </>
@@ -117,7 +107,7 @@ export default function Home() {
           {/* 继续处理:后台运行中的轮次(真实探测,无则不显示空卡片) */}
           <section className="animate-in fade-in slide-in-from-bottom-3 duration-500">
             <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">继续处理</h2>
-            <RunningTasks />
+            <RunningTasks compact />
           </section>
 
           {/* 最近任务结果(B1 命名修正 2026-09-27:内容是执行记录,含失败/取消,
@@ -135,7 +125,7 @@ export default function Home() {
         </div>
       </div>
 
-      <CommandPalette isOpen={isCmdKOpen} onClose={() => setIsCmdKOpen(false)} />
+      
     </>
   );
 }

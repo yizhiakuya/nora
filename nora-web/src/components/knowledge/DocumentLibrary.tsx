@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
-import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff, FolderInput, Plus } from "lucide-react";
+import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff, FolderInput, Plus, MoreHorizontal } from "lucide-react";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeBase, KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { addChunk, createBase, deleteChunk, fetchBases, fetchDocDetail, reindexDoc, setChunkEnabled, setDocBase, setDocEnabled, updateChunk } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
@@ -431,7 +432,8 @@ export function DocumentLibrary() {
                       <td className="p-3 text-right text-muted-foreground text-xs whitespace-nowrap hidden md:table-cell">{doc.updatedAt}</td>
                       <td className="p-3 pr-4">
                         <div className="flex items-center justify-end gap-1">
-                          {/* 停用/启用(阶段 B):停用=退出检索,数据保留——比删除轻的操作 */}
+                          {/* 停用/启用(阶段 B):停用=退出检索,数据保留——比删除轻的操作。
+                              §7 评审:高频动作留明面,低频(移库/重建/重命名)收进「更多操作」 */}
                           <button
                             type="button"
                             onClick={() => void handleToggleEnabled(doc)}
@@ -441,43 +443,36 @@ export function DocumentLibrary() {
                           >
                             {doc.enabled === false ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                           </button>
-                          {/* 移动到资料库(阶段 B 闭环;仅后端模式且已有多个库时显示) */}
-                          {USE_BACKEND && bases.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => setMoving(doc)}
-                              disabled={busyId === doc.id}
-                              className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
-                              title="移动到资料库"
-                            >
-                              <FolderInput className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleReindex(doc)}
-                            disabled={busyId === doc.id}
-                            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
-                            title="用已存分块重建向量（换模型或失败恢复）"
-                          >
-                            <RefreshCw className={`w-3.5 h-3.5 ${busyId === doc.id ? "animate-spin" : ""}`} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setRenaming(doc); setRenameValue(doc.name); }}
-                            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
-                            title="重命名"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDelete([doc.id])}
-                            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-red-600 dark:hover:text-red-400 cursor-pointer"
-                            title="删除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                disabled={busyId === doc.id}
+                                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+                                title="更多操作"
+                              >
+                                <MoreHorizontal className="w-3.5 h-3.5" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-44">
+                              {/* 移动到资料库(阶段 B 闭环;仅后端模式且已有多个库时显示) */}
+                              {USE_BACKEND && bases.length > 1 && (
+                                <DropdownMenuItem onClick={() => setMoving(doc)}>
+                                  <FolderInput className="w-3.5 h-3.5 mr-2" /> 移动到资料库…
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem onClick={() => handleReindex(doc)}>
+                                <RefreshCw className={`w-3.5 h-3.5 mr-2 ${busyId === doc.id ? "animate-spin" : ""}`} /> 重建向量
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => { setRenaming(doc); setRenameValue(doc.name); }}>
+                                <Pencil className="w-3.5 h-3.5 mr-2" /> 重命名
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600 dark:text-red-400" onClick={() => setConfirmDelete([doc.id])}>
+                                <Trash2 className="w-3.5 h-3.5 mr-2" /> 删除
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </td>
                     </tr>
