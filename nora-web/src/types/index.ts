@@ -294,6 +294,8 @@ export interface ExecutionRecord {
   /** 所属规则 id(后端返回;「重试」按它重新触发) */
   ruleId?: number;
   ruleName: string;
+  /** 规则原始动作 JSON(B2,2026-09-27;「设为定期任务」复用它而非结果文本) */
+  actionJson?: string | null;
   time: string;
   duration: string;
   /**

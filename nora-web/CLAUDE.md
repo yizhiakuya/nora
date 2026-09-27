@@ -14,6 +14,9 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 - `hooks/useSkills` — 技能唯一数据源(列表走 /api/skills 不带正文;详情按需 loadDetail 拉正文——渐进披露);后端模式 CRUD 乐观更新+失败回滚
 - `components/files/WorkspaceBrowser.tsx` — 文件页内的「Agent 工作区」文件夹浏览器(文件系统一体化:普通文件夹形态,点击进入/面包屑导航/文件编辑器);`app/files/page.tsx` 持 `workspaceDir` 状态(null=根视图)
 - `components/files/IndexToKnowledgeModal.tsx` — 「加入知识库」配置弹窗(F5,2026-09-26):目标资料库/分段模式(结构分段·父块-子块)/高级参数(chunkSize/overlap/separator)/**试切预览**(`previewChunks` + `filesApi.fetchPreviewText`);确认后 `indexFileFromBackend(fileId, name, chunkConfig, baseId)` 带参提交(此前只发 fileId/name,后端参数被忽略)
+- `lib/executionStatus.ts` — **执行终态统一展示映射(B5,2026-09-27)**:`EXECUTION_STATUS_META`/`executionStatusMeta(status)`(icon/cls/label/actionHint 四元组)——执行历史、首页「最近任务结果」、资料页共用同一份,改状态语义只改这里(此前首页/成果页 `success ? 成功 : 失败` 二分,同一条记录在不同入口状态不一致)
+- `lib/services/savedArtifactsApi.ts` + `components/files/SavedArtifactsView.tsx` — **已保存成果(B1,2026-09-27)**:对话保存(文件/知识库)成功后登记服务端(`POST /api/saved-artifacts`),资料页「已保存成果」tab 读它渲染——类型徽章/打开(工作区深链 `?workspace=`)/回到来源会话(`/chat?session=`);执行记录留在任务页,不混入成果
+- `components/shared/HandoffChoiceDialog.tsx` + `lib/handoff.ts` — **跨页交接去向选择(B6,2026-09-27)**:`buildAssistantHandoffUrl(prompt, refs, newSession=true)` 默认带 `new=1`(跨页发起=新建处理);文件页批量栏弹「新建处理/加入当前对话」选择;chat 页消费 `new=1` 建新会话(用后清参数)。`TaskContextPayload.retrievalScope`(B4):「限定检索」开关开启时随 context 下发 docIds
 - `lib/services/workspaceApi.ts` — 工作区 API 接入层(stats/files/read/write/delete)
 
 ## 约定
@@ -24,6 +27,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 
 ## 已知坑
 
+- **双健康探针(B7,2026-09-27)**:`useBackendHealth` 拆两个——`online` 探 `/api/auth/status`(gateway 自身端点,只有网关不可达才全屏替换)、`agentOnline` 探 `/chat/health`(只影响助手/对话区域局部提示,文件/任务/数据源不受影响)。此前唯一探针是 chat/health,agent 挂了整站被替换成「服务不可用」,其他服务可用也无法导航。新增探针目标时想清楚「挂了影响哪个区域」,不要回到单探针
 - **错误结构化优先(异常处理系统 2026-09-12)**:`client.ts` 的 `requestJson` 非 2xx 时解析后端信封为 `ApiError`(带 category/errorCode/hint/retryable/traceId);`humanizeError` 优先按 `category` 映射文案(ApiError 入参),字符串启发式仅作兜底(网络异常/网关 HTML/旧接口)。新增错误 UI 时先传 Error 对象、不要先 `.message` 提取字符串
 - HMR 对重命名导出不可靠,报 "does not provide an export" 先整页 reload 再判断
 - Zustand persist 的 store 改字段结构时注意兼容旧 localStorage 数据

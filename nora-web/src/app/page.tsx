@@ -120,9 +120,10 @@ export default function Home() {
             <RunningTasks />
           </section>
 
-          {/* 最近成果 */}
+          {/* 最近任务结果(B1 命名修正 2026-09-27:内容是执行记录,含失败/取消,
+              不叫「成果」;真正的已保存文件在「资料 → 工作区/长期知识」) */}
           <section className="animate-in fade-in slide-in-from-bottom-3 duration-500">
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">最近成果</h2>
+            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">最近任务结果</h2>
             <RecentResults />
           </section>
 

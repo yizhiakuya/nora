@@ -44,6 +44,9 @@ interface ChatInputAreaProps {
   onAddRef?: (ref: ChatRef) => void;
   /** 移除引用(键 = chatRefs.refKey) */
   onRemoveRef?: (key: string) => void;
+  /** 限定检索范围(B4,2026-09-27):开启后本轮只从引用的知识文档召回 */
+  limitToRefs?: boolean;
+  onLimitToRefsChange?: (v: boolean) => void;
 }
 
 /** @ 提及菜单条目(引用 + 来源标签) */
@@ -51,7 +54,7 @@ type MentionItem = ChatRef & { hint: string };
 
 const MENTION_MAX_ITEMS = 8;
 
-export function ChatInputArea({ input, setInput, isSending, onSend, onStop, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange, refs = [], onAddRef, onRemoveRef }: ChatInputAreaProps) {
+export function ChatInputArea({ input, setInput, isSending, onSend, onStop, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange, refs = [], onAddRef, onRemoveRef, limitToRefs = false, onLimitToRefsChange }: ChatInputAreaProps) {
   const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
   const toggleSkill = useSkills((s) => s.toggleSkill);
@@ -337,10 +340,27 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
               )}
               {/* 待发送引用 chips(📎附件/📄文件/@知识库/技能/MCP 工具):发送时随消息序列化 */}
               {refs.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+                <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5">
                   {refs.map((ref) => (
                     <RefChip key={refKey(ref)} chatRef={ref} onRemove={onRemoveRef} />
                   ))}
+                  {/* 限定检索(B4,2026-09-27):有知识库文档引用时可选——开启后
+                      本轮只从这些文档召回;关闭(默认)= 引用排前,其余资料仍参与 */}
+                  {onLimitToRefsChange && refs.some((r) => r.kind === "doc") && (
+                    <button
+                      type="button"
+                      onClick={() => onLimitToRefsChange(!limitToRefs)}
+                      title={limitToRefs
+                        ? "本轮只从引用的知识文档中检索;点击恢复「全库检索 + 引用优先」"
+                        : "开启后本轮只从引用的知识文档中检索,不混入其它资料"}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium border transition-colors cursor-pointer ${limitToRefs
+                        ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                        : "bg-card text-muted-foreground border-dashed border-border hover:text-foreground hover:border-foreground/40"}`}
+                    >
+                      <Layers className="w-2.5 h-2.5" />
+                      {limitToRefs ? "仅引用资料内检索" : "限定检索范围"}
+                    </button>
+                  )}
                 </div>
               )}
               <textarea

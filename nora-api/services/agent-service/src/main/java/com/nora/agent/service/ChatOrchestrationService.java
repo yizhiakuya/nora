@@ -363,8 +363,11 @@ public class ChatOrchestrationService {
         // 第 1 步:知识检索(尽力而为,在 LLM 调用之前)
         // 2026-09-22(阶段 A):带通道状态——degraded/unavailable 显式下发,
         // 不再把「检索坏了」折叠成「资料里没有」。
+        // B4(2026-09-27):用户限定资料范围时(refs 之外显式勾选「限定检索」),
+        // 范围进 RAG 查询——只从指定库/文档召回,不再混入范围外内容。
         long retrievalStart = System.currentTimeMillis();
-        RagRetrievalClient.RetrievalPayload retrieval = ragRetrievalClient.searchWithStatus(userMessage, 6);
+        RagRetrievalClient.RetrievalScope scope = retrievalScopeOf(taskContext);
+        RagRetrievalClient.RetrievalPayload retrieval = ragRetrievalClient.searchWithStatus(userMessage, 6, scope);
         List<CitationDto> citations = new java.util.ArrayList<>(retrieval.resultsOrEmpty());
         // 消息引用(📎/📄/@ 按钮)注入:真实内容排在语义检索命中之前——
         // 「用户明确引用的内容」优先级高于「检索到的相关片段」,且不受
@@ -696,6 +699,21 @@ public class ChatOrchestrationService {
             }
         }
         return false;
+    }
+
+    /**
+     * 从 TaskContext 提取检索范围(B4,2026-09-27):用户显式限定时只从
+     * 指定库/文档召回;未限定(字段缺失/全空)返回 null = 保持旧行为。
+     */
+    private static RagRetrievalClient.RetrievalScope retrievalScopeOf(com.nora.agent.dto.TaskContext taskContext) {
+        if (taskContext == null || taskContext.retrievalScope() == null) {
+            return null;
+        }
+        com.nora.agent.dto.TaskContext.RetrievalScope s = taskContext.retrievalScope();
+        if (s.isEmpty()) {
+            return null;
+        }
+        return new RagRetrievalClient.RetrievalScope(s.baseId(), s.docIds(), s.sources());
     }
 
 

@@ -71,11 +71,24 @@ public class AutomationService {
      * nextRunAt(方案 §7.2:新建规则默认第一次在未来计划点执行)。手动规则忽略。
      */
     public RuleView create(String name, String triggerType, String actionType, String sql, String prompt) {
-        return create(name, triggerType, actionType, sql, prompt, null);
+        return create(name, triggerType, actionType, sql, prompt, null, null);
     }
 
     public RuleView create(String name, String triggerType, String actionType, String sql, String prompt,
                            String scheduleJson) {
+        return create(name, triggerType, actionType, sql, prompt, scheduleJson, null);
+    }
+
+    /**
+     * 创建规则(B3,2026-09-27:connectionId 贯穿)。
+     *
+     * <p>SQL 动作的目标连接必须随规则落库——此前不保存 connectionId,执行时
+     * 回退到「数据源列表第一项」,多库场景下用户在 B 库保存的查询可能在 A 库
+     * 执行(执行目标丢失)。前端/agent 未传时保持 null(执行仍走第一项兜底,
+     * 兼容旧调用方),但真实保存路径(查询控制台)现在会带上。
+     */
+    public RuleView create(String name, String triggerType, String actionType, String sql, String prompt,
+                           String scheduleJson, Long connectionId) {
         if (name == null || name.isBlank()) {
             throw new BusinessException(400, "name is required");
         }
@@ -106,7 +119,7 @@ public class AutomationService {
         String label = triggerLabel(type);
         String actionJson = agentAction
                 ? actionExecutor.agentAction(prompt.trim())
-                : actionExecutor.sqlAction(sql);
+                : actionExecutor.sqlAction(sql, connectionId);
         jdbcTemplate.update(
                 "INSERT INTO automation_rule (name, trigger_type, trigger_expr, action, enabled, status, schedule, next_run_at, configuration_status) "
                         + "VALUES (?, ?, ?, ?::jsonb, true, 'active', ?::jsonb, ?, 'ok')",
@@ -284,13 +297,14 @@ public class AutomationService {
     /** 全部规则的最新执行(前端 ExecutionRecord[])。 */
     public List<ExecutionView> listExecutions(int limit) {
         return jdbcTemplate.query(
-                "SELECT e.id, e.rule_id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
+                "SELECT e.id, e.rule_id, r.name AS rule_name, r.action AS rule_action, e.duration_ms, e.status, e.detail, e.started_at "
                         + "FROM execution_record e JOIN automation_rule r ON r.id = e.rule_id "
                         + "ORDER BY e.started_at DESC, e.id DESC LIMIT ?",
                 (rs, rowNum) -> new ExecutionView(
                         rs.getLong("id"),
                         rs.getLong("rule_id"),
                         rs.getString("rule_name"),
+                        rs.getString("rule_action"),
                         rs.getObject("duration_ms") == null ? null : rs.getLong("duration_ms"),
                         rs.getString("status"),
                         rs.getString("detail"),
@@ -396,13 +410,14 @@ public class AutomationService {
 
     private ExecutionView latestExecution(long ruleId) {
         List<ExecutionView> rows = jdbcTemplate.query(
-                "SELECT e.id, e.rule_id, r.name AS rule_name, e.duration_ms, e.status, e.detail, e.started_at "
+                "SELECT e.id, e.rule_id, r.name AS rule_name, r.action AS rule_action, e.duration_ms, e.status, e.detail, e.started_at "
                         + "FROM execution_record e JOIN automation_rule r ON r.id = e.rule_id "
                         + "WHERE e.rule_id = ? ORDER BY e.started_at DESC, e.id DESC LIMIT 1",
                 (rs, rowNum) -> new ExecutionView(
                         rs.getLong("id"),
                         rs.getLong("rule_id"),
                         rs.getString("rule_name"),
+                        rs.getString("rule_action"),
                         rs.getObject("duration_ms") == null ? null : rs.getLong("duration_ms"),
                         rs.getString("status"),
                         rs.getString("detail"),
@@ -444,9 +459,19 @@ public class AutomationService {
             long id,
             long ruleId,
             String ruleName,
+            /** 规则原始动作 JSON(B2,2026-09-27):「设为定期任务」复用**原始指令**
+             *  而非结果文本——结果陈述(「已完成整理,文件在…」)不能表达下一次的
+             *  操作要求;原始指令 + 结果参考才是正确语义。 */
+            String actionJson,
             Long durationMs,
             String status,
             String detail,
             java.sql.Timestamp startedAt) {
+
+        /** 兼容构造(旧调用方:无 actionJson)。 */
+        public ExecutionView(long id, long ruleId, String ruleName, Long durationMs,
+                             String status, String detail, java.sql.Timestamp startedAt) {
+            this(id, ruleId, ruleName, null, durationMs, status, detail, startedAt);
+        }
     }
 }

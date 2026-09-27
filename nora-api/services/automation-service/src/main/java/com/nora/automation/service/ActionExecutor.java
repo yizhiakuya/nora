@@ -104,18 +104,31 @@ public class ActionExecutor {
             }
             // 显式 Long:三元两分支类型不一致时会自动拆箱,null 会当场 NPE,
             // 让下面的判空形同虚设(真实踩过的坑)
-            Long connectionId = action.hasNonNull("connectionId")
+            boolean pinned = action.hasNonNull("connectionId");
+            Long connectionId = pinned
                     ? Long.valueOf(action.get("connectionId").asLong()) : firstConnectionId();
             if (connectionId == null) {
                 return ActionResult.failed("no database connection configured — 请先在数据源页添加一个连接");
             }
-            ApiResponse<QueryBody> envelope = restClient.post()
-                    .uri("/api/datasources/{id}/query", connectionId)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new QueryRequest(sql))
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
+            ApiResponse<QueryBody> envelope;
+            try {
+                envelope = restClient.post()
+                        .uri("/api/datasources/{id}/query", connectionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(new QueryRequest(sql))
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {
+                        });
+            } catch (com.nora.common.http.EnvelopeErrorHandler.DownstreamException restEx) {
+                // B3(2026-09-27):绑定的目标连接已被删除/不可用 → 明确指向配置,
+                // 不再含糊报「查询失败」;也不静默回退到别的库执行。
+                // (服务间 RestClient 经 EnvelopeErrorHandler 抛 DownstreamException)
+                if (restEx.getStatus() == 404 && pinned) {
+                    return ActionResult.failed("规则绑定的数据源连接不存在(id=" + connectionId
+                            + ",可能已被删除)——请到数据源页确认,并在任务页重建或更新该规则");
+                }
+                throw restEx;
+            }
             if (envelope == null || envelope.code() != 0 || envelope.data() == null) {
                 String message = envelope == null ? "empty response" : envelope.message();
                 return ActionResult.failed(message);
@@ -371,11 +384,25 @@ public class ActionExecutor {
         return sb.toString();
     }
 
-    /** 为 SQL 规则构建存储的动作 JSON。 */
+    /** 为 SQL 规则构建存储的动作 JSON(兼容入口:不绑定连接,执行走第一项兜底)。 */
     public String sqlAction(String sql) {
+        return sqlAction(sql, null);
+    }
+
+    /**
+     * 为 SQL 规则构建存储的动作 JSON(B3,2026-09-27)。
+     *
+     * <p>connectionId 随动作落库——执行时优先用它定位目标库,不再默认
+     * 「数据源列表第一项」(多库时执行目标会丢失)。null = 旧规则/未指定,
+     * 执行时保持 firstConnectionId() 兜底(兼容)。
+     */
+    public String sqlAction(String sql, Long connectionId) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("type", "sql");
         node.put("sql", sql);
+        if (connectionId != null) {
+            node.put("connectionId", connectionId);
+        }
         return node.toString();
     }
 

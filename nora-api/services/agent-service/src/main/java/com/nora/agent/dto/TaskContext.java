@@ -26,7 +26,11 @@ public record TaskContext(
         /** 来源(可空):从哪个入口发起(chat/query/log/file/automation)。 */
         Origin origin,
         /** 数据选择(可空):固定集合或已支持的相对时间范围。 */
-        DataSelection dataSelection) {
+        DataSelection dataSelection,
+        /** 检索范围(B4,2026-09-27;可空 = 不限):限定本轮自动检索的资料。
+         *  与 refs 的区别:refs 是「优先参考」(排前,不排除其它资料),
+         *  这里是「本次只在这些资料里找」——直接进 RAG 范围查询。 */
+        RetrievalScope retrievalScope) {
 
     /** 一条资源引用:kind 决定解析方式;id 为所属服务的稳定 ID。 */
     public record ResourceRef(
@@ -60,5 +64,17 @@ public record TaskContext(
             /** thisWeek | previousWeek | last7Days */
             String range,
             String timezone) {
+    }
+
+    /** 检索范围(与 rag-service RetrievalScope 对齐;全部为空 = 不限)。 */
+    public record RetrievalScope(
+            Long baseId,
+            List<Long> docIds,
+            List<String> sources) {
+
+        public boolean isEmpty() {
+            return baseId == null && (docIds == null || docIds.isEmpty())
+                    && (sources == null || sources.isEmpty());
+        }
     }
 }

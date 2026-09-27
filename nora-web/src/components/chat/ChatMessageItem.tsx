@@ -14,6 +14,7 @@ import { useChatSessions } from "@/hooks/useChatSessions";
 import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
 import { USE_BACKEND } from "@/lib/api/client";
 import { contentKey, contentHashSuffix, getSavedRecord, markSaved } from "@/lib/saveState";
+import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
 
 /** 错误图标与配色(按 kind 微调,不喧宾夺主) */
 const ERROR_ICON: Record<string, React.ElementType> = {
@@ -122,16 +123,29 @@ function SaveToKnowledgeButton({ msg, sessionId }: { msg: ChatMessage; sessionId
     const title = `对话结论 · ${msg.content.slice(0, 24).replace(/[#*\n]/g, "").trim()}`;
     // 本地始终留底;后端模式再真实入库(name-keyed 同名覆盖,可在知识库检索)
     addChatDoc(`${title}…`, msg.content);
+    let docId: number | null = null;
     if (USE_BACKEND) {
       try {
-        await saveTextAsync(title, msg.content);
+        const doc = await saveTextAsync(title, msg.content);
+        docId = doc?.id ?? null;
       } catch (e) {
         toast.error(`入库失败：${(e as Error).message}`);
         return;
       }
     }
     setSaved(true);
-    markSaved(key, { knowledgeSaved: true });
+    markSaved(key, { knowledgeSaved: true, knowledgeDocId: docId ?? undefined });
+    // B1(2026-09-27):服务端登记归属(来自哪次对话)——换浏览器也能从
+    // 资料页找到;登记失败静默(保存本身已成功,登记是增益)
+    if (USE_BACKEND && docId != null) {
+      void savedArtifactsApi.register({
+        kind: "knowledge_doc",
+        path: String(docId),
+        name: title,
+        sessionId,
+        messageKey: key,
+      });
+    }
     toast.success(USE_BACKEND ? "已入库，可在知识库检索" : "已保存到本地知识库");
   };
 
@@ -184,6 +198,15 @@ function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: st
       }
       setSavedPath(path);
       markSaved(key, { filePath: path });
+      // B1(2026-09-27):服务端登记归属(来自哪次对话)——换浏览器也能从
+      // 资料页找到;登记失败静默(保存本身已成功,登记是增益)
+      void savedArtifactsApi.register({
+        kind: "workspace_file",
+        path,
+        name: firstLine.slice(0, 60) || "回答",
+        sessionId,
+        messageKey: key,
+      });
       toast.success(`已保存:工作区 ${path}`, { description: "可在「资料 → 工作区」中打开" });
     } catch (e) {
       toast.error(`保存失败：${(e as Error).message}`);

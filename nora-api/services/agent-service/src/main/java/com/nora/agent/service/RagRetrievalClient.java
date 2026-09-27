@@ -39,11 +39,28 @@ public class RagRetrievalClient {
      * @return 结果集;rag-service 不可用时 status=unavailable(绝不静默为空)
      */
     public RetrievalPayload searchWithStatus(String query, int topK) {
+        return searchWithStatus(query, topK, null);
+    }
+
+    /**
+     * 带检索范围的知识库检索(B4,2026-09-27)。
+     *
+     * <p>评审报告 B4:普通对话的自动检索只传 query/topK——「引用某份资料」
+     * 只是把它排到结果前面,其他知识库内容仍会混入。用户明确选择
+     * 「限定这些资料」时,把 baseId/docIds 传给 rag-service(范围同时进入
+     * 向量与关键词两路候选;范围内无结果不自动扩大)。
+     *
+     * @param scope 检索范围;null = 不限(保持旧行为)
+     */
+    public RetrievalPayload searchWithStatus(String query, int topK, RetrievalScope scope) {
         try {
             ApiResponse<RetrievalPayload> envelope = restClient.post()
                     .uri("/api/rag/search")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new SearchBody(query, topK))
+                    .body(new SearchBody(query, topK,
+                            scope == null ? null : scope.baseId(),
+                            scope == null ? null : scope.docIds(),
+                            scope == null ? null : scope.sources()))
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
                     });
@@ -60,6 +77,15 @@ public class RagRetrievalClient {
         }
     }
 
+    /** 检索范围(对话级;B4):baseId / docIds / sources 任一非空即限定。 */
+    public record RetrievalScope(Long baseId, List<Long> docIds, List<String> sources) {
+        /** 是否有实际约束(全部为空 = 不限,等价 null)。 */
+        public boolean isEmpty() {
+            return baseId == null && (docIds == null || docIds.isEmpty())
+                    && (sources == null || sources.isEmpty());
+        }
+    }
+
     /**
      * 兼容入口(旧调用方):只要命中列表;异常时为空。
      */
@@ -68,7 +94,12 @@ public class RagRetrievalClient {
     }
 
     /** POST /api/rag/search 请求体。 */
-    record SearchBody(String query, Integer topK) {
+    /** POST /api/rag/search 请求体(B4:可带范围;与 RagController.SearchBody 对齐)。 */
+    record SearchBody(String query, Integer topK, Long baseId, List<Long> docIds, List<String> sources) {
+        /** 兼容构造(不限范围)。 */
+        SearchBody(String query, Integer topK) {
+            this(query, topK, null, null, null);
+        }
     }
 
     /**

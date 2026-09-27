@@ -60,10 +60,13 @@ gateway(8080) → file(8081) / rag(8082) / agent(8083) / datasource(8084) / env(
 - **持久化**:会话/消息/step 落 schema_agent;reasoning 聚合后一次性保存(`s-reasoning-{round}`)
 - **工作区/记忆(文件系统一体化,对齐 OpenClaw/Hermes)**:agent 的目录(默认 `D:/claude/Nora/agent-workspace`,可配 `nora.agent.workspace`)既是**默认 cwd**也是记忆载体。引导注入按 **Hermes 三层提示词结构**(stable 身份 → context 约定 → volatile 快照):`SOUL.md`(可演化人格:agent 自己改它就改变下轮行为)/`AGENTS.md`(使用约定,从经验中补充)/`USER.md`(偏好)/`MEMORY.md`(耐久事实)——每轮自动注入,逐文件 6k 字+总量 16k 字双预算截断;`memory/YYYY-MM-DD.md` 日记只列清单不注入,按需 `read`。**SYSTEM_PROMPT 只留协议层**(引用标记/行动而非空谈/自演化声明/工作台操作员定位——第 6 条要求「问工作台功能先读手册技能」),人格与任务习惯全部下放到可演化文件(改文件即进化,不改代码)。**「工作台使用手册」技能**(id=7,分类=工作台):九个功能面逐项说明(用户视角+工具映射+常见任务操作指引),用户问工作台能力时 agent `manage_skill read` 读取后回答——改工作台功能时应同步更新该技能正文。「记住…」= 落盘(无隐藏状态)。**工作区是默认目录而非硬沙箱**(OpenClaw 语义):相对路径=区内,**绝对路径=整机**(agent 可读/写项目文件);风险分级 `manage_workspace`——区内写=LOW 自动、区外写=HIGH(ASSIST 询问)、区外删=CRITICAL(任何档位确认),系统目录(Windows/Program Files/盘根)写删硬拒;管理 API `/api/workspace`(GET stats/files/file,PUT file,DELETE file——**仅限区内**,前端管理通道不开放整机)。前端:文件页把工作区渲染为**普通文件夹**「Agent 工作区」(点击进入/面包屑导航/文件编辑器,与真实文件系统一体),非独立页面
 - **指令型技能**:`agent_skill` 表(名称/描述/分类/正文),启用技能的**目录**(名称+描述)注入系统提示,正文由 `manage_skill action=read` 按需拉取(渐进披露,不占每轮预算);CRUD API `/api/skills`(列表不返回正文,详情才返回);agent 可在对话中 create/update 沉淀技能(闭环自管)
+- **保存成果登记(B1,2026-09-27)**:`saved_artifact` 表(V26)+ `/api/saved-artifacts`(POST 幂等 upsert by kind+path / GET 列表 / DELETE 移除登记)。对话「保存为文件/保存到知识库」成功后登记 `{kind, path, name, sessionId, messageKey}`——**服务端权威**记录「哪个文件/文档来自哪次对话」(此前只有浏览器 localStorage,换浏览器丢失)。内容不复制第三份;前端资料页「已保存成果」据此渲染,可打开并回到来源会话
+- **对话检索范围(B4,2026-09-27)**:`TaskContext.retrievalScope`(baseId/docIds/sources)——前端「限定检索」开关开启时随 context 下发,编排层 `retrievalScopeOf` 提取后传入 `RagRetrievalClient.searchWithStatus(query, topK, scope)`(范围进 RAG 两路候选)。关闭(默认)= 旧行为:引用内容排前、其余资料仍参与;refs(优先参考)与范围(限定只查)是两种语义
 
 ## automation-service(自动任务)
 
 - **动作执行结果状态化(F2,2026-09-26)**:`ActionExecutor.execute` 返回 `ActionResult(detail, status)`——agent 动作的终态来自对话 `done.status`(F3 同源),不再按 `detail.startsWith("ERROR")` 或「有文字」推断;`partial/cancelled/unknown` 落执行记录并**不发成功通知**(unknown = 连接中断、该轮可能仍在后台跑,文案指引去会话确认);旧后端无 status 时按 stopped/error/无终态兼容推断。前端 `ExecutionHistory` 按终态分别展示(成功/部分完成/失败/已取消/结果未知/错过计划点)
+- **SQL 规则连接目标(B3,2026-09-27)**:`CreateRequest.connectionId` → `sqlAction(sql, connectionId)` 落进动作 JSON → 执行时优先使用(不再默认「数据源列表第一项」——多库场景执行目标会丢失);绑定连接被删时 404 给明确指引(`DownstreamException`,不是笼统「查询失败」)。前端 `useAutomations.addRule`/`QueryConsole.saveAsAutomation` 全链路携带;规则列表标注 `@连接#id`
 
 ## 模型/推理注入规则
 

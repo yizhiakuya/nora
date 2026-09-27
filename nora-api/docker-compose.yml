@@ -2,6 +2,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: nora-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: nora
       POSTGRES_USER: nora
@@ -20,6 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: nora-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -32,6 +34,7 @@ services:
   nacos:
     image: nacos/nacos-server:v2.3.2
     container_name: nora-nacos
+    restart: unless-stopped
     environment:
       MODE: standalone
     ports:
@@ -51,6 +54,7 @@ services:
   kafka:
     image: apache/kafka:3.7.1
     container_name: nora-kafka
+    restart: unless-stopped
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -64,8 +68,13 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+      # 数据目录固定到卷(2026-09-27):默认 /tmp 在容器重建时丢失,
+      # nora.notifications topic 要手动重建(实测踩过)
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
       - "9092:9092"
+    volumes:
+      - kafkadata:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -76,6 +85,7 @@ services:
   rocketmq-namesrv:
     image: apache/rocketmq:5.1.4
     container_name: nora-rocketmq-namesrv
+    restart: unless-stopped
     command: sh mqnamesrv
     ports:
       - "9876:9876"
@@ -84,6 +94,7 @@ services:
   rocketmq-broker:
     image: apache/rocketmq:5.1.4
     container_name: nora-rocketmq-broker
+    restart: unless-stopped
     command: sh mqbroker -n rocketmq-namesrv:9876
     depends_on:
       - rocketmq-namesrv
@@ -100,3 +111,4 @@ services:
 
 volumes:
   pgdata:
+  kafkadata:

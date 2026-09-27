@@ -187,6 +187,9 @@ export interface TaskContextPayload {
   output?: { kind: "workspace" | "fileFolder"; target: string };
   origin?: { kind: "chat" | "query" | "log" | "file" | "automation"; id?: string };
   dataSelection?: { mode: "fixed" | "relativeTime"; sourceId?: string; range?: "thisWeek" | "previousWeek" | "last7Days"; timezone?: string };
+  /** 检索范围(B4,2026-09-27):「限定检索」开启时只从这些库/文档召回;
+   *  缺省 = 不限(引用排前,其余资料仍参与检索)。 */
+  retrievalScope?: { baseId?: number; docIds?: number[]; sources?: string[] };
 }
 
 /**

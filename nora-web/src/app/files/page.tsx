@@ -27,17 +27,17 @@ import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { usePreferences } from "@/hooks/usePreferences";
 import { filesApi, humanSize, type BackendFolder } from "@/lib/services/filesApi";
 import { USE_BACKEND } from "@/lib/api/client";
-import { buildAssistantHandoffUrl } from "@/lib/handoff";
+import { HandoffChoiceDialog } from "@/components/shared/HandoffChoiceDialog";
 import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
-import { SavedResultsView } from "@/components/files/SavedResultsView";
+import { SavedArtifactsView } from "@/components/files/SavedArtifactsView";
 
 export default function FilesPage() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   /**
-   * 资料页视图(M1-03,2026-09-20,方案 §4.2):files(全部文件,默认)/
-   * knowledge(长期知识)/ results(已保存成果)。URL ?view= 同步,刷新/
-   * 返回键/复制链接保持一致。旧链接无 view 参数时按 files 处理。
+   * 资料页视图(M1-03,2026-09-20;B1 命名修正 2026-09-27):files(全部文件,
+   * 默认)/ knowledge(长期知识)/ results(任务结果——自动任务执行记录)。
+   * URL ?view= 同步,刷新/返回键/复制链接保持一致。旧链接无 view 参数时按 files 处理。
    */
   const [dataView, setDataView] = useState<"files" | "knowledge" | "results">(() => {
     const v = new URLSearchParams(window.location.search).get("view");
@@ -269,9 +269,10 @@ export default function FilesPage() {
   };
 
   /**
-   * 交给助手(M2-02):选中文件作为结构化引用带入对话页,预填指令与引用 chip。
-   * 用户可在输入区增删引用、编辑指令后再发送(不自动发送)。
+   * 交给助手(M2-02;B6 2026-09-27):选中文件作为结构化引用,先选去向
+   * (新建处理 / 加入当前对话),再带入对话页预填指令与引用 chip。
    */
+  const [handoff, setHandoff] = useState<{ prompt: string; refs: import("@/lib/handoff").HandoffRef[] } | null>(null);
   const handleAskAssistant = () => {
     if (selection.selectedIds.length === 0) return;
     const selected = files.filter((f) => selection.selectedIds.includes(f.id));
@@ -279,7 +280,7 @@ export default function FilesPage() {
     const prompt = selected.length === 1
       ? `请阅读并处理这份资料:${selected[0].name}`
       : `请比较这 ${selected.length} 份资料的差异,给我一份报告。`;
-    navigate(buildAssistantHandoffUrl(prompt, refs));
+    setHandoff({ prompt, refs });
   };
 
   /** 执行移动。 */
@@ -518,7 +519,9 @@ export default function FilesPage() {
 
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
         <div className="max-w-6xl mx-auto pb-24">
-          {/* 资料视图切换(M1-03):全部文件 / 长期知识 / 已保存成果 */}
+          {/* 资料视图切换(M1-03;B1 修正 2026-09-27):第三个 tab 改为
+              「已保存成果」= 对话保存的文件/文档(saved_artifact 服务端登记,
+              可打开并回到来源会话);自动任务执行记录在「任务 → 执行历史」 */}
           <div role="tablist" aria-label="资料视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit mb-4">
             {([
               { key: "files", label: "全部文件" },
@@ -541,7 +544,7 @@ export default function FilesPage() {
           {dataView === "knowledge" ? (
             <KnowledgeView />
           ) : dataView === "results" ? (
-            <SavedResultsView />
+            <SavedArtifactsView />
           ) : trashOpen ? (
             <TrashBrowser onExit={() => setTrashOpen(false)} />
           ) : mediaCacheOpen ? (
@@ -741,6 +744,13 @@ export default function FilesPage() {
         </div>
       </Modal>
 
+      {/* 交给助手去向选择(B6):新建处理 / 加入当前对话 */}
+      <HandoffChoiceDialog
+        isOpen={handoff != null}
+        onClose={() => setHandoff(null)}
+        prompt={handoff?.prompt ?? ""}
+        refs={handoff?.refs ?? []}
+      />
       <UploadModal
         upload={upload}
         title={currentFolder ? `上传到「${currentFolder.name}」` : "上传到文件中心"}

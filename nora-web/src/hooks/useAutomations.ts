@@ -31,8 +31,12 @@ interface AutomationsState {
   syncFromBackend: () => Promise<void>;
   /** 创建规则;后端模式失败返回 null(已提示,绝不产生"未创建却成功"的幽灵条目) */
   /** 创建规则;后端模式失败返回 null(已提示,绝不产生"未创建却成功"的幽灵条目)。
-   *  schedule(M4-01):daily/weekly 必填日程(daily/weekly 规则后端强制校验)。 */
-  addRule: (name: string, trigger: string, action: string, schedule?: import("@/lib/services/automationsApi").ScheduleSpec) => Promise<AutomationRule | null>;
+   *  schedule(M4-01):daily/weekly 必填日程(daily/weekly 规则后端强制校验)。
+   *  connectionId(B3,2026-09-27):SQL 动作的目标数据源——随规则落库,执行时
+   *  优先使用,不再默认「列表第一项」(多库时执行目标丢失)。 */
+  addRule: (name: string, trigger: string, action: string,
+            schedule?: import("@/lib/services/automationsApi").ScheduleSpec,
+            connectionId?: number) => Promise<AutomationRule | null>;
   /** 启用/暂停规则;返回是否真实切换成功(后端模式等服务器结果,失败回滚) */
   toggleRule: (id: number) => Promise<boolean>;
   /** 立即运行;返回是否真实执行成功(后端模式等待服务器结果) */
@@ -79,7 +83,7 @@ export const useAutomations = create<AutomationsState>()(
           /* 后端不可用时沿用本地缓存 */
         }
       },
-      addRule: async (name, trigger, action, schedule) => {
+      addRule: async (name, trigger, action, schedule, connectionId) => {
         const isSqlAction = looksLikeSql(action);
         if (USE_BACKEND) {
           // 后端模式:等服务器真实结果再落状态(2026-09-19 修假成功)。
@@ -98,7 +102,7 @@ export const useAutomations = create<AutomationsState>()(
           try {
             const saved = await automationsApi.createRule(
               isSqlAction
-                ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action, schedule: schedule ? JSON.stringify(schedule) : undefined }
+                ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action, schedule: schedule ? JSON.stringify(schedule) : undefined, connectionId }
                 : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action, schedule: schedule ? JSON.stringify(schedule) : undefined },
             );
             set((state) => ({

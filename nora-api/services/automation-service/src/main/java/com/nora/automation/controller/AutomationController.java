@@ -42,7 +42,8 @@ public class AutomationController {
     @PostMapping
     public ApiResponse<AutomationService.RuleView> create(@RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(request.name(), request.triggerType(),
-                request.actionType(), request.sql(), request.prompt(), request.schedule()));
+                request.actionType(), request.sql(), request.prompt(), request.schedule(),
+                request.connectionId()));
     }
 
     /**
@@ -87,8 +88,15 @@ public class AutomationController {
     }
 
     /** POST /api/automations 请求体。 */
-    /** actionType 缺省 = "sql";"agent" 时用 prompt。schedule 为 M4-01 日程 JSON。 */
+    /** actionType 缺省 = "sql";"agent" 时用 prompt。schedule 为 M4-01 日程 JSON。
+     *  connectionId(B3,2026-09-27):SQL 动作的目标数据源连接——随规则落库,
+     *  执行时优先使用,不再默认「列表第一项」(多库场景执行目标丢失)。 */
     public record CreateRequest(String name, String triggerType, String actionType, String sql, String prompt,
-                                String schedule) {
+                                String schedule, Long connectionId) {
+        /** 兼容构造(旧调用方:无 connectionId)。 */
+        public CreateRequest(String name, String triggerType, String actionType, String sql, String prompt,
+                             String schedule) {
+            this(name, triggerType, actionType, sql, prompt, schedule, null);
+        }
     }
 }

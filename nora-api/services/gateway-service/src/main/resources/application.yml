@@ -36,6 +36,10 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/workspace/**
+        - id: saved-artifacts
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/saved-artifacts/**
         - id: media
           uri: lb://agent-service
           predicates:

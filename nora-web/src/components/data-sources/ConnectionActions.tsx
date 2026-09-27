@@ -44,9 +44,9 @@ export function ConnectionActions({ connectionId, name, database }: ConnectionAc
     toast.success(`已删除「${name}」`);
   };
 
-  /** 让 AI 在对话页基于该连接生成 SQL(真实 agent,不是本地假生成) */
+  /** 让 AI 在对话页基于该连接生成 SQL(真实 agent,不是本地假生成;B6:新建处理) */
   const handleAskAi = () => {
-    navigate(`/chat?prompt=${encodeURIComponent(`请基于数据源「${name}」(${database}) 帮我写一条查询:`)}`);
+    navigate(`/chat?prompt=${encodeURIComponent(`请基于数据源「${name}」(${database}) 帮我写一条查询:`)}&new=1`);
   };
 
   return (

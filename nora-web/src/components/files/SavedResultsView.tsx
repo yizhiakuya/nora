@@ -1,20 +1,23 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, FileText, ChevronRight, Loader2 } from "lucide-react";
+import { FileText, ChevronRight, Loader2 } from "lucide-react";
 import { Modal } from "@/components/ui/custom/Modal";
+import MarkdownContent from "@/components/shared/MarkdownContent";
 import { Button } from "@/components/ui/button";
 import type { ExecutionRecord } from "@/types";
 import { automationsApi } from "@/lib/services/automationsApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { executionStatusMeta } from "@/lib/executionStatus";
 
 /**
- * 「已保存成果」视图(M1-03,2026-09-20,方案 §4.2):
- * 任务执行产出的完整结果(成功/失败),点击打开全文。
+ * 「任务结果」视图(M1-03,2026-09-20;B1 命名修正 2026-09-27):
+ * 自动任务执行产出的完整结果(成功/失败都列出),点击打开全文。
  *
- * 说明:当前成果以 execution_record.detail 为权威存储(任务执行结果),
- * 不复制到第三个存储;对话中的 `nora-artifacts` 画廊仍在会话内呈现。
- * 删除任务不删除这里的历史结果(execution_record 独立于规则)。
+ * B1(评审报告):此前叫「已保存成果」,但内容是 execution_record 执行记录
+ * (含取消/结果未知/错过计划)——与用户心智中「我保存的成果」不符,且
+ * 对话「保存为文件」的报告不在这里出现。命名与空态文案改为实际内容,
+ * 并指引真正的保存位置(工作区/知识库);状态展示用共享映射(B5)。
  */
 export function SavedResultsView() {
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
@@ -62,9 +65,9 @@ export function SavedResultsView() {
     return (
       <div className="bg-card border border-dashed border-border rounded-xl py-16 text-center space-y-1">
         <FileText className="w-6 h-6 mx-auto text-muted-foreground/40" />
-        <div className="text-xs text-muted-foreground">还没有已保存的成果</div>
+        <div className="text-xs text-muted-foreground">还没有任务执行结果</div>
         <div className="text-[11px] text-muted-foreground/70">
-          在「助手」中完成任务,或到「任务」页运行定期任务,结果会出现在这里。
+          自动任务的结果会出现在这里;对话中保存的报告在「工作区」文件夹,知识库文档在「长期知识」。
         </div>
       </div>
     );
@@ -73,35 +76,41 @@ export function SavedResultsView() {
   return (
     <>
       <div className="bg-card border border-border rounded-xl divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
-        {records.map((rec) => (
-          <button
-            key={rec.id}
-            type="button"
-            onClick={() => setViewing(rec)}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/40 transition-colors cursor-pointer"
-          >
-            {rec.status === "success"
-              ? <CheckCircle2 className="w-4 h-4 shrink-0 text-green-600 dark:text-green-400" />
-              : <XCircle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />}
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-foreground truncate">{rec.ruleName}</div>
-              <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                {rec.detailSummary ?? rec.detail}
+        {records.map((rec) => {
+          const meta = executionStatusMeta(rec.status);
+          const Icon = meta.icon;
+          return (
+            <button
+              key={rec.id}
+              type="button"
+              onClick={() => setViewing(rec)}
+              title={meta.actionHint ?? undefined}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/40 transition-colors cursor-pointer"
+            >
+              <Icon className={`w-4 h-4 shrink-0 ${meta.cls} ${rec.status === "running" ? "animate-spin" : ""}`} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-foreground truncate">{rec.ruleName}</span>
+                  <span className={`text-[9px] font-bold shrink-0 ${meta.cls}`}>{meta.label}</span>
+                </div>
+                <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                  {rec.detailSummary ?? rec.detail}
+                </div>
               </div>
-            </div>
-            <div className="text-right shrink-0">
-              <div className="text-[10px] text-muted-foreground tabular-nums">{rec.time}</div>
-              <div className="text-[10px] text-muted-foreground tabular-nums">{rec.duration}</div>
-            </div>
-            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
-          </button>
-        ))}
+              <div className="text-right shrink-0">
+                <div className="text-[10px] text-muted-foreground tabular-nums">{rec.time}</div>
+                <div className="text-[10px] text-muted-foreground tabular-nums">{rec.duration}</div>
+              </div>
+              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+            </button>
+          );
+        })}
       </div>
 
       <Modal
         isOpen={viewing != null}
         onClose={() => setViewing(null)}
-        title={viewing ? `${viewing.ruleName} · ${viewing.status === "success" ? "成功" : "失败"}` : ""}
+        title={viewing ? `${viewing.ruleName} · ${executionStatusMeta(viewing.status).label}` : ""}
         width="w-[94%] sm:w-[720px]"
         footer={viewing && (
           <>
@@ -117,11 +126,11 @@ export function SavedResultsView() {
             <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
               <span>时间:{viewing.time}</span>
               <span>耗时:{viewing.duration}</span>
-              <span>状态:{viewing.status === "success" ? "成功" : "失败"}</span>
+              <span>状态:{executionStatusMeta(viewing.status).label}</span>
             </div>
-            <pre className="max-h-[420px] overflow-auto rounded-lg border border-border bg-muted/40 p-3 text-xs whitespace-pre-wrap break-words font-mono">
-              {viewing.detail || "（本次执行没有输出内容）"}
-            </pre>
+            <div className="max-h-[420px] overflow-auto rounded-lg border border-border bg-muted/40 p-3 text-xs leading-relaxed">
+              <MarkdownContent className="prose-sm [&_pre]:whitespace-pre-wrap [&_pre]:break-words">{viewing.detail || "（本次执行没有输出内容）"}</MarkdownContent>
+            </div>
           </div>
         )}
       </Modal>

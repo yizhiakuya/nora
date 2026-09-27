@@ -9,6 +9,10 @@
  * 消息内容不变(历史重载后 content 一致)则键一致,已保存状态跨刷新/切屏保持。
  * 同时「保存为文件」的文件名改用内容哈希后缀(替代时间戳):即使状态意外
  * 丢失再点,也只是覆盖同一文件,不再产生副本(双保险)。
+ *
+ * B1(2026-09-27):localStorage 只是**按钮状态的本地镜像**——成果归属的
+ * 权威记录在服务端(saved_artifact 表,保存成功后经 /api/saved-artifacts
+ * 登记),换浏览器也能从资料页找到「这个文件来自哪次对话」。
  */
 const STORAGE_KEY = "nora-saved-artifacts";
 
@@ -17,6 +21,8 @@ export interface SavedRecord {
   filePath?: string;
   /** 「保存到知识库」是否已保存 */
   knowledgeSaved?: boolean;
+  /** 「保存到知识库」的知识文档 id(服务端返回;登记与跳转用) */
+  knowledgeDocId?: number;
 }
 
 function loadAll(): Record<string, SavedRecord> {

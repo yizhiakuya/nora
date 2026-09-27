@@ -1,10 +1,15 @@
 import { CloudOff } from "lucide-react";
 
 /**
- * 全屏「服务不可用」页:API 不在线时替换整个应用(无侧栏/导航/按钮/提示)。
- * 点阵网格背景 + 居中大号三角警告 + 一句状态,别无他物。
- * 自动重连:指数退避探测(5s→10s→20s→30s)后台静默进行,服务恢复后
- * 本页自动消失、回到用户原所在页面。
+ * 全屏「服务不可用」页:**仅网关不可达时**替换整个应用(B7,2026-09-27)。
+ *
+ * 此前探针是 agent-service /chat/health——agent 挂了也会全屏替换,即使
+ * 文件/数据源/任务服务仍可用,用户无法通过导航进入任何区域。现在网关
+ * (api/auth/status,gateway 自身端点)不可达才走到这里(此时确实全站
+ * 不可用);agent 单独探测,只影响助手区域的局部提示。
+ *
+ * 点阵网格背景 + 居中大号三角警告 + 一句状态。自动重连:指数退避探测
+ * (5s→10s→20s→30s)后台静默进行,服务恢复后本页自动消失、回到用户原所在页面。
  */
 export function ServiceUnavailablePage() {
   return (
@@ -34,8 +39,11 @@ export function ServiceUnavailablePage() {
       </svg>
 
       <h1 className="mt-8 text-2xl font-semibold tracking-wide text-foreground">
-        服务不可用
+        网关不可达
       </h1>
+      <p className="mt-3 text-xs text-muted-foreground max-w-xs text-center leading-relaxed">
+        无法连接到 Nora 网关(端口 8080)。请确认服务已启动;恢复后本页会自动消失。
+      </p>
     </div>
   );
 }

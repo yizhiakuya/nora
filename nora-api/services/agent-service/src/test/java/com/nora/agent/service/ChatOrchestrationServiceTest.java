@@ -674,7 +674,7 @@ class ChatOrchestrationServiceTest {
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
             when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(okOutcome(List.of()));
+                    org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(List.of()));
 
             List<ChatStepDto> steps = new java.util.ArrayList<>();
             svc.chat("hi", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
@@ -713,7 +713,7 @@ class ChatOrchestrationServiceTest {
                 ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
                 null, null, null, null, null, null, null, null, skills, null, 5, null, null, null, null, null);
         when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(okOutcome(List.of()));
+                    org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(List.of()));
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         svc.chat("hi", List.of(), new ChatOrchestrationService.ChatEventConsumer() {
@@ -744,7 +744,7 @@ class ChatOrchestrationServiceTest {
                     ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
             when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt())).thenReturn(okOutcome(List.of()));
+                    org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(List.of()));
 
             // 先跑一轮拿到真实的注入步骤(作为「历史里的上一轮」)
             List<ChatStepDto> firstSteps = new java.util.ArrayList<>();
@@ -862,7 +862,7 @@ class ChatOrchestrationServiceTest {
     void emitsRetrievalStepAndSourcesWhenRagReturnsHits() {
         List<CitationDto> citations = List.of(
                 new CitationDto(11L, "arch.md", "file", 2, 0.9, "pgvector provides cosine search"));
-        when(ragRetrievalClient.searchWithStatus("向量检索", 6)).thenReturn(okOutcome(citations));
+        when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.eq("向量检索"), org.mockito.ArgumentMatchers.eq(6), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(citations));
 
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<List<CitationDto>> sourcesEvents = new java.util.ArrayList<>();
@@ -896,7 +896,7 @@ class ChatOrchestrationServiceTest {
     @Test
     void emptyRagYieldsNoStepsAndNoSourcesEvent() {
         when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyInt()))
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(okOutcome(List.of()));
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<List<CitationDto>> sourcesEvents = new java.util.ArrayList<>();

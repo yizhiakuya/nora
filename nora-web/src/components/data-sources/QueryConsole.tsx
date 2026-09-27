@@ -154,6 +154,9 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
       "每日 09:00",
       sql.trim() || AI_SUGGEST,
       { frequency: "daily", localTime: "09:00", timezone: tz },
+      // B3(2026-09-27):目标连接随规则落库——此前不传,执行时回退
+      // 「数据源列表第一项」,多库场景在 B 库保存的查询可能在 A 库执行
+      connectionId,
     );
     if (saved) {
       toast.success("已保存为定期任务（每日 09:00 执行），到「任务」页查看");
@@ -179,6 +182,8 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
     if (connectionId !== undefined) {
       params.set("refs", JSON.stringify([{ kind: "datasource", id: connectionId, name: database }]));
     }
+    // B6(2026-09-27):跨页发起 = 新建处理(不接着旧会话);沿用统一语义
+    params.set("new", "1");
     navigate(`/chat?${params.toString()}`);
   };
 

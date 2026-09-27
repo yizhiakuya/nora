@@ -36,6 +36,8 @@ export interface BackendExecution {
   id: number;
   ruleId?: number;
   ruleName: string;
+  /** 规则原始动作 JSON(B2,2026-09-27;「设为定期任务」复用它而非结果文本) */
+  actionJson?: string | null;
   durationMs: number | null;
   status: string;
   detail: string;
@@ -75,14 +77,16 @@ function toRule(r: BackendRule): AutomationRule {
 
 function describeAction(actionJson: string): string {
   try {
-    const action = JSON.parse(actionJson) as { type?: string; sql?: string; prompt?: string };
+    const action = JSON.parse(actionJson) as { type?: string; sql?: string; prompt?: string; connectionId?: number };
     if (action.type === "agent" && action.prompt) {
       const oneLine = action.prompt.replace(/\s+/g, " ");
       return "🤖 " + (oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine);
     }
     if (action.type === "sql" && action.sql) {
       const oneLine = action.sql.replace(/\s+/g, " ");
-      return oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
+      const sqlText = oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine;
+      // B3(2026-09-27):绑定连接时标注目标库 id(执行目标可见;名称由列表页另行解析)
+      return action.connectionId != null ? `@连接#${action.connectionId} ${sqlText}` : sqlText;
     }
   } catch {
     /* fall through */
@@ -96,6 +100,8 @@ function toExecution(e: BackendExecution): ExecutionRecord {
     id: e.id,
     ruleId: e.ruleId,
     ruleName: e.ruleName,
+    // 规则原始动作(B2):「设为定期任务」据此复用原始指令(结果文本只作参考)
+    actionJson: e.actionJson ?? null,
     time: mdHmFromLocalIso(e.startedAt),
     duration: e.durationMs != null ? `${(e.durationMs / 1000).toFixed(1)}s` : "—",
     // 终态直通(F2,2026-09-26):后端执行器返回 completed/partial/failed/
@@ -155,6 +161,9 @@ export const automationsApi = {
     prompt?: string;
     /** daily/weekly 必填:日程 JSON 字符串(M4-01,{frequency,localTime,dayOfWeek,timezone}) */
     schedule?: string;
+    /** SQL 动作的目标数据源连接 id(B3,2026-09-27:随规则落库,执行时优先使用;
+     *  不传 = 旧行为「列表第一项」,多库时执行目标会丢失) */
+    connectionId?: number;
   }): Promise<AutomationRule> {
     const item = await requestJson<BackendRule>("/automations", {
       method: "POST",

@@ -1,24 +1,28 @@
 'use client';
 
 import { useState } from "react";
-import { RotateCw, CheckCircle2, XCircle, Loader2, History, ChevronRight, AlertTriangle, CircleSlash, HelpCircle, CalendarX } from "lucide-react";
+import { RotateCw, History, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
+import MarkdownContent from "@/components/shared/MarkdownContent";
 import type { ExecutionRecord } from "@/types";
 import { useAutomations } from "@/hooks/useAutomations";
+import { EXECUTION_STATUS_META as STATUS_META } from "@/lib/executionStatus";
 
-// 终态展示(F2,2026-09-26):partial/cancelled/unknown/missed_schedule 各自
-// 有独立视觉——不再把非 success 一律画成红色「失败」(取消/未知/错过计划
-// 都不是执行失败,混在一起用户无法区分)。
-const STATUS_META: Record<ExecutionRecord["status"], { icon: React.ElementType; cls: string; label: string }> = {
-  success:         { icon: CheckCircle2,  cls: "text-green-600 dark:text-green-400",   label: "成功" },
-  partial:         { icon: AlertTriangle, cls: "text-amber-600 dark:text-amber-400",   label: "部分完成" },
-  failed:          { icon: XCircle,       cls: "text-red-600 dark:text-red-400",       label: "失败" },
-  cancelled:       { icon: CircleSlash,   cls: "text-gray-500 dark:text-gray-400",     label: "已取消" },
-  unknown:         { icon: HelpCircle,    cls: "text-orange-600 dark:text-orange-400", label: "结果未知" },
-  running:         { icon: Loader2,       cls: "text-blue-600 dark:text-blue-400",     label: "执行中" },
-  missed_schedule: { icon: CalendarX,     cls: "text-amber-600 dark:text-amber-400",   label: "错过计划点" },
-};
+// 终态展示(B5,2026-09-27):改用共享映射(lib/executionStatus.ts)——
+// 与首页「最近成果」、资料页「已保存任务结果」同一份,同一条记录在各入口
+// 状态一致(partial/cancelled/unknown/missed_schedule 各有独立视觉)。
+
+/** 解析规则原始动作 JSON(B2;失败返回 null,调用方退回结果文本兜底)。 */
+function parseActionJson(actionJson: string | null | undefined): { prompt?: string; sql?: string } | null {
+  if (!actionJson) return null;
+  try {
+    const parsed = JSON.parse(actionJson) as { prompt?: string; sql?: string };
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 执行历史(M0-04,2026-09-20):
@@ -104,15 +108,23 @@ export function ExecutionHistory({ onCreateSchedule }: { onCreateSchedule?: (pre
             <Button
               variant="outline" size="sm"
               onClick={() => {
-                // M4-02:从成果创建定期任务——带入规则名与结果摘要作为指令参考;
-                // 用户在新建弹窗里确认日程(不静默继承)。
+                // B2(2026-09-27,评审报告):复用**原始指令**创建定期任务——
+                // 此前把结果文本(viewing.detail)当作下一次指令,结果陈述
+                // (「已完成整理,文件在…」)不能表达「下周重新查找并整理」的
+                // 操作要求。现在:action 取规则原始动作(agent 取 prompt /
+                // SQL 取语句),上次结果作为**参考**附在指令后。
+                const parsed = parseActionJson(viewing.actionJson);
+                const original = parsed?.prompt ?? parsed?.sql;
+                const action = original
+                  ? `【原始指令】\n${original}\n\n【上次结果参考】\n${viewing.detail.slice(0, 1500)}`
+                  : viewing.detail.slice(0, 2000);
                 onCreateSchedule?.({
                   name: `${viewing.ruleName}（定期）`,
-                  action: viewing.detail.slice(0, 2000),
+                  action,
                 });
                 setViewing(null);
               }}
-              title="以本次结果为依据创建定期任务"
+              title="复用原始指令创建定期任务(上次结果作为参考附后)"
             >
               设为定期任务
             </Button>
@@ -133,9 +145,9 @@ export function ExecutionHistory({ onCreateSchedule }: { onCreateSchedule?: (pre
               <span>耗时:{viewing.duration}</span>
               <span>状态:{STATUS_META[viewing.status].label}</span>
             </div>
-            <pre className="max-h-[420px] overflow-auto rounded-lg border border-border bg-muted/40 p-3 text-xs whitespace-pre-wrap break-words font-mono">
-              {viewing.detail || "（本次执行没有输出内容）"}
-            </pre>
+            <div className="max-h-[420px] overflow-auto rounded-lg border border-border bg-muted/40 p-3 text-xs leading-relaxed">
+              <MarkdownContent className="prose-sm [&_pre]:whitespace-pre-wrap [&_pre]:break-words">{viewing.detail || "（本次执行没有输出内容）"}</MarkdownContent>
+            </div>
           </div>
         )}
       </Modal>

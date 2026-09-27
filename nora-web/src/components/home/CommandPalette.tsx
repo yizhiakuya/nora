@@ -26,7 +26,7 @@ interface SearchResult {
 
 const NAV_PAGES: SearchResult[] = [
   { id: "nav-home",    group: "页面", label: "助手",       hint: "输入需求、继续处理、最近成果", href: "/",       icon: Home,      color: "text-blue-500 dark:text-blue-400" },
-  { id: "nav-files",   group: "页面", label: "资料",       hint: "文件、长期知识、已保存成果",   href: "/files",   icon: Folder,    color: "text-blue-500 dark:text-blue-400" },
+  { id: "nav-files",   group: "页面", label: "资料",       hint: "文件、长期知识、任务结果",   href: "/files",   icon: Folder,    color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-chat",    group: "页面", label: "对话",       hint: "AI 对话助手",    href: "/chat",           icon: MessageSquare, color: "text-blue-500 dark:text-blue-400" },
   { id: "nav-tasks",   group: "页面", label: "任务",       hint: "正在处理 / 定期任务 / 执行记录", href: "/tasks", icon: ListCheck, color: "text-yellow-500 dark:text-yellow-400" },
   { id: "nav-know",    group: "页面", label: "长期知识",   hint: "资料 · RAG 检索", href: "/knowledge",      icon: BookOpen,  color: "text-blue-500 dark:text-blue-400" },

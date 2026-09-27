@@ -103,7 +103,7 @@ function shouldShowTimeDivider(prev: ChatMessage | undefined, cur: ChatMessage):
  * 智能滚动:用户上翻阅读历史时不强制拉底,显示「回到底部」按钮。
  */
 export function ChatConversation({ sessionId, initialMessages, initialInput, initialRefs, autoSendInitial }: ChatConversationProps) {
-  const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend, refs, addRef, removeRef } = useChat({
+  const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend, refs, addRef, removeRef, limitToRefs, setLimitToRefs } = useChat({
     initialMessages,
     initialInput,
     initialRefs,
@@ -166,6 +166,7 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
         reasoningLevel={reasoningLevel} onReasoningLevelChange={(l) => { setReasoningLevel(l); useAgentSettings.getState().setReasoningLevelOverride(l); }}
         permissionMode={permissionMode} onPermissionModeChange={setPermissionMode}
         refs={refs} onAddRef={addRef} onRemoveRef={removeRef}
+        limitToRefs={limitToRefs} onLimitToRefsChange={setLimitToRefs}
         contextTokens={estimateContextTokens(messages, input)}
         contextLimit={resolveContextLimit(messages)} />
     </>

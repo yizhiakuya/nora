@@ -9,6 +9,7 @@ import { ChatConversation } from "@/components/chat/ChatConversation";
 import { useModelProviders } from "@/hooks/useModelProviders";
 import { deleteSessionOnBackend } from "@/lib/api/agentApi";
 import { relativeTime } from "@/lib/relativeTime";
+import { useAgentOnline } from "@/hooks/useBackendHealth";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 
@@ -22,6 +23,8 @@ export default function ChatPage() {
   const defaultModel = useModelProviders((s) => s.defaultModel);
   const syncProviders = useModelProviders((s) => s.syncFromBackend);
   const [copied, setCopied] = useState(false);
+  // B7(2026-09-27):agent 独立探针——离线只提示本区域,不全屏替换
+  const agentOnline = useAgentOnline();
   // 跨页跳转预填(如数据源页「让 AI 帮我写 SQL」带 ?prompt=...):只读一次,避免后续重挂载重复填入
   const [prefillPrompt] = useState(() => new URLSearchParams(window.location.search).get("prompt") ?? "");
   // 自动发送(2026-09-20 首页「开始新需求」):autosend=1 时预填后直接发出,
@@ -46,13 +49,26 @@ export default function ChatPage() {
   // 指定会话(M1-02):助手首页「开始新需求」新建会话后带 ?session=<id> 进入,
   // 直接落到该会话而不是"最近一个活跃会话"。挂载时只应用一次。
   const [targetSessionId] = useState(() => new URLSearchParams(window.location.search).get("session") ?? "");
+  // B6(2026-09-27):跨页「交给助手」带 ?new=1 时**新建会话**——
+  // 从资料页发起 = 一个新处理任务,不再默认接着当前活跃会话工作。
+  const [wantNewSession] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
   const setActiveSession = useChatSessions((s) => s.setActive);
 
   useEffect(() => {
     if (targetSessionId) {
       setActiveSession(targetSessionId);
+    } else if (wantNewSession) {
+      // 新建空会话并激活(prompt/refs 由 prefill 机制填入输入区,不自动发送)
+      const newId = createSession();
+      setActiveSession(newId);
+      // 用后即清 URL 的 new 参数:切会话重挂载不再重复建会话
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("new");
+        window.history.replaceState({}, "", url.toString());
+      } catch { /* URL 处理失败不影响 */ }
     }
-  }, [targetSessionId, setActiveSession]);
+  }, [targetSessionId, wantNewSession, setActiveSession, createSession]);
 
   useEffect(() => {
     void syncProviders().catch(() => undefined);
@@ -144,6 +160,13 @@ export default function ChatPage() {
       <div className="flex-1 flex overflow-hidden">
         {active ? (
           <div key={active.id} className="flex-1 relative flex flex-col min-w-0">
+            {/* B7(2026-09-27):agent-service 不可用时的局部提示——不再全屏
+                替换整个工作台(文件/任务/数据源区域仍可用),只在此区域说明 */}
+            {agentOnline === false && (
+              <div className="shrink-0 px-4 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-[11px] text-amber-800 dark:text-amber-200">
+                Agent 服务不可用——对话暂时无法执行;其他区域(文件、任务、数据源)不受影响。服务恢复后本提示自动消失。
+              </div>
+            )}
             <ChatConversation sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} initialRefs={prefillRefs} autoSendInitial={autoSend} />
           </div>
         ) : (

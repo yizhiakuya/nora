@@ -77,6 +77,12 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
   /** 待发送引用(附件/文件/知识库文档;2026-09-17):发送时序列化进消息尾部。
    *  initialRefs:跨页「交给助手」交接(M2-02)预填的引用集合。 */
   const [refs, setRefs] = useState<ChatRef[]>(initialRefs);
+  /**
+   * 限定检索范围(B4,2026-09-27):开启后本轮自动检索只从**引用的知识库
+   * 文档**里召回(docIds 进 RAG 范围查询),不混入范围外内容。
+   * 关闭(默认)= 旧行为:引用内容排前,其余资料仍参与检索。
+   */
+  const [limitToRefs, setLimitToRefs] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const model = useModelProviders((s) => s.defaultModel);
   // 生效渠道:与后端 activeProvider(providerId, model) 同一回落顺序(显式 id → 按名)。
@@ -402,12 +408,20 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
 
   /** 待发送引用 → 结构化上下文(M2-01);无引用返回 undefined(请求不带该字段)。 */
   const contextFromRefs = useCallback((pending: ChatRef[]): TaskContextPayload | undefined => {
-    if (pending.length === 0) return undefined;
+    // B4(2026-09-27):「限定检索」开启且有知识库文档引用时,附检索范围——
+    // 后端据此只从这些文档召回(docIds 同时进入向量与关键词两路)。
+    const scopedDocIds = limitToRefs
+      ? pending.filter((r) => r.kind === "doc").map((r) => r.id)
+      : [];
+    if (pending.length === 0 && scopedDocIds.length === 0) return undefined;
     return {
       version: 1,
       refs: pending.map((r) => ({ kind: r.kind, id: String(r.id), label: r.name })),
+      ...(scopedDocIds.length > 0
+        ? { retrievalScope: { docIds: scopedDocIds } }
+        : {}),
     };
-  }, []);
+  }, [limitToRefs]);
 
   const sendMessage = useCallback(async () => {
     if ((!input.trim() && refs.length === 0) || isSending) return;
@@ -436,6 +450,8 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
     ]);
     setInput("");
     setRefs([]);
+    // B4:限定检索是一次性开关——随发送重置,下一轮默认回到「全库检索」
+    setLimitToRefs(false);
     await runTurn(content, assistantMsgId, context);
   }, [input, refs, isSending, runTurn, composeWithRefs, contextFromRefs]);
 
@@ -566,6 +582,9 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
     refs,
     addRef,
     removeRef,
+    /** 限定检索范围(B4):开启后本轮只从引用的知识文档召回 */
+    limitToRefs,
+    setLimitToRefs,
     isSending,
     sendMessage,
     scrollRef,
