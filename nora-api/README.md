@@ -50,7 +50,7 @@ Nora 个人工作台 Java 后端。设计文档见 [docs/](docs/)：
 # 基础设施（PG :5432 / Redis :6379 / Nacos :8848）
 cd nora-api && docker compose --profile dev-basic up -d
 
-# 构建（16 模块全部构建 + 测试）
+# 构建（14 模块全部构建 + 测试）
 mvn install
 
 # 起服务（示例：file + rag + agent + gateway）
@@ -72,7 +72,7 @@ Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local
 > 脚本不识别 Git Bash 的 `MINGW64_NT` uname、未把路径转回 Windows 格式；
 > 已在 `D:/tools/apache-maven-3.9.16/bin/mvn` 中补 `MSYS*)` 分支并让 `MINGW*` 启用
 > cygpath 转换（原脚本备份为 `mvn.bak-20260906`）。**升级 Maven 后需重新打此补丁。**
-> 当前 `mvn -B install` 全绿：16 模块 SUCCESS，106 测试 0 失败。
+> 当前 `mvn test` 全绿：14 模块 SUCCESS，272 测试 0 失败（2026-09-27）。
 
 ## 已知设计偏差
 
@@ -82,8 +82,9 @@ Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local
 - **检索为混合检索（向量 + pg_trgm）**：`V3__hybrid_search.sql` 引入 `pg_trgm` 扩展，
   关键词侧用 `strict_word_similarity`（免中文分词），与向量侧按权重 RRF 融合
   （`nora.retrieval.*`）。`pg_trgm` 缺失时自动降级为纯向量，不影响服务启动。
-  相似度下限 `min-score` 默认 `0.45`，为 jina-embeddings-v3 在本语料上的实测值
-  （相关 ~0.46–0.76 / 无关 ~0.31–0.42）；换 embedding 模型后需重新标定，否则可能全砍或全放。
+  相似度下限 `min-score` 默认 `0.51`（2026-09-22 评测校准：无关查询最高 0.476、
+  相关查询最低 0.540，取两带中点；复校详见 `scripts/rag-eval.py` 基线）；换 embedding
+  模型后需重新标定，否则可能全砍或全放。
 - **文件→RAG 同步**：生命周期通知（删/恢复/永久删）带持久化重试（`pending_rag_sync` + 定时退避，2026-09-20）；
   索引触发仍为 `@Async` 火忘调用（失败可在文件页重新索引）。
 - **单实例假设**：LiveTurn / activeTurns / 自动任务防重集合都在进程内；Redis 审批票据不等于多实例恢复能力。

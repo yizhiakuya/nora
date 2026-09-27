@@ -288,9 +288,11 @@ export async function generateCitationsAsync(query: string, topK = 2): Promise<C
 
 /** POST /api/rag/index/text → 保存文本到知识库(name-keyed,同名覆盖重建索引) */
 export async function saveTextAsync(name: string, text: string): Promise<KnowledgeDoc | null> {
+  // A2(2026-09-27):source=chat——对话保存的文档在知识库标记「对话产出」,
+  // 不再与通用文本保存混在一起(避免以后检索到旧结论时误以为它是原始资料)
   const doc = await requestJson<KnowledgeDoc>("/rag/index/text", {
     method: "POST",
-    body: JSON.stringify({ name, text }),
+    body: JSON.stringify({ name, text, source: "chat" }),
   });
   return doc ?? null;
 }

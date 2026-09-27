@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { usePreferences } from "@/hooks/usePreferences";
-import { Search, ArrowUp, Loader2, Sparkles } from "lucide-react";
+import { Search, ArrowUp, Loader2, Paperclip, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
@@ -12,15 +12,22 @@ import { QuickActions } from "@/components/home/QuickActions";
 import { RunningTasks } from "@/components/automations/RunningTasks";
 import { RecentResults } from "@/components/home/RecentResults";
 import { useChatSessions } from "@/hooks/useChatSessions";
+import { ReferencePicker } from "@/components/chat/ReferencePicker";
+import { RefChip } from "@/components/chat/RefChip";
+import { refKey, type ChatRef } from "@/lib/chatRefs";
 
 /**
  * 助手首页(M1-02,2026-09-20,按产品改造方案 §4.1):
- * 输入需求为首要焦点;「继续处理」展示后台运行中的轮次;「最近成果」打开
+ * 输入需求为首要焦点;「继续处理」展示后台运行中的轮次;「最近任务结果」打开
  * 已完成的结果。不再是服务数/连接数/Chunks 的运维面板(审查报告 B10)。
  *
  * 开始新需求 = 新建会话后带 prompt 跳转,**在对话页自动发送**(2026-09-20 用户
  * 反馈修正:此前只预填不发送,用户以为"发不出去")。跳转携带 autosend=1,
  * 对话页发送后即从 URL 移除,刷新不会重发。
+ *
+ * B3(2026-09-27,评审报告):**发送前可以加资料**——此前首页只能发纯文本,
+ * 需要资料的请求先开始执行、资料随后才补。现在输入区有 📎(文件)与 📄
+ * (知识库)按钮,选中的引用随跳转带进新会话(chips 在输入区可见可删)。
  */
 export default function Home() {
   // 问候语(2026-09-19 去假数据):按时段 + 用户昵称
@@ -30,6 +37,9 @@ export default function Home() {
   const greetLine = accountName.trim() ? `${greeting}，${accountName.trim()}` : greeting;
   const [demand, setDemand] = useState("");
   const [starting, setStarting] = useState(false);
+  /** 发送前选中的资料引用(B3):随跳转带进新会话,对话页解析为 chips */
+  const [refs, setRefs] = useState<ChatRef[]>([]);
+  const [picker, setPicker] = useState<"file" | "doc" | null>(null);
   const navigate = useNavigate();
   const createSession = useChatSessions((s) => s.createSession);
 
@@ -43,7 +53,9 @@ export default function Home() {
     if (!text || starting) return;
     setStarting(true);
     const sessionId = createSession();
-    navigate(`/chat?prompt=${encodeURIComponent(text)}&session=${encodeURIComponent(sessionId)}&autosend=1`);
+    // B3:选中的资料引用随跳转带进新会话(对话页解析为 chips,发送时序列化)
+    const refsParam = refs.length > 0 ? `&refs=${encodeURIComponent(JSON.stringify(refs))}` : "";
+    navigate(`/chat?prompt=${encodeURIComponent(text)}&session=${encodeURIComponent(sessionId)}&autosend=1${refsParam}`);
   };
 
   const headerActions = (
@@ -87,10 +99,35 @@ export default function Home() {
                 placeholder="例如：比较这几份资料的差异，给我一份报告；或把本周的演出照片整理到一个文件夹"
                 className="w-full bg-transparent border-none outline-none resize-none text-sm text-foreground placeholder:text-muted-foreground/60 px-1 py-1"
               />
+              {/* B3:发送前选中的资料 chips(可删;随跳转带进新会话) */}
+              {refs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-1 pb-1.5">
+                  {refs.map((r) => (
+                    <RefChip key={refKey(r)} chatRef={r}
+                      onRemove={(k) => setRefs((prev) => prev.filter((x) => refKey(x) !== k))} />
+                  ))}
+                </div>
+              )}
               <div className="flex items-center justify-between mt-1">
                 <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
-                  <Sparkles className="w-3 h-3" />
-                  <span>进入对话后可添加资料、选择连接；Enter 发送，Shift+Enter 换行</span>
+                  {/* B3:发送前可加资料——📎 文件 / 📄 知识库 */}
+                  <button
+                    type="button"
+                    onClick={() => setPicker("file")}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    title="添加文件(随需求一起交给 AI)"
+                  >
+                    <Paperclip className="w-3 h-3" /> 文件
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPicker("doc")}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    title="添加知识库文档(随需求一起交给 AI)"
+                  >
+                    <BookOpen className="w-3 h-3" /> 知识库
+                  </button>
+                  <span className="hidden sm:inline">Enter 发送，Shift+Enter 换行</span>
                 </div>
                 <Button
                   size="sm"
@@ -125,7 +162,16 @@ export default function Home() {
         </div>
       </div>
 
-      
+      {/* B3:发送前加资料的选择器(文件/知识库) */}
+      <ReferencePicker
+        kind={picker ?? "file"}
+        isOpen={picker != null}
+        onClose={() => setPicker(null)}
+        onPick={(ref) => {
+          setRefs((prev) => (prev.some((r) => refKey(r) === refKey(ref)) ? prev : [...prev, ref]));
+          setPicker(null);
+        }}
+      />
     </>
   );
 }

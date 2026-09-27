@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
-import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff, FolderInput, Plus, MoreHorizontal } from "lucide-react";
+import { Search, Trash2, Pencil, RefreshCw, Loader2, Eye, EyeOff, FolderInput, Plus, MoreHorizontal, MessageSquare } from "lucide-react";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeBase, KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types";
@@ -11,6 +11,7 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { addChunk, createBase, deleteChunk, fetchBases, fetchDocDetail, reindexDoc, setChunkEnabled, setDocBase, setDocEnabled, updateChunk } from "@/lib/services/ragService";
 import { USE_BACKEND } from "@/lib/api/client";
+import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
 import { toast } from "sonner";
 
 const SOURCE_ORDER: KnowledgeSource[] = ["file", "database", "repo", "environment", "chat", "text"];
@@ -204,11 +205,26 @@ export function DocumentLibrary() {
     });
   };
 
+  /** 文档详情抽屉里的来源会话(A2:对话保存的文档可回到来源会话)。 */
+  const [detailSourceSession, setDetailSourceSession] = useState<string | null>(null);
+
   const openDetail = async (doc: KnowledgeDoc) => {
     setDetailLoading(doc.id);
+    setDetailSourceSession(null);
     try {
       const d = await fetchDocDetail(doc.id);
       setDetail(d);
+      // A2(2026-09-27):对话保存的文档(source=chat)查登记表拿来源会话——
+      // 知识库详情可直接回到那次对话(sessionId 为空/非对话产出则不显示)
+      if (USE_BACKEND && doc.source === "chat") {
+        try {
+          const artifacts = await savedArtifactsApi.list(200);
+          const match = artifacts.find((a) => a.kind === "knowledge_doc" && a.path === String(doc.id));
+          setDetailSourceSession(match?.sessionId ?? null);
+        } catch {
+          /* 登记查询失败:不显示来源会话,不阻断详情 */
+        }
+      }
     } catch (e) {
       toast.error(`加载详情失败：${(e as Error).message}`);
     } finally {
@@ -557,6 +573,20 @@ export function DocumentLibrary() {
         }
       >
         <div className="p-4 space-y-3 max-h-[60vh] overflow-auto">
+          {/* 来源会话(A2):对话保存的文档可回到那次对话 */}
+          {detail && detailSourceSession && (
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <MessageSquare className="w-3 h-3 text-teal-500 shrink-0" />
+              <span>对话产出,来源会话:</span>
+              <a
+                href={`/chat?session=${encodeURIComponent(detailSourceSession)}`}
+                className="font-mono text-blue-500 dark:text-blue-400 hover:underline truncate max-w-[320px]"
+                title={`回到来源会话 ${detailSourceSession}`}
+              >
+                {detailSourceSession}
+              </a>
+            </div>
+          )}
           {detail && detail.chunks.length === 0 && (
             <div className="text-sm text-muted-foreground">该文档暂无分块。</div>
           )}

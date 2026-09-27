@@ -358,21 +358,30 @@ public class RagController {
 
     /**
      * POST /api/rag/index/text —— 按展示名索引原始文本
-     * (按名索引的来源 "text";重存同名会替换其分块)。
+     * (按名索引;重存同名会替换其分块)。
      * Consumed by the chat "保存到知识库" action so saved answers survive
      * 刷新后仍在,且跨设备可检索。
+     *
+     * <p><b>来源标记(A2,2026-09-27)</b>:请求可带 {@code source}(chat / text,
+     * 默认 text)——对话保存传 {@code chat},知识库页显示「对话产出」而非
+     * 「文本保存」(评审报告 §6:AI 生成内容应明确标记,避免以后检索到旧结论
+     * 时误以为它就是原始资料)。评测脚本(rag-eval.py)不传,行为不变。
      */
     @PostMapping("/index/text")
     public ApiResponse<KnowledgeDocService.KnowledgeDocView> indexText(@RequestBody TextIndexRequest request) {
         if (request.text() == null || request.text().isBlank()) {
             throw new IllegalArgumentException("text is required");
         }
+        String source = request.source() == null || request.source().isBlank() ? "text" : request.source().trim();
+        if (!List.of("text", "chat").contains(source)) {
+            throw new BusinessException(400, "source 只允许 text / chat,收到: " + source);
+        }
         String name = (request.name() == null || request.name().isBlank())
                 ? "对话保存 " + java.time.LocalDate.now() : request.name();
         // 分段配置(阶段 B 模式 / 阶段 D 完整参数):chunkSize/overlap/separator 可选
         ChunkingService.ChunkConfig config = new ChunkingService.ChunkConfig(
                 request.chunkMode(), request.chunkSize(), request.overlap(), request.separator());
-        long docId = indexingService.indexDocument(name, "text", null,
+        long docId = indexingService.indexDocument(name, source, null,
                 (request.text().length() / 1024) + " KB", request.text(),
                 config, request.baseId());
         return ApiResponse.ok(knowledgeDocService.getDoc(docId));
@@ -642,15 +651,23 @@ public class RagController {
 
     /** POST /api/rag/index/text 请求体(阶段 B:可带 chunkMode 与 baseId)。 */
     public record TextIndexRequest(String name, String text, String chunkMode, Long baseId,
-                                   Integer chunkSize, Integer overlap, String separator) {
+                                   Integer chunkSize, Integer overlap, String separator,
+                                   /** A2:来源标记(text 默认 / chat 对话保存)。 */
+                                   String source) {
         /** 兼容构造(阶段 A 调用方)。 */
         public TextIndexRequest(String name, String text) {
-            this(name, text, null, null, null, null, null);
+            this(name, text, null, null, null, null, null, null);
         }
 
         /** 兼容构造(阶段 B 形态:模式 + 库)。 */
         public TextIndexRequest(String name, String text, String chunkMode, Long baseId) {
-            this(name, text, chunkMode, baseId, null, null, null);
+            this(name, text, chunkMode, baseId, null, null, null, null);
+        }
+
+        /** 兼容构造(阶段 D 形态:完整分段参数;source 缺省 text)。 */
+        public TextIndexRequest(String name, String text, String chunkMode, Long baseId,
+                                Integer chunkSize, Integer overlap, String separator) {
+            this(name, text, chunkMode, baseId, chunkSize, overlap, separator, null);
         }
     }
 
