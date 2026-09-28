@@ -440,9 +440,21 @@ public class McpServerService {
                 return McpToolResult.error("ERROR: MCP 工具调用失败(" + toolName + "): " + shorten(msg));
             }
         }
-        // 阶段 2:实际调用——中断 = 结果未知(可能已生效),重试按本地信任配置决策
+        // 阶段 2:实际调用——结果确定性按异常类型区分(2026-09-29 修复):
+        //  · McpError = 服务端返回 JSON-RPC 错误(参数校验失败/方法不存在等),
+        //    调用已到达且被**明确拒绝**——结果确定(没执行),按普通失败返回,
+        //    模型可直接修正参数重试。此前与传输异常一锅端成「结果未知」,
+        //    实测 tavily 校验拒绝(多传 description 参数)被误标 unknown,
+        //    模型收到「可能已生效,不要直接重发」的误导提示。
+        //  · 其余(传输中断/超时/连接断开)= 结果未知(可能已生效),不自动重放。
         try {
             return renderResultRich(client.callTool(new McpSchema.CallToolRequest(toolName, args)));
+        } catch (io.modelcontextprotocol.spec.McpError serverRejected) {
+            clientPool.evictClient(serverId);
+            String raw = serverRejected.getMessage() == null ? serverRejected.toString() : serverRejected.getMessage();
+            log.info("mcp callTool rejected by server (server={} tool={}): {}", server.name(), toolName, shorten(raw));
+            return McpToolResult.error("ERROR: MCP 服务器拒绝调用(" + toolName + "): " + shorten(raw)
+                    + " —— 调用未执行(服务端校验/拒绝)。请按错误修正参数后重试");
         } catch (Exception callFailure) {
             clientPool.evictClient(serverId);
             String raw = callFailure.getMessage() == null ? callFailure.toString() : callFailure.getMessage();
@@ -453,6 +465,10 @@ public class McpServerService {
                 try {
                     McpSyncClient fresh = clientPool.clientFor(server);
                     return renderResultRich(fresh.callTool(new McpSchema.CallToolRequest(toolName, args)));
+                } catch (io.modelcontextprotocol.spec.McpError rejected) {
+                    String msg = rejected.getMessage() == null ? rejected.toString() : rejected.getMessage();
+                    return McpToolResult.error("ERROR: MCP 服务器拒绝调用(" + toolName + "): " + shorten(msg)
+                            + " —— 调用未执行(服务端校验/拒绝)。请按错误修正参数后重试");
                 } catch (Exception e) {
                     String msg = friendlyConnectError(e.getMessage() == null ? e.toString() : e.getMessage());
                     log.warn("mcp read-only callTool failed after reconnect: server={} tool={}: {}",
