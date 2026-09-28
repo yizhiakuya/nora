@@ -106,14 +106,26 @@ class McpClientPool {
                     headerInjector = (requestBuilder, method, uri, requestBody, context) -> {
                 headers.forEach(requestBuilder::header);
             };
+            // query-string 密钥修复(2026-09-29):SDK 用 URI.resolve 拼接 endpoint——
+            // RFC 3986 的绝对路径引用会**替换掉 base 的 path 与 query**,tavily/exa
+            // 那种 `https://mcp.tavily.com/mcp/?tavilyApiKey=xxx` 的 query 被静默
+            // 丢弃(实测探针:请求到达但无 query)。修法:
+            //  · STREAMABLE:endpoint = 注册 URL 的 path+query(该协议 endpoint
+            //    就是完整 URL,path 与 query 都有效);
+            //  · SSE:SDK 约定始终连 base 的 /sse(中继:GET /sse 是流、POST /mcp
+            //    是消息端点,注册 URL 的 path 本就无意义)——保持 /sse 路径不变,
+            //    只把 query 透传到 /sse(密钥形态 SSE 服务器)。
+            String sseQuery = rawQueryOf(effectiveUrl);
             transport = switch (transportName) {
                 case "SSE" ->
                     io.modelcontextprotocol.client.transport.HttpClientSseClientTransport.builder(effectiveUrl)
+                            .sseEndpoint(sseQuery == null ? "/sse" : "/sse?" + sseQuery)
                             .customizeClient(http11For(effectiveUrl))
                             .httpRequestCustomizer(headerInjector)
                             .build();
                 default ->
                     io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport.builder(effectiveUrl)
+                            .endpoint(endpointOf(effectiveUrl))
                             .customizeClient(http11For(effectiveUrl))
                             .httpRequestCustomizer(headerInjector)
                             .build();
@@ -141,6 +153,35 @@ class McpClientPool {
         clients.put(server.id(), client);
         clientUrls.put(server.id(), desiredUrl == null ? "" : desiredUrl);
         return client;
+    }
+
+    /**
+     * 从注册 URL 提取「path + query」作为 Streamable HTTP 的传输 endpoint
+     * (2026-09-29)。
+     *
+     * <p>SDK 默认 endpoint="/mcp" 是绝对路径引用,URI.resolve 会丢弃 base 的
+     * path/query——query-string 形态的密钥(tavily/exa)会被静默丢掉。这里
+     * 原样提取,resolve 后得到与注册完全一致的 URL;path 为空时回退 SDK 默认 /mcp。
+     */
+    static String endpointOf(String url) {
+        try {
+            java.net.URI u = java.net.URI.create(url);
+            String path = u.getRawPath();
+            String query = u.getRawQuery();
+            String endpoint = (path == null || path.isEmpty()) ? "/mcp" : path;
+            return query == null ? endpoint : endpoint + "?" + query;
+        } catch (Exception e) {
+            return "/mcp";
+        }
+    }
+
+    /** 注册 URL 的 raw query(SSE 传输透传用;无则 null)。 */
+    static String rawQueryOf(String url) {
+        try {
+            return java.net.URI.create(url).getRawQuery();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

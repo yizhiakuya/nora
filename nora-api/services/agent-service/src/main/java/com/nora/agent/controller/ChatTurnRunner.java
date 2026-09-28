@@ -261,6 +261,23 @@ class ChatTurnRunner {
                         }
 
                         @Override
+                        public void questionRequired(com.nora.agent.dto.QuestionRequestDto request) {
+                            // ask_user 澄清提问(2026-09-29):与审批同款「等待用户」
+                            // 运行态——任务页显示「等待确认」,用户作答后步骤
+                            // 终态事件会把状态改回 running
+                            send(emitter, "question_required", request);
+                            turnStreams.publish(liveTurn, "question_required", toJson(request));
+                            if (runStarted[0]) {
+                                try {
+                                    chatStoreService.updateRunStatus(runId, "awaiting_approval");
+                                    lastRunStatus[0] = "awaiting_approval";
+                                } catch (Exception e) {
+                                    log.debug("run status awaiting_approval failed: {}", e.getMessage());
+                                }
+                            }
+                        }
+
+                        @Override
                         public void sources(List<CitationDto> found) {
                             citations.addAll(found);
                             send(emitter, "sources", found);
@@ -464,7 +481,7 @@ class ChatTurnRunner {
             switch (event) {
                 case "delta" -> { /* 高频,不逐条记 */ }
                 case "error" -> log.warn("sse event={} payload={}", event, abbreviate(json, 300));
-                case "step", "approval_required", "sources", "done" ->
+                case "step", "approval_required", "question_required", "sources", "done" ->
                         log.info("sse event={} payload={}", event, abbreviate(json, 200));
                 default -> log.debug("sse event={}", event);
             }

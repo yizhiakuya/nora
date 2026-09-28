@@ -278,6 +278,9 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
         onApproval: (approval) => {
           updateMessage(recoverId, { approval });
         },
+        onQuestion: (question) => {
+          updateMessage(recoverId, { question });
+        },
         onDone: (p?: unknown) => {
           // 轮次结束:去 typing 态;服务端已落库,主动拉历史收敛终态
           // (直接 loadHistory 会被本会话本地写版本闸门丢弃——恢复消息刚写回

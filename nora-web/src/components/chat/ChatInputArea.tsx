@@ -229,15 +229,39 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   };
 
   // 监听 input 变化，动态调整 textarea 高度
+  // 2026-09-29 修复(输入框卡在大高度不缩回):此前仅在 [input] 变化时重算,
+  // 高度以 inline style 持久化——一旦某个时刻把它留在高值而后续没有 input
+  // 变化(实测输入框停在最大高度、内容清空后仍是大框),就会永久卡住。
+  // 现在:每次渲染后都重算(rAF 合并同帧多次调度;不短路——自愈正是目的)。
+  // 不手工同步 value:受控组件的 DOM 更新交给 React,组合输入(IME)期间
+  // 手写 value 会擦掉正在组合的文本。
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    // 强制先重置为 auto 以便在删除文字时能缩回
-    textarea.style.height = 'auto';
-    // 设置为滚动高度，最大限制交给 CSS maxHeight
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [input]);
+    const fit = () => {
+      // 强制先重置为 auto 以便在删除文字时能缩回
+      textarea.style.height = 'auto';
+      // 设置为滚动高度，最大限制交给 CSS maxHeight
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    };
+    const raf = requestAnimationFrame(fit);
+    // 宽度变化(窗口/侧栏缩放改变折行数)不触发 React 渲染:ResizeObserver 兜底
+    let lastWidth = textarea.clientWidth;
+    const ro = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          if (textarea.clientWidth !== lastWidth) {
+            lastWidth = textarea.clientWidth;
+            fit();
+          }
+        })
+      : null;
+    ro?.observe(textarea);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+  });
 
   return (
     <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">

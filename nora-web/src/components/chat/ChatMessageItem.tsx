@@ -2,6 +2,7 @@ import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
+import { QuestionCard } from "./QuestionCard";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { splitChatRefs, refKey } from "@/lib/chatRefs";
 import { RefChip } from "./RefChip";
@@ -370,6 +371,13 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                     <ApprovalCard
                       approval={msg.approval}
                       onResolved={(d) => toast.success(d === "approved" ? "已批准，Agent 继续执行" : "已拒绝，Agent 跳过该操作")}
+                    />
+                  )}
+
+                  {msg.question && (
+                    <QuestionCard
+                      question={msg.question}
+                      onAnswered={(answer) => toast.success(`已回答：${answer.length > 30 ? answer.slice(0, 30) + "…" : answer}`)}
                     />
                   )}
 

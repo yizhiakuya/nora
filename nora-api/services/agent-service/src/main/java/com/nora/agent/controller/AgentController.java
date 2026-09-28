@@ -68,6 +68,8 @@ public class AgentController {
     private final ChatOrchestrationService orchestrationService;
     private final ChatStoreService chatStoreService;
     private final ApprovalService approvalService;
+    /** ask_user 澄清提问服务(可空:老测试构造器不接)。 */
+    private final com.nora.agent.service.QuestionService questionService;
     private final ObjectMapper objectMapper;
     private final TurnStreamRegistry turnStreams;
     /** 轮次取消信号(可空:老测试构造器不接);「停止生成」的可靠判据。 */
@@ -83,7 +85,7 @@ public class AgentController {
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
                            ObjectMapper objectMapper) {
-        this(orchestrationService, chatStoreService, null, objectMapper, new TurnStreamRegistry(), null);
+        this(orchestrationService, chatStoreService, null, objectMapper, new TurnStreamRegistry(), null, null);
     }
 
     public AgentController(ChatOrchestrationService orchestrationService,
@@ -91,7 +93,7 @@ public class AgentController {
                            ApprovalService approvalService,
                            ObjectMapper objectMapper,
                            TurnStreamRegistry turnStreams) {
-        this(orchestrationService, chatStoreService, approvalService, objectMapper, turnStreams, null);
+        this(orchestrationService, chatStoreService, approvalService, objectMapper, turnStreams, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -101,10 +103,13 @@ public class AgentController {
                            ObjectMapper objectMapper,
                            TurnStreamRegistry turnStreams,
                            @org.springframework.beans.factory.annotation.Autowired(required = false)
-                           TurnCancellation turnCancellation) {
+                           TurnCancellation turnCancellation,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false)
+                           com.nora.agent.service.QuestionService questionService) {
         this.orchestrationService = orchestrationService;
         this.chatStoreService = chatStoreService;
         this.approvalService = approvalService;
+        this.questionService = questionService;
         this.objectMapper = objectMapper;
         this.turnStreams = turnStreams;
         this.turnCancellation = turnCancellation;
@@ -347,6 +352,10 @@ public class AgentController {
             }
         }
         approvalService.clearPending(sessionId);
+        // ask_user 挂起提问同路径清理:以「未回答」结算,释放阻塞中的工具线程
+        if (questionService != null) {
+            questionService.clearPending(sessionId);
+        }
         // 有在途轮次或标志已置,都算"取消已受理"(前端据 ok(true) 收敛 UI)
         return ApiResponse.ok(cancelled || turnCancellation != null);
     }
@@ -365,6 +374,29 @@ public class AgentController {
             throw new IllegalArgumentException("approval not found, session mismatch, or already resolved");
         }
         return ApiResponse.ok(approved);
+    }
+
+    /**
+     * 回答挂起的 ask_user 提问(2026-09-29)。一次性 token 来自
+     * question_required SSE 事件;答案作为工具结果回填给模型,同一轮继续执行。
+     * 未知/已消费 token 返回 404(绝不静默成功)。
+     */
+    @PostMapping("/answers/{questionToken}")
+    public ApiResponse<Boolean> resolveQuestion(@PathVariable String questionToken,
+                                                @RequestBody QuestionAnswer answer,
+                                                @org.springframework.web.bind.annotation.RequestParam("sessionId") String sessionId) {
+        boolean resolved = questionService != null
+                && questionService.resolve(sessionId, questionToken, answer.answer());
+        if (!resolved) {
+            throw new IllegalArgumentException("question not found, session mismatch, already resolved, or blank answer");
+        }
+        return ApiResponse.ok(true);
+    }
+
+    /** 某会话的挂起提问(重连兜底)。 */
+    @GetMapping("/sessions/{sessionId}/questions")
+    public ApiResponse<List<com.nora.agent.dto.QuestionRequestDto>> pendingQuestions(@PathVariable String sessionId) {
+        return ApiResponse.ok(questionService == null ? List.of() : questionService.pendingFor(sessionId));
     }
 
     /** 某会话的挂起审批(重连兜底)。 */
@@ -443,7 +475,8 @@ public class AgentController {
     public record ApprovalDecision(Boolean approved) {
     }
 
-
-
+    /** POST /api/chat/answers/{token} 请求体(ask_user 的回答)。 */
+    public record QuestionAnswer(String answer) {
+    }
 
 }

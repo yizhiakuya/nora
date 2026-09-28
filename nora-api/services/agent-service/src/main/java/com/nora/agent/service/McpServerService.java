@@ -59,6 +59,13 @@ public class McpServerService {
     private final McpClientPool clientPool;
     private final ObjectMapper objectMapper;
     /**
+     * 自定义环境变量(设置页「环境变量」;可空=测试构造)。
+     * 连接建立时对 url/headers/env/command/args 做 {@code ${VAR}} 替换
+     * (2026-09-29):密钥不进对话记录/数据库明文——用户把 key 存设置页,
+     * MCP 注册用占位符引用,是「复用本机已有密钥」的干净通道。
+     */
+    private final AppSettingStore appSettingStore;
+    /**
      * 本地是否信任远端 readOnlyHint 声明(2026-09-20 验收 F2,设计 §6):
      * 默认 false——远端注解只是参考,仅当本地配置显式信任时,声明只读的
      * 工具才允许调用中断后自动重放。配置项 nora.agent.mcp.trust-readonly-hints。
@@ -67,17 +74,59 @@ public class McpServerService {
 
     /** 测试便捷构造(不信任远端只读声明)。 */
     public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, RelayMediaRouter relayRouter) {
-        this(jdbcTemplate, objectMapper, relayRouter, false);
+        this(jdbcTemplate, objectMapper, relayRouter, false, null);
     }
 
+    /** 测试便捷构造(指定信任开关;不接设置存储)。 */
+    public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, RelayMediaRouter relayRouter,
+                            boolean trustReadOnlyHints) {
+        this(jdbcTemplate, objectMapper, relayRouter, trustReadOnlyHints, null);
+    }
+
+    /** Spring 构造(2026-09-29):接设置存储以支持 ${VAR} 替换。 */
     @org.springframework.beans.factory.annotation.Autowired
     public McpServerService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, RelayMediaRouter relayRouter,
                             @org.springframework.beans.factory.annotation.Value(
-                                    "${nora.agent.mcp.trust-readonly-hints:false}") boolean trustReadOnlyHints) {
+                                    "${nora.agent.mcp.trust-readonly-hints:false}") boolean trustReadOnlyHints,
+                            @org.springframework.beans.factory.annotation.Autowired(required = false)
+                            AppSettingStore appSettingStore) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.clientPool = new McpClientPool(objectMapper, relayRouter);
         this.trustReadOnlyHints = trustReadOnlyHints;
+        this.appSettingStore = appSettingStore;
+    }
+
+    /**
+     * {@code ${VAR}} 替换(连接建立前;设置页「环境变量」的值):
+     * 未定义的变量保持原样(连接会以字面量失败,可据此提示用户去设置)。
+     * 仅作用于连接用原始行——脱敏视图与 DB 里存的仍是占位符(密钥不落库)。
+     */
+    private String substituteEnv(String value) {
+        if (value == null || value.isEmpty() || appSettingStore == null || !value.contains("${")) {
+            return value;
+        }
+        Map<String, String> vars = com.nora.agent.controller.EnvVarsController.resolveForExecution(appSettingStore);
+        if (vars.isEmpty()) {
+            return value;
+        }
+        String out = value;
+        for (Map.Entry<String, String> e : vars.entrySet()) {
+            out = out.replace("${" + e.getKey() + "}", e.getValue());
+        }
+        return out;
+    }
+
+    /** 对原始行的连接相关字段做 ${VAR} 替换(不改 DB;仅连接/调用路径)。 */
+    private RawServer withResolvedEnv(RawServer raw) {
+        if (raw == null || appSettingStore == null) {
+            return raw;
+        }
+        return new RawServer(raw.id(), raw.name(),
+                substituteEnv(raw.url()), raw.transport(),
+                substituteEnv(raw.headers()), substituteEnv(raw.command()),
+                substituteEnv(raw.args()), substituteEnv(raw.env()),
+                raw.enabled(), raw.toolPolicy());
     }
 
     // ---------- 注册表 CRUD ----------
@@ -168,6 +217,43 @@ public class McpServerService {
         return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ? AND deleted_at IS NULL", id) : null;
     }
 
+    /**
+     * agent 通道的远程服务器更新(manage_mcp action=update,2026-09-29):
+     * url 与 headers 都是「给了才改」——只换密钥不必重传 url、只换地址不动
+     * 凭证;headers 显式传空对象 {} 表示清除全部鉴权头。更新后清空工具
+     * 缓存(挂载面待 refresh 重建),返回刷新后的脱敏视图。
+     *
+     * <p>为什么需要它(工具面修复):此前「改地址/换密钥」在工具面上无合法
+     * 通道——密钥被平台脱敏后 register 无法重放,只能 remove + 重新 register
+     * (历史会话实测:模型在阻塞点上打转 30+ 步)。
+     */
+    public ServerView updateRemote(long id, String url, Map<String, String> headers) {
+        boolean urlGiven = url != null && !url.isBlank();
+        boolean headersGiven = headers != null;
+        if (!urlGiven && !headersGiven) {
+            throw new IllegalArgumentException("update 至少需要 url 或 headers 之一(给什么改什么)");
+        }
+        clientPool.evictClient(id);
+        StringBuilder sql = new StringBuilder(
+                "UPDATE mcp_server SET status='untested', status_detail=NULL, tools_cache=NULL");
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        if (urlGiven) {
+            sql.append(", url = ?");
+            args.add(url.trim());
+        }
+        if (headersGiven) {
+            sql.append(", headers = ?");
+            args.add(headers.isEmpty() ? null : writeJson(headers));
+        }
+        sql.append(" WHERE id = ? AND transport <> 'STDIO' AND deleted_at IS NULL");
+        args.add(id);
+        int updated = jdbcTemplate.update(sql.toString(), args.toArray());
+        if (updated > 0) {
+            toolsRevision.incrementAndGet(); // tools_cache 被清空 = 挂载面变化
+        }
+        return updated > 0 ? queryOne(VIEW_SELECT + " WHERE id = ? AND deleted_at IS NULL", id) : null;
+    }
+
     /** 启用/停用服务器;停用同时丢弃池化客户端。 */
     public boolean setEnabled(long id, boolean enabled) {
         if (!enabled) {
@@ -201,20 +287,26 @@ public class McpServerService {
         return getByName(t);
     }
 
-    /** 取一条原始行(机密未脱敏——仅内部使用;排除软删)。 */
+    /**
+     * 取一条原始行(机密未脱敏——仅内部使用;排除软删)。
+     * 连接字段经 {@code ${VAR}} 替换(设置页环境变量;2026-09-29)。
+     */
     public RawServer rawById(long id) {
         List<RawServer> rows = jdbcTemplate.query(
                 "SELECT id, name, url, transport, headers, command, args, env, enabled, tool_policy FROM mcp_server WHERE id = ? AND deleted_at IS NULL",
                 (rs, i) -> rawOf(rs),
                 id);
-        return rows.isEmpty() ? null : rows.get(0);
+        return rows.isEmpty() ? null : withResolvedEnv(rows.get(0));
     }
 
-    /** 列出启用服务器的原始行(内部:连接建立用;排除软删)。 */
+    /**
+     * 列出启用服务器的原始行(内部:连接建立用;排除软删)。
+     * 连接字段经 {@code ${VAR}} 替换(设置页环境变量;2026-09-29)。
+     */
     public List<RawServer> rawEnabled() {
         return jdbcTemplate.query(
                 "SELECT id, name, url, transport, headers, command, args, env, enabled, tool_policy FROM mcp_server WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY id",
-                (rs, i) -> rawOf(rs));
+                (rs, i) -> withResolvedEnv(rawOf(rs)));
     }
 
     /**
@@ -526,7 +618,7 @@ public class McpServerService {
         }
         List<RawServer> rows = jdbcTemplate.query(
                 "SELECT id, name, url, transport, headers, command, args, env, enabled, tool_policy FROM mcp_server WHERE name = ? AND enabled = TRUE AND deleted_at IS NULL",
-                (rs, i) -> rawOf(rs),
+                (rs, i) -> withResolvedEnv(rawOf(rs)),
                 serverName);
         return rows.isEmpty() ? null : rows.get(0);
     }

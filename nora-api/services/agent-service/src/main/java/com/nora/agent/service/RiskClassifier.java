@@ -404,12 +404,12 @@ final class RiskClassifier {
     /** manage_mcp 动作白名单。 */
     static String validateMcpAction(String action) {
         if (action == null || action.isBlank()) {
-            return "拒绝执行：缺少 action 参数。可用值:list / refresh / enable / disable / register / remove / tools / call / setPolicy";
+            return "拒绝执行：缺少 action 参数。可用值:list / refresh / enable / disable / register / update / remove / tools / call / setPolicy";
         }
         String normalized = normalizeMcpAction(action);
-        if (!Set.of("list", "refresh", "enable", "disable", "register", "remove", "tools", "call", "setpolicy").contains(normalized)) {
+        if (!Set.of("list", "refresh", "enable", "disable", "register", "update", "remove", "tools", "call", "setpolicy").contains(normalized)) {
             return "拒绝执行「" + action + "」：action 只允许 "
-                    + "list / refresh / enable / disable / register / remove / tools(查工具清单) / call(按名调用工具) / setPolicy(设置加载策略)";
+                    + "list / refresh / enable / disable / register / update(改地址/密钥) / remove / tools(查工具清单) / call(按名调用工具) / setPolicy(设置加载策略)";
         }
         return null;
     }
@@ -432,6 +432,7 @@ final class RiskClassifier {
             case "invoke" -> "call";
             case "get_tools", "describe", "schema" -> "tools";
             case "set_policy", "policy" -> "setpolicy";
+            case "edit", "modify", "set", "update_credentials", "change" -> "update";
             default -> a;
         };
     }
@@ -481,8 +482,8 @@ final class RiskClassifier {
             }
             return null;
         }
-        if (url == null || !url.trim().startsWith("http")) {
-            return "拒绝执行：缺少合法 url(http(s):// 地址)";
+        if (url == null || (!url.trim().startsWith("http") && !url.trim().startsWith("${"))) {
+            return "拒绝执行：缺少合法 url(http(s):// 地址,或 ${VAR} 环境变量占位)";
         }
         return null;
     }

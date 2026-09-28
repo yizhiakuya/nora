@@ -24,6 +24,8 @@ class ChatToolsSpec {
     private final KnowledgeManageClient knowledgeManageClient;
     private final AutomationManageClient automationManageClient;
     private final EnvironmentStatusClient environmentStatusClient;
+    /** 澄清提问服务(ask_user 工具;null=不挂载该工具,测试构造器兼容)。 */
+    private final QuestionService questionService;
 
     ChatToolsSpec(ObjectMapper objectMapper,
                   AgentWorkspaceService agentWorkspaceService,
@@ -31,7 +33,7 @@ class ChatToolsSpec {
                   McpServerService mcpServerService,
                   TerminalService terminalService) {
         this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     ChatToolsSpec(ObjectMapper objectMapper,
@@ -41,7 +43,7 @@ class ChatToolsSpec {
                   TerminalService terminalService,
                   MediaFetchService mediaFetchService) {
         this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService,
-                mediaFetchService, null, null, null);
+                mediaFetchService, null, null, null, null);
     }
 
     ChatToolsSpec(ObjectMapper objectMapper,
@@ -53,6 +55,20 @@ class ChatToolsSpec {
                   KnowledgeManageClient knowledgeManageClient,
                   AutomationManageClient automationManageClient,
                   EnvironmentStatusClient environmentStatusClient) {
+        this(objectMapper, agentWorkspaceService, agentSkillService, mcpServerService, terminalService,
+                mediaFetchService, knowledgeManageClient, automationManageClient, environmentStatusClient, null);
+    }
+
+    ChatToolsSpec(ObjectMapper objectMapper,
+                  AgentWorkspaceService agentWorkspaceService,
+                  AgentSkillService agentSkillService,
+                  McpServerService mcpServerService,
+                  TerminalService terminalService,
+                  MediaFetchService mediaFetchService,
+                  KnowledgeManageClient knowledgeManageClient,
+                  AutomationManageClient automationManageClient,
+                  EnvironmentStatusClient environmentStatusClient,
+                  QuestionService questionService) {
         this.objectMapper = objectMapper;
         this.agentWorkspaceService = agentWorkspaceService;
         this.agentSkillService = agentSkillService;
@@ -62,6 +78,7 @@ class ChatToolsSpec {
         this.knowledgeManageClient = knowledgeManageClient;
         this.automationManageClient = automationManageClient;
         this.environmentStatusClient = environmentStatusClient;
+        this.questionService = questionService;
     }
 
     /** 给字符串字段加 enum 约束(有限取值集):无效值在 schema 层不可表示。 */
@@ -672,6 +689,44 @@ class ChatToolsSpec {
         tools.add(envTool);
         }
 
+        // ask_user 澄清提问(2026-09-29):轮内暂停等待用户作答,答案作为工具
+        // 结果回填继续同一轮。为什么是一等工具:此前「指代不明先问」在工具面上
+        // 不可表达——模型只能"结束回合丢个问题"或继续瞎猜(实测 sess-1790597675229
+        // 「装个搜索 MCP」被猜了 73 步,推理里 5 次写 should ask the user 却没有
+        // 动作可做)。不走审批门:提问不是高风险操作,任何档位都可发起。
+        if (questionService != null) {
+        ObjectNode askTool = objectMapper.createObjectNode();
+        askTool.put("type", "function");
+        ObjectNode askFn = askTool.putObject("function");
+        askFn.put("name", "ask_user");
+        askFn.put("description", "向用户提问并等待回答(暂停当前轮次,用户作答后从答案继续执行)。"
+                + "何时用:用户指代不明(「那个 MCP」「那个文件」无法确定所指)、缺少必须的信息"
+                + "(如选哪个方案、密钥从哪来)、需要在多个方案间让用户选择时。"
+                + "有候选项时给 options(用户可点选);问题要具体、可回答。"
+                + "不要用它确认已明确的事,也不要用它替代高风险操作的审批(审批是独立机制)。"
+                + "示例:{\"question\": \"要安装哪个搜索服务?\", \"options\": [\"tavily\", \"exa\"]}");
+        ObjectNode askParams = askFn.putObject("parameters");
+        askParams.put("type", "object");
+        askParams.put("additionalProperties", false);
+        ObjectNode askProps = askParams.putObject("properties");
+        ObjectNode askQuestionProp = askProps.putObject("question");
+        askQuestionProp.put("type", "string");
+        askQuestionProp.put("description", "要问用户的问题原文(具体、可回答,避免开放式的「你想要什么」)");
+        ObjectNode askOptionsProp = askProps.putObject("options");
+        askOptionsProp.put("type", "array");
+        askOptionsProp.putObject("items").put("type", "string");
+        askOptionsProp.put("description", "可选项(可选;给 2-5 个候选项让用户点选,同时用户仍可自由输入)");
+        ObjectNode askTimeoutProp = askProps.putObject("timeoutSeconds");
+        askTimeoutProp.put("type", "integer");
+        askTimeoutProp.put("description", "等待上限秒数(可选,默认 300,上限 600);超时后你会收到「未回答」提示,应基于合理假设继续");
+        ObjectNode askDescProp = askProps.putObject("description");
+        askDescProp.put("type", "string");
+        askDescProp.put("description", "一句话描述这次提问的目的(5-12 个字,祈使句)");
+        ArrayNode askRequired = askParams.putArray("required");
+        askRequired.add("question");
+        tools.add(askTool);
+        }
+
         // MCP 服务器管理:agent 可自管远程工具服务器(注册/启停/刷新/删除),
         // 与设置页 /api/mcp/servers 共用服务层。风险跟随全局权限档位
         // (register/remove 等 = HIGH:ASK 全问 / ASSIST 询问 / FULL 自动);
@@ -684,7 +739,9 @@ class ChatToolsSpec {
         mcpFn.put("description", "管理 MCP(Model Context Protocol)工具服务器(远程或本地进程):"
                 + "list=列出已注册服务器(名称/状态/工具数);"
                 + "refresh=测试连接并拉取工具清单(拉取成功后其工具挂载为 mcp__<服务器名>__<工具名>,你即可调用);"
-                + "enable/disable=启用或停用;register=注册新服务器;remove=删除注册;"
+                + "enable/disable=启用或停用;register=注册新服务器;"
+                + "update=原地修改既有远程服务器的 url / headers(换密钥/换地址——不必 remove 重注册;给什么改什么,headers 传 {} 清除);"
+                + "remove=删除注册;"
                 + "tools=查看某服务器的工具清单(读缓存快照,不触发远端;lazy 服务器的工具从这里发现;"
                 + "**加 tool=<工具名> 参数则返回该工具的完整参数 schema**——调用前先读它,按 schema 构造 arguments,不要猜);"
                 + "call=按名调用工具(参数 target=服务器、tool=工具名、arguments=参数对象/JSON 字符串;"
@@ -694,6 +751,8 @@ class ChatToolsSpec {
                 + "register 两种形态:①远程——提供 url(可选 transport=STREAMABLE/SSE);"
                 + "②本地进程(STDIO)——提供 command 与 args,如 command=npx, args=[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"D:/docs\"],"
                 + "或 Docker 方式 command=docker, args=[\"run\",\"-i\",\"--rm\",\"镜像名\"];本地方式需本机已装对应运行时。"
+                + "**密钥处理**:url/headers/env 的值支持 ${VAR} 占位符,引用设置页「环境变量」中已存的变量"
+                + "(如 url=https://mcp.example.com/mcp?key=${TAVILY_API_KEY})——这是推荐做法:密钥不进入对话记录。"
                 + "按当前权限档位,高风险动作可能要求用户批准。"
                 + "用户说「把 XX MCP 服务器接上/注册一下」时使用。示例:{\"action\": \"register\", "
                 + "\"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
@@ -703,8 +762,8 @@ class ChatToolsSpec {
         ObjectNode mcpProps = mcpParams.putObject("properties");
         ObjectNode mcpActionProp = mcpProps.putObject("action");
         mcpActionProp.put("type", "string");
-        mcpActionProp.put("description", "list / refresh / enable / disable / register / remove / tools / call / setPolicy");
-        setEnum(mcpActionProp, "list", "refresh", "enable", "disable", "register", "remove", "tools", "call", "setPolicy");
+        mcpActionProp.put("description", "list / refresh / enable / disable / register / update / remove / tools / call / setPolicy");
+        setEnum(mcpActionProp, "list", "refresh", "enable", "disable", "register", "update", "remove", "tools", "call", "setPolicy");
         ObjectNode mcpToolNameProp = mcpProps.putObject("tool");
         mcpToolNameProp.put("type", "string");
         mcpToolNameProp.put("description", "call 时:要调用的工具名(以 action=tools 清单为准,不要猜测)");
@@ -762,6 +821,8 @@ class ChatToolsSpec {
                 + "Windows 默认 PowerShell 7(Nora 内置,版本确定),也可显式 shell=bash(git bash)。"
                 + "注意:命令无 TTY——不要运行交互式程序(vim/需要输入确认的),会挂起到超时;"
                 + "长时间命令(构建/下载)显式传更大的 timeout(秒,上限 300);"
+                + "探索范围限定在工作台/项目内:不要用它扫描用户主目录、其他 AI 工具的配置与历史日志"
+                + "(如 ~/.claude、~/.codex)、或 SSH 到其他服务器找线索——用户明确要求时才做。"
                 + "运行前用户会按权限档位收到审批请求。示例:{\"command\": \"npm test\", \"cwd\": \"D:/projects/app\"}");
         ObjectNode cmdParams = cmdFn.putObject("parameters");
         cmdParams.put("type", "object");

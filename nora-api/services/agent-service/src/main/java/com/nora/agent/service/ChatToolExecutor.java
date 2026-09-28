@@ -290,7 +290,8 @@ class ChatToolExecutor {
                 + "search_knowledge（知识库主动检索）、manage_knowledge（知识库 list/index/remove/reindex/stats）、"
                 + "manage_automation（自动任务 list/create/toggle/remove/run/executions）、"
                 + "manage_skill（技能 list/read/create/update/remove）、"
-                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/remove,风险跟随权限档位）、"
+                + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/update/remove,风险跟随权限档位）、"
+                + "ask_user（向用户提问并等待回答——指代不明/缺关键信息时用,而不是猜测）、"
                 + "run_command（本机终端非交互命令,风险跟随权限档位）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
     }
@@ -979,6 +980,9 @@ class ChatToolExecutor {
             if ("register".equals(action)) {
                 return mcpRegisterResult(a);
             }
+            if ("update".equals(action)) {
+                return mcpUpdateResult(a);
+            }
             return mcpTargetOpResult(action, a);
         } catch (IllegalArgumentException | IllegalStateException e) {
             // create/refresh 的参数与连接错误:直接作为可自纠错误回给模型
@@ -1188,6 +1192,68 @@ class ChatToolExecutor {
         }
         return new ToolOutcome("已注册 MCP 服务器(id=" + created.id() + "): " + created.name()
                 + " · " + created.transport() + "\n" + testResult, null, null, false);
+    }
+
+    /**
+     * manage_mcp action=update(2026-09-29):原地改既有远程服务器的 url /
+     * headers(换密钥/换地址不必 remove+重新注册)。给什么改什么:
+     * url 省略=不动;headers 省略=不动、显式 {} = 清除。
+     * 值不落步骤/对话记录(仅服务层),更新后自动 refresh 重建工具缓存。
+     */
+    private ToolOutcome mcpUpdateResult(JsonNode a) {
+        String target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText(null));
+        if (target == null || target.isBlank()) {
+            return new ToolOutcome("ERROR: update 需要 target(服务器名或 id)。可先用 action=list 查看",
+                    null, null, false);
+        }
+        McpServerService.ServerView server = mcpServerService.findByNameOrId(target);
+        if (server == null) {
+            return new ToolOutcome("ERROR: 找不到 MCP 服务器「" + target + "」。可先用 action=list 查看现有服务器"
+                    + "(服务器名不能猜测)", null, null, false);
+        }
+        String url = a.path("url").asText(null);
+        Map<String, String> headers = null; // null=不改;{} = 清除
+        JsonNode h = a.path("headers");
+        if (h.isObject()) {
+            Map<String, String> collected = new java.util.LinkedHashMap<>();
+            h.fields().forEachRemaining(e -> collected.put(e.getKey(), e.getValue().asText("")));
+            headers = collected;
+        }
+        if ((url == null || url.isBlank()) && headers == null) {
+            return new ToolOutcome("ERROR: update 至少需要 url 或 headers 之一(给什么改什么)。"
+                    + "示例:{\"action\": \"update\", \"target\": \"" + server.name()
+                    + "\", \"headers\": {\"Authorization\": \"Bearer 新密钥\"}}", null, null, false);
+        }
+        if (url != null && !url.isBlank() && !url.trim().startsWith("http")) {
+            return new ToolOutcome("ERROR: url 必须是 http(s) 地址(当前: " + Texts.abbreviate(url, 80) + ")",
+                    null, null, false);
+        }
+        try {
+            McpServerService.ServerView updated = mcpServerService.updateRemote(server.id(), url, headers);
+            if (updated == null) {
+                return new ToolOutcome("ERROR: 服务器「" + server.name() + "」不是远程形态(或已被删除),"
+                        + "无法用 update 修改;STDIO 本地进程请 remove 后重新 register", null, null, false);
+            }
+        } catch (IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage(), 300), null, null, false);
+        }
+        // 更新后自动重连测试(与 register 后自动 refresh 同语义):凭证是否正确
+        // 当场见分晓,失败如实报告(更新已保留,可再改)
+        String testResult;
+        try {
+            List<McpServerService.ToolEntry> toolEntries = mcpServerService.refresh(server.id());
+            testResult = "连接成功,发现 " + toolEntries.size() + " 个工具"
+                    + (toolEntries.isEmpty() ? "" : ": " + formatToolNames(toolEntries)
+                    + (toolEntries.size() > 10 ? " 等" : ""))
+                    + "。已用新配置生效";
+        } catch (Exception e) {
+            testResult = "连接测试失败: " + Texts.abbreviate(e.getMessage() == null ? e.toString() : e.getMessage(), 200)
+                    + "(更新已保留;检查地址/密钥后用 refresh 重试)";
+        }
+        return new ToolOutcome("已更新 MCP 服务器「" + server.name() + "」"
+                + (url != null && !url.isBlank() ? "\n地址: 已更新" : "")
+                + (headers != null ? "\n鉴权头: " + (headers.isEmpty() ? "已清除" : "已更新(" + String.join(", ", headers.keySet()) + ")") : "")
+                + "\n" + testResult, null, null, false);
     }
 
     /** manage_mcp 目标操作:refresh / enable / disable / remove(目标 = 名称或数字 id)。 */

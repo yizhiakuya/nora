@@ -131,6 +131,8 @@ public class ChatOrchestrationService {
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     EnvironmentStatusClient environmentStatusClient,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
+                                    QuestionService questionService,
+                                    @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     AppSettingStore appSettingStore) {
         this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
@@ -150,7 +152,7 @@ public class ChatOrchestrationService {
         this.terminalService = terminalService;
         this.toolsSpecBuilder = new ChatToolsSpec(objectMapper, agentWorkspaceService, agentSkillService,
                 mcpServerService, terminalService, mediaFetchService,
-                knowledgeManageClient, automationManageClient, environmentStatusClient);
+                knowledgeManageClient, automationManageClient, environmentStatusClient, questionService);
         this.maxToolRounds = Math.max(1, maxToolRounds);
         this.proxyProperties = proxyProperties != null ? proxyProperties : com.nora.common.http.ProxyProperties.disabled();
         this.galleryPrefetcher = galleryPrefetcher;
@@ -160,7 +162,7 @@ public class ChatOrchestrationService {
                 mediaFetchService, relayMediaRouter, knowledgeManageClient, automationManageClient,
                 environmentStatusClient);
         this.capabilityRegistry = new ModelCapabilityRegistry();
-        this.stepEmitter = new ToolStepEmitter(objectMapper, approvalService, toolExecutor,
+        this.stepEmitter = new ToolStepEmitter(objectMapper, approvalService, questionService, toolExecutor,
                 capabilityRegistry, turnCancellation);
         this.turnCancellation = turnCancellation;
         this.upstreamClient = new UpstreamLlmClient(objectMapper, capabilityRegistry);
@@ -199,7 +201,7 @@ public class ChatOrchestrationService {
                 dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService,
                 agentWorkspaceService, agentSkillService, terminalService, maxToolRounds, proxyProperties,
                 galleryPrefetcher, mediaFetchService, relayMediaRouter, turnCancellation,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     public ChatOrchestrationService(LlmProperties llmProperties,
@@ -209,7 +211,7 @@ public class ChatOrchestrationService {
                                     ObjectMapper objectMapper) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
                 null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     /** 测试入口:显式最大工具轮数,无 provider store。 */
@@ -221,7 +223,7 @@ public class ChatOrchestrationService {
                                     int maxToolRounds) {
         this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
                 null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     /**
@@ -1095,6 +1097,10 @@ public class ChatOrchestrationService {
         }
 
         default void approvalRequired(ApprovalRequestDto request) {
+        }
+
+        /** ask_user 澄清提问:轮内暂停等待用户作答(2026-09-29)。 */
+        default void questionRequired(com.nora.agent.dto.QuestionRequestDto request) {
         }
 
         void sources(List<CitationDto> citations);

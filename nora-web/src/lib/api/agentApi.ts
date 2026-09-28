@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, PermissionMode } from "./chatApi";
+import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, QuestionRequest, PermissionMode } from "./chatApi";
 import { emitSessionTitle } from "./sessionTitleEvents";
 import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
 import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";
@@ -166,6 +166,28 @@ export async function resolveApproval(
   return approved;
 }
 
+/** 回答挂起的 ask_user 提问(2026-09-29);答案作为工具结果回填同一轮。 */
+export async function answerQuestion(
+  sessionId: string,
+  questionToken: string,
+  answer: string
+): Promise<boolean> {
+  const response = await fetch(
+    `${API_BASE}/chat/answers/${encodeURIComponent(questionToken)}?sessionId=${encodeURIComponent(sessionId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ answer }),
+    }
+  );
+  if (response.status === 401) handleUnauthorized();
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `回答提交失败(HTTP ${response.status})`);
+  }
+  return true;
+}
+
 export const AgentAPI: { sendMessage: ChatResponder } = {
   async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode, signal, providerId, context) {
     if (!sessionId) {
@@ -214,6 +236,8 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     let donePayload: DonePayload | undefined;
     /** 当前挂起审批:SSE approval_required 下发;同 stepId 的工具步骤到达即已决策,卡片应清除 */
     let pendingApproval: ApprovalRequest | undefined;
+    /** 当前挂起提问:SSE question_required 下发;同 stepId 的工具步骤到达即已作答,卡片应清除 */
+    let pendingQuestion: QuestionRequest | undefined;
 
     // 流结束兜底:仍在 running 的步骤(中断/异常残留)就地收尾,避免永久「执行中」。
     // 用户主动停止:推理步骤记 completed(已流出的部分思考保留、折叠回看,配合
@@ -244,6 +268,12 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
           pendingApproval = approval;
           onUpdate({ approval });
         }
+      } else if (event === "question_required") {
+        const question = parseData<QuestionRequest>(data);
+        if (question?.questionToken) {
+          pendingQuestion = question;
+          onUpdate({ question });
+        }
       } else if (event === "step") {
         const payload = parseData<StepPayload>(data);
         if (!payload) return;
@@ -253,6 +283,13 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         if (pendingApproval && normalized.id === pendingApproval.stepId) {
           pendingApproval = undefined;
           onUpdate({ approval: undefined });
+        }
+        // 提问同理:同 stepId 的步骤进入终态(completed/declined/failed)
+        // = 已作答/超时,卡片撤下(提问发出时步骤本就在 running,不按 running 撤)
+        if (pendingQuestion && normalized.id === pendingQuestion.stepId
+            && normalized.status !== "running") {
+          pendingQuestion = undefined;
+          onUpdate({ question: undefined });
         }
         // 其它推理步骤仍在 running = 那一轮 LLM 已结束却没收到结算事件
         // (部分模型轮无文字 delta,推理步骤会一直挂着)。工具/新步骤到来即
@@ -325,6 +362,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
         onUpdate({
           isTyping: false,
           approval: undefined,
+          question: undefined,
           steps: [...steps],
           turnMetrics: donePayload?.durationMs != null
             ? {
@@ -339,7 +377,7 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
       } else if (event === "error") {
         const payload = parseData<ErrorPayload>(data);
         flushPendingSteps();
-        onUpdate({ error: payload?.message || "Agent 执行失败", isTyping: false, approval: undefined });
+        onUpdate({ error: payload?.message || "Agent 执行失败", isTyping: false, approval: undefined, question: undefined });
         // 异常处理系统:结构化错误(带分类)原样抛出——humanizeError 按 category
         // 直接映射文案,不再字符串猜测;traceId 供报障定位
         throw new ApiError({
@@ -550,6 +588,8 @@ export function attachLiveTurnStream(
     onReasoningDelta?: (roundIndex: number | null, c: string) => void;
     onSources?: (c: Citation[]) => void;
     onApproval?: (a: ApprovalRequest) => void;
+    /** ask_user 澄清提问(2026-09-29);作答经 answerQuestion 提交 */
+    onQuestion?: (q: QuestionRequest) => void;
     onDone?: (p?: unknown) => void;
     onError?: (msg: string) => void;
     onIdle?: () => void;
@@ -587,6 +627,10 @@ export function attachLiveTurnStream(
   es.addEventListener("approval_required", (e) => {
     const p = safeParse<ApprovalRequest>((e as MessageEvent).data);
     if (p) handlers.onApproval?.(p);
+  });
+  es.addEventListener("question_required", (e) => {
+    const p = safeParse<QuestionRequest>((e as MessageEvent).data);
+    if (p) handlers.onQuestion?.(p);
   });
   es.addEventListener("done", (e) => {
     handlers.onDone?.(safeParse((e as MessageEvent).data));

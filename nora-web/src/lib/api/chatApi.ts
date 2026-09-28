@@ -127,6 +127,8 @@ export interface ChatMessage {
   turnMetrics?: ChatTurnMetrics;
   /** 当前轮等待用户处理的高风险审批 */
   approval?: ApprovalRequest;
+  /** 当前轮等待用户作答的澄清提问(ask_user;2026-09-29) */
+  question?: QuestionRequest;
   /** 人性化错误提示 + 建议动作(原始串折叠在详情里) */
   errorHint?: string;
   errorKind?: "network" | "provider" | "auth" | "rate-limit" | "timeout" | "approval" | "unknown";
@@ -160,6 +162,20 @@ export interface ApprovalRequest {
   risk: string;
   /** 各工具的参数明细(逐行 key=value;密码类参数后端已排除),可能为空 */
   detail?: string;
+}
+
+/**
+ * ask_user 澄清提问(2026-09-29):agent 经 ask_user 工具暂停轮次等待
+ * 用户作答;answerQuestion 提交后答案作为工具结果回填,同一轮继续执行。
+ */
+export interface QuestionRequest {
+  questionToken: string;
+  stepId: string;
+  question: string;
+  /** 可选项(点选即作答;用户仍可自由输入) */
+  options?: string[];
+  /** 服务端等待上限(秒);超时后 agent 会收到「未回答」提示 */
+  timeoutSeconds?: number;
 }
 
 export type ChatResponder = (

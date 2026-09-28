@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
+import com.nora.agent.dto.QuestionRequestDto;
 
 /**
  * 工具步骤发射器(2026-09-17 从 ChatOrchestrationService 拆出,拆分方案收尾):
@@ -29,6 +30,8 @@ class ToolStepEmitter {
     private final ObjectMapper objectMapper;
     /** 审批门(可空=测试构造器不接,无审批直接执行)。 */
     private final ApprovalService approvalService;
+    /** 澄清提问门(ask_user;可空=测试构造器不接,提问工具不生效)。 */
+    private final QuestionService questionService;
     private final ChatToolExecutor toolExecutor;
     private final ModelCapabilityRegistry capabilityRegistry;
     /** 轮次取消信号(可空=测试构造器不接);批量工具用它做不可吞的取消检查。 */
@@ -36,14 +39,22 @@ class ToolStepEmitter {
 
     ToolStepEmitter(ObjectMapper objectMapper, ApprovalService approvalService,
                     ChatToolExecutor toolExecutor, ModelCapabilityRegistry capabilityRegistry) {
-        this(objectMapper, approvalService, toolExecutor, capabilityRegistry, null);
+        this(objectMapper, approvalService, null, toolExecutor, capabilityRegistry, null);
     }
 
     ToolStepEmitter(ObjectMapper objectMapper, ApprovalService approvalService,
                     ChatToolExecutor toolExecutor, ModelCapabilityRegistry capabilityRegistry,
                     TurnCancellation turnCancellation) {
+        this(objectMapper, approvalService, null, toolExecutor, capabilityRegistry, turnCancellation);
+    }
+
+    ToolStepEmitter(ObjectMapper objectMapper, ApprovalService approvalService,
+                    QuestionService questionService,
+                    ChatToolExecutor toolExecutor, ModelCapabilityRegistry capabilityRegistry,
+                    TurnCancellation turnCancellation) {
         this.objectMapper = objectMapper;
         this.approvalService = approvalService;
+        this.questionService = questionService;
         this.toolExecutor = toolExecutor;
         this.capabilityRegistry = capabilityRegistry;
         this.turnCancellation = turnCancellation;
@@ -159,6 +170,71 @@ class ToolStepEmitter {
                     new ChatStepDto.StepResult(null, "无人值守通道拒绝执行", null, null, false, error),
                     "declined", roundIndex, eventConsumer);
             backfillToolMessage(messages, callId, "ERROR: " + error);
+            return;
+        }
+
+        // ask_user(澄清提问,2026-09-29):轮内暂停等待用户作答,答案作为
+        // 工具结果回填继续同一轮。为什么是一等工具:此前「指代不明先问」
+        // 在工具面上不可表达——模型只能"结束回合+留个问题"或继续瞎猜
+        // (实测 sess-1790597675229:「装个搜索 MCP」被猜了 73 步,推理里
+        // 5 次写 should ask the user 却没有动作可做)。
+        // 不走审批门:提问不是高风险操作,任何档位都可发起(无人值守通道除外,
+        // 现场无人可答——直接以可操作错误结算,让模型给出假设继续或放弃)。
+        if ("ask_user".equals(name)) {
+            if (questionService == null || sessionId == null || unattended) {
+                String reason = (unattended || sessionId == null)
+                        ? "无人值守通道没有用户可作答。请基于合理假设继续执行,或在最终回答中列出待确认问题"
+                        : "提问通道未启用";
+                finishToolStep(toolStepId, name, title, input, toolStart,
+                        new ChatStepDto.StepResult(null, "无法提问", null, null, false, reason),
+                        "declined", roundIndex, eventConsumer);
+                backfillToolMessage(messages, callId, "ERROR: " + reason);
+                return;
+            }
+            JsonNode qa = parseArgsSafe(args);
+            String question = qa.path("question").asText("");
+            if (question.isBlank()) {
+                finishToolStep(toolStepId, name, title, input, toolStart,
+                        new ChatStepDto.StepResult(null, "缺少 question 参数", null, null, false,
+                                "ask_user 需要 question 参数(要问用户的问题原文)"),
+                        "failed", roundIndex, eventConsumer);
+                backfillToolMessage(messages, callId,
+                        "ERROR: ask_user 需要 question 参数。示例:{\"question\": \"用哪个搜索服务?\", \"options\": [\"tavily\", \"exa\"]}");
+                return;
+            }
+            java.util.List<String> options = new java.util.ArrayList<>();
+            if (qa.path("options").isArray()) {
+                for (JsonNode n : qa.path("options")) {
+                    String opt = n.asText("");
+                    if (!opt.isBlank()) {
+                        options.add(opt);
+                    }
+                }
+            }
+            Integer timeout = qa.path("timeoutSeconds").isInt() ? qa.path("timeoutSeconds").asInt() : null;
+            QuestionService.Registered registered = questionService.registerWithFuture(
+                    sessionId, toolStepId, Texts.abbreviate(question, 2000),
+                    options.isEmpty() ? null : options, timeout);
+            eventConsumer.questionRequired(registered.ticket());
+            // 等待期间步骤保持 running(前端提问卡展示中);不重置 execStart——
+            // 等待时长对用户是可见的等待,不是工具执行耗时
+            String answer = questionService.awaitFuture(registered);
+            if (answer == null) {
+                // 超时/取消:如实结算,给模型可操作的出路(不把空串当答案)
+                loopDetector.recordResult(fingerprint, resultHashOf("__no_answer__"));
+                finishToolStep(toolStepId, name, title, input, toolStart,
+                        new ChatStepDto.StepResult(null, "用户未回答(超时)", null, null, false,
+                                "等待用户回答超时或轮次被取消。请基于合理假设继续,或在最终回答中说明待确认事项"),
+                        "declined", roundIndex, eventConsumer);
+                backfillToolMessage(messages, callId,
+                        "ERROR: 用户未在时限内回答。请基于合理假设继续任务;若该信息是必须的,在最终回答中说明需要用户确认什么");
+                return;
+            }
+            loopDetector.recordResult(fingerprint, resultHashOf(answer));
+            finishToolStep(toolStepId, name, title, input, toolStart,
+                    new ChatStepDto.StepResult(answer, "用户已回答", null, null, false, null),
+                    "completed", roundIndex, eventConsumer);
+            backfillToolMessage(messages, callId, "用户回答: " + answer);
             return;
         }
 
@@ -473,6 +549,12 @@ class ToolStepEmitter {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, cmd),
                             description, null, action);
                 }
+                case "ask_user" -> {
+                    // 问题原文放 target(折叠行展示「向用户提问: …」)
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null,
+                            Texts.abbreviate(node.path("question").asText(null), 120)),
+                            description, null, action);
+                }
                 default -> {
                     if (node.has("action") && node.has("service")) {
                         return new ParsedArgs(new ChatStepDto.StepInput(null, node.path("service").asText(null), null),
@@ -511,6 +593,7 @@ class ToolStepEmitter {
             case "manage_knowledge" -> "知识库管理";
             case "manage_automation" -> "自动任务管理";
             case "environment_status" -> "环境状态快照";
+            case "ask_user" -> "向用户提问";
             default -> {
                 // 手机相册整理(2026-09-20):任意挂载名下的 photos_manage 都给
                 // 可读标题,与泛化「调用 MCP 工具」区分,时间线一眼可读
@@ -748,6 +831,22 @@ class ToolStepEmitter {
                     target = parsed.input().target() == null ? "?" : parsed.input().target();
                     detail = "MCP 服务器: " + target + "\n后果: 注册记录与连接一并删除";
                     risk = "删除后其工具立即不可用,需重新注册才能恢复";
+                } else if ("update".equals(action)) {
+                    target = Texts.firstNonNull(a.path("target").asText(null), a.path("name").asText("?"));
+                    JsonNode upHeaders = a.path("headers");
+                    StringBuilder upHeaderKeys = new StringBuilder();
+                    if (upHeaders.isObject()) {
+                        upHeaders.fieldNames().forEachRemaining(k ->
+                                upHeaderKeys.append(upHeaderKeys.length() > 0 ? ", " : "").append(k));
+                    }
+                    detail = "服务器: " + target
+                            + (a.path("url").asText("").isBlank() ? "" : "\n新地址: " + a.path("url").asText(""))
+                            + (upHeaders.isObject()
+                                ? (upHeaderKeys.length() == 0
+                                    ? "\n鉴权头: 清除全部"
+                                    : "\n鉴权头: " + upHeaderKeys + "(值已隐藏)")
+                                : "");
+                    risk = "将更新 MCP 服务器的连接配置(地址/鉴权),旧连接失效后以新配置重连";
                 } else if ("call".equals(action)) {
                     // 按名调用外部工具:与 mcp_tool 同语义——服务器+工具名+参数可见
                     target = a.path("target").asText("?");
