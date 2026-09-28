@@ -654,6 +654,18 @@ class ChatOrchestrationServiceTest {
             calls.incrementAndGet();
             return new SqlOutcome("1\n(1 rows, 1ms)", "1 rows, 1ms", false);
         }
+
+        @Override
+        public SqlOutcome executeSqlDetailed(String sql, Target target) {
+            calls.incrementAndGet();
+            return new SqlOutcome("1\n(1 rows, 1ms)", "1 rows, 1ms", false);
+        }
+
+        @Override
+        public Target resolveTarget(String datasourceId) {
+            // 测试不连真实 datasource-service:返回固定目标(非 redis,走 SQL guard)
+            return new Target(1L, "postgresql");
+        }
     }
 
     private static class NoopConsumer implements ChatOrchestrationService.ChatEventConsumer {

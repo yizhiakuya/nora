@@ -238,7 +238,9 @@ describe("AgentProcessBlock 过程折叠(对齐 Codex:执行中展示、完成�
     render(<AgentProcessBlock steps={steps} isTyping durationMs={undefined} />);
     // 过程步骤直接可见(不经过折叠按钮)
     screen.getByText(/思考中|已深度思考/);
-    screen.getByText("mcp__phone__photos_review");
+    // 2026-09-29:折叠行显示人类可读标题(step.title),不再显示原始工具名
+    // (toolName 降为悬浮提示)
+    screen.getByText("检索照片");
   });
 
   it("完成后折叠为一行,点击展开回看", () => {

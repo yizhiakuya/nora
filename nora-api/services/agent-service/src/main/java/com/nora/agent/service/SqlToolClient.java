@@ -47,15 +47,23 @@ public class SqlToolClient {
      * 同 {@link #executeSql(String)},但额外报告提供方行数上限,让编排层把
      * 步骤标为 {@code truncated}——静默截断会让模型把部分行当成完整答案。
      *
-     * @param sql          SELECT / SHOW / EXPLAIN 语句
+     * @param sql          SELECT / SHOW / EXPLAIN 语句(PostgreSQL/MySQL)或
+     *                     只读 Redis 命令(Redis 连接;见 {@link #resolveTarget})
      * @param datasourceId 显式连接(id 或名称);null = 第一个配置的连接
      */
     public SqlOutcome executeSqlDetailed(String sql, String datasourceId) {
+        return executeSqlDetailed(sql, resolveTarget(datasourceId));
+    }
+
+    /**
+     * 用已解析的 target 执行(executor 的 guard 已解析过一次,避免重复拉列表;
+     * 2026-09-29)。{@code target} 为 null = 无可用连接。
+     */
+    public SqlOutcome executeSqlDetailed(String sql, Target target) {
         try {
-            Long connectionId = resolveConnectionId(datasourceId);
+            Long connectionId = target == null ? null : target.id();
             if (connectionId == null) {
-                return new SqlOutcome("ERROR: no database connection is configured in the datasource service"
-                        + (datasourceId == null ? "" : " (查询目标: " + datasourceId + ")"),
+                return new SqlOutcome("ERROR: no database connection is configured in the datasource service",
                         null, false);
             }
             ApiResponse<QueryBody> envelope = restClient.post()
@@ -84,7 +92,7 @@ public class SqlToolClient {
 
     /** 兼容:第一个配置的连接。 */
     public SqlOutcome executeSqlDetailed(String sql) {
-        return executeSqlDetailed(sql, null);
+        return executeSqlDetailed(sql, (String) null);
     }
 
     /**
@@ -95,6 +103,22 @@ public class SqlToolClient {
      * @return 连接 id;完全没配连接时为 null
      */
     public Long resolveConnectionId(String datasourceId) {
+        Target t = resolveTarget(datasourceId);
+        return t == null ? null : t.id();
+    }
+
+    /** 解析结果:连接 id + 引擎(guard 按引擎分派,2026-09-29)。 */
+    public record Target(long id, String engine) {
+    }
+
+    /**
+     * 同 {@link #resolveConnectionId},但带引擎类型——execute_sql 的语句
+     * guard 需要按引擎分派:PostgreSQL/MySQL 走 SELECT/SHOW/EXPLAIN,
+     * Redis 连接走只读命令白名单(2026-09-29 修复:此前 Redis 命令被
+     * SQL 语法 guard 误拦,模型改试 SELECT 又被 RedisGuard 拒,两条规则
+     * 互相打架等于没有命令能通过——E2E 实测发现)。
+     */
+    public Target resolveTarget(String datasourceId) {
         try {
             ApiResponse<ArrayNode> envelope = restClient.get()
                     .uri("/api/datasources")
@@ -107,21 +131,21 @@ public class SqlToolClient {
                 return null;
             }
             if (datasourceId == null || datasourceId.isBlank()) {
-                return envelope.data().get(0).path("id").asLong();
+                return targetOf(envelope.data().get(0));
             }
             String target = datasourceId.trim();
             if (target.matches("\\d+")) {
                 long id = Long.parseLong(target);
                 for (JsonNode n : envelope.data()) {
                     if (n.path("id").asLong(-1) == id) {
-                        return id;
+                        return targetOf(n);
                     }
                 }
             } else {
                 for (JsonNode n : envelope.data()) {
                     if (target.equalsIgnoreCase(n.path("name").asText(""))
                             || target.equalsIgnoreCase(n.path("database").asText(""))) {
-                        return n.path("id").asLong();
+                        return targetOf(n);
                     }
                 }
                 // 前缀/包含匹配(模型常传"nora-pg"这类缩写)
@@ -129,16 +153,25 @@ public class SqlToolClient {
                     String name = n.path("name").asText("");
                     if (!name.isBlank() && (name.toLowerCase().startsWith(target.toLowerCase())
                             || name.toLowerCase().contains(target.toLowerCase()))) {
-                        return n.path("id").asLong();
+                        return targetOf(n);
                     }
                 }
             }
             // 未匹配到:回落第一个连接(参数只是提示,猜错不该阻断查询)
-            return envelope.data().get(0).path("id").asLong();
+            return targetOf(envelope.data().get(0));
         } catch (Exception e) {
             log.warn("datasource list failed: {}", e.getMessage());
             return null;
         }
+    }
+
+    private static Target targetOf(JsonNode n) {
+        String engine = n.path("engine").asText("");
+        if (engine.isBlank()) {
+            // 字段名兼容(列表接口历史上有 type 别名)
+            engine = n.path("type").asText("");
+        }
+        return new Target(n.path("id").asLong(), engine.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** 渲染后的 SQL 结果 + 面向 UI 的元数据。 */

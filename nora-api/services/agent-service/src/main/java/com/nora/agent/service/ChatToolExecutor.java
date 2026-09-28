@@ -300,11 +300,16 @@ class ChatToolExecutor {
     ToolOutcome execExecuteSql(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             LiveOutput liveOutput) {
         String sql = parsed.input().sql() != null ? parsed.input().sql() : "";
-        String guard = guardSql(sql);
+        // guard 按目标引擎分派(2026-09-29 修复):Redis 连接的命令形态是
+        // INFO/KEYS/GET 等,SQL 语法 guard 会误拦;redis 走命令白名单语义
+        // (与 datasource-service 的 RedisGuard 同一份清单口径,见其 ALLOWED)。
+        SqlToolClient.Target target = sqlToolClient.resolveTarget(parsed.input().target());
+        String engine = target == null ? "" : target.engine();
+        String guard = "redis".equals(engine) ? guardRedisCommand(sql) : guardSql(sql);
         if (guard != null) {
             return new ToolOutcome("ERROR: " + guard, null, null, false);
         }
-        SqlToolClient.SqlOutcome outcome = sqlToolClient.executeSqlDetailed(sql, parsed.input().target());
+        SqlToolClient.SqlOutcome outcome = sqlToolClient.executeSqlDetailed(sql, target);
         return new ToolOutcome(outcome.content(), outcome.summary(), null, outcome.truncated());
     }
 
@@ -1719,7 +1724,8 @@ class ChatToolExecutor {
         String normalized = sql.trim();
         if (!normalized.matches("(?is)^(SELECT|SHOW|EXPLAIN)\\b.*")) {
             return "拒绝执行「" + Texts.abbreviate(normalized, 60) + "」：只允许单条 SELECT / SHOW / EXPLAIN 查询，"
-                    + "不允许写入或修改数据。正确示例：{\"sql\": \"SELECT status, COUNT(*) FROM orders GROUP BY status\"}";
+                    + "不允许写入或修改数据。正确示例：{\"sql\": \"SELECT status, COUNT(*) FROM orders GROUP BY status\"}"
+                    + "(目标若是 Redis 连接,请改用 Redis 只读命令,如 GET/KEYS/SCAN/INFO)";
         }
         String withoutTrailing = normalized.replaceFirst(";\\s*$", "");
         if (withoutTrailing.contains(";")) {
@@ -1732,6 +1738,54 @@ class ChatToolExecutor {
         }
         return null;
     }
+
+    /**
+     * Redis 连接的只读命令守卫(2026-09-29):与 datasource-service 的
+     * {@link com.nora.datasource.service.RedisGuard} 同一份白名单口径——
+     * agent 侧先拦一次给可自纠的提示,最终防线仍在 datasource-service。
+     * 只读命令清单保持与 RedisGuard.ALLOWED 同步(键空间/字符串/哈希/
+     * 列表/集合/有序集合/流/位图/服务信息)。
+     */
+    static String guardRedisCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return "拒绝执行：缺少 sql 参数(Redis 连接请传只读命令,如 INFO server / KEYS nora* / GET key)";
+        }
+        String trimmed = command.trim();
+        if (trimmed.contains(";")) {
+            return "拒绝执行：一次只允许一条命令(检测到分号)。请拆成多次调用";
+        }
+        String[] parts = trimmed.split("\\s+");
+        String verb = parts[0].toLowerCase(java.util.Locale.ROOT);
+        if (!REDIS_READONLY_VERBS.contains(verb)) {
+            return "拒绝执行「" + Texts.abbreviate(trimmed, 40) + "」：Redis 连接只允许只读命令"
+                    + "(GET/MGET/KEYS/SCAN/TYPE/TTL/EXISTS/DBSIZE/HGETALL/LRANGE/SMEMBERS/ZRANGE/XINFO/INFO/TIME 等)。"
+                    + "写命令(SET/DEL/FLUSHALL 等)在任何通道都不被允许";
+        }
+        if (parts.length > 8) {
+            return "拒绝执行：命令参数过多(最多 8 个)";
+        }
+        return null;
+    }
+
+    /** Redis 只读命令白名单(与 datasource-service RedisGuard.ALLOWED 同步)。 */
+    private static final java.util.Set<String> REDIS_READONLY_VERBS = java.util.Set.of(
+            // 键空间 / 元数据
+            "keys", "scan", "type", "ttl", "pttl", "exists", "dbsize", "randomkey", "object",
+            // 字符串
+            "get", "mget", "strlen", "getrange", "substr",
+            // 哈希
+            "hget", "hmget", "hgetall", "hkeys", "hvals", "hlen", "hexists", "hscan", "hrandfield",
+            // 列表
+            "lrange", "llen", "lindex", "lpos",
+            // 集合
+            "smembers", "scard", "sismember", "srandmember", "sscan", "smismember",
+            // 有序集合
+            "zrange", "zrevrange", "zrangebyscore", "zrevrangebyscore", "zrangebylex", "zcard",
+            "zscore", "zmscore", "zrank", "zrevrank", "zcount", "zscan", "zrandmember",
+            // 流 / 位图 / HyperLogLog(只读形式)
+            "xrange", "xrevrange", "xlen", "xinfo", "getbit", "bitcount", "bitpos", "pfcount",
+            // 服务信息
+            "info", "time", "memory", "command", "lastsave", "lolwut");
 
     /** 服务日志工具的守卫:服务名必须来自注册表。 */
     static String guardService(String service) {

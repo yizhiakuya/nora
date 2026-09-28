@@ -122,7 +122,7 @@ function ProgressPanel({ progress }: { progress: ChatStepProgress }) {
 }
 
 function argsPreview(step: ChatStep): string {
-  if (step.toolName === "execute_sql" && step.input?.sql) {
+  if ((step.toolName === "execute_sql" || step.toolName === "execute_write_sql") && step.input?.sql) {
     const sql = step.input.sql.replace(/\s+/g, " ").trim();
     return sql.length > 56 ? `${sql.slice(0, 56)}…` : sql;
   }
@@ -231,9 +231,12 @@ export function ToolRow({ step }: { step: ChatStep }) {
             <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-500" />
           )}
         </span>
-        <span className="text-xs font-medium text-foreground shrink-0 flex items-center gap-1">
+        <span
+          className="text-xs font-medium text-foreground shrink-0 flex items-center gap-1"
+          title={step.toolName ? `工具: ${step.toolName}` : undefined}
+        >
           {!running && step.status === "completed" && <Wrench className="w-3 h-3 text-muted-foreground/60" />}
-          {step.toolName || step.title}
+          {step.title || step.toolName}
         </span>
         {preview && (
           <span className="text-[11px] text-muted-foreground font-mono truncate flex-1">{preview}</span>

@@ -121,10 +121,6 @@ class ChatToolsSpec {
         sqlDsProp.put("type", "string");
         sqlDsProp.put("description", "可选:目标数据源的连接名或 id(以 manage_datasource action=list 返回的 name/id 为准,"
                 + "不要猜测数据库名);单连接时省略此参数");
-        ObjectNode sqlDescProp = sqlProps.putObject("description");
-        sqlDescProp.put("type", "string");
-        sqlDescProp.put("description", "一句话描述这次调用要做什么,将作为执行时间线的标题展示给用户(5-12 个字,祈使句)。"
-                + "正例:「统计各状态订单数」「查最近 50 行日志」;反例:不要出现「复杂」「风险」等主观词,不要复述完整 SQL");
         ArrayNode sqlRequired = sqlParams.putArray("required");
         sqlRequired.add("sql");
         tools.add(sqlTool);
@@ -146,10 +142,6 @@ class ChatToolsSpec {
         ObjectNode limitProp = logProps.putObject("limit");
         limitProp.put("type", "integer");
         limitProp.put("description", "返回的最近日志行数,默认 50,最大 100");
-        ObjectNode logDescProp = logProps.putObject("description");
-        logDescProp.put("type", "string");
-        logDescProp.put("description", "一句话描述这次调用要做什么,将作为执行时间线的标题展示给用户(5-12 个字,祈使句)。"
-                + "正例:「诊断 Redis 启动日志」「排查 Postgres 报错」;反例:不要用「查看日志」这类与工具名重复的泛化描述");
         ArrayNode logRequired = logParams.putArray("required");
         logRequired.add("service");
         tools.add(logTool);
@@ -173,10 +165,6 @@ class ChatToolsSpec {
         ObjectNode writeDsProp = writeProps.putObject("datasource");
         writeDsProp.put("type", "string");
         writeDsProp.put("description", "可选:目标数据源的名称或 id(不填=默认连接)");
-        ObjectNode writeDescProp = writeProps.putObject("description");
-        writeDescProp.put("type", "string");
-        writeDescProp.put("description", "一句话描述这次写操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
-                + "正例:「更新订单 42 状态」;反例:不要出现「危险」「风险」等主观词");
         ArrayNode writeRequired = writeParams.putArray("required");
         writeRequired.add("sql");
         tools.add(writeTool);
@@ -200,10 +188,6 @@ class ChatToolsSpec {
         containerActionProp.put("type", "string");
         containerActionProp.put("description", "要执行的动作:start / stop / restart");
         setEnum(containerActionProp, "start", "stop", "restart");
-        ObjectNode containerDescProp = containerProps.putObject("description");
-        containerDescProp.put("type", "string");
-        containerDescProp.put("description", "一句话描述这次容器操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
-                + "正例:「重启 Redis 恢复连接」;反例:不要用「操作容器」这类泛化描述");
         ArrayNode containerRequired = containerParams.putArray("required");
         containerRequired.add("service");
         containerRequired.add("action");
@@ -252,9 +236,6 @@ class ChatToolsSpec {
         ObjectNode dsPwdProp = dsProps.putObject("password");
         dsPwdProp.put("type", "string");
         dsPwdProp.put("description", "create 时:密码(可选;仅存入数据源服务,不会出现在对话与日志)");
-        ObjectNode dsDescProp = dsProps.putObject("description");
-        dsDescProp.put("type", "string");
-        dsDescProp.put("description", "一句话描述这次操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)");
         ArrayNode dsRequired = dsParams.putArray("required");
         dsRequired.add("action");
         tools.add(dsTool);
@@ -300,9 +281,6 @@ class ChatToolsSpec {
         ObjectNode svcTargetProp = svcProps.putObject("target");
         svcTargetProp.put("type", "string");
         svcTargetProp.put("description", "enable/disable/remove 时:目标纳管源的名称或 id");
-        ObjectNode svcDescProp = svcProps.putObject("description");
-        svcDescProp.put("type", "string");
-        svcDescProp.put("description", "一句话描述这次操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)");
         ArrayNode svcRequired = svcParams.putArray("required");
         svcRequired.add("action");
         tools.add(svcTool);
@@ -355,9 +333,6 @@ class ChatToolsSpec {
         ObjectNode fileFolderProp = fileProps.putObject("folderId");
         fileFolderProp.put("type", "integer");
         fileFolderProp.put("description", "move 时:目标文件夹 id(folders 动作查看;省略/null=移回根目录)");
-        ObjectNode fileDescProp = fileProps.putObject("description");
-        fileDescProp.put("type", "string");
-        fileDescProp.put("description", "一句话描述这次调用要做什么(5-12 个字,祈使句)");
         ArrayNode fileRequired = fileParams.putArray("required");
         tools.add(fileTool);
 
@@ -434,9 +409,6 @@ class ChatToolsSpec {
         wsNewProp.put("type", "string");
         wsNewProp.put("description", "edit 时:替换后的新文本(留空字符串=删除该段)。"
                 + "写不存在的文件用 write;整文件重写用 write;只改一小段用 edit(不必 read 全文再 write 全文)");
-        ObjectNode wsDescProp = wsProps.putObject("description");
-        wsDescProp.put("type", "string");
-        wsDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
         ArrayNode wsRequired = wsParams.putArray("required");
         wsRequired.add("action");
         tools.add(wsTool);
@@ -486,9 +458,6 @@ class ChatToolsSpec {
         fmQualityProp.put("type", "string");
         fmQualityProp.put("description", "high=图片取原片(归档推荐);不传=手机按网络自动出图。视频始终原片");
         setEnum(fmQualityProp, "high");
-        ObjectNode fmDescProp = fmProps.putObject("description");
-        fmDescProp.put("type", "string");
-        fmDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
         tools.add(fmTool);
         }
 
@@ -563,9 +532,6 @@ class ChatToolsSpec {
         kbDocIdsProp.put("type", "array");
         kbDocIdsProp.put("description", "可选:限定在这批文档 id 内检索(manage_knowledge action=list 查 id)");
         kbDocIdsProp.putObject("items").put("type", "integer");
-        ObjectNode kbSearchDescProp = kbSearchProps.putObject("description");
-        kbSearchDescProp.put("type", "string");
-        kbSearchDescProp.put("description", "一句话描述这次检索要做什么(5-12 个字,祈使句)");
         ArrayNode kbSearchRequired = kbSearchParams.putArray("required");
         kbSearchRequired.add("query");
         tools.add(kbSearchTool);
@@ -603,9 +569,6 @@ class ChatToolsSpec {
         ObjectNode kbTargetProp = kbProps.putObject("target");
         kbTargetProp.put("type", "string");
         kbTargetProp.put("description", "remove/reindex 时:文档 id(list 结果里的数字 id)");
-        ObjectNode kbDescProp = kbProps.putObject("description");
-        kbDescProp.put("type", "string");
-        kbDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
         ArrayNode kbRequired = kbParams.putArray("required");
         kbRequired.add("action");
         tools.add(kbTool);
@@ -661,9 +624,6 @@ class ChatToolsSpec {
         ObjectNode autoLimitProp = autoProps.putObject("limit");
         autoLimitProp.put("type", "integer");
         autoLimitProp.put("description", "executions 时:返回条数(默认 20,最大 200)");
-        ObjectNode autoDescProp = autoProps.putObject("description");
-        autoDescProp.put("type", "string");
-        autoDescProp.put("description", "一句话描述这次操作的目的(5-12 个字,祈使句)");
         ArrayNode autoRequired = autoParams.putArray("required");
         autoRequired.add("action");
         tools.add(autoTool);
@@ -683,9 +643,6 @@ class ChatToolsSpec {
         envParams.put("type", "object");
         envParams.put("additionalProperties", false);
         ObjectNode envProps = envParams.putObject("properties");
-        ObjectNode envDescProp = envProps.putObject("description");
-        envDescProp.put("type", "string");
-        envDescProp.put("description", "一句话描述这次调用的目的(5-12 个字,祈使句)");
         tools.add(envTool);
         }
 
@@ -719,9 +676,6 @@ class ChatToolsSpec {
         ObjectNode askTimeoutProp = askProps.putObject("timeoutSeconds");
         askTimeoutProp.put("type", "integer");
         askTimeoutProp.put("description", "等待上限秒数(可选,默认 300,上限 600);超时后你会收到「未回答」提示,应基于合理假设继续");
-        ObjectNode askDescProp = askProps.putObject("description");
-        askDescProp.put("type", "string");
-        askDescProp.put("description", "一句话描述这次提问的目的(5-12 个字,祈使句)");
         ArrayNode askRequired = askParams.putArray("required");
         askRequired.add("question");
         tools.add(askTool);
@@ -800,9 +754,6 @@ class ChatToolsSpec {
         ObjectNode mcpTargetProp = mcpProps.putObject("target");
         mcpTargetProp.put("type", "string");
         mcpTargetProp.put("description", "refresh/enable/disable/remove 时:目标服务器的名称或 id(以 list 结果为准,不要猜测)");
-        ObjectNode mcpDescProp = mcpProps.putObject("description");
-        mcpDescProp.put("type", "string");
-        mcpDescProp.put("description", "一句话描述这次操作的目的,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)");
         ArrayNode mcpRequired = mcpParams.putArray("required");
         mcpRequired.add("action");
         tools.add(mcpTool);
@@ -841,10 +792,6 @@ class ChatToolsSpec {
         cmdShellProp.put("type", "string");
         cmdShellProp.put("description", "powershell(默认,Nora 内置 pwsh 7)或 bash(需要 git bash);省略=平台默认");
         setEnum(cmdShellProp, "powershell", "bash");
-        ObjectNode cmdDescProp = cmdProps.putObject("description");
-        cmdDescProp.put("type", "string");
-        cmdDescProp.put("description", "一句话描述这次命令要做什么,将作为审批卡片和时间线标题展示(5-12 个字,祈使句)。"
-                + "正例:「运行单元测试」「查看 git 状态」;反例:不要用「执行命令」这类泛化描述");
         ArrayNode cmdRequired = cmdParams.putArray("required");
         cmdRequired.add("command");
         tools.add(cmdTool);
@@ -873,6 +820,44 @@ class ChatToolsSpec {
             }
         }
 
+        injectTitleParam(tools);
         return tools;
+    }
+
+    /**
+     * 统一注入「标题」参数(2026-09-29,对齐 Claude Code 的 tool 标题):
+     * 所有内置工具自动获得可选 {@code description} 参数(一句话任务标题,
+     * 展示在时间线/审批卡),不再每个工具各写一段样板。
+     *
+     * <p>规则:
+     * <ul>
+     *   <li>跳过 MCP 挂载工具——远端 schema 可能 additionalProperties=false,
+     *       未知参数会被服务端拒绝(实测 tavily 校验失败);</li>
+     *   <li>跳过已有同名业务字段的工具(如 manage_skill 的 create/update
+     *       用 description 存技能说明)——不覆盖业务语义;</li>
+     *   <li>只加属性不加 required:标题可选,省略时由 harness 层兜底派生
+     *       (见 ToolStepEmitter.defaultTitle)。</li>
+     * </ul>
+     */
+    private void injectTitleParam(ArrayNode tools) {
+        for (com.fasterxml.jackson.databind.JsonNode t : tools) {
+            com.fasterxml.jackson.databind.JsonNode fn = t.path("function");
+            String name = fn.path("name").asText("");
+            if (name.startsWith("mcp__")) {
+                continue;
+            }
+            if (!(fn.path("parameters") instanceof ObjectNode params)
+                    || !(params.path("properties") instanceof ObjectNode props)) {
+                continue;
+            }
+            if (props.has("description")) {
+                continue; // 业务字段名恰为 description(manage_skill):不覆盖
+            }
+            ObjectNode desc = props.putObject("description");
+            desc.put("type", "string");
+            desc.put("description", "一句话描述这次调用要做什么,将作为执行时间线的标题展示给用户"
+                    + "(5-12 个字,祈使句)。正例:「统计各状态订单数」「重启 Redis 恢复连接」;"
+                    + "反例:不要用「执行操作」这类泛化词,不要复述完整参数");
+        }
     }
 }

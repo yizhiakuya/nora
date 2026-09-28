@@ -121,10 +121,12 @@ class ToolStepEmitter {
         // 模型看到自己真实的调用记录,而不是"纯文本声称跑过命令"(实测:缺失工具链
         // 结构时弱模型会续写编造工具结果)。脱敏与日志同口径,不存凭据明文。
         ChatStepDto.StepInput input = withRawArgs(parsed.input(), args);
-        // Claude Code 模式:模型经 description 参数填展示标题(祈使句、无主观词);
-        // 省略时回退工具名
+        // 标题管线(2026-09-29 统一,对齐 Claude Code 的工具标题):
+        //   ① 模型经 description 参数填的标题(所有内置工具 schema 已统一注入该参数)
+        //   ② 省略时从参数派生「动作 + 目标」(「读取 memory/x.md」,比静态工具名有信息量)
+        //   ③ 无法派生回退静态名(defaultTitle)
         String title = parsed.description() != null && !parsed.description().isBlank()
-                ? parsed.description() : defaultTitle(name);
+                ? parsed.description() : derivedTitle(name, parsed);
         long toolStart = System.currentTimeMillis();
         // 审批等待时间不计入工具执行耗时(2026-09-18 复盘):批准后重置锚点,
         // completed 步骤的 duration=纯执行时间;declined 保留全程时长(等的是用户)。
@@ -572,6 +574,112 @@ class ToolStepEmitter {
         } catch (Exception e) {
             return new ParsedArgs(new ChatStepDto.StepInput(null, null, null), null, null);
         }
+    }
+
+    /**
+     * 派生标题(2026-09-29):模型没填 description 时,从解析后的参数派生
+     * 「动作 + 目标」——比静态工具名有信息量(「读取 memory/x.md」而不是
+     * 「工作区文件」),且新工具零改动(统一走 ParsedArgs)。
+     * 派生不出时回退 {@link #defaultTitle}。
+     */
+    private String derivedTitle(String name, ParsedArgs parsed) {
+        String action = parsed.datasourceAction(); // action/子命令(manage_* 工具)
+        String target = parsed.input() != null ? parsed.input().target() : null;
+        String sql = parsed.input() != null ? parsed.input().sql() : null;
+        String service = parsed.input() != null ? parsed.input().service() : null;
+        return switch (name == null ? "" : name) {
+            case "execute_sql" -> {
+                // 从 SQL 提取表名派生(「查询 chat_message」比「查询数据库」有信息量)
+                String table = firstTableOf(sql);
+                if (table != null) {
+                    yield "查询 " + table;
+                }
+                yield sql != null && !sql.isBlank() ? "查询数据库" : defaultTitle(name);
+            }
+            case "execute_write_sql" -> {
+                String table = firstTableOf(sql);
+                yield table != null ? "写入 " + table : defaultTitle(name);
+            }
+            case "read_service_logs" -> service != null && !service.isBlank()
+                    ? "读取 " + service + " 日志" : defaultTitle(name);
+            case "manage_workspace", "manage_file", "read_file" -> {
+                String act = actionLabel(action);
+                if (act != null && target != null && !target.isBlank()) {
+                    yield act + " " + Texts.abbreviate(target, 40);
+                }
+                if (target != null && !target.isBlank()) {
+                    yield Texts.abbreviate(target, 40);
+                }
+                yield defaultTitle(name);
+            }
+            case "manage_datasource", "manage_service", "manage_mcp", "manage_skill",
+                 "manage_knowledge", "manage_automation" -> {
+                if (target != null && !target.isBlank()) {
+                    String act = actionLabel(action);
+                    yield act != null ? act + " " + Texts.abbreviate(target, 40)
+                            : Texts.abbreviate(target, 40);
+                }
+                yield defaultTitle(name);
+            }
+            case "run_command" -> target != null && !target.isBlank()
+                    ? Texts.abbreviate(target, 48) : defaultTitle(name);
+            case "search_knowledge" -> target != null && !target.isBlank()
+                    ? "检索「" + Texts.abbreviate(target, 30) + "」" : defaultTitle(name);
+            case "fetch_media" -> target != null && !target.isBlank()
+                    ? "拉取媒体到 " + Texts.abbreviate(target, 30) : defaultTitle(name);
+            default -> defaultTitle(name);
+        };
+    }
+
+    /** 常见 action 的中文标签(派生标题用;未知/缺失返回 null)。 */
+    private static String actionLabel(String action) {
+        if (action == null || action.isBlank()) {
+            return null;
+        }
+        return switch (action.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "list" -> "列出";
+            case "read" -> "读取";
+            case "write" -> "写入";
+            case "append" -> "追加";
+            case "edit", "update" -> "编辑";
+            case "delete", "remove" -> "删除";
+            case "import" -> "导入";
+            case "move" -> "移动";
+            case "copy" -> "复制";
+            case "mkdir" -> "新建目录";
+            case "index" -> "索引进知识库";
+            case "reindex" -> "重建索引";
+            case "register" -> "注册";
+            case "refresh" -> "刷新";
+            case "enable" -> "启用";
+            case "disable" -> "停用";
+            case "create" -> "创建";
+            case "toggle" -> "切换";
+            case "run" -> "运行";
+            case "stats" -> "统计";
+            case "call" -> "调用";
+            case "executions" -> "执行记录";
+            default -> null;
+        };
+    }
+
+    /**
+     * 从 SQL 里提取首个表名(派生标题用):FROM/JOIN/UPDATE/INTO 之后的
+     * 标识符,带 schema 前缀时只取表名部分。提取不到返回 null。
+     */
+    private static String firstTableOf(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return null;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "\\b(?:from|join|update|into)\\s+([A-Za-z_][\\w.]*)",
+                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(sql);
+        if (!m.find()) {
+            return null;
+        }
+        String ident = m.group(1);
+        int dot = ident.lastIndexOf('.');
+        return dot >= 0 ? ident.substring(dot + 1) : ident;
     }
 
     /** 模型省略 description 参数时的人类可读标题。 */
