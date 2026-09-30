@@ -42,11 +42,11 @@ export function ReferencePicker({
     sync.catch(() => undefined).finally(() => setLoading(false));
   }, [isOpen, kind]);
 
-  const title = kind === "file" ? "引用文件中心的文件" : "引用知识库文档";
+  const title = kind === "file" ? "引用资料里的文件" : "引用知识库文档";
   const emptyHint =
     kind === "file"
-      ? "文件中心还没有文件。可以先点 📎 上传，或去「文件」页导入。"
-      : "知识库还没有已索引的文档。先去「知识库」页导入并索引。";
+      ? "还没有文件。可以先点 📎 上传，或去「资料」页导入。"
+      : "知识库还没有已索引的文档。先去「资料 → 长期知识」导入并索引。";
 
   const q = query.trim().toLowerCase();
   const items: ChatRef[] =
@@ -94,7 +94,7 @@ export function ReferencePicker({
                   <span className="flex-1 min-w-0">
                     <span className="block text-xs text-foreground truncate">{item.name}</span>
                     <span className="block text-[10px] text-muted-foreground">
-                      {item.kind === "file" ? `文件中心${item.size ? ` · ${item.size}` : ""}` : "知识库文档"}
+                      {item.kind === "file" ? `资料文件${item.size ? ` · ${item.size}` : ""}` : "知识库文档"}
                     </span>
                   </span>
                 </button>

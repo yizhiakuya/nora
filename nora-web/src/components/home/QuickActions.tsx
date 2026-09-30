@@ -12,7 +12,7 @@ const ACTIONS = [
     gradient: "from-blue-50 dark:from-blue-950/30 to-indigo-50 dark:to-indigo-950/30",
     hoverBorder: "hover:border-blue-200 dark:hover:border-blue-800",
     // 点击跳到对话页并预填指令(此前只跳转,用户到了还得自己打字)
-    href: "/chat?prompt=" + encodeURIComponent("请帮我总结一份文档:先列出文件中心里可选的文档,我选好后再读取内容并提取核心观点和行动项。"),
+    href: "/chat?prompt=" + encodeURIComponent("请帮我总结一份文档:先列出资料里可选的文档,我选好后再读取内容并提取核心观点和行动项。"),
   },
   {
     label: "巡检数据分析",
@@ -49,8 +49,7 @@ export function QuickActions() {
         className="group border border-dashed border-gray-300 dark:border-gray-700 bg-card p-4 rounded-xl cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all flex flex-col items-center justify-center text-muted-foreground hover:text-blue-500 dark:hover:text-blue-400 min-h-[110px]"
       >
         <Plus className="w-6 h-6 mb-2 group-hover:scale-110 transition-transform" />
-        <div className="text-xs font-medium">导入文档到知识库</div>
-      </div>
+        <div className="text-xs font-medium">导入文档到知识库</div>      </div>
     </div>
   );
 }

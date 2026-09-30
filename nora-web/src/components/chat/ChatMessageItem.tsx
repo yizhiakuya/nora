@@ -1,4 +1,4 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock } from "lucide-react";
+import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock, User } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -20,6 +20,7 @@ import { FileDeliveryCards } from "./FileDeliveryCards";
 import { FileChangeCards } from "./FileChangeCards";
 import { parseArtifactsFence } from "@/lib/artifacts";
 import { useFileViewer } from "@/hooks/useFileViewer";
+import { usePreferences } from "@/hooks/usePreferences";
 
 /** 错误图标与配色(按 kind 微调,不喧宾夺主) */
 const ERROR_ICON: Record<string, React.ElementType> = {
@@ -249,6 +250,9 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
   const [editDraft, setEditDraft] = useState("");
   // 流式期间实时秒表(每秒递增);结束后停表不再显示(总耗时走 TurnMeta)
   const elapsedSeconds = useElapsedSeconds(msg.startedAtMs, !!msg.isTyping);
+  // 用户头像:有昵称显示首字,未设置昵称显示通用图标(此前硬编码假身份 "NC")
+  const accountName = usePreferences((s) => s.account.name);
+  const avatarText = accountName.trim() ? accountName.trim().charAt(0).toUpperCase() : null;
 
   const copyId = async () => {
     try {
@@ -334,7 +338,9 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
               </div>
             )}
             <div className="flex flex-col items-center gap-1">
-              <div className="w-8 h-8 rounded-full flex-shrink-0 bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center shadow-sm">NC</div>
+              <div className="w-8 h-8 rounded-full flex-shrink-0 bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center shadow-sm">
+                {avatarText ?? <User className="w-3.5 h-3.5" />}
+              </div>
               {onEdit && canEdit && !editing && (
                 <button
                   type="button"
@@ -359,7 +365,7 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
               <Sparkles className="w-4 h-4" />
           </div>
           <div className="flex-1 overflow-hidden">
-              <div className="text-sm font-medium flex items-center gap-2 mb-4">AI 助理 <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>
+              <div className="text-sm font-medium flex items-center gap-2 mb-4">Nora <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>
                 {msg.isTyping && elapsedSeconds != null && (
                   <span className="text-[10px] font-normal tabular-nums text-blue-600 dark:text-blue-400" title="本轮流式响应已用时">{elapsedSeconds}s</span>
                 )}

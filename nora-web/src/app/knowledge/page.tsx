@@ -13,7 +13,7 @@ export default function KnowledgePage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "资料", href: "/files", isCurrent: false }, { label: "长期知识", isCurrent: true }]}
+        breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "资料", href: "/files", isCurrent: false }, { label: "长期知识", isCurrent: true }]}
       />
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20">

@@ -96,8 +96,8 @@ export function KnowledgeAISettings() {
 
         <div className="space-y-3">
           <div>
-            <label className="text-sm font-bold text-foreground">AI 能力默认开关</label>
-            <p className="text-xs text-muted-foreground mt-0.5">与「AI 能力」页共享同一状态，控制对话中 AI 可使用的工具。</p>
+            <label className="text-sm font-bold text-foreground">技能默认开关</label>
+            <p className="text-xs text-muted-foreground mt-0.5">与设置页「技能」共享同一状态，控制对话中 AI 可使用的技能。</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {skills.map((skill) => (

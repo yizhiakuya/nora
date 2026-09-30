@@ -51,7 +51,7 @@ export function GeneralSettings() {
         <div className="space-y-4">
           <div>
             <label className="text-sm font-bold text-foreground">工作区偏好</label>
-            <p className="text-xs text-muted-foreground">自定义您的工作台视觉与交互体验。</p>
+            <p className="text-xs text-muted-foreground">自定义 Nora 的视觉与交互体验。</p>
           </div>
 
           <div className="flex items-center justify-between">

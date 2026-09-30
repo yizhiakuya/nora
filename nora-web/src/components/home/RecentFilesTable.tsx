@@ -90,7 +90,7 @@ export function RecentFilesTable() {
         ]}
         empty={
           <div className="bg-card border border-border rounded-xl shadow-sm p-6 text-center text-xs text-muted-foreground">
-            {stale ? "暂时拿不到最近使用记录,连接恢复后自动显示" : "还没有打开过文件,去文件中心看看吧"}
+            {stale ? "暂时拿不到最近使用记录,连接恢复后自动显示" : "还没有打开过文件,去「资料」看看吧"}
           </div>
         }
       />

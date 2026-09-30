@@ -114,7 +114,7 @@ export default function ChatPage() {
     <>
       <Header
         breadcrumbs={[
-          { label: "工作台", href: "/", isCurrent: false },
+          { label: "Nora", href: "/", isCurrent: false },
           { label: "对话", isCurrent: false },
           { label: active?.title ?? "新对话", isCurrent: true }
         ]}

@@ -98,14 +98,11 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
                 /* 静态品牌区(2026-09-19 去假功能):此前是假工作区切换器
                    (Team Alpha 假切换/假"创建新工作区")——单用户单工作台,无此功能 */
                 <div className="p-2.5 flex-1 flex items-center gap-3 min-w-0">
-                  <img src="/logo-mark.png" alt="AI 工作台" width={32} height={32} className="w-8 h-8 rounded-lg shrink-0" />
-                  <div className="flex flex-col text-left min-w-0">
-                    <span className="text-foreground font-bold text-sm truncate">Nora 的个人空间</span>
-                    <span className="text-[10px] text-muted-foreground truncate">自部署版</span>
-                  </div>
+                  <img src="/logo-mark.png" alt="Nora" width={32} height={32} className="w-8 h-8 rounded-lg shrink-0" />
+                  <span className="text-foreground font-bold text-sm truncate">Nora</span>
                 </div>
               ) : (
-                <img src="/logo-mark.png" alt="AI 工作台" width={28} height={28} className="w-7 h-7 rounded-lg shrink-0" title="Nora 的个人空间" />
+                <img src="/logo-mark.png" alt="Nora" width={28} height={28} className="w-7 h-7 rounded-lg shrink-0" title="Nora" />
               )}
               <div className="flex items-center">
                 {!compact && <button className="hidden md:flex p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-colors shrink-0" onClick={toggleCollapsed} title={collapsed ? "展开导航" : "收起导航"}>

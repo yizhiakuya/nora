@@ -460,7 +460,7 @@ export default function FilesPage() {
     <>
       <Header
         breadcrumbs={[
-          { label: "工作台", href: "/", isCurrent: false },
+          { label: "Nora", href: "/", isCurrent: false },
           {
             // §7 评审:导航叫「资料」,面包屑原叫「文件中心」——名称随导航统一
             label: "资料",

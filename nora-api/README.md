@@ -1,6 +1,6 @@
 # Nora API
 
-Nora 个人工作台 Java 后端。设计文档见 [docs/](docs/)：
+Nora(个人 AI 助手)的 Java 后端。设计文档见 [docs/](docs/)：
 
 - [docs/architecture-v2.md](docs/architecture-v2.md) — **微服务架构设计（当前基准，含 Phase 0–4 路线图）**
 - [docs/agent-implementation-spec.md](docs/agent-implementation-spec.md) — **Agent 实施规格**（ReAct 协议、工具契约、高风险审批协议）

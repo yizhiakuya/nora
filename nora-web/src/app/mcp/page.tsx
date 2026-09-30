@@ -12,7 +12,7 @@ export default function McpPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "设置", href: "/settings", isCurrent: false }, { label: "连接与工具", isCurrent: true }]}
+        breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "设置", href: "/settings", isCurrent: false }, { label: "连接与工具", isCurrent: true }]}
       />
       <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
         <div className="max-w-6xl mx-auto space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-300">

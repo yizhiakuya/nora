@@ -71,7 +71,7 @@ export default function LoginPage() {
       setError(body?.message || `登录失败(HTTP ${res.status})`);
       setHint(body?.hint || null);
     } catch {
-      setError("无法连接服务(网关不可达?)");
+      setError("无法连接服务,请确认 Nora 已启动");
     } finally {
       setBusy(false);
     }
@@ -92,7 +92,7 @@ export default function LoginPage() {
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg mb-3">
             <ShieldCheck className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-lg font-bold text-foreground">Nora 个人工作台</h1>
+          <h1 className="text-lg font-bold text-foreground">Nora</h1>
           <p className="text-xs text-muted-foreground mt-1">输入访问令牌以继续</p>
         </div>
 

@@ -71,7 +71,7 @@ export default function SettingsPage() {
     <>
       <Header
         breadcrumbs={[
-          { label: "工作台", href: "/", isCurrent: false },
+          { label: "Nora", href: "/", isCurrent: false },
           { label: "设置", isCurrent: true },
         ]}
       />

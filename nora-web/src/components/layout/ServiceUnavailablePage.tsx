@@ -39,10 +39,10 @@ export function ServiceUnavailablePage() {
       </svg>
 
       <h1 className="mt-8 text-2xl font-semibold tracking-wide text-foreground">
-        网关不可达
+        服务暂时不可用
       </h1>
       <p className="mt-3 text-xs text-muted-foreground max-w-xs text-center leading-relaxed">
-        无法连接到 Nora 网关(端口 8080)。请确认服务已启动;恢复后本页会自动消失。
+        无法连接到 Nora 后端服务。请确认服务已启动;恢复后本页会自动消失。
       </p>
     </div>
   );

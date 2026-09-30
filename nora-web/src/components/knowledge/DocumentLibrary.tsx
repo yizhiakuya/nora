@@ -420,7 +420,7 @@ export function DocumentLibrary() {
                               <a
                                 href={`/files?open=${doc.sourceId}`}
                                 className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline"
-                                title="在文件中心查看原文件"
+                                title="在「资料」中查看原文件"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 原文件

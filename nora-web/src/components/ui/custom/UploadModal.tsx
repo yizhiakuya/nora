@@ -97,7 +97,7 @@ export function UploadModal({ upload, title, hint = "单文件最大支持 50MB"
               ? `上传完成（成功 ${p.done - p.failed}/${p.total}${p.failed > 0 ? `，失败 ${p.failed}` : ""}）`
               : "上传成功"}
           </div>
-          <div className="text-xs text-muted-foreground mt-1">文件已保存到您的空间</div>
+          <div className="text-xs text-muted-foreground mt-1">文件已保存到资料</div>
         </div>
       )}
     </Modal>

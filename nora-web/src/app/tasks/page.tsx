@@ -50,7 +50,7 @@ export default function TasksPage() {
   return (
     <>
       <Header
-        breadcrumbs={[{ label: "工作台", href: "/", isCurrent: false }, { label: "任务", isCurrent: true }]}
+        breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "任务", isCurrent: true }]}
         actions={
           <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
             <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建定期任务

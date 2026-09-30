@@ -72,8 +72,8 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
   const handleSaveToFiles = async (item: CachedMediaItem) => {
     try {
       const res = await mediaCacheApi.saveToFiles(item.key);
-      toast.success(`已保存到文件中心:「${res.name}」`, {
-        description: "可在「文件中心」根目录查看，并加入知识库",
+      toast.success(`已保存到资料:「${res.name}」`, {
+        description: "可在「资料」根目录查看，并加入知识库",
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "保存失败");
@@ -96,7 +96,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
       {/* 面包屑 */}
       <div className="flex items-center gap-1.5 mb-4 text-xs animate-in fade-in flex-wrap">
         <button type="button" className="text-muted-foreground hover:text-foreground transition-colors" onClick={onExit}>
-          文件中心
+          资料
         </button>
         <span className="text-muted-foreground/50">/</span>
         <span className="text-foreground font-medium">媒体缓存</span>
@@ -170,7 +170,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
                   <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       type="button"
-                      title="保存到文件中心（转为正式文件,可索引/引用）"
+                      title="保存到资料（转为正式文件,可索引/引用）"
                       onClick={(e) => {
                         e.stopPropagation();
                         void handleSaveToFiles(item);

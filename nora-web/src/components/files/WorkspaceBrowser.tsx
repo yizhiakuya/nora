@@ -60,14 +60,14 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
 
   return (
     <>
-      {/* 路径面包屑:文件中心 / Agent 工作区 / …(点击跳转;末级为当前目录) */}
+      {/* 路径面包屑:资料 / Agent 工作区 / …(点击跳转;末级为当前目录) */}
       <div className="flex items-center gap-1.5 mb-4 text-xs animate-in fade-in flex-wrap">
         <button
           type="button"
           className="text-muted-foreground hover:text-foreground transition-colors"
           onClick={onExit}
         >
-          文件中心
+          资料
         </button>
         <span className="text-muted-foreground/50">/</span>
         <button

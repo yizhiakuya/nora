@@ -38,7 +38,7 @@ const TITLES: Record<string, string> = {
   "/chat": "助手",
   "/tasks": "任务",
   "/knowledge": "资料",
-  "/skills": "AI 能力",
+  "/skills": "技能",
   "/data-sources": "数据源",
   "/environments": "环境控制台",
   "/automations": "任务",
@@ -74,7 +74,7 @@ function RouteShell({ children }: { children: React.ReactNode }) {
   }, [toggleCmdK, closeCmdK]);
   useEffect(() => {
     const title = TITLES[location.pathname];
-    document.title = title ? `${title} · Nora 个人工作台` : "Nora 个人工作台";
+    document.title = title ? `${title} · Nora` : "Nora";
   }, [location.pathname]);
   // API 不在线 = 全部功能不可用:整屏替换为服务不可用页(无侧栏/导航)
   if (online === false) {

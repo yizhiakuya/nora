@@ -271,10 +271,10 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   return (
     <div className="shrink-0 px-4 pb-4 pt-2 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
       <div className="max-w-3xl mx-auto pointer-events-auto">
-          {/* AI 能力状态条：启用=高亮，停用=置灰；点击切换 */}
+          {/* 技能状态条：启用=高亮，停用=置灰；点击切换 */}
           <div className="flex items-center gap-1.5 mb-2 flex-wrap">
             <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground mr-1">
-              <Zap className="w-3 h-3" /> AI 能力
+              <Zap className="w-3 h-3" /> 技能
             </span>
             {skills.map((skill) => (
               <button
@@ -335,10 +335,10 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
           {mention && mention.query && mentionItems.length === 0 && (
             <div className="absolute bottom-full left-0 right-0 mb-2 z-20 rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 text-[11px] text-muted-foreground animate-in fade-in slide-in-from-bottom-1">
               {mention.trigger === "@"
-                ? <>没有匹配「{mention.query}」的文件（可去「文件」页导入）</>
+                ? <>没有匹配「{mention.query}」的文件（可去「资料」页导入）</>
                 : mention.trigger === "#"
-                  ? <>没有匹配「{mention.query}」的知识库文档（可去「知识库」页导入并索引）</>
-                  : <>没有匹配「{mention.query}」的技能或 MCP 工具（可去「AI 能力」/「MCP」页配置）</>}
+                  ? <>没有匹配「{mention.query}」的知识库文档（可去「资料 → 长期知识」导入并索引）</>
+                  : <>没有匹配「{mention.query}」的技能或 MCP 工具（可去「设置 → 技能」/「设置 → 连接与工具」配置）</>}
             </div>
           )}
 
@@ -363,7 +363,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
               {dragging && (
                 <div className="absolute inset-0 z-10 bg-blue-500/5 flex items-center justify-center pointer-events-none">
                   <span className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                    <Paperclip className="w-3.5 h-3.5" /> 松开上传到文件中心并引用
+                    <Paperclip className="w-3.5 h-3.5" /> 松开上传到资料并引用
                   </span>
                 </div>
               )}
@@ -396,7 +396,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                 ref={textareaRef}
                 rows={1}
                 style={{ minHeight: '52px', maxHeight: '240px' }}
-                placeholder="给“AI 助理”发送消息...（@ 文件 · # 知识库 · / 技能与工具）"
+                placeholder="给 Nora 发送消息...（@ 文件 · # 知识库 · / 技能与工具）"
                 className="w-full bg-transparent resize-none outline-none text-sm px-4 pt-4 pb-2 text-foreground placeholder:text-muted-foreground overflow-y-auto custom-scroll"
                 value={input}
                 onChange={(e) => {
@@ -464,16 +464,16 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={uploading}
-                        title="上传附件(存入文件中心并引用,AI 可读取)"
+                        title="上传附件(存入资料并引用,AI 可读取)"
                       >
                         {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
                       </Button>
-                      {/* 📄 引用文件中心的文件 */}
+                      {/* 📄 引用资料里的文件 */}
                       <Button
                         variant="ghost" size="icon"
                         className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
                         onClick={() => setPicker("file")}
-                        title="引用文件中心的文件(AI 用 manage_file 读取)"
+                        title="引用资料里的文件(AI 可读取)"
                       >
                         <FileText className="w-4 h-4" />
                       </Button>
