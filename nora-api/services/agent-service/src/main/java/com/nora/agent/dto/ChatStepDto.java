@@ -116,6 +116,8 @@ public record ChatStepDto(
      * @param rowCount  SQL 结果的行数
      * @param truncated {@code content} 是否被裁到大小预算
      * @param error     status 为 failed/declined 时的机器可读失败原因
+     * @param fileChanges 本轮文本写操作的变更记录(对话「已编辑 N 个文件」卡片;
+     *                 仅工作区文件、不含记忆/人格等内部状态文件)
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record StepResult(
@@ -127,12 +129,35 @@ public record ChatStepDto(
             String error,
             java.util.List<ViewerFile> files,
             String focusTarget,
-            java.util.List<com.nora.agent.service.ViewerService.FileError> fileErrors
+            java.util.List<com.nora.agent.service.ViewerService.FileError> fileErrors,
+            java.util.List<FileChange> fileChanges
     ) {
         public StepResult(String content, String summary, Integer rowCount, Integer lineCount,
                           Boolean truncated, String error) {
-            this(content, summary, rowCount, lineCount, truncated, error, null, null, null);
+            this(content, summary, rowCount, lineCount, truncated, error, null, null, null, null);
         }
+    }
+
+    /**
+     * 一次文本写操作的变更统计(2026-09-30,对齐 Codex 的编辑卡片):
+     * 行级 LCS 统计,供对话底部「已编辑 N 个文件 +X/-Y」展示与点击进查看器。
+     *
+     * @param target    查看器可解析的引用({@code workspace:相对路径};区外文件不记录)
+     * @param name      文件名
+     * @param kind      操作类型:{@code write} / {@code append} / {@code edit}
+     * @param additions 新增行数
+     * @param deletions 删除行数
+     * @param created   是否新建文件(true 时 additions=全文行数)
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record FileChange(
+            String target,
+            String name,
+            String kind,
+            Integer additions,
+            Integer deletions,
+            Boolean created
+    ) {
     }
 
     /**

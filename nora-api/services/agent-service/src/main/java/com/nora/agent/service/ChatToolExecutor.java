@@ -775,7 +775,10 @@ class ChatToolExecutor {
                     }
                 }
             }
-            return new ToolOutcome(switch (action) {
+            // 文本写操作的变更记录(对话「已编辑 N 个文件」卡片):switch 内写分支
+            // 逐项追加,switch 后统一挂到 ToolOutcome;非写操作保持空列表。
+            List<ChatStepDto.FileChange> fileChanges = new java.util.ArrayList<>();
+            String result = switch (action) {
                 case "list" -> {
                     // dir 优先,其次 path(agent 可能把路径塞进 path)
                     String dirArg = a.path("dir").asText(null);
@@ -823,7 +826,10 @@ class ChatToolExecutor {
                     if (content == null) {
                         yield "ERROR: 缺少 content 参数(要写入的完整内容;如需保留原内容请先 read)";
                     }
+                    boolean existed = agentWorkspaceService.existsAny(path);
+                    String before = existed ? agentWorkspaceService.readTextOrNull(path) : null;
                     int written = agentWorkspaceService.writeAny(path, content);
+                    addFileChange(fileChanges, path, "write", before, content, existed);
                     yield "已写入 " + path + "(" + written + " 字符)";
                 }
                 case "append" -> {
@@ -835,7 +841,10 @@ class ChatToolExecutor {
                     if (content == null || content.isBlank()) {
                         yield "ERROR: 缺少 content 参数(要追加的内容)";
                     }
+                    boolean existed = agentWorkspaceService.existsAny(path);
+                    String before = existed ? agentWorkspaceService.readTextOrNull(path) : null;
                     int written = agentWorkspaceService.appendAny(path, content);
+                    addFileChange(fileChanges, path, "append", before, (before == null ? "" : before) + content, existed);
                     yield "已追加 " + written + " 字符到 " + path;
                 }
                 case "edit" -> {
@@ -852,7 +861,17 @@ class ChatToolExecutor {
                     if (newString == null) {
                         yield "ERROR: edit 需要 new_string 参数(替换后的新文本;留空字符串=删除该段)";
                     }
-                    yield agentWorkspaceService.editAny(path, oldString, newString);
+                    String before = agentWorkspaceService.readTextOrNull(path);
+                    String editResult = agentWorkspaceService.editAny(path, oldString, newString);
+                    // editAny 成功后 oldString 必然唯一,重放替换即为写后内容
+                    if (before != null) {
+                        int idx = before.indexOf(oldString);
+                        if (idx >= 0) {
+                            String after = before.substring(0, idx) + newString + before.substring(idx + oldString.length());
+                            addFileChange(fileChanges, path, "edit", before, after, true);
+                        }
+                    }
+                    yield editResult;
                 }
                 case "import" -> importFromUrl(a, path);
                 case "move" -> {
@@ -891,12 +910,35 @@ class ChatToolExecutor {
                     agentWorkspaceService.deleteAny(path);
                     yield "已删除 " + path;
                 }
-            }, null, null, false);
+            };
+            return new ToolOutcome(result, null, null, false, java.util.List.of(), false, false,
+                    null, null, null, fileChanges.isEmpty() ? null : fileChanges);
         } catch (IllegalArgumentException e) {
             return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
         } catch (Exception e) {
             return new ToolOutcome("ERROR: 工作区操作失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
         }
+    }
+
+    /**
+     * 文本写操作的变更记录(对话「已编辑 N 个文件」卡片,2026-09-30):
+     * 区外文件与 agent 内部状态文件(人格/记忆/日记)不记录——前者不可通过
+     * 查看器打开,后者是 agent 自身记账,弹卡片只会造成每轮噪音。
+     * 前后内容任一不可读(二进制/超限)时跳过统计,不阻塞写操作本身。
+     */
+    private void addFileChange(List<ChatStepDto.FileChange> changes, String path, String kind,
+                               String before, String after, boolean existed) {
+        String target = agentWorkspaceService.changeTargetOrNull(path);
+        if (target == null) {
+            return;
+        }
+        if (existed && before == null) {
+            return; // 写前内容不可读:无法给出可靠的行级统计
+        }
+        AgentWorkspaceService.ChangeStats stats = AgentWorkspaceService.diffStats(before, after);
+        String name = target.substring(target.lastIndexOf('/') + 1);
+        changes.add(new ChatStepDto.FileChange(target, name, kind,
+                stats.additions(), stats.deletions(), !existed));
     }
 
     /** manage_skill handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
@@ -2121,7 +2163,18 @@ class ChatToolExecutor {
                         boolean partial,
                         java.util.List<com.nora.agent.dto.ViewerFile> files,
                         String focusTarget,
-                        java.util.List<ViewerService.FileError> fileErrors) {
+                        java.util.List<ViewerService.FileError> fileErrors,
+                        /** 文本写操作的变更记录(对话「已编辑 N 个文件」卡片,2026-09-30):
+                         *  仅工作区普通内容文件;内部状态文件/区外文件不记录。空 = 非写操作。 */
+                        java.util.List<ChatStepDto.FileChange> fileChanges) {
+
+        /** 带文件清单的结果(兼容构造:无 fileChanges)。 */
+        ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
+                    java.util.List<McpServerService.McpToolResult.ImageBlock> images, boolean unknown, boolean partial,
+                    java.util.List<com.nora.agent.dto.ViewerFile> files, String focusTarget,
+                    java.util.List<ViewerService.FileError> fileErrors) {
+            this(content, summary, rowCount, truncated, images, unknown, partial, files, focusTarget, fileErrors, null);
+        }
 
         ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
                     java.util.List<McpServerService.McpToolResult.ImageBlock> images, boolean unknown, boolean partial) {

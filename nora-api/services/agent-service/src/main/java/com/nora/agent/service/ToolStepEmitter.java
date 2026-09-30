@@ -321,7 +321,8 @@ class ToolStepEmitter {
                 countLines(outcome.content()),
                 outcome.truncated(),
                 failure ? outcome.content() : null,
-                outcome.files(), outcome.focusTarget(), outcome.fileErrors());
+                outcome.files(), outcome.focusTarget(), outcome.fileErrors(),
+                outcome.fileChanges());
         // 记录本次结果(结果感知的循环检测,设计 §9.3):结果变化会重置计数——
         // 「正常轮询/有进展的重复读取」不被误拦;结果未知不参与判定
         loopDetector.recordResult(fingerprint, outcome.unknown() ? null

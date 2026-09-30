@@ -14,12 +14,25 @@ export interface ChatStepResult {
   files?: ViewerFile[];
   focusTarget?: string;
   fileErrors?: ViewerFileError[];
+  /** 文本写操作的变更记录(「已编辑 N 个文件」卡片;后端 ChatStepDto.FileChange 同构) */
+  fileChanges?: FileChange[];
   content?: string;
   summary?: string;
   rowCount?: number;
   lineCount?: number;
   truncated?: boolean;
   error?: string;
+}
+
+/** 一次文本写操作的变更统计(对齐 Codex 编辑卡片;行级 diff 由服务端计算) */
+export interface FileChange {
+  /** 查看器引用(workspace:相对路径) */
+  target: string;
+  name: string;
+  kind: "write" | "append" | "edit" | string;
+  additions: number;
+  deletions: number;
+  created?: boolean;
 }
 
 /**

@@ -486,6 +486,92 @@ public class AgentWorkspaceService {
         }
     }
 
+    // ---------- 变更统计(对话「已编辑 N 个文件 +X/-Y」卡片,2026-09-30) ----------
+
+    /** 一次文本写操作的行级变更统计。 */
+    public record ChangeStats(int additions, int deletions) {
+    }
+
+    /**
+     * 行级 diff 统计(对话编辑卡片用):LCS 求最长公共子序列,两侧剩余行数
+     * 即新增/删除。行数规模受 {@link #MAX_FILE_CHARS} 约束(≤20 万字符),
+     * 超 2000 行时截断统计(近似值,避免病态开销)。
+     *
+     * @param before 写前内容(null=文件不存在或不可读)
+     * @param after  写后内容
+     */
+    public static ChangeStats diffStats(String before, String after) {
+        List<String> a = linesOf(before);
+        List<String> b = linesOf(after);
+        int cap = 2000;
+        if (a.size() > cap) a = a.subList(0, cap);
+        if (b.size() > cap) b = b.subList(0, cap);
+        int n = a.size(), m = b.size();
+        // 滚动数组 LCS 长度
+        int[] prev = new int[m + 1];
+        int[] curr = new int[m + 1];
+        for (int i = 1; i <= n; i++) {
+            for (int j = 1; j <= m; j++) {
+                curr[j] = a.get(i - 1).equals(b.get(j - 1))
+                        ? prev[j - 1] + 1
+                        : Math.max(prev[j], curr[j - 1]);
+            }
+            int[] t = prev;
+            prev = curr;
+            curr = t;
+            java.util.Arrays.fill(curr, 0);
+        }
+        int lcs = prev[m];
+        return new ChangeStats(m - lcs, n - lcs);
+    }
+
+    private static List<String> linesOf(String text) {
+        if (text == null || text.isEmpty()) {
+            return List.of();
+        }
+        // 末尾换行不产生额外空行(与 git 行统计口径近似)
+        String normalized = text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
+        return List.of(normalized.split("\n", -1));
+    }
+
+    /**
+     * 编辑卡片的可打开引用:工作区内普通内容文件 → {@code workspace:相对路径};
+     * 区外文件、agent 内部状态文件(人格/记忆/日记)→ null(不产生卡片)。
+     *
+     * <p>内部状态文件的日常读写属于 agent 自身记账(与成果登记同一排除口径,
+     * 设计文档 §7),若也弹卡片会让每轮对话都出现「已编辑 MEMORY.md」噪音。
+     */
+    public String changeTargetOrNull(String path) {
+        try {
+            ResolvedTarget resolved = resolveAny(path);
+            if (!resolved.insideWorkspace()) {
+                return null;
+            }
+            String relative = root.relativize(resolved.path()).toString().replace('\\', '/');
+            if (relative.startsWith("memory/") || IDENTITY_FILES.contains(relative)
+                    || CONTEXT_FILES.contains(relative) || VOLATILE_FILES.contains(relative)) {
+                return null;
+            }
+            return "workspace:" + relative;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 读取文本文件内容(变更统计用;不存在/二进制/超限返回 null,不抛)。 */
+    public String readTextOrNull(String path) {
+        try {
+            Path file = resolveAny(path).path();
+            if (!Files.isRegularFile(file) || Files.size(file) > 4L * 1024 * 1024) {
+                return null;
+            }
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            return content.indexOf('\u0000') >= 0 ? null : content;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** 写入任意文件(agent 工具用;区外写由 HIGH 审批把门)。 */
     public int writeAny(String path, String content) {
         return writePath(resolveAny(path).path(), content);

@@ -17,6 +17,7 @@ import { USE_BACKEND } from "@/lib/api/client";
 import { contentKey, contentHashSuffix, getSavedRecord, markSaved } from "@/lib/saveState";
 import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
 import { FileDeliveryCards } from "./FileDeliveryCards";
+import { FileChangeCards } from "./FileChangeCards";
 import { parseArtifactsFence } from "@/lib/artifacts";
 import { useFileViewer } from "@/hooks/useFileViewer";
 
@@ -388,6 +389,8 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                   )}
 
                   <FileDeliveryCards msg={msg} sessionId={sessionId} />
+
+                  <FileChangeCards msg={msg} sessionId={sessionId} />
 
                   {msg.error && (() => {
                     const ErrIcon = ERROR_ICON[msg.errorKind ?? "unknown"] ?? AlertTriangle;
