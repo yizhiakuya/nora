@@ -89,7 +89,7 @@ export default function LoginPage() {
     <div className="h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <img src="/logo-mark.svg" alt="Nora" width={48} height={48} className="w-12 h-12 mb-3" />
+          <img src="/brand-logo.png" alt="Nora" width={56} height={56} className="w-14 h-14 mb-3" />
           <h1 className="text-lg font-bold text-foreground">Nora</h1>
           <p className="text-xs text-muted-foreground mt-1">输入访问令牌以继续</p>
         </div>

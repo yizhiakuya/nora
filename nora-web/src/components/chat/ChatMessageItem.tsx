@@ -361,8 +361,10 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
   return (
     <>
       <div className="flex gap-4 animate-in fade-in slide-in-from-bottom-2">
-          <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm mt-1">
-              <img src="/logo-mark-white.svg" alt="Nora" width={18} height={18} className="w-[18px] h-[18px]" />
+          {/* 头像:气泡 N(深蓝剪影)。深色模式下近黑背景对比度低,
+              加一圈浅色细环把剪影从背景里拉出来(审查建议,2026-10-01) */}
+          <div className="w-8 h-8 rounded-full flex-shrink-0 shadow-sm mt-1 overflow-hidden ring-1 ring-black/10 dark:ring-white/25">
+              <img src="/brand-avatar.png" alt="Nora" width={32} height={32} className="w-8 h-8" />
           </div>
           <div className="flex-1 overflow-hidden">
               <div className="text-sm font-medium flex items-center gap-2 mb-4">Nora <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>

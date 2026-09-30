@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- Nora 品牌标·白色版(彩色/深色底上用)。几何同 logo-mark.svg。 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <g stroke="#ffffff" stroke-width="124" stroke-linecap="round">
-    <path d="M102 101 L102 411"/>
-    <path d="M102 101 L409 411"/>
-    <path d="M409 101 L409 411"/>
-  </g>
-</svg>

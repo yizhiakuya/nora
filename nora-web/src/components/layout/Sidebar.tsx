@@ -2,8 +2,8 @@
 
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  Folder, ListCheck, Settings, Database, Server,
-  Check, X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
+  MessageSquare, Folder, ListCheck, Settings, Database, Server,
+  X, PanelLeftClose, PanelLeftOpen, Plus, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
@@ -19,19 +19,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
-/** 品牌标作为「助手」导航图标(替代星星,2026-09-30):N 字母标即助手入口的身份 */
-function NoraNavIcon({ className }: { className?: string }) {
-  return <img src="/logo-mark.svg" alt="" aria-hidden className={cn("w-4 h-4 shrink-0", className)} />;
-}
-
 /**
  * 主导航(2026-09-20,按产品改造方案 §3.1 + 用户反馈):
  * 「助手 / 资料 / 任务 / 数据源 / 环境 / 设置」——此前技术模块平铺为十个
  * 顶级入口,用户开始一件事之前要先学系统结构(审查报告 B01);
  * 数据源与环境控制台从底部小链接提升为并列主导航(用户明确要求,2026-09-20)。
+ *
+ * 图标风格约定(2026-09-30 用户反馈):导航栏统一线性图标(lucide),
+ * 不放彩色品牌标(突兀);品牌标只在侧栏顶部/登录页/聊天头像出现。
  */
 const NAV_ITEMS = [
-  { name: "助手", icon: NoraNavIcon, href: "/" },
+  { name: "助手", icon: MessageSquare, href: "/" },
   { name: "资料", icon: Folder, href: "/files" },
   { name: "任务", icon: ListCheck, href: "/tasks" },
   { name: "数据源", icon: Database, href: "/data-sources" },
@@ -103,11 +101,11 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
                 /* 静态品牌区(2026-09-19 去假功能):此前是假工作区切换器
                    (Team Alpha 假切换/假"创建新工作区")——单用户单工作台,无此功能 */
                 <div className="p-2.5 flex-1 flex items-center gap-3 min-w-0">
-                  <img src="/logo-mark.svg" alt="Nora" width={32} height={32} className="w-8 h-8 shrink-0" />
+                  <img src="/brand-logo.png" alt="Nora" width={32} height={32} className="w-8 h-8 shrink-0 rounded-lg" />
                   <span className="text-foreground font-bold text-sm truncate">Nora</span>
                 </div>
               ) : (
-                <img src="/logo-mark.svg" alt="Nora" width={28} height={28} className="w-7 h-7 shrink-0" title="Nora" />
+                <img src="/brand-logo.png" alt="Nora" width={28} height={28} className="w-7 h-7 shrink-0 rounded-lg" title="Nora" />
               )}
               <div className="flex items-center">
                 {!compact && <button className="hidden md:flex p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-colors shrink-0" onClick={toggleCollapsed} title={collapsed ? "展开导航" : "收起导航"}>
