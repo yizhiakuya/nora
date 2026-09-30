@@ -152,9 +152,16 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     get().suppressAutoOpen();
     const next = get().tabs.filter(file => file.target !== target);
     set({ tabs: next });
-    if (get().active?.target === target) {
-      if (next.length) get().select(next[next.length - 1].target);
-      else get().close();
+    // 最后一个标签页:无论 active 是否匹配都关闭面板——文件解析失败时
+    // active 为 null,旧逻辑的 active?.target === target 判定会漏掉,面板
+    // 停在「无法打开文件」错误态关不掉(2026-09-30 实测:关已删文件标签后残留)
+    if (!next.length) {
+      get().close();
+      return;
+    }
+    // active 为 null(上一个文件解析失败)时也选中剩余标签,给出恢复路径
+    if (get().active?.target === target || !get().active) {
+      get().select(next[next.length - 1].target);
     }
   }),
   select: target => {
