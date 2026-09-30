@@ -18,7 +18,7 @@ import type { ArtifactGallery } from "@/lib/artifacts";
  * 新增业务画廊 = 加一个组件文件 + 这里注册一行(互不影响,无共享状态)。
  * 未知 gallery 名 → 降级 ListGallery(前向兼容,永不报错)。
  */
-const REGISTRY: Record<string, ComponentType<{ data: Record<string, unknown> }>> = {
+const REGISTRY: Record<string, ComponentType<{ data: Record<string, unknown>; sessionId?: string }>> = {
   media: MediaGallery,
   files: FilesGallery,
   table: TableGallery,
@@ -30,13 +30,13 @@ const REGISTRY: Record<string, ComponentType<{ data: Record<string, unknown> }>>
 };
 
 /** 渲染一条画廊实例(按 gallery 名查注册表;未知降级 list)。 */
-export function ArtifactsBlock({ gallery }: { gallery: ArtifactGallery }) {
+export function ArtifactsBlock({ gallery, sessionId }: { gallery: ArtifactGallery; sessionId?: string }) {
   const Component = REGISTRY[gallery.gallery] ?? ListGallery;
   // data-nora-gallery:画廊内的图片由组件自己控制样式,globals.css 据此
   // 把「Markdown 正文图片」规则(420px 限高/白边框)排除在外(实测踩过)
   return (
     <div data-nora-gallery>
-      <Component data={gallery.data} />
+      <Component data={gallery.data} sessionId={sessionId} />
     </div>
   );
 }

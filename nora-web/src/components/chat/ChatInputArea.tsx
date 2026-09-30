@@ -67,6 +67,11 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const mcpServers = useMcpServers((s) => s.servers);
   const syncMcpServers = useMcpServers((s) => s.syncServers);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previousRefCount = useRef(refs.length);
+  useEffect(() => {
+    if (refs.length > previousRefCount.current) textareaRef.current?.focus();
+    previousRefCount.current = refs.length;
+  }, [refs.length]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** 📎 上传中(禁用按钮防重复) */
   const [uploading, setUploading] = useState(false);
@@ -264,7 +269,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   });
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
+    <div className="shrink-0 px-4 pb-4 pt-2 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
       <div className="max-w-3xl mx-auto pointer-events-auto">
           {/* AI 能力状态条：启用=高亮，停用=置灰；点击切换 */}
           <div className="flex items-center gap-1.5 mb-2 flex-wrap">
@@ -285,7 +290,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
             ))}
           </div>
 
-          <div className="relative">
+          <div className="relative [container-type:inline-size]">
           {/* 内联提及菜单(@ 文件 / # 知识库 / / 技能与工具):绝对定位在输入框上方,不挤压布局 */}
           {mention && mentionItems.length > 0 && (
             <div className="absolute bottom-full left-0 right-0 mb-2 z-20 rounded-xl border border-border bg-card shadow-lg overflow-hidden animate-in fade-in slide-in-from-bottom-1">
@@ -439,8 +444,8 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                 }}
               ></textarea>
 
-              <div className="flex justify-between items-end p-2.5 pt-1">
-                  <div className="flex shrink-0 gap-0.5">
+              <div className="flex flex-wrap justify-between items-center gap-x-2 gap-y-1.5 p-2.5 pt-1">
+                  <div className="flex shrink-0 items-center gap-0.5">
                       {/* 📎 附件:选本地文件上传到文件中心并引用 */}
                       <input
                         ref={fileInputRef}
@@ -481,27 +486,25 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                       >
                         <AtSign className="w-4 h-4" />
                       </Button>
-                  </div>
-
-                  <div className="flex min-w-0 flex-1 justify-end gap-1.5 items-center">
-                      <div className="hidden sm:flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground font-medium hover:bg-muted cursor-pointer shrink-0" title={`上下文用量 ${contextPercent}%`}>
+                      <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground font-medium shrink-0" title={`上下文用量 ${contextPercent}%`}>
                           <Layers className={`w-3 h-3 shrink-0 ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : "text-muted-foreground"}`} />
-                          <div className="hidden lg:flex w-12 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
+                          <div className="hidden [@container(min-width:720px)]:flex w-12 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
                               <div className={`h-full ${contextPercent >= 90 ? "bg-red-500" : contextPercent >= 75 ? "bg-amber-500" : "bg-blue-500"}`} style={{width: `${contextPercent}%`}}></div>
                           </div>
                           <span className={`font-mono ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : ""}`}>{contextTokens >= 1000 ? `${Math.round(contextTokens / 1000)}k` : contextTokens}/{contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k` : contextLimit}</span>
                       </div>
+                  </div>
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
-
-                      {/* 思考等级:仅列出设置页为当前模型启用的等级(窄屏隐藏,减拥挤) */}
+                  <div className="flex min-w-0 flex-1 justify-end gap-1.5 items-center [@container(max-width:720px)]:basis-full">
+                      {/* 思考等级:仅列出设置页为当前模型启用的等级 */}
                       {onReasoningLevelChange && availableLevels.length > 0 && (
-                        <div className="hidden sm:flex items-center">
+                        <div className="flex shrink-0 items-center">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground" title="思考等级">
-                              <Brain className="w-3 h-3 mr-1 shrink-0" />
-                              {reasoningLevel ?? "自动"} <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
+                            <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground" title="思考等级" aria-label={`思考等级：${reasoningLevel ?? "自动"}`}>
+                              <Brain className="w-3 h-3 shrink-0" />
+                              <span className="[@container(max-width:480px)]:hidden">{reasoningLevel ?? "自动"}</span>
+                              <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-40 rounded-xl">
@@ -534,7 +537,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </div>
                       )}
 
-                      <div className="hidden sm:block w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0 [@container(max-width:480px)]:hidden"></div>
 
                       {/* 三档权限模式 */}
                       {onPermissionModeChange && (
@@ -543,12 +546,13 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                             <Button
                               variant="ghost"
                               size="sm"
-                              className={`h-7 text-xs px-2 shrink-0 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
+                              className={`h-7 gap-1 text-xs px-2 shrink-0 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
                               title="权限模式"
+                              aria-label={`权限模式：${PERMISSION_MODE_META[permissionMode].label}`}
                             >
-                              <ShieldAlert className="w-3 h-3 sm:mr-1 shrink-0" />
-                              <span className="hidden sm:inline truncate">{PERMISSION_MODE_META[permissionMode].label}</span>
-                              <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
+                              <ShieldAlert className="w-3 h-3 shrink-0" />
+                              <span className="truncate [@container(max-width:480px)]:hidden">{PERMISSION_MODE_META[permissionMode].label}</span>
+                              <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-72 rounded-xl p-1.5">
@@ -578,13 +582,13 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </DropdownMenu>
                       )}
 
-                      <div className="hidden sm:block w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0"></div>
+                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0 [@container(max-width:480px)]:hidden"></div>
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 shrink max-w-[100px] sm:max-w-none"
-                            title={activeProvider ? `当前渠道：${activeProvider.name}` : undefined}>
-                            <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 ml-1 shrink-0 text-muted-foreground" />
+                          <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 max-w-[160px] flex-1"
+                            title={`模型：${defaultModel}${activeProvider ? ` · 当前渠道：${activeProvider.name}` : ""}`}>
+                            <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-64 rounded-xl max-h-96 overflow-y-auto">

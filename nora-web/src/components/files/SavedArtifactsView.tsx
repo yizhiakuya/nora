@@ -6,6 +6,7 @@ import { FileText, ChevronRight, Loader2, MessageSquare, FileDown, BookOpen, Fol
 import { Button } from "@/components/ui/button";
 import { savedArtifactsApi, type SavedArtifact } from "@/lib/services/savedArtifactsApi";
 import { USE_BACKEND } from "@/lib/api/client";
+import { useFileViewer } from "@/hooks/useFileViewer";
 
 /**
  * 「已保存成果」视图(B1,2026-09-27,评审报告:成果入口和实际保存行为没有对齐)。
@@ -103,7 +104,7 @@ export function SavedArtifactsView() {
                 variant="outline" size="sm" className="h-6 text-[10px] px-2"
                 onClick={() => {
                   if (isFile) {
-                    navigate(`/files?workspace=${encodeURIComponent(a.path)}`);
+                    void useFileViewer.getState().openTargets([`workspace:${a.path}`], undefined, { sessionId: a.sessionId ?? undefined });
                   } else {
                     navigate("/files?view=knowledge");
                   }

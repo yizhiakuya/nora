@@ -47,12 +47,17 @@ class MessageRefResolver {
     /** 数据源引用行(M2-02):连接 id 为稳定身份;正文旧格式兼容解析。 */
     private static final Pattern DATASOURCE_REF =
             Pattern.compile("^\\[引用数据源\\]\\s*(.+?)\\s*\\(connection_id=(\\d+)\\)");
+    private static final Pattern VIEWER_REF =
+            Pattern.compile("^\\[引用文件资源\\]\\s*(.+?)\\s*\\(target=([^\\s)]+)\\)");
 
     private final FileToolClient fileToolClient;
     private final RagRetrievalClient ragRetrievalClient;
     private final AgentSkillService agentSkillService;
     /** MCP 服务器查找(引用注入时区分 eager/lazy 策略;可为 null = 测试场景)。 */
     private final McpServerService mcpServerService;
+    private ViewerService viewerService;
+
+    void setViewerService(ViewerService viewerService) { this.viewerService = viewerService; }
 
     MessageRefResolver(FileToolClient fileToolClient, RagRetrievalClient ragRetrievalClient,
                        AgentSkillService agentSkillService) {
@@ -68,7 +73,8 @@ class MessageRefResolver {
     }
 
     /** 一条待注入引用(file/doc/skill/mcp 的实体 id)。 */
-    record Ref(String kind, long id, String name) {
+    record Ref(String kind, long id, String name, String target) {
+        Ref(String kind, long id, String name) { this(kind, id, name, null); }
     }
 
     /** 解析消息中的引用行;无引用返回空列表。 */
@@ -79,6 +85,13 @@ class MessageRefResolver {
         }
         for (String raw : message.split("\n")) {
             String line = raw.trim();
+            Matcher resource = VIEWER_REF.matcher(line);
+            if (resource.find()) {
+                try {
+                    out.add(new Ref("viewer", 0, resource.group(1), java.net.URLDecoder.decode(resource.group(2), java.nio.charset.StandardCharsets.UTF_8)));
+                } catch (IllegalArgumentException e) { log.debug("invalid file reference encoding"); }
+                continue;
+            }
             Matcher m = FILE_REF.matcher(line);
             if (m.find()) {
                 out.add(new Ref("file", Long.parseLong(m.group(2)), m.group(1)));
@@ -116,6 +129,7 @@ class MessageRefResolver {
         for (Ref ref : refs) {
             try {
                 switch (ref.kind()) {
+                    case "viewer" -> out.addAll(resolveViewer(ref));
                     case "file" -> out.addAll(resolveFile(ref));
                     case "skill" -> out.addAll(resolveSkill(ref));
                     case "mcp" -> out.addAll(resolveMcp(ref));
@@ -154,6 +168,10 @@ class MessageRefResolver {
                 String label = r.label() == null || r.label().isBlank() ? r.id() : r.label();
                 Long numericId = parseNumericId(r.id());
                 switch (kind) {
+                    case "viewer" -> {
+                        structuredKeys.add("viewer:" + r.id());
+                        out.addAll(resolveViewer(new Ref("viewer", 0, label, r.id())));
+                    }
                     case "file", "doc", "skill", "mcp" -> {
                         if (numericId == null) {
                             out.add(new CitationDto(null, label, "text", 0, 1.0,
@@ -177,11 +195,12 @@ class MessageRefResolver {
         // 旧格式回退:仅注入结构化未覆盖的 (kind,id)
         if (legacyRefs != null) {
             for (Ref ref : legacyRefs) {
-                if (structuredKeys.contains(ref.kind() + ":" + ref.id())) {
+                if (structuredKeys.contains(ref.kind() + ":" + (ref.target() == null ? ref.id() : ref.target()))) {
                     continue;
                 }
                 try {
                     switch (ref.kind()) {
+                        case "viewer" -> out.addAll(resolveViewer(ref));
                         case "file" -> out.addAll(resolveFile(ref));
                         case "skill" -> out.addAll(resolveSkill(ref));
                         case "mcp" -> out.addAll(resolveMcp(ref));
@@ -224,6 +243,27 @@ class MessageRefResolver {
         }
         return List.of(new CitationDto(ref.id(), ref.name(), "file", 0, 1.0,
                 "【用户引用的文件内容】\n" + content));
+    }
+
+    private List<CitationDto> resolveViewer(Ref ref) {
+        String content;
+        try {
+            if (viewerService == null) throw new IllegalArgumentException("文件查看服务不可用");
+            var file = viewerService.resolveOne(ref.target());
+            if (file.capabilities().source()) {
+                var text = viewerService.text(file.target());
+                content = Texts.abbreviate(text.content(), FILE_INJECT_CHARS);
+                if (text.truncated() || text.content().length() > FILE_INJECT_CHARS) content += "\n…[已截断，需补读请使用 manage_file read target=" + file.target() + "]";
+            } else {
+                content = file.name() + " · " + file.mimeType() + " · " + file.size() + " bytes\n"
+                        + "引用为真实文件，尚未提供二进制内容。用 manage_file action=read target=" + file.target()
+                        + " 读取；图片会作为图像附件提供，视频/音频不支持内容理解时如实说明。";
+            }
+            content = "【用户引用的文件资源 " + file.target() + "】\n" + content;
+        } catch (java.io.IOException | IllegalArgumentException | org.springframework.web.client.RestClientException e) {
+            content = "(引用文件读取失败:文件不存在、格式不支持或暂时无法读取;请重新打开文件核对)";
+        }
+        return List.of(new CitationDto(null, ref.name(), "file", 0, 1.0, content));
     }
 
     private List<CitationDto> resolveDoc(Ref ref) {

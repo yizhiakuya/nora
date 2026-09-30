@@ -1,6 +1,8 @@
 # 功能设计文档：文件查看（File Viewer）
 
-> 状态：已实现 · 范围：纯前端 Mock · 遵循 AGENTS.md 前端边界
+> 本文归档早期 Mock 文件预览设计。2026-09-30 已实现连接真实后端的统一文件查看器，当前设计与验收记录见 [unified-file-viewer-design.md](unified-file-viewer-design.md)。
+
+> 状态：历史设计，已由统一查看器替代 · 范围：早期纯前端 Mock
 
 ## 1. 背景与目标
 

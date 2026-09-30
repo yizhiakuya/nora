@@ -1,45 +1,36 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useState } from "react";
 import { ArtifactsBlock } from "@/components/chat/galleries";
 import { parseArtifactsJson, parseLegacyGalleryFence } from "@/lib/artifacts";
-import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
-import { mediaCacheUrl, originalVariant, thumbVariant } from "@/lib/mediaCache";
+import { useFileViewer } from "@/hooks/useFileViewer";
+import { viewerApi, viewerTargetFromUrl } from "@/lib/services/viewerApi";
+import { mediaCacheUrl, originalVariant } from "@/lib/mediaCache";
 
 /**
- * Markdown 正文里的图片：点击页内灯箱放大（不再跳外部标签页）。
- * 单张图也给灯箱——行为一致（点击放大、Esc 关闭）。
- *
- * 灯箱大图取原图档（/thumb → /content，2026-09-18）：正文里贴的常是
- * 相册缩略图链接，全屏看缩略图必模糊；缩略图只做占位。
+ * 图片与文件链接进入共享查看器；工作区 Markdown 支持相对资源。
  */
-function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
-  const [open, setOpen] = useState(false);
+function MarkdownImage({ src, alt, fileTarget, sessionId }: { src?: string; alt?: string; fileTarget?: string; sessionId?: string }) {
   if (!src) return null;
-  const images: LightboxImage[] = [{
-    src: mediaCacheUrl(originalVariant(src)),
-    thumb: mediaCacheUrl(thumbVariant(src)),
-    alt,
-  }];
+  const target = markdownFileTarget(src, fileTarget);
+  const url = target ? viewerApi.rawUrl({ target, version: "" }) : mediaCacheUrl(src);
   return (
     <>
-      <img
-        src={src}
+      <button type="button" className="block max-w-full" aria-label={`查看图片 ${alt ?? ""}`} onClick={() => void useFileViewer.getState().openTargets([target ?? originalVariant(src)], undefined, { sessionId })}><img
+        src={url}
         alt={alt ?? ""}
         loading="lazy"
-        onClick={() => setOpen(true)}
         className="max-w-full rounded-lg border border-border cursor-zoom-in my-1.5"
-      />
-      {open && (
-        <ImageLightbox
-          images={images}
-          index={0}
-          onClose={() => setOpen(false)}
-          onIndexChange={() => {}}
-        />
-      )}
+      /></button>
     </>
   );
+}
+
+function markdownFileTarget(value: string, fileTarget?: string): string | null {
+  const target = viewerTargetFromUrl(value);
+  if (target) return target;
+  if (!fileTarget?.startsWith("workspace:") || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(value)) return null;
+  try { return `workspace:${decodeURIComponent(new URL(value, `https://workspace.invalid/${fileTarget.slice(10)}`).pathname.slice(1))}`; }
+  catch { return null; }
 }
 
 /**
@@ -138,20 +129,34 @@ function splitGalleryFences(text: string): FenceSegment[] {
 export default function MarkdownContent({
   children,
   className,
+  fileTarget,
+  sessionId,
 }: {
   children: string;
   className?: string;
+  fileTarget?: string;
+  sessionId?: string;
 }) {
   const segments = splitGalleryFences(children);
+  const components = {
+    img: ({ src, alt }: { src?: string; alt?: string }) => <MarkdownImage src={src} alt={alt} fileTarget={fileTarget} sessionId={sessionId} />,
+    a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+      const target = href ? markdownFileTarget(href, fileTarget) : null;
+      return <a href={target ? `?viewer=${encodeURIComponent(target)}` : href} onClick={event => {
+        if (!target || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        void useFileViewer.getState().openTargets([target], undefined, { sessionId });
+      }}>{children}</a>;
+    },
+  };
+  const urlTransform = (url: string) => /^(workspace:|file:|media:)/.test(url) ? url : defaultUrlTransform(url);
   // 常见路径：无画廊围栏 → 单段 Markdown（保持原有行为）
-  if (segments.length <= 1) {
+  if (segments.length === 0 || (segments.length === 1 && segments[0].type === "md")) {
     return (
       <div className={className}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          components={{
-            img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
-          }}
+          components={components} urlTransform={urlTransform}
         >
           {children}
         </ReactMarkdown>
@@ -170,7 +175,7 @@ export default function MarkdownContent({
           return galleries && galleries.length > 0 ? (
             <div key={i} className="space-y-1.5">
               {galleries.map((g, gi) => (
-                <ArtifactsBlock key={gi} gallery={g} />
+                <ArtifactsBlock key={gi} gallery={g} sessionId={sessionId} />
               ))}
             </div>
           ) : (
@@ -183,9 +188,7 @@ export default function MarkdownContent({
           <ReactMarkdown
             key={i}
             remarkPlugins={[remarkGfm]}
-            components={{
-              img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
-            }}
+            components={components} urlTransform={urlTransform}
           >
             {seg.text}
           </ReactMarkdown>

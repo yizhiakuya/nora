@@ -12,7 +12,6 @@ export function VideoPreview({ preview }: { preview: FilePreview }) {
         src={preview.mediaUrl}
         controls
         playsInline
-        autoPlay
         muted
         preload="metadata"
         className="max-w-full max-h-full bg-black animate-in fade-in"
@@ -27,7 +26,7 @@ export function VideoPreview({ preview }: { preview: FilePreview }) {
 export function AudioPreview({ preview }: { preview: FilePreview }) {
   return (
     <div className="w-full h-full flex flex-col items-center justify-center gap-4">
-      <audio src={preview.mediaUrl} controls autoPlay preload="metadata" className="w-full max-w-lg">
+      <audio src={preview.mediaUrl} controls preload="metadata" className="w-full max-w-lg">
         您的浏览器不支持音频播放。
       </audio>
     </div>

@@ -214,6 +214,14 @@ public class MediaCacheController {
                                  long totalBytes, String dir) {
     }
 
+    @GetMapping("/cached/{key}/raw")
+    public ResponseEntity<StreamingResponseBody> rawCached(@PathVariable String key,
+            @RequestHeader(value = "Range", required = false) String range) {
+        var entry = mediaCache.lookupByKey(key).orElseThrow(() -> new BusinessException(404, "媒体缓存已失效"));
+        mediaCache.touch(entry);
+        return serveCached(entry, range);
+    }
+
     /** 删除单个缓存条目。 */
     @DeleteMapping("/cached/{key}")
     public ApiResponse<Boolean> deleteCached(@PathVariable("key") String key) {

@@ -148,10 +148,10 @@ public class AgentWorkspaceService {
                     - 日常观察、进度、临时上下文:追加到 `memory/YYYY-MM-DD.md`(按需读,不注入)。
                     - 写入前先 read 相关文件避免覆盖;优先追加/最小编辑;删除记忆前向用户确认。
 
-                    ## 产物画廊(展示成果给用户)
-                    - 完成**多文件操作/整理/批量任务**后,按技能「产物画廊指南」在回答末尾附
-                      ```nora-artifacts 围栏(结构化 JSON,前端原生渲染:图片开灯箱、文件点击直达)。
-                    - 单文件小改动不必出画廊,文字汇报即可;画廊数据必须来自真实工具结果。
+                    ## 文件交付与业务画廊
+                    - 报告、代码、表格先保存为真实文件，再用 open_file 展示；工作区成果用 intent=deliver 登记。
+                    - targets 使用 workspace:相对路径、file:id、media:缓存键，不使用 URL、绝对路径或正文。
+                    - 相册缩略图、表格、差异、时间线等业务卡片仍按技能「产物画廊指南」使用；不再用 text/files 画廊交付文件。
 
                     ## 回答风格
                     - 中文、结论前置、Markdown 紧凑;不复述工具参数或执行过程。
@@ -207,7 +207,7 @@ public class AgentWorkspaceService {
      *
      * @param relative 模型给的相对路径(允许 / 或 \ 分隔)
      */
-    Path resolveSafe(String relative) {
+    public Path resolveSafe(String relative) {
         if (relative == null || relative.isBlank()) {
             throw new IllegalArgumentException("路径不能为空");
         }
@@ -221,8 +221,10 @@ public class AgentWorkspaceService {
         }
         // 已存在时做真实路径校验(防符号链接打出根目录)
         try {
-            if (Files.exists(resolved)) {
-                Path real = resolved.toRealPath();
+            Path existing = resolved;
+            while (!Files.exists(existing) && existing.getParent() != null) existing = existing.getParent();
+            if (Files.exists(existing)) {
+                Path real = existing.toRealPath();
                 if (!real.startsWith(root.toRealPath())) {
                     throw new IllegalArgumentException("拒绝符号链接逃逸: " + relative);
                 }
@@ -455,6 +457,35 @@ public class AgentWorkspaceService {
         return writePath(resolveSafe(relative), content);
     }
 
+    // ponytail: 单进程写锁；工作区写入吞吐成为瓶颈时改为按路径锁。
+    public synchronized int writeChecked(String relative, String content, String expectedHash) {
+        Path file = resolveSafe(relative);
+        if (content != null && content.getBytes(StandardCharsets.UTF_8).length > ViewerService.TEXT_LIMIT) {
+            throw new IllegalArgumentException("编辑保存上限为 2MiB UTF-8 文本");
+        }
+        try {
+            if (expectedHash != null) {
+                byte[] current;
+                if (!Files.isRegularFile(file)) throw new com.nora.common.exception.BusinessException(409, "文件已不可用，草稿未覆盖原文件");
+                try (var input = Files.newInputStream(file)) { current = input.readNBytes(ViewerService.TEXT_LIMIT + 1); }
+                if (current.length > ViewerService.TEXT_LIMIT || !contentHash(current).equals(expectedHash)) {
+                    throw new com.nora.common.exception.BusinessException(409, "文件已被修改，请重新加载或明确选择覆盖");
+                }
+            }
+            return writePath(file, content, ViewerService.TEXT_LIMIT);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("文件暂时无法读取");
+        }
+    }
+
+    public static String contentHash(byte[] content) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** 写入任意文件(agent 工具用;区外写由 HIGH 审批把门)。 */
     public int writeAny(String path, String content) {
         return writePath(resolveAny(path).path(), content);
@@ -474,7 +505,7 @@ public class AgentWorkspaceService {
      * @param newText 替换后的新文本(空字符串=删除该段)
      * @return 人类可读结果(替换位置提示)
      */
-    public String editAny(String path, String oldText, String newText) {
+    public synchronized String editAny(String path, String oldText, String newText) {
         Path file = resolveAny(path).path();
         guardSystemPath(file, "编辑");
         if (!Files.isRegularFile(file)) {
@@ -520,14 +551,18 @@ public class AgentWorkspaceService {
                 + " 字符 → " + (newText == null ? 0 : newText.length()) + " 字符)";
     }
 
-    private int writePath(Path file, String content) {
+    private synchronized int writePath(Path file, String content) {
+        return writePath(file, content, MAX_FILE_CHARS);
+    }
+
+    private int writePath(Path file, String content, int maxChars) {
         guardSystemPath(file, "写入");
         if (Files.isDirectory(file)) {
             throw new IllegalArgumentException("目标是目录,不能写入: " + file);
         }
         String body = content == null ? "" : content;
-        if (body.length() > MAX_FILE_CHARS) {
-            throw new IllegalArgumentException("内容超过 " + MAX_FILE_CHARS + " 字符上限");
+        if (body.length() > maxChars) {
+            throw new IllegalArgumentException("内容超过 " + maxChars + " 字符上限");
         }
         try {
             Files.createDirectories(file.getParent());
@@ -558,7 +593,7 @@ public class AgentWorkspaceService {
      * @param bytes   文件字节
      * @return 实际写入的字节数
      */
-    public long writeBinaryAny(String path, byte[] bytes) {
+    public synchronized long writeBinaryAny(String path, byte[] bytes) {
         if (bytes == null) {
             throw new IllegalArgumentException("内容为空");
         }
@@ -736,7 +771,7 @@ public class AgentWorkspaceService {
         return appendPath(resolveAny(path).path(), content);
     }
 
-    private int appendPath(Path file, String content) {
+    private synchronized int appendPath(Path file, String content) {
         guardSystemPath(file, "写入");
         String body = content == null ? "" : content;
         if (body.length() > MAX_FILE_CHARS) {
@@ -766,7 +801,7 @@ public class AgentWorkspaceService {
         deletePath(resolveAny(path).path());
     }
 
-    private void deletePath(Path file) {
+    private synchronized void deletePath(Path file) {
         guardSystemPath(file, "删除");
         if (file.equals(root)) {
             throw new IllegalArgumentException("不能删除工作区根目录");

@@ -101,6 +101,29 @@ class ChatToolsSpec {
     ArrayNode build() {
         ArrayNode tools = objectMapper.createArrayNode();
 
+        ObjectNode openTool = tools.addObject();
+        openTool.put("type", "function");
+        ObjectNode openFn = openTool.putObject("function");
+        openFn.put("name", "open_file");
+        openFn.put("description", "验证已有文件并向用户提供统一查看入口。报告和表格先写成真实文件，再以 intent=deliver 交付；"
+                + "只查看已有文件用 inspect。targets 使用 workspace:相对路径、file:id 或 media:缓存键，不能传正文、URL 或绝对路径。"
+                + "交付工作区文件时登记到已保存成果；历史回放和后台任务不保证自动打开。无需再输出整篇报告或文件型画廊 JSON。");
+        ObjectNode openParams = openFn.putObject("parameters");
+        openParams.put("type", "object");
+        openParams.put("additionalProperties", false);
+        ObjectNode openProps = openParams.putObject("properties");
+        ObjectNode openTargets = openProps.putObject("targets");
+        openTargets.put("type", "array");
+        openTargets.put("minItems", 1);
+        openTargets.put("maxItems", 20);
+        openTargets.putObject("items").put("type", "string");
+        openProps.putObject("focus").put("type", "string").put("description", "可选，必须属于 targets");
+        ObjectNode openIntent = openProps.putObject("intent");
+        openIntent.put("type", "string");
+        openIntent.put("default", "inspect");
+        openIntent.putArray("enum").add("inspect").add("deliver");
+        openParams.putArray("required").add("targets");
+
         ObjectNode sqlTool = objectMapper.createObjectNode();
         sqlTool.put("type", "function");
         ObjectNode sqlFn = sqlTool.putObject("function");

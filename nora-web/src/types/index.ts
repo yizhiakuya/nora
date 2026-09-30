@@ -39,7 +39,24 @@ export interface FolderItem {
   count: number;
 }
 
-export type FilePreviewKind = "pdf" | "word" | "excel" | "image" | "video" | "audio" | "text" | "unknown";
+export type FilePreviewKind = "pdf" | "word" | "excel" | "image" | "video" | "audio" | "text" | "unknown" | "markdown" | "csv" | "json" | "html";
+
+/** POST /api/viewer/resolve 与工具步骤共享的真实文件描述。 */
+export interface ViewerFile {
+  target: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  modifiedAt: string | null;
+  version: string;
+  previewKind: FilePreviewKind | "office";
+  capabilities: { preview: boolean; source: boolean; download: boolean; edit: boolean; attach: boolean };
+  /** 旧相册入口的原件地址，仅在浏览器内保留，不写入工具步骤。 */
+  originalUrl?: string;
+  delivery?: { status: "registered" | "failed" | "not_requested"; artifactId?: number | null; error?: string | null } | null;
+}
+
+export interface ViewerFileError { target: string; code: string; message: string }
 
 export interface FilePreview {
   kind: FilePreviewKind;
@@ -49,6 +66,9 @@ export interface FilePreview {
   imageUrl?: string;
   /** 视频/音频原始字节 URL(经 /api/files/{id}/raw,<video>/<audio> 直接播放) */
   mediaUrl?: string;
+  hash?: string | null;
+  truncated?: boolean;
+  tableTruncated?: boolean;
 }
 
 // ==========================================

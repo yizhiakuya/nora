@@ -39,7 +39,7 @@ function isNavActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/") || pathname.startsWith(href + "?");
 }
 
-export function Sidebar() {
+export function Sidebar({ compact = false }: { compact?: boolean }) {
   const location = useLocation();
   const pathname = location.pathname;
   const navigate = useNavigate();
@@ -85,7 +85,7 @@ export function Sidebar() {
 
   useEffect(() => { setIsOpen(false); }, [pathname, setIsOpen]);
 
-  const collapsed = isCollapsed;
+  const collapsed = isCollapsed || compact;
   const recentSessions = sessions.slice(0, 8);
 
   return (
@@ -108,9 +108,9 @@ export function Sidebar() {
                 <img src="/logo-mark.png" alt="AI 工作台" width={28} height={28} className="w-7 h-7 rounded-lg shrink-0" title="Nora 的个人空间" />
               )}
               <div className="flex items-center">
-                <button className="hidden md:flex p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-colors shrink-0" onClick={toggleCollapsed} title={collapsed ? "展开导航" : "收起导航"}>
+                {!compact && <button className="hidden md:flex p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-colors shrink-0" onClick={toggleCollapsed} title={collapsed ? "展开导航" : "收起导航"}>
                   {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-                </button>
+                </button>}
                 <button className="md:hidden ml-1 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg shrink-0" onClick={() => setIsOpen(false)}><X className="w-5 h-5" /></button>
               </div>
           </div>

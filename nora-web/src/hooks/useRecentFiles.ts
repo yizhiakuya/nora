@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export interface RecentFile {
+  target?: string;
   name: string;
   type: string;
   time: string;
@@ -9,7 +10,7 @@ export interface RecentFile {
 
 interface RecentFilesState {
   recent: RecentFile[];
-  addRecent: (name: string, type: string) => void;
+  addRecent: (name: string, type: string, target?: string) => void;
 }
 
 /** 最近使用文件：文件中心打开/上传时写入，首页展示（持久化）。初始为空——后端是唯一数据源，没有假种子。 */
@@ -17,9 +18,9 @@ export const useRecentFiles = create<RecentFilesState>()(
   persist(
     (set) => ({
       recent: [],
-      addRecent: (name, type) =>
+      addRecent: (name, type, target) =>
         set((state) => ({
-          recent: [{ name, type, time: "刚刚" }, ...state.recent.filter((r) => r.name !== name)].slice(0, 5),
+          recent: [{ name, type, target, time: "刚刚" }, ...state.recent.filter((r) => target ? r.target !== target : r.name !== name)].slice(0, 5),
         })),
     }),
     { name: "recent-files", version: 1,

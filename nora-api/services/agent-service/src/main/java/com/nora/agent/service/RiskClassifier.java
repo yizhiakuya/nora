@@ -49,6 +49,7 @@ final class RiskClassifier {
      * @param argsJson 模型填的参数 JSON
      */
     static Risk classify(String toolName, String argsJson) {
+        if ("open_file".equals(toolName)) return Risk.LOW;
         if ("manage_workspace".equals(toolName)) {
             // 工作区语义(对齐 OpenClaw):默认 cwd 而非硬沙箱。
             // 区内:读 LOW、写/追加 LOW(记忆维护需自动)——这与「记住…」必须即时落盘矛盾最小;

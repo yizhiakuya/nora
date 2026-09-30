@@ -119,36 +119,36 @@ export default function ChatPage() {
           { label: active?.title ?? "新对话", isCurrent: true }
         ]}
         actions={
-          <div className="flex items-center gap-3 text-muted-foreground text-sm">
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
             {/* 会话 ID:点击复制,便于查库排障(agent_step/chat_message 按 session_id 关联) */}
             {active && (
               <button
                 type="button"
                 onClick={copySessionId}
                 title="点击复制会话 ID,用于日志与数据库排障"
-                className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono text-muted-foreground border border-dashed border-border hover:text-foreground hover:border-foreground/40 cursor-pointer transition-colors"
+                className="hidden [@container(min-width:1000px)]:inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono text-muted-foreground border border-dashed border-border hover:text-foreground hover:border-foreground/40 cursor-pointer transition-colors"
               >
                 {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
                 {active.id}
               </button>
             )}
             {active && (
-              <span className="hidden md:inline text-[10px] text-muted-foreground/70 tabular-nums" title="最近活跃时间">
+              <span className="hidden [@container(min-width:1000px)]:inline text-[10px] text-muted-foreground/70 tabular-nums" title="最近活跃时间">
                 {relativeTime(active.updatedAt)}
               </span>
             )}
             <button
               type="button"
               onClick={() => navigate("/settings?tab=模型管理")}
-              className="px-2 py-1 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900 rounded text-xs flex items-center gap-1.5 mr-2 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer transition-colors"
+              className="px-2 py-1 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900 rounded text-xs flex items-center gap-1.5 min-w-0 max-w-[88px] [@container(min-width:400px)]:max-w-[112px] [@container(min-width:600px)]:max-w-[160px] hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer transition-colors"
               title="点击管理模型服务商"
             >
-              <Sparkles className="w-3 h-3" /> {defaultModel}
+              <Sparkles className="w-3 h-3 shrink-0" /> <span className="truncate">{defaultModel}</span>
             </button>
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
               title="删除当前会话"
               onClick={handleDeleteActive}
             >

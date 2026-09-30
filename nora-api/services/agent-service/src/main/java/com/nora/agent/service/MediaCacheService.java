@@ -160,6 +160,12 @@ public class MediaCacheService {
         }
     }
 
+    /** 文件内容版本取元数据时间，访问缓存时刷新的 LRU 时间不算内容变化。 */
+    FileTime contentModifiedAt(CacheEntry entry) throws IOException {
+        Path meta = entry.file().resolveSibling(entry.file().getFileName().toString().replace(".bin", ".meta"));
+        return Files.isRegularFile(meta) ? Files.getLastModifiedTime(meta) : FileTime.fromMillis(0);
+    }
+
     /**
      * 打开上游媒体连接(同步等到响应头)。
      *

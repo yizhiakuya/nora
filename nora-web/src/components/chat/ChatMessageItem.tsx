@@ -16,6 +16,9 @@ import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
 import { USE_BACKEND } from "@/lib/api/client";
 import { contentKey, contentHashSuffix, getSavedRecord, markSaved } from "@/lib/saveState";
 import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
+import { FileDeliveryCards } from "./FileDeliveryCards";
+import { parseArtifactsFence } from "@/lib/artifacts";
+import { useFileViewer } from "@/hooks/useFileViewer";
 
 /** 错误图标与配色(按 kind 微调,不喧宾夺主) */
 const ERROR_ICON: Record<string, React.ElementType> = {
@@ -67,7 +70,7 @@ function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["source
           className="group flex items-center gap-1.5 w-full text-left cursor-pointer"
         >
           <span className="text-[10px] text-muted-foreground group-hover:text-foreground transition-colors shrink-0">
-            引用来源 · {sources.length} 个知识库片段
+            引用来源 · {sources.length} 个片段
           </span>
           {hasLowScore && (
             <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">· 含低置信度内容</span>
@@ -179,7 +182,8 @@ function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: st
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    if (savedPath || saving) return;
+    if (savedPath) { void useFileViewer.getState().openTargets([`workspace:${savedPath}`], undefined, { sessionId }); return; }
+    if (saving) return;
     if (!USE_BACKEND) {
       toast.info("保存为文件需要连接后端服务");
       return;
@@ -188,13 +192,15 @@ function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: st
     try {
       // 文件名:首行标题(去 Markdown 标记)+ 内容哈希后缀——同一回答重复保存
       // 命中同一路径(覆盖),不因时间戳变化产生副本
-      const firstLine = msg.content.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find((l) => l.length > 0) ?? "回答";
+      const legacyReport = parseArtifactsFence(msg.content)?.find(gallery => gallery.gallery === "text" && typeof gallery.data.text === "string");
+      const body = legacyReport ? String(legacyReport.data.text) : msg.content;
+      const firstLine = body.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find((l) => l.length > 0) ?? "回答";
       const base = firstLine.replace(/[\\/:*?"<>|]/g, "").slice(0, 40) || "回答";
       const path = `reports/${base}-${contentHashSuffix(msg.content)}.md`;
-      await workspaceApi.writeFile(path, msg.content);
+      await workspaceApi.writeFile(path, body);
       // 写后回读验证(方案要求"返回验证过的路径",不空口报成功)
       const check = await workspaceApi.readFile(path);
-      if (check !== msg.content) {
+      if (check !== body) {
         throw new Error("写入后校验不一致");
       }
       setSavedPath(path);
@@ -381,6 +387,8 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                     />
                   )}
 
+                  <FileDeliveryCards msg={msg} sessionId={sessionId} />
+
                   {msg.error && (() => {
                     const ErrIcon = ERROR_ICON[msg.errorKind ?? "unknown"] ?? AlertTriangle;
                     return (
@@ -443,7 +451,7 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                         </div>
                         <div className="text-sm text-foreground leading-relaxed pt-0.5">
                             {msg.content ? (
-                              <Markdown className="chat-markdown">{msg.content}</Markdown>
+                              <Markdown className="chat-markdown" sessionId={sessionId ?? undefined}>{msg.content}</Markdown>
                             ) : msg.isTyping ? (
                               <span className="text-muted-foreground text-xs">正在思考…{elapsedSeconds != null ? ` ${elapsedSeconds}s` : ""}</span>
                             ) : (
@@ -486,7 +494,7 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                   {!msg.isTyping && msg.content && (
                     <div className="relative pt-1 flex items-center gap-2 flex-wrap">
                       <SaveToKnowledgeButton msg={msg} sessionId={sessionId} />
-                      <SaveAsFileButton msg={msg} sessionId={sessionId} />
+                      {!msg.steps?.some(step => step.result?.files?.length) && <SaveAsFileButton msg={msg} sessionId={sessionId} />}
                     </div>
                   )}
 

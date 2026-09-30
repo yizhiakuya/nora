@@ -1,17 +1,20 @@
 import { BookOpen, Database, FileText, Wrench, X, Zap } from "lucide-react";
 import { refKey, type ChatRef } from "@/lib/chatRefs";
+import { useFileViewer } from "@/hooks/useFileViewer";
 
 /**
  * 引用 chip(2026-09-17):输入区待发送区与用户气泡共用。
  * 五类引用统一视觉:文件=蓝 / 知识库=紫 / 技能=绿 / MCP 工具=橙 / 数据源=青。
  */
-export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; label: string; Icon: React.ElementType }> = {
-  file: {
+const FILE_META = {
     cls: "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800",
     iconCls: "text-blue-500 dark:text-blue-400",
     label: "文件",
     Icon: FileText,
-  },
+};
+export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; label: string; Icon: React.ElementType }> = {
+  file: FILE_META,
+  viewer: FILE_META,
   doc: {
     cls: "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800",
     iconCls: "text-purple-500 dark:text-purple-400",
@@ -40,6 +43,7 @@ export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; l
 
 export function RefChip({ chatRef, onRemove }: { chatRef: ChatRef; onRemove?: (key: string) => void }) {
   const meta = REF_META[chatRef.kind];
+  const target = chatRef.kind === "viewer" ? chatRef.id : chatRef.kind === "file" ? `file:${chatRef.id}` : null;
   return (
     <span
       className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[10px] font-medium border ${meta.cls}`}
@@ -50,7 +54,8 @@ export function RefChip({ chatRef, onRemove }: { chatRef: ChatRef; onRemove?: (k
       }
     >
       <meta.Icon className="w-3 h-3" />
-      <span className="max-w-[160px] truncate">{chatRef.name}</span>
+      {target ? <button type="button" className="max-w-[160px] truncate hover:underline" onClick={() => void useFileViewer.getState().openTargets([target])}>{chatRef.name}</button>
+        : <span className="max-w-[160px] truncate">{chatRef.name}</span>}
       {onRemove && (
         <button
           type="button"

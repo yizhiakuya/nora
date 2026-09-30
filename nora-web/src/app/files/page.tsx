@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { Search, FolderPlus, CloudUpload, Bot, HardDrive, Trash2, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ import { UploadModal } from "@/components/ui/custom/UploadModal";
 import { useSelection } from "@/hooks/useSelection";
 import { useSimulatedUpload } from "@/hooks/useUpload";
 import { useFileViewer } from "@/hooks/useFileViewer";
-import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { WorkspaceBrowser } from "@/components/files/WorkspaceBrowser";
 import { MediaCacheBrowser } from "@/components/files/MediaCacheBrowser";
 import { TrashBrowser } from "@/components/files/TrashBrowser";
@@ -33,6 +32,8 @@ import { SavedArtifactsView } from "@/components/files/SavedArtifactsView";
 
 export default function FilesPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const workspacePath = params.get("workspace");
   const [searchQuery, setSearchQuery] = useState("");
   /**
    * 资料页视图(M1-03,2026-09-20;B1 命名修正 2026-09-27):files(全部文件,
@@ -137,7 +138,7 @@ export default function FilesPage() {
           const folder = folderList.find((fo) => fo.id === target.folderId);
           if (folder) setCurrentFolder(folder);
         }
-        addRecent(target.name, target.type);
+        addRecent(target.name, target.type, `file:${target.id}`);
         // 列表上下文:目标所在视图(文件夹内/根),让弹窗内 ←/→ 可连续浏览
         const viewList = target.folderId != null
           ? all.filter((f) => f.folderId === target.folderId)
@@ -151,10 +152,11 @@ export default function FilesPage() {
   }, []);
 
   // 深链:?workspace=<相对路径>(产物画廊「打开」按钮)→ 进入工作区浏览器定位。
-  // 目标是目录 → 直接进入;目标是文件 → 进入其所在目录(2026-09-18)。
+  // 目标是目录 → 直接进入;目标是文件 → 定位父目录并打开共享查看器。
   useEffect(() => {
-    const wsPath = new URLSearchParams(window.location.search).get("workspace");
+    const wsPath = workspacePath;
     if (wsPath == null) return;
+    if (wsPath === "") { setWorkspaceDir(""); return; }
     let cancelled = false;
     (async () => {
       const { workspaceApi } = await import("@/lib/services/workspaceApi");
@@ -170,6 +172,7 @@ export default function FilesPage() {
           setWorkspaceDir(wsPath);
         } else {
           setWorkspaceDir(parentDir);
+          await useFileViewer.getState().openTargets([`workspace:${wsPath}`]);
         }
       } catch {
         // 查询失败退化为「按文件处理」(进父目录)
@@ -177,8 +180,7 @@ export default function FilesPage() {
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [workspacePath]);
 
   /** 当前视图中的文件(根视图=无归属文件;文件夹内=该文件夹文件)。 */
   const inRootView = workspaceDir === null && !mediaCacheOpen && !trashOpen && currentFolder === null;
@@ -336,7 +338,7 @@ export default function FilesPage() {
   const handleUploadComplete = (fileName?: string, uploadedFile?: FileItem) => {
     if (uploadedFile) {
       syncFile(uploadedFile);
-      addRecent(uploadedFile.name, uploadedFile.type);
+      addRecent(uploadedFile.name, uploadedFile.type, `file:${uploadedFile.id}`);
       addNotification("上传完成", `「${uploadedFile.name}」已保存到资料，可在列表中查看。`);
       refreshFolders();
       // 上传后自动入库(2026-09-19 接线):「设置 → 知识库与 AI」的开关
@@ -355,7 +357,7 @@ export default function FilesPage() {
     }
     const defaultName = `上传文档_${Date.now().toString().slice(-4)}.pdf`;
     const newFile = addFile(fileName ?? defaultName);
-    addRecent(newFile.name, newFile.type);
+    addRecent(newFile.name, newFile.type, `file:${newFile.id}`);
     addNotification("上传完成", `「${newFile.name}」已保存到资料，可在列表中查看。`);
   };
 
@@ -481,10 +483,10 @@ export default function FilesPage() {
           ...breadcrumbTail,
         ]}
         actions={
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1 [@container(min-width:600px)]:gap-2 shrink-0">
             {workspaceDir === null && !mediaCacheOpen && !trashOpen && (
             <>
-            <div className="relative w-[100px] sm:w-[180px] shrink-0">
+            <div className="relative w-[88px] [@container(min-width:800px)]:w-[180px] shrink-0">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3.5 h-3.5" />
               <Input
                 placeholder="搜索..."
@@ -493,11 +495,13 @@ export default function FilesPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <div className="w-px h-5 bg-gray-200 dark:bg-gray-800 mx-1 shrink-0 hidden sm:block"></div>
+            <div className="w-px h-5 bg-gray-200 dark:bg-gray-800 mx-1 shrink-0 hidden [@container(min-width:600px)]:block"></div>
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs bg-card text-foreground hover:bg-muted shrink-0 hidden md:flex"
+              className="h-8 gap-1 px-2 text-xs bg-card text-foreground hover:bg-muted shrink-0"
+              title="新建文件夹"
+              aria-label="新建文件夹"
               onClick={() => {
                 if (!USE_BACKEND) {
                   toast.info("文件夹需要连接后端服务");
@@ -507,10 +511,11 @@ export default function FilesPage() {
                 setFolderDialog({ mode: "create" });
               }}
             >
-              <FolderPlus className="w-3.5 h-3.5 mr-1.5" /> 新建文件夹
+              <FolderPlus className="w-3.5 h-3.5" /> <span className="hidden [@container(min-width:600px)]:inline">新建文件夹</span>
             </Button>
-            <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 shrink-0" onClick={upload.open}>
-              <CloudUpload className="w-3.5 h-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">{currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"}</span>
+            <Button size="sm" className="h-8 gap-1 px-2 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 shrink-0" onClick={upload.open}
+              title={currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"} aria-label={currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"}>
+              <CloudUpload className="w-3.5 h-3.5" /> <span className="hidden max-w-40 truncate [@container(min-width:600px)]:inline">{currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"}</span>
             </Button>
             </>
             )}
@@ -641,7 +646,7 @@ export default function FilesPage() {
                   onDeleteSelected={handleDeleteSelected}
                   onDownloadSelected={handleDownloadSelected}
                   onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
-                  onOpen={(f) => { addRecent(f.name, f.type); void viewer.open(f, filteredFiles); }}
+                  onOpen={(f) => { void viewer.open(f, filteredFiles); }}
                   onIndex={handleIndexFile}
                   onDownload={(f) => handleDownloadOne(f)}
                   onRename={USE_BACKEND ? handleRenameFile : undefined}
@@ -662,7 +667,7 @@ export default function FilesPage() {
                 <FileGrid
                   files={filteredFiles}
                   selection={selection}
-                  onOpen={(f) => { addRecent(f.name, f.type); void viewer.open(f, filteredFiles); }}
+                  onOpen={(f) => { void viewer.open(f, filteredFiles); }}
                   onDownload={(f) => handleDownloadOne(f)}
                   onRename={USE_BACKEND ? handleRenameFile : undefined}
                   onMove={USE_BACKEND ? handleMoveOne : undefined}
@@ -771,16 +776,6 @@ export default function FilesPage() {
         onClose={() => setIndexTarget(null)}
         onConfirm={handleIndexConfirm}
         submitting={indexSubmitting}
-      />
-      <FileViewerModal
-        file={viewer.activeFile}
-        preview={viewer.preview}
-        status={viewer.status}
-        onClose={viewer.close}
-        onNavigate={viewer.navigate}
-        hasPrev={viewer.hasPrev}
-        hasNext={viewer.hasNext}
-        position={viewer.position}
       />
     </>
   );

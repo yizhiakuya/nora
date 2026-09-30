@@ -6,9 +6,8 @@ import { useFileViewer } from "@/hooks/useFileViewer";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useBackendOnline } from "@/hooks/useBackendHealth";
-import { FileViewerModal } from "@/components/files/viewer/FileViewerModal";
 import { ResponsiveList } from "@/components/shared/ResponsiveList";
-import { FileItem } from "@/types";
+import { toast } from "sonner";
 
 function iconFor(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -26,23 +25,13 @@ export function RecentFilesTable() {
   // 离线:如实显示本机记录为待同步,而不是把它们装作最新数据
   const stale = online === false;
 
-  const openRecent = (name: string, type: string) => {
-    // 列表内打开:支持弹窗内 ←/→ 切换(最近使用之间的连续浏览)
-    const list: FileItem[] = recent.map((r) => {
-      const { Icon, color } = iconFor(r.name);
-      return {
-        id: r.name.length * 7 + r.name.charCodeAt(0),
-        name: r.name,
-        type: r.type,
-        size: "—",
-        date: r.time,
-        icon: Icon,
-        color,
-        indexed: false,
-      };
-    });
-    const target = list.find((f) => f.name === name) ?? list[0];
-    if (target) void viewer.open(target, list);
+  const openRecent = (name: string) => {
+    const target = recent.find(file => file.name === name)?.target;
+    if (target) void viewer.openTargets([target], target, { collection: recent.flatMap(file => file.target ? [file.target] : []) });
+    else {
+      toast.info("这条旧记录没有文件引用，请从资料页重新打开");
+      navigate("/files");
+    }
   };
 
   return (
@@ -64,7 +53,7 @@ export function RecentFilesTable() {
         rowKey={({ name }) => name}
         mobileTitle={({ name }) => name}
         mobileSubtitle={({ type, time }) => `${type} · ${time}`}
-        onRowClick={({ name, type }) => openRecent(name, type)}
+        onRowClick={({ name }) => openRecent(name)}
         mobileActions={({ name }) => (
           <span className="text-[10px] text-muted-foreground">
             {docs.some((d) => d.name === name) ? "已索引" : "未索引"}
@@ -106,16 +95,6 @@ export function RecentFilesTable() {
         }
       />
 
-      <FileViewerModal
-        file={viewer.activeFile}
-        preview={viewer.preview}
-        status={viewer.status}
-        onClose={viewer.close}
-        onNavigate={viewer.navigate}
-        hasPrev={viewer.hasPrev}
-        hasNext={viewer.hasNext}
-        position={viewer.position}
-      />
     </div>
   );
 }

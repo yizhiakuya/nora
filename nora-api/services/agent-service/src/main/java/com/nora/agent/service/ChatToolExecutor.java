@@ -45,6 +45,9 @@ class ChatToolExecutor {
     private final AutomationManageClient automationManageClient;
     /** 环境健康快照(可为 null:测试等场景未接)。 */
     private final EnvironmentStatusClient environmentStatusClient;
+    private ViewerService viewerService;
+
+    void setViewerService(ViewerService viewerService) { this.viewerService = viewerService; }
 
     ChatToolExecutor(ObjectMapper objectMapper,
                      SqlToolClient sqlToolClient,
@@ -194,6 +197,12 @@ class ChatToolExecutor {
      */
     ToolOutcome executeTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                                     LiveOutput liveOutput) {
+        return executeTool(name, args, parsed, liveOutput, null, null);
+    }
+
+    ToolOutcome executeTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            LiveOutput liveOutput, String sessionId, String stepId) {
+        if ("open_file".equals(name)) return execOpenFile(args, sessionId, stepId);
         if ("execute_sql".equals(name)) {
             return execExecuteSql(name, args, parsed, liveOutput);
         }
@@ -520,7 +529,10 @@ class ChatToolExecutor {
             //   其余(含 / 的路径、工作区文件) → 转 manage_workspace.readAny
             return routeReadByPath(target);
         }
-        long fileId = Long.parseLong(target);
+        return readCenterFile(Long.parseLong(target));
+    }
+
+    private ToolOutcome readCenterFile(long fileId) {
         FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
         if (info.failed()) {
             return bounded("ERROR: " + info.error(), null);
@@ -561,6 +573,22 @@ class ChatToolExecutor {
      */
     private ToolOutcome routeReadByPath(String target) {
         String t = target.trim();
+        if (t.startsWith("workspace:") || t.startsWith("file:") || t.startsWith("media:")) {
+            try {
+                if (viewerService == null) throw new IllegalArgumentException("文件查看服务不可用");
+                var file = viewerService.resolveOne(t);
+                if (file.target().startsWith("file:")) return readCenterFile(Long.parseLong(file.target().substring(5)));
+                if (file.previewKind().equals("image")) {
+                    var raw = viewerService.image(file.target());
+                    return new ToolOutcome("图片 " + file.name() + " 已作为图像附件返回", "图片", null, false,
+                            List.of(new McpServerService.McpToolResult.ImageBlock(file.mimeType(), java.util.Base64.getEncoder().encodeToString(raw.bytes()))));
+                }
+                if (file.capabilities().source()) return bounded(viewerService.text(file.target()).content(), null);
+                return bounded("文件 " + file.name() + " 不支持内容提取，可使用 open_file 展示给用户查看", null);
+            } catch (java.io.IOException | IllegalArgumentException | org.springframework.web.client.RestClientException e) {
+                return new ToolOutcome("ERROR: 文件暂时无法读取或格式不支持，请核对引用", null, null, false);
+            }
+        }
         boolean explicitCenter = t.startsWith("@center/");
         boolean hasSeparator = t.contains("/") || t.contains("\\");
         // 1) 显式 @center/ 或纯文件名:先试文件中心
@@ -2040,6 +2068,47 @@ class ChatToolExecutor {
         return "import-" + System.currentTimeMillis() + ".bin";
     }
 
+    private ToolOutcome execOpenFile(String args, String sessionId, String stepId) {
+        if (viewerService == null) return new ToolOutcome("ERROR: 文件查看服务不可用", null, null, false);
+        try {
+            JsonNode input = objectMapper.readTree(args);
+            JsonNode targetsNode = input.path("targets");
+            if (!targetsNode.isArray()) throw new IllegalArgumentException("targets 必须是文件引用数组");
+            var targets = new java.util.ArrayList<String>();
+            for (JsonNode target : targetsNode) {
+                if (!target.isTextual()) throw new IllegalArgumentException("文件引用必须是字符串");
+                targets.add(target.asText());
+            }
+            String intent = input.path("intent").asText("inspect");
+            if (!java.util.Set.of("inspect", "deliver").contains(intent)) throw new IllegalArgumentException("intent 只允许 inspect / deliver");
+            String focus = input.path("focus").asText(null);
+            if (focus != null && !targets.contains(focus)) throw new IllegalArgumentException("focus 必须属于 targets");
+            var resolved = viewerService.resolve(targets);
+            if ("deliver".equals(intent)) resolved = viewerService.deliver(resolved, sessionId, stepId);
+            String focusTarget = resolved.files().isEmpty() ? null : resolved.files().get(0).target();
+            if (focus != null) {
+                try {
+                    String canonical = viewerService.resolveOne(focus).target();
+                    if (resolved.files().stream().anyMatch(file -> file.target().equals(canonical))) focusTarget = canonical;
+                } catch (IllegalArgumentException | java.io.IOException | org.springframework.web.client.RestClientException ignored) { /* 使用首个有效文件。 */ }
+            }
+            StringBuilder content = new StringBuilder(resolved.files().isEmpty() ? "ERROR: 没有可打开的文件\n" : "已验证文件，可通过文件入口查看：\n");
+            for (var file : resolved.files()) {
+                content.append(file.target()).append(" | ").append(file.name()).append(" | ").append(file.size()).append(" bytes");
+                if (file.delivery() != null) content.append(" | 登记:").append(file.delivery().status());
+                content.append('\n');
+            }
+            for (var error : resolved.errors()) content.append(error.target()).append(" | ").append(error.message()).append('\n');
+            boolean partial = !resolved.errors().isEmpty() || resolved.files().stream()
+                    .anyMatch(file -> file.delivery() != null && "failed".equals(file.delivery().status()));
+            var boundedContent = bounded(content.toString(), null);
+            return new ToolOutcome(boundedContent.content(), resolved.files().size() + " 个文件可查看", null, boundedContent.truncated(),
+                    List.of(), false, partial && !resolved.files().isEmpty(), resolved.files(), focusTarget, resolved.errors());
+        } catch (java.io.IOException | IllegalArgumentException e) {
+            return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
+        }
+    }
+
     /** 一次执行的工具调用:有界内容 + 面向 UI 的元数据。 */
     record ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
                         /** 图片附件(MCP 工具返回的 image 块);空 = 纯文本 */
@@ -2049,7 +2118,15 @@ class ChatToolExecutor {
                         boolean unknown,
                         /** 部分成功(批量任务有成功也有失败;设计 §5.2):
                          *  保留成功/失败/跳过区别,不显示为全量成功。 */
-                        boolean partial) {
+                        boolean partial,
+                        java.util.List<com.nora.agent.dto.ViewerFile> files,
+                        String focusTarget,
+                        java.util.List<ViewerService.FileError> fileErrors) {
+
+        ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
+                    java.util.List<McpServerService.McpToolResult.ImageBlock> images, boolean unknown, boolean partial) {
+            this(content, summary, rowCount, truncated, images, unknown, partial, null, null, null);
+        }
 
         /** 纯文本结果(旧行为,保持不变) */
         ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated) {

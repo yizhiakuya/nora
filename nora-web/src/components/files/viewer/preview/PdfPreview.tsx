@@ -1,4 +1,4 @@
-import { ExternalLink, Download } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { FilePreview } from "@/types";
 
 /**
@@ -18,33 +18,25 @@ export function PdfPreview({ preview }: { preview: FilePreview }) {
     return <div className="py-16 text-center text-xs text-muted-foreground">（PDF 地址缺失）</div>;
   }
   return (
-    <div className="flex flex-col gap-2">
+    <div className="h-full flex flex-col gap-2 min-h-[320px]">
       <div className="flex items-center justify-end gap-2 text-xs">
         {preview.pages != null && preview.pages > 1 && (
-          <span className="text-white/50 mr-auto">约 {preview.pages} 页 · 内置查看器可翻页/缩放/搜索</span>
+          <span className="text-muted-foreground mr-auto">约 {preview.pages} 页 · 内置查看器可翻页/缩放/搜索</span>
         )}
         <a
           href={src}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/15 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
         >
           <ExternalLink className="w-3.5 h-3.5" /> 新窗口打开
-        </a>
-        <a
-          href={src}
-          download
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/15 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-        >
-          <Download className="w-3.5 h-3.5" /> 下载
         </a>
       </div>
       {/* 浏览器内置 PDF 查看器:翻页/缩放/目录/打印全有 */}
       <iframe
         src={src}
         title="PDF 预览"
-        className="w-full rounded-xl border border-white/10 bg-white"
-        style={{ height: "62vh" }}
+        className="w-full flex-1 min-h-[300px] border-0 bg-white"
       />
     </div>
   );

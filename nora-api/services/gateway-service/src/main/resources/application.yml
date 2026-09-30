@@ -40,6 +40,10 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/saved-artifacts/**
+        - id: viewer
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/viewer/**
         - id: media
           uri: lb://agent-service
           predicates:

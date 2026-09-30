@@ -124,8 +124,15 @@ public record ChatStepDto(
             Integer rowCount,
             Integer lineCount,
             Boolean truncated,
-            String error
+            String error,
+            java.util.List<ViewerFile> files,
+            String focusTarget,
+            java.util.List<com.nora.agent.service.ViewerService.FileError> fileErrors
     ) {
+        public StepResult(String content, String summary, Integer rowCount, Integer lineCount,
+                          Boolean truncated, String error) {
+            this(content, summary, rowCount, lineCount, truncated, error, null, null, null);
+        }
     }
 
     /**

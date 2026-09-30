@@ -247,21 +247,31 @@ public class FileToolClient {
      */
     public JsonNode meta(long id) {
         try {
-            ApiResponse<JsonNode> envelope = restClient.get()
-                    .uri("/api/files?ids={id}", id)
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
-            if (envelope == null || envelope.code() != 0 || envelope.data() == null
-                    || !envelope.data().isArray() || envelope.data().isEmpty()) {
-                return null;
-            }
-            return envelope.data().get(0);
+            return metadata(id);
         } catch (Exception e) {
             log.warn("file meta failed for {}: {}", id, e.getMessage());
             return null;
         }
+    }
+
+    /** 查看器需要区分不存在与服务错误，不能吞掉依赖故障。 */
+    public JsonNode metadata(long id) {
+        ApiResponse<JsonNode> envelope = restClient.get().uri("/api/files?ids={id}", id)
+                .accept(MediaType.APPLICATION_JSON).retrieve()
+                .body(new ParameterizedTypeReference<>() { });
+        if (envelope == null || envelope.code() != 0 || envelope.data() == null || !envelope.data().isArray()) {
+            throw new org.springframework.web.client.RestClientException("文件服务元数据不可用");
+        }
+        return envelope.data().isEmpty() ? null : envelope.data().get(0);
+    }
+
+    public byte[] rawBounded(long id, int limit) {
+        return restClient.get().uri("/api/files/{id}/raw", id).exchange((request, response) -> {
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new org.springframework.web.client.RestClientException("文件原件不可用");
+            }
+            return response.getBody().readNBytes(limit);
+        });
     }
 
     /**

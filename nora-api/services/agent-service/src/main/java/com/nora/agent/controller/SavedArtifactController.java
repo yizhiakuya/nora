@@ -2,7 +2,8 @@ package com.nora.agent.controller;
 
 import java.util.List;
 
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.nora.agent.service.SavedArtifactService;
+import com.nora.agent.service.SavedArtifactService.ArtifactView;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,10 +32,10 @@ import com.nora.common.response.ApiResponse;
 @RequestMapping("/api/saved-artifacts")
 public class SavedArtifactController {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final SavedArtifactService artifacts;
 
-    public SavedArtifactController(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public SavedArtifactController(SavedArtifactService artifacts) {
+        this.artifacts = artifacts;
     }
 
     /**
@@ -52,28 +53,14 @@ public class SavedArtifactController {
         if (!List.of("workspace_file", "knowledge_doc").contains(request.kind())) {
             throw new BusinessException(400, "kind 只允许 workspace_file / knowledge_doc,收到: " + request.kind());
         }
-        String name = request.name() == null || request.name().isBlank()
-                ? request.path() : request.name().trim();
-        return ApiResponse.ok(jdbcTemplate.queryForObject(
-                "INSERT INTO saved_artifact (kind, path, name, session_id, message_key) "
-                        + "VALUES (?, ?, ?, ?, ?) "
-                        + "ON CONFLICT (kind, path) DO UPDATE SET name = EXCLUDED.name, "
-                        + "session_id = EXCLUDED.session_id, message_key = EXCLUDED.message_key, updated_at = now() "
-                        + "RETURNING id, kind, path, name, session_id, message_key, created_at",
-                (rs, i) -> mapRow(rs),
-                request.kind(), request.path().trim(), name,
-                blankToNull(request.sessionId()), blankToNull(request.messageKey())));
+        return ApiResponse.ok(artifacts.register(request.kind(), request.path(), request.name(),
+                request.sessionId(), request.messageKey()));
     }
 
     /** 保存成果列表(最新在前;资料页「已保存成果」入口)。 */
     @GetMapping
     public ApiResponse<List<ArtifactView>> list(@RequestParam(value = "limit", defaultValue = "50") int limit) {
-        int bounded = Math.max(1, Math.min(limit, 200));
-        return ApiResponse.ok(jdbcTemplate.query(
-                "SELECT id, kind, path, name, session_id, message_key, created_at "
-                        + "FROM saved_artifact ORDER BY created_at DESC, id DESC LIMIT ?",
-                (rs, i) -> mapRow(rs),
-                bounded));
+        return ApiResponse.ok(artifacts.list(limit));
     }
 
     /**
@@ -83,27 +70,7 @@ public class SavedArtifactController {
      */
     @DeleteMapping
     public ApiResponse<Integer> remove(@RequestParam("id") long id) {
-        return ApiResponse.ok(jdbcTemplate.update("DELETE FROM saved_artifact WHERE id = ?", id));
-    }
-
-    private static String blankToNull(String s) {
-        return s == null || s.isBlank() ? null : s.trim();
-    }
-
-    /** 行映射:created_at 格式化为本地挂钟 "yyyy-MM-dd HH:mm"(与其它端点展示口径一致)。 */
-    private static ArtifactView mapRow(java.sql.ResultSet rs) throws java.sql.SQLException {
-        java.sql.Timestamp ts = rs.getTimestamp("created_at");
-        String createdAt = ts == null ? null
-                : ts.toLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-        return new ArtifactView(
-                rs.getLong("id"), rs.getString("kind"), rs.getString("path"), rs.getString("name"),
-                rs.getString("session_id"), rs.getString("message_key"), createdAt);
-    }
-
-    /** 登记行视图(createdAt 为本地挂钟字符串 "yyyy-MM-dd HH:mm")。 */
-    public record ArtifactView(long id, String kind, String path, String name,
-                               String sessionId, String messageKey,
-                               String createdAt) {
+        return ApiResponse.ok(artifacts.remove(id));
     }
 
     /** POST /api/saved-artifacts 请求体。 */

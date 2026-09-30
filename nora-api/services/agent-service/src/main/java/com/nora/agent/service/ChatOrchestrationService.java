@@ -97,6 +97,12 @@ public class ChatOrchestrationService {
     private final int maxToolRounds;
 
     @org.springframework.beans.factory.annotation.Autowired
+    void configureViewerService(ViewerService viewerService) {
+        toolExecutor.setViewerService(viewerService);
+        messageRefResolver.setViewerService(viewerService);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
     public ChatOrchestrationService(LlmProperties llmProperties,
                                     RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,

@@ -45,10 +45,10 @@ export const workspaceApi = {
     // 图片 src 无法带 header:令牌走 ?token=
     return withAuthToken(`/api/workspace/file/raw?path=${encodeURIComponent(path)}`);
   },
-  async writeFile(path: string, content: string): Promise<void> {
+  async writeFile(path: string, content: string, expectedHash?: string | null): Promise<void> {
     await requestJson<{ path: string; content: string }>("/workspace/file", {
       method: "PUT",
-      body: JSON.stringify({ path, content }),
+      body: JSON.stringify({ path, content, expectedHash }),
     });
   },
   async deleteFile(path: string): Promise<void> {

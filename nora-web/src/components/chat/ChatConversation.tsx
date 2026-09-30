@@ -119,48 +119,50 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
   return (
     <>
       {/* Chat History */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 custom-scroll">
-        <div className="max-w-3xl mx-auto space-y-8 pb-32">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 pt-20">
-              <MessageSquareOpen className="w-8 h-8 opacity-20" />
-              <span className="text-xs">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
-            </div>
-          ) : (
-            messages.map((msg, i) => (
-              <Fragment key={msg.id}>
-                {shouldShowTimeDivider(messages[i - 1], msg) && (
-                  <div className="flex justify-center pb-1">
-                    <span className="text-[10px] text-muted-foreground bg-muted/70 dark:bg-muted/40 px-2.5 py-0.5 rounded-full tabular-nums">
-                      {msg.timestamp}
-                    </span>
-                  </div>
-                )}
-                <ChatMessageItem
-                  msg={msg}
-                  sessionId={sessionId}
-                  onRetry={retryMessage}
-                  canRetry={!isSending}
-                  onEdit={editAndResend}
-                  canEdit={!isSending}
-                />
-              </Fragment>
-            ))
-          )}
+      <div className="relative flex-1 min-h-0">
+        <div ref={scrollRef} className="h-full overflow-y-auto p-4 custom-scroll">
+          <div className="max-w-3xl mx-auto space-y-8">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 pt-20">
+                <MessageSquareOpen className="w-8 h-8 opacity-20" />
+                <span className="text-xs">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
+              </div>
+            ) : (
+              messages.map((msg, i) => (
+                <Fragment key={msg.id}>
+                  {shouldShowTimeDivider(messages[i - 1], msg) && (
+                    <div className="flex justify-center pb-1">
+                      <span className="text-[10px] text-muted-foreground bg-muted/70 dark:bg-muted/40 px-2.5 py-0.5 rounded-full tabular-nums">
+                        {msg.timestamp}
+                      </span>
+                    </div>
+                  )}
+                  <ChatMessageItem
+                    msg={msg}
+                    sessionId={sessionId}
+                    onRetry={retryMessage}
+                    canRetry={!isSending}
+                    onEdit={editAndResend}
+                    canEdit={!isSending}
+                  />
+                </Fragment>
+              ))
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* 回到底部:用户上翻后出现,点击平滑回底并恢复自动跟随 */}
-      {showJumpButton && (
-        <button
-          type="button"
-          onClick={() => scrollToBottom(true)}
-          className="absolute bottom-36 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-card border border-border shadow-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer animate-in fade-in slide-in-from-bottom-2"
-          title="回到底部"
-        >
-          <ArrowDown className="w-4 h-4" />
-        </button>
-      )}
+        {/* 回到底部:用户上翻后出现,点击平滑回底并恢复自动跟随 */}
+        {showJumpButton && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom(true)}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-card border border-border shadow-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer animate-in fade-in slide-in-from-bottom-2"
+            title="回到底部"
+          >
+            <ArrowDown className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
       <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage} onStop={stopGenerating}
         reasoningLevel={reasoningLevel} onReasoningLevelChange={(l) => { setReasoningLevel(l); useAgentSettings.getState().setReasoningLevelOverride(l); }}

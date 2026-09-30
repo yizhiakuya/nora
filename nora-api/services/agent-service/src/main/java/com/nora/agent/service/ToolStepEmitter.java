@@ -306,7 +306,7 @@ class ToolStepEmitter {
                                 || (turnCancellation != null && sessionId != null
                                     && turnCancellation.isCancelled(sessionId));
                     }
-                });
+                }, sessionId, toolStepId);
         boolean failure = outcome.content().startsWith("ERROR:");
         // 状态语义(设计 §5.2):结果未知(调用已发出但中断,远端可能已生效)
         // 与普通失败分开——不是"没执行",不能静默当失败重做;
@@ -320,7 +320,8 @@ class ToolStepEmitter {
                 outcome.rowCount(),
                 countLines(outcome.content()),
                 outcome.truncated(),
-                failure ? outcome.content() : null);
+                failure ? outcome.content() : null,
+                outcome.files(), outcome.focusTarget(), outcome.fileErrors());
         // 记录本次结果(结果感知的循环检测,设计 §9.3):结果变化会重置计数——
         // 「正常轮询/有进展的重复读取」不被误拦;结果未知不参与判定
         loopDetector.recordResult(fingerprint, outcome.unknown() ? null

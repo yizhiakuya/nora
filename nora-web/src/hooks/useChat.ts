@@ -10,6 +10,7 @@ import { humanizeError } from "@/lib/errorMessages";
 import { randomId } from "@/lib/utils";
 import { nowHm } from "@/lib/format";
 import { formatChatRefs, refKey, type ChatRef } from "@/lib/chatRefs";
+import { useFileViewer } from "./useFileViewer";
 
 /**
  * Agent 全局设置(权限模式 / 默认模型 / 思考等级覆写):后端 app_setting
@@ -349,10 +350,20 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
       abortRef.current = controller;
 
       setIsSending(true);
+      if (sessionId) useFileViewer.getState().beginRun(assistantMsgId, sessionId);
       try {
         await responder(
           content,
-          (partial) => updateMessage(assistantMsgId, partial),
+          (partial) => {
+            updateMessage(assistantMsgId, partial);
+            if (mountedRef.current && sessionId === useChatSessions.getState().activeId) {
+              for (const step of partial.steps ?? []) {
+                if ((step.status === "completed" || step.status === "partial") && step.result?.files?.length) {
+                  useFileViewer.getState().receiveFiles(assistantMsgId, step.id, step.result.files, step.result.focusTarget);
+                }
+              }
+            }
+          },
           sessionId,
           model === "未配置" ? undefined : model,
           reasoningLevel,
@@ -387,6 +398,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
         // 轮次结束后兜底拉 AI 标题：title 事件是旁路任务，短轮次常在 done 之后
         // 才回来（emitter 已 complete），事件会丢。这里轮询补一次。
         if (sessionId) void useChatSessions.getState().awaitGeneratedTitle(sessionId);
+        void useFileViewer.getState().refresh(true);
       }
     },
     [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage, effectiveProviderId]
@@ -399,6 +411,12 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
   const removeRef = useCallback((key: string) => {
     setRefs((prev) => prev.filter((r) => refKey(r) !== key));
   }, []);
+  const pendingReference = useFileViewer(state => state.pendingReference);
+  useEffect(() => {
+    if (!sessionId || pendingReference?.sessionId !== sessionId) return;
+    addRef(pendingReference.ref);
+    useFileViewer.setState({ pendingReference: null });
+  }, [pendingReference, sessionId, addRef]);
 
   /** 拼引用后的实际发送内容:正文 + 引用块(尾部,持久化后历史仍可解析) */
   const composeWithRefs = useCallback(
@@ -414,7 +432,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
     // B4(2026-09-27):「限定检索」开启且有知识库文档引用时,附检索范围——
     // 后端据此只从这些文档召回(docIds 同时进入向量与关键词两路)。
     const scopedDocIds = limitToRefs
-      ? pending.filter((r) => r.kind === "doc").map((r) => r.id)
+      ? pending.filter((r) => r.kind === "doc").map((r) => Number(r.id))
       : [];
     if (pending.length === 0 && scopedDocIds.length === 0) return undefined;
     return {

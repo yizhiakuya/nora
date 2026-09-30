@@ -2,6 +2,8 @@ import { Routes, Route, Navigate, useLocation, useSearchParams } from "react-rou
 import { lazy, Suspense, useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { FileViewerWorkspace } from "@/components/layout/FileViewerWorkspace";
+import { useFileViewer } from "@/hooks/useFileViewer";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
 import { NotificationWatcher } from "@/components/layout/NotificationWatcher";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
@@ -45,6 +47,7 @@ const TITLES: Record<string, string> = {
 };
 
 function RouteShell({ children }: { children: React.ReactNode }) {
+  const viewerOpen = useFileViewer(state => state.isOpen);
   const location = useLocation();
   const startPolling = useBackendHealth((s) => s.startPolling);
   const online = useBackendHealth((s) => s.online);
@@ -88,10 +91,8 @@ function RouteShell({ children }: { children: React.ReactNode }) {
           <CommandPalette isOpen onClose={closeCmdK} />
         </Suspense>
       )}
-      <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden bg-background relative">
-        {children}
-      </main>
+      <Sidebar compact={viewerOpen} />
+      <FileViewerWorkspace>{children}</FileViewerWorkspace>
     </div>
   );
 }

@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Images, Play } from "lucide-react";
-import { ImageLightbox, type LightboxImage } from "@/components/shared/ImageLightbox";
+import { useFileViewer } from "@/hooks/useFileViewer";
 import { mediaCacheUrl, originalVariant, thumbVariant, videoStreamVariant } from "@/lib/mediaCache";
 import { mdHm } from "@/lib/format";
 
@@ -15,7 +15,7 @@ import { mdHm } from "@/lib/format";
  *
  * 数据字段(兼容两种来源):
  *   title(标题)/ note(底部注释)
- *   items: [{ kind(image|video), url(灯箱用原图/压缩流), thumbUrl(网格缩略图),
+   *   items: [{ kind(image|video), url(原图/压缩流), thumbUrl(网格缩略图),
  *             fullUrl(可选原图), name, caption, meta(拍摄时间/大小) }]
  *   旧 nora-gallery 由解析层转换后同构(url=原图, thumbUrl=缩略图)。
  */
@@ -39,35 +39,14 @@ function formatTakenAt(takenAt?: string): string | undefined {
   return Number.isNaN(d.getTime()) ? takenAt : mdHm(d);
 }
 
-export function MediaGallery({ data }: { data: Record<string, unknown> }) {
-  // items 按 data.items 引用缓存:此前每次渲染都重建数组 → 灯箱 images 每次
-  // 重建 → ImageLightbox 预加载 effect 反复解绑重挂(preload 警告刷屏)
+export function MediaGallery({ data, sessionId }: { data: Record<string, unknown>; sessionId?: string }) {
   const items = useMemo(
     () => (Array.isArray(data.items) ? (data.items as MediaItem[]) : [])
       .filter((it) => it && (it.url || it.fullUrl)),
     [data.items],
   );
   const count = items.length;
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-
-  const lightboxImages: LightboxImage[] = useMemo(
-    () => items.map((item) => {
-      const isVideo = item.kind === "video";
-      const full = item.fullUrl ?? item.url ?? "";
-      return {
-        // 视频走压缩流端点(/video,手机端按网络档位转码);图片走原图
-        // (originalVariant:/thumb 升级为 /content——灯箱全屏看缩略图必模糊)
-        src: mediaCacheUrl(isVideo ? videoStreamVariant(full) : originalVariant(full)),
-        thumb: mediaCacheUrl(item.thumbUrl ?? item.url ?? full),
-        caption: item.caption,
-        alt: item.name ?? "媒体",
-        kind: isVideo ? ("video" as const) : ("image" as const),
-        // 下载/新窗口出口:图片同样升级为原图档(与 src 同口径)
-        originalSrc: mediaCacheUrl(isVideo ? full.replace(/(\/photo\/\d+\/)video(\?|$)/, "$1content$2") : originalVariant(full)),
-      };
-    }),
-    [items],
-  );
+  const targets = items.map(item => item.kind === "video" ? videoStreamVariant(item.fullUrl ?? item.url ?? "") : originalVariant(item.fullUrl ?? item.url ?? ""));
 
   if (items.length === 0) return null;
 
@@ -104,7 +83,7 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
               type="button"
               key={idx}
               title={tip || "媒体"}
-              onClick={() => setLightboxIndex(idx)}
+              onClick={() => void useFileViewer.getState().openTargets([targets[idx]], undefined, { sessionId, collection: targets })}
               className="group/img relative block w-full rounded-md overflow-hidden border border-border/60 bg-muted/40 cursor-zoom-in text-left"
             >
               <img
@@ -131,14 +110,6 @@ export function MediaGallery({ data }: { data: Record<string, unknown> }) {
         <div className="px-3 py-2 border-t border-border/70 text-[11px] text-muted-foreground leading-relaxed">
           {data.note}
         </div>
-      )}
-      {lightboxIndex !== null && (
-        <ImageLightbox
-          images={lightboxImages}
-          index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          onIndexChange={setLightboxIndex}
-        />
       )}
     </div>
   );

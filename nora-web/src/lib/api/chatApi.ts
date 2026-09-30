@@ -1,4 +1,4 @@
-import type { Citation } from "@/types";
+import type { Citation, ViewerFile, ViewerFileError } from "@/types";
 
 /** 结构化工具入参(execute_sql → sql;read_service_logs → service/limit) */
 export interface ChatStepInput {
@@ -11,6 +11,9 @@ export interface ChatStepInput {
 
 /** 结构化工具结果:content 是喂给模型的完整(有界)输出 */
 export interface ChatStepResult {
+  files?: ViewerFile[];
+  focusTarget?: string;
+  fileErrors?: ViewerFileError[];
   content?: string;
   summary?: string;
   rowCount?: number;
@@ -199,7 +202,7 @@ export type ChatResponder = (
  */
 export interface TaskContextPayload {
   version: 1;
-  refs: Array<{ kind: "file" | "doc" | "skill" | "mcp" | "datasource"; id: string; label: string }>;
+  refs: Array<{ kind: "file" | "doc" | "skill" | "mcp" | "datasource" | "viewer"; id: string; label: string }>;
   output?: { kind: "workspace" | "fileFolder"; target: string };
   origin?: { kind: "chat" | "query" | "log" | "file" | "automation"; id?: string };
   dataSelection?: { mode: "fixed" | "relativeTime"; sourceId?: string; range?: "thisWeek" | "previousWeek" | "last7Days"; timezone?: string };

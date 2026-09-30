@@ -327,9 +327,9 @@ export function openArtifactLink(open: string | undefined): void {
   const parsed = parseOpen(open);
   if (!parsed) return;
   if (parsed.scheme === "workspace") {
-    window.location.href = `/files?workspace=${encodeURIComponent(parsed.target)}`;
+    void useFileViewer.getState().openTargets([`workspace:${parsed.target}`]);
   } else if (parsed.scheme === "file") {
-    window.location.href = `/files?open=${encodeURIComponent(parsed.target)}`;
+    void useFileViewer.getState().openTargets([`file:${parsed.target}`]);
   } else if (parsed.scheme === "url") {
     // 仅允许 http(s):画廊数据来自 agent 输出(可能被工具结果/文件内容影响),
     // url:javascript:/url:data: 经 window.open 会在新窗口执行脚本
@@ -339,3 +339,4 @@ export function openArtifactLink(open: string | undefined): void {
     }
   }
 }
+import { useFileViewer } from "@/hooks/useFileViewer";

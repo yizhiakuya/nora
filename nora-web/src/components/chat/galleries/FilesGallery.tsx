@@ -3,6 +3,7 @@
 import { FileText, Folder, Link2, ExternalLink, FolderTree } from "lucide-react";
 import { openArtifactLink, parseOpen } from "@/lib/artifacts";
 import { GalleryShell, SectionLabel } from "./GalleryShell";
+import { useNavigate } from "react-router-dom";
 
 /**
  * files 画廊:文件增删改/归档(文件行,点击深链直达)。
@@ -44,6 +45,7 @@ export function FilesGallery({ data }: { data: Record<string, unknown> }) {
 }
 
 function FileRow({ item }: { item: FileItem }) {
+  const navigate = useNavigate();
   const Icon = item.kind === "folder" ? Folder : item.kind === "link" ? Link2 : FileText;
   const clickable = !!parseOpen(item.open);
   const parsed = parseOpen(item.open);
@@ -51,7 +53,7 @@ function FileRow({ item }: { item: FileItem }) {
     <button
       type="button"
       disabled={!clickable}
-      onClick={() => openArtifactLink(item.open)}
+      onClick={() => item.kind === "folder" && parsed?.scheme === "workspace" ? navigate(`/files?workspace=${encodeURIComponent(parsed.target)}`) : openArtifactLink(item.open)}
       title={clickable ? "点击打开" : undefined}
       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-border/60 bg-muted/20 text-left transition-colors ${
         clickable ? "hover:bg-muted/60 cursor-pointer" : "cursor-default"

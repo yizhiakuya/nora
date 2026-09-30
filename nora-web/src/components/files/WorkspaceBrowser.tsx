@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, FileText, FolderOpen, Save, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/custom/Modal";
+import { ArrowLeft, FileText, FolderOpen, Trash2 } from "lucide-react";
+import { useFileViewer } from "@/hooks/useFileViewer";
 import { workspaceApi, type WorkspaceEntry, type WorkspaceStats } from "@/lib/services/workspaceApi";
 import { toast } from "sonner";
 
@@ -18,18 +17,12 @@ interface WorkspaceBrowserProps {
  * Agent 工作区文件夹浏览器——作为「文件」页里的一个普通文件夹出现(文件系统一体化)。
  *
  * - 面包屑:文件中心 / Agent 工作区 / …(任意层级可点击跳回);
- * - 目录进入 / 文件打开编辑器(保存/删除);
+ * - 目录进入 / 文件打开共享查看器;
  * - 底部标注真实磁盘路径,强调它就是文件系统上的一个目录。
  */
 export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserProps) {
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
   const [stats, setStats] = useState<WorkspaceStats | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [content, setContent] = useState("");
-  const [original, setOriginal] = useState("");
-  const [busy, setBusy] = useState(false);
-  /** 图片预览(二进制不进编辑器:文本读取会拒绝二进制)。 */
-  const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const list = await workspaceApi.listFiles(dir).catch(() => []);
@@ -44,43 +37,12 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
     workspaceApi.getStats().then(setStats).catch(() => { /* 统计不可用不阻塞浏览 */ });
   }, []);
 
-  const openFile = async (path: string) => {
-    // 图片走原始字节预览(文本端点拒绝二进制)
-    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(path)) {
-      setViewingImage(path);
-      return;
-    }
+  const handleDelete = async (path: string) => {
+    if (!window.confirm(`确认删除「${path}」？该操作不可恢复。`)) return;
     try {
-      const text = await workspaceApi.readFile(path);
-      setEditing(path);
-      setContent(text);
-      setOriginal(text);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "读取失败");
-    }
-  };
-
-  const handleSave = async () => {
-    if (!editing) return;
-    setBusy(true);
-    try {
-      await workspaceApi.writeFile(editing, content);
-      setOriginal(content);
-      toast.success("已保存");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "保存失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!editing) return;
-    if (!window.confirm(`确认删除「${editing}」？该操作不可恢复。`)) return;
-    try {
-      await workspaceApi.deleteFile(editing);
+      await workspaceApi.deleteFile(path);
       toast.success("已删除");
-      setEditing(null);
+      if (useFileViewer.getState().active?.target === `workspace:${path}`) void useFileViewer.getState().refresh();
       void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "删除失败");
@@ -90,7 +52,6 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
   const segments = dir ? dir.split("/").filter(Boolean) : [];
   const goUp = () => onNavigate(segments.slice(0, -1).join("/"));
 
-  const dirty = editing != null && content !== original;
   const dirs = entries.filter((e) => e.directory);
   const files = entries.filter((e) => !e.directory);
   const realPath = stats ? `${stats.root}${dir ? `\\${dir.replace(/\//g, "\\")}` : ""}` : null;
@@ -143,11 +104,11 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
           <div className="py-16 text-center text-xs text-muted-foreground">（空目录）</div>
         )}
         {[...dirs, ...files].map((e) => (
+          <div key={e.path} className="flex border-b border-border last:border-0">
           <button
-            key={e.path}
             type="button"
-            onClick={() => (e.directory ? onNavigate(e.path) : void openFile(e.path))}
-            className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-border last:border-0 hover:bg-muted/50 transition-colors text-left"
+            onClick={() => e.directory ? onNavigate(e.path) : void useFileViewer.getState().openTargets([`workspace:${e.path}`], undefined, { collection: files.map(file => `workspace:${file.path}`) })}
+            className="flex-1 min-w-0 flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left"
           >
             {e.directory ? (
               <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
@@ -158,6 +119,8 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
             <span className="text-xs text-muted-foreground">{e.directory ? "目录" : `${e.size} B`}</span>
             <span className="text-xs text-muted-foreground/60 hidden sm:inline">{e.modifiedAt}</span>
           </button>
+          {!e.directory && <button type="button" aria-label={`删除 ${e.path}`} className="px-3 text-muted-foreground hover:text-red-500" onClick={() => useFileViewer.getState().requestAction(() => { void handleDelete(e.path); })}><Trash2 className="w-3.5 h-3.5" /></button>}
+          </div>
         ))}
       </div>
 
@@ -169,52 +132,6 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
         </div>
       )}
 
-      <Modal
-        isOpen={viewingImage != null}
-        onClose={() => setViewingImage(null)}
-        title={viewingImage ?? ""}
-        width="w-[94%] sm:w-[720px]"
-      >
-        {viewingImage && (
-          <div className="flex items-center justify-center bg-muted/40 rounded-lg p-4 min-h-[300px]">
-            <img
-              src={workspaceApi.rawUrl(viewingImage)}
-              alt={viewingImage}
-              className="max-w-full max-h-[420px] rounded-lg shadow-md"
-            />
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        isOpen={editing != null}
-        onClose={() => setEditing(null)}
-        title={editing ?? ""}
-        width="w-[94%] sm:w-[720px]"
-        footer={
-          <>
-            {dirty && <span className="text-xs text-amber-600 dark:text-amber-400 mr-auto">未保存</span>}
-            <Button
-              variant="outline"
-              size="sm"
-              className="bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40"
-              onClick={() => void handleDelete()}
-            >
-              <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
-            </Button>
-            <Button size="sm" disabled={!dirty || busy} onClick={() => void handleSave()}>
-              <Save className="w-3.5 h-3.5 mr-1" /> 保存
-            </Button>
-          </>
-        }
-      >
-        <textarea
-          className="w-full min-h-[380px] p-3 text-xs font-mono leading-relaxed bg-[#1e1e1e] text-gray-300 rounded-lg resize-none focus:outline-none custom-scroll"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          spellCheck={false}
-        />
-      </Modal>
     </>
   );
 }

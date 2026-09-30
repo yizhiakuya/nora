@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
 import { parseArtifactsFence, parseLegacyGalleryFence } from "@/lib/artifacts";
-import { ImageLightbox } from "@/components/shared/ImageLightbox";
+import { useFileViewer } from "@/hooks/useFileViewer";
+import { useChatSessions } from "@/hooks/useChatSessions";
 import { mediaCacheUrl, thumbVariant, originalVariant } from "@/lib/mediaCache";
 
 /**
@@ -172,8 +173,7 @@ function extractResultImages(content: string | null | undefined): { alt: string;
 export function ToolRow({ step }: { step: ChatStep }) {
   const [open, setOpen] = useState(step.status === "running");
   const [userTouched, setUserTouched] = useState(false);
-  // 结果散图点击 → 页内灯箱（不再跳外部标签页）
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const sessionId = useChatSessions(state => state.activeId) ?? undefined;
   const effectiveOpen = userTouched ? open : step.status === "running";
   const expandable = Boolean(step.input || step.result || step.detail);
   const lines = outputLineCount(step);
@@ -265,7 +265,7 @@ export function ToolRow({ step }: { step: ChatStep }) {
       {artifacts && artifacts.length > 0 && (
         <div className="ml-6 mt-1.5 space-y-1.5">
           {artifacts.map((g, i) => (
-            <ArtifactsBlock key={i} gallery={g} />
+            <ArtifactsBlock key={i} gallery={g} sessionId={sessionId} />
           ))}
         </div>
       )}
@@ -276,7 +276,7 @@ export function ToolRow({ step }: { step: ChatStep }) {
               type="button"
               key={`${img.url}-${i}`}
               title={`${img.alt}（点击放大查看）`}
-              onClick={() => setLightboxIndex(i)}
+              onClick={() => void useFileViewer.getState().openTargets([originalVariant(img.url)], undefined, { sessionId, collection: resultImages.map(image => originalVariant(image.url)) })}
               className="group/img block rounded-lg border border-border overflow-hidden bg-muted/40 cursor-zoom-in"
             >
               <img
@@ -291,20 +291,6 @@ export function ToolRow({ step }: { step: ChatStep }) {
             <span className="self-end text-[10px] text-muted-foreground">+{resultImages.length - 6} 张</span>
           )}
         </div>
-      )}
-      {lightboxIndex !== null && (
-        <ImageLightbox
-          images={resultImages.map((img) => ({
-            // 大图取原图档(/thumb 升级为 /content——缩略图全屏放大必模糊);
-            // 缩略图只做占位/网格
-            src: mediaCacheUrl(originalVariant(img.url)),
-            thumb: mediaCacheUrl(thumbVariant(img.url)),
-            alt: img.alt,
-          }))}
-          index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          onIndexChange={setLightboxIndex}
-        />
       )}
       {effectiveOpen && expandable && (
         <ToolDetail step={step} />

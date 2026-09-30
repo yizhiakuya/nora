@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.nora.agent.service.AgentWorkspaceService;
+import com.nora.agent.service.ViewerService;
 import com.nora.common.exception.BusinessException;
 import com.nora.common.response.ApiResponse;
 
@@ -60,36 +61,30 @@ public class AgentWorkspaceController {
      * 文本端点拒绝二进制,图片预览必须走这里。
      */
     @GetMapping("/file/raw")
-    public org.springframework.http.ResponseEntity<byte[]> raw(@RequestParam String path) {
+    public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> raw(
+            @RequestParam String path, @RequestParam(defaultValue = "false") boolean download) {
         try {
-            byte[] body = workspaceService.readBytes(path);
-            String mime = guessMime(path);
+            var file = workspaceService.resolveSafe(path);
+            if (!java.nio.file.Files.isRegularFile(file)) throw new IllegalArgumentException("文件不存在或目标是目录");
             return org.springframework.http.ResponseEntity.ok()
-                    .header("Content-Type", mime)
-                    .header("Cache-Control", "private, max-age=300")
-                    .body(body);
+                    .header("Content-Type", ViewerService.mime(file))
+                    .header("Cache-Control", "private, no-cache")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Content-Security-Policy", "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'")
+                    .header("Content-Disposition", org.springframework.http.ContentDisposition
+                            .builder(download ? "attachment" : "inline")
+                            .filename(file.getFileName().toString(), java.nio.charset.StandardCharsets.UTF_8).build().toString())
+                    .body(new org.springframework.core.io.FileSystemResource(file));
         } catch (IllegalArgumentException e) {
             throw new BusinessException(404, e.getMessage());
         }
-    }
-
-    /** 按扩展名猜 mime(工作区文件没有元数据表,从路径推断)。 */
-    private static String guessMime(String path) {
-        String lower = path == null ? "" : path.toLowerCase();
-        if (lower.endsWith(".png")) return "image/png";
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-        if (lower.endsWith(".gif")) return "image/gif";
-        if (lower.endsWith(".webp")) return "image/webp";
-        if (lower.endsWith(".svg")) return "image/svg+xml";
-        if (lower.endsWith(".pdf")) return "application/pdf";
-        return "application/octet-stream";
     }
 
     /** 写文件(覆盖);前端编辑器保存用。 */
     @PutMapping("/file")
     public ApiResponse<FileContent> write(@RequestBody WriteRequest request) {
         try {
-            workspaceService.write(request.path(), request.content());
+            workspaceService.writeChecked(request.path(), request.content(), request.expectedHash());
             return ApiResponse.ok(new FileContent(request.path(), workspaceService.read(request.path())));
         } catch (IllegalArgumentException e) {
             throw new BusinessException(400, e.getMessage());
@@ -110,6 +105,7 @@ public class AgentWorkspaceController {
     public record FileContent(String path, String content) {
     }
 
-    public record WriteRequest(String path, String content) {
+    public record WriteRequest(String path, String content, String expectedHash) {
+        public WriteRequest(String path, String content) { this(path, content, null); }
     }
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { HardDrive, Play, Trash2, BookmarkPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/custom/Modal";
+import { useFileViewer } from "@/hooks/useFileViewer";
 import {
   mediaCacheApi,
   cachedItemLabel,
@@ -36,7 +36,6 @@ function humanSize(bytes: number): string {
 export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
   const [data, setData] = useState<CachedMediaList | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewing, setViewing] = useState<CachedMediaItem | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -140,7 +139,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
                     type="button"
                     className="absolute inset-0 cursor-zoom-in"
                     title={`${cachedItemLabel(item)}\n${humanSize(item.size)} · ${mdHm(item.savedAt)}\n${item.url}`}
-                    onClick={() => setViewing(item)}
+                    onClick={() => void useFileViewer.getState().openTargets([item.url], undefined, { collection: data.items.map(entry => entry.url) })}
                   >
                     {/* 统一用缩略图铺底:视频条目(播放流/原片)也改写为手机 /thumb
                         端点(封面帧)——不再只有播放角标,一眼能认出是哪张 */}
@@ -205,37 +204,6 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
         </>
       )}
 
-      {/* 预览灯箱:图片直接看,视频用原生播放器 */}
-      <Modal
-        isOpen={viewing != null}
-        onClose={() => setViewing(null)}
-        title={viewing ? cachedItemLabel(viewing) : ""}
-        width="w-[94%] sm:w-[760px]"
-      >
-        {viewing && (
-          <div className="flex items-center justify-center bg-black/80 rounded-lg p-2 min-h-[260px]">
-            {isVideoItem(viewing) ? (
-              <video
-                ref={(el) => {
-                  if (el) el.muted = true;
-                }}
-                src={mediaCacheApi.previewUrl(viewing.url)}
-                controls
-                autoPlay
-                playsInline
-                muted
-                className="max-w-full max-h-[420px] rounded"
-              />
-            ) : (
-              <img
-                src={mediaCacheApi.previewUrl(viewing.url)}
-                alt={cachedItemLabel(viewing)}
-                className="max-w-full max-h-[420px] rounded"
-              />
-            )}
-          </div>
-        )}
-      </Modal>
     </>
   );
 }

@@ -1,81 +1,43 @@
-import { renderHook, act } from "@testing-library/react";
-import {describe, it, vi, beforeEach, afterEach} from "vitest";
+import { beforeEach, it, vi } from "vitest";
 import { useFileViewer } from "./useFileViewer";
-import { FileItem } from "@/types";
-import { FileText } from "lucide-react";
+import type { ViewerFile } from "@/types";
 
-// 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行渲染/交互路径,不校验结果。
+const file: ViewerFile = {
+  target: "workspace:reports/smoke.md", name: "smoke.md", mimeType: "text/markdown", size: 8,
+  modifiedAt: null, version: "1", previewKind: "markdown",
+  capabilities: { preview: true, source: true, download: true, edit: true, attach: true },
+};
+vi.mock("@/lib/services/viewerApi", () => ({ viewerApi: {
+  resolve: async () => ({ files: [file], errors: [] }),
+  preview: async () => ({ kind: "markdown", text: "# smoke", hash: "hash" }),
+  save: async () => {},
+} }));
 
-// 后端是唯一数据源:预览走 filesApi,测试中打桩控制时序与返回
-const fetchPreviewMock = vi.fn();
-vi.mock("@/lib/services/filesApi", () => ({
-  filesApi: { fetchPreview: (...args: unknown[]) => fetchPreviewMock(...args) },
+beforeEach(() => useFileViewer.setState({
+  active: null, tabs: [], preview: null, isOpen: false, editing: false, saving: false,
+  pendingAction: null, pendingReference: null, run: null, newFiles: 0, wide: true,
 }));
 
-function makePreview(kind: string) {
-  return { kind, pages: kind === "pdf" ? 3 : undefined } as never;
-}
-
-const pdfFile: FileItem = {
-  id: 1,
-  name: "NestJS部署手册.pdf",
-  type: "PDF 文档",
-  size: "2.4 MB",
-  date: "2024-06-02 14:30",
-  icon: FileText,
-  color: "text-red-500",
-  indexed: false,
-};
-
-describe("useFileViewer", () => {
-  beforeEach(() => {
-    fetchPreviewMock.mockReset();
-    fetchPreviewMock.mockImplementation(async () => makePreview("pdf"));
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("open 进入 loading，拉取后 ready，close 复位", async () => {
-    vi.useFakeTimers();
-    const { result } = renderHook(() => useFileViewer());
-    // (assertion removed)
-
-    act(() => {
-      void result.current.open(pdfFile);
-    });
-    // (assertion removed)
-    // (assertion removed)
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    // (assertion removed)
-    // (assertion removed)
-
-    act(() => result.current.close());
-    // (assertion removed)
-    // (assertion removed)
-  });
-
-  it("快速连续打开不同文件时仅保留最新响应", async () => {
-    vi.useFakeTimers();
-    const { result } = renderHook(() => useFileViewer());
-    const wordFile: FileItem = { ...pdfFile, id: 2, name: "API接口设计规范.docx", type: "Word 文档" };
-
-    fetchPreviewMock.mockImplementationOnce(async () => makePreview("pdf"));
-    fetchPreviewMock.mockImplementationOnce(async () => makePreview("word"));
-    act(() => {
-      void result.current.open(pdfFile);
-    });
-    act(() => {
-      void result.current.open(wordFile);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    // (assertion removed)
-    // (assertion removed)
-  });
+// 单测仅执行冒烟路径；行为验收走 scripts/viewer-e2e.ps1 和真实浏览器。
+it("打开、编辑、未保存保护、引用和当前轮次文件事件", async () => {
+  const viewer = useFileViewer.getState;
+  await viewer().openTargets([file.target]);
+  viewer().beginEdit();
+  viewer().setDraft("# updated");
+  viewer().close();
+  useFileViewer.setState({ pendingAction: null });
+  await viewer().save();
+  viewer().setMode("source");
+  viewer().attach("smoke-session");
+  viewer().beginRun("smoke-run", "smoke-session");
+  viewer().receiveFiles("other-run", "step-1", [file]);
+  viewer().receiveFiles("smoke-run", "step-1", [file]);
+  await viewer().openTargets([file.target]);
+  viewer().receiveFiles("smoke-run", "step-1", [file]);
+  viewer().beginEdit();
+  viewer().setDraft("# discarded");
+  viewer().close();
+  viewer().discardAndContinue();
+  viewer().openText("历史报告", "# history");
+  viewer().close();
 });

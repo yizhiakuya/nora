@@ -8,7 +8,7 @@
  * 后端 MessageRefResolver 解析同样的行格式并注入真实内容。
  */
 
-export interface ChatRef {
+export type ChatRef = {
   /** file=文件中心文件;doc=知识库文档;skill=指令型技能;mcp=MCP 服务器;datasource=数据源连接 */
   kind: "file" | "doc" | "skill" | "mcp" | "datasource";
   /** 实体 id(mcp 为 serverId;datasource 为连接 id) */
@@ -17,13 +17,14 @@ export interface ChatRef {
   name: string;
   /** 文件大小(仅 file;展示用) */
   size?: string;
-}
+} | { kind: "viewer"; id: string; name: string; size?: string };
 
 const FILE_REF_RE = /^\[引用文件\]\s*(.+?)\s*\(file_id=(\d+)(?:,\s*([^)]+))?\)/;
 const DOC_REF_RE = /^\[引用知识库\]\s*(.+?)\s*\(doc_id=(\d+)\)/;
 const SKILL_REF_RE = /^\[引用技能\]\s*(.+?)\s*\(skill_id=(\d+)\)/;
 const MCP_REF_RE = /^\[引用MCP服务器\]\s*(.+?)\s*\(server_id=(\d+)\)/;
 const DATASOURCE_REF_RE = /^\[引用数据源\]\s*(.+?)\s*\(connection_id=(\d+)\)/;
+const VIEWER_REF_RE = /^\[引用文件资源\]\s*(.+?)\s*\(target=([^\s)]+)\)/;
 
 /**
  * 把待发送引用序列化为消息尾部的引用块(每行一条)。
@@ -35,6 +36,8 @@ export function formatChatRefs(refs: ChatRef[]): string {
   return refs
     .map((r) => {
       switch (r.kind) {
+        case "viewer":
+          return `[引用文件资源] ${r.name} (target=${encodeURIComponent(r.id)}) —— 文件内容由服务端验证后提供;需补读时用 manage_file 的 read，target=${r.id}`;
         case "file":
           return `[引用文件] ${r.name} (file_id=${r.id}${r.size ? `, ${r.size}` : ""}) —— 内容已随消息提供;如需完整原文可用 manage_file 工具读取`;
         case "doc":
@@ -59,6 +62,11 @@ export function splitChatRefs(content: string): { body: string; refs: ChatRef[] 
   const bodyLines: string[] = [];
   for (const raw of content.split("\n")) {
     const line = raw.trim();
+    const resource = VIEWER_REF_RE.exec(line);
+    if (resource) {
+      try { refs.push({ kind: "viewer", id: decodeURIComponent(resource[2]), name: resource[1] }); continue; }
+      catch { /* 损坏的引用保留原文 */ }
+    }
     let m = FILE_REF_RE.exec(line);
     if (m) {
       refs.push({ kind: "file", id: Number(m[2]), name: m[1], size: m[3] });

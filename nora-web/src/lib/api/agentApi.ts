@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResponder, ChatStep, ApprovalRequest, QuestionRequest, PermissionMode } from "./chatApi";
+import type { ChatMessage, ChatResponder, ChatStep, ChatStepResult, ApprovalRequest, QuestionRequest, PermissionMode } from "./chatApi";
 import { emitSessionTitle } from "./sessionTitleEvents";
 import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
 import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";
@@ -8,14 +8,7 @@ import { cached, invalidateForPath } from "./requestCache";
 import { hmFromLocalIso } from "@/lib/format";
 
 /** 结构化工具结果(后端 ChatStepDto.StepResult) */
-interface StepResultPayload {
-  content?: string;
-  summary?: string;
-  rowCount?: number;
-  lineCount?: number;
-  truncated?: boolean;
-  error?: string;
-}
+type StepResultPayload = ChatStepResult;
 
 /** 结构化工具入参(后端 ChatStepDto.StepInput) */
 interface StepInputPayload {
