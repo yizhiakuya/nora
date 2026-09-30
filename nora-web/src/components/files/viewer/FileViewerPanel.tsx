@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Maximize2, Minimize2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, FileText, Maximize2, Minimize2, X } from "lucide-react";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { ViewerContent } from "./ViewerContent";
 import { ViewerToolbar } from "./ViewerToolbar";
@@ -50,7 +50,10 @@ export default function FileViewerPanel() {
         </div>
         <TabsList className="flex justify-start h-auto bg-transparent p-0 overflow-x-auto custom-scroll mt-2 gap-0.5" aria-label="已打开文件">
           {viewer.tabs.map(file => <div key={file.target} className={`flex items-center shrink-0 rounded-t-lg ${viewer.active?.target === file.target ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-b-2 border-blue-500" : "text-muted-foreground"}`}>
-            <TabsTrigger value={file.target} className="flex items-center gap-1.5 px-2 py-2.5 text-xs max-w-[220px] bg-transparent data-[state=active]:bg-transparent data-[state=active]:shadow-none"><FileText className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{file.name}</span></TabsTrigger>
+            <TabsTrigger value={file.target} className="flex items-center gap-1.5 px-2 py-2.5 text-xs max-w-[220px] bg-transparent data-[state=active]:bg-transparent data-[state=active]:shadow-none">
+              {viewer.missing.has(file.target) ? <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-label="文件已失效" /> : <FileText className="w-3.5 h-3.5 shrink-0" />}
+              <span className={`truncate ${viewer.missing.has(file.target) ? "line-through opacity-60" : ""}`}>{file.name}</span>
+            </TabsTrigger>
             <button type="button" aria-label={`关闭 ${file.name}`} onClick={() => viewer.closeTab(file.target)} className="p-1.5 mr-1 hover:bg-muted rounded-md"><X className="w-3 h-3" /></button>
           </div>)}
         </TabsList>
@@ -62,7 +65,14 @@ export default function FileViewerPanel() {
       <ViewerToolbar />
       {viewer.externalChange && <div className="shrink-0 p-3 text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 flex items-center flex-wrap gap-2">文件可能已在外部修改，草稿已保留。<Button size="sm" variant="outline" onClick={() => viewer.requestAction(() => { void viewer.refresh(); })}>重新加载</Button><Button size="sm" variant="outline" onClick={() => void viewer.save(true)}>覆盖保存</Button></div>}
       <TabsContent ref={contentRef} value={viewer.active?.target ?? ""} aria-label={viewer.active?.name ?? "文件内容"} className="mt-0 flex-1 min-h-0 min-w-0 overflow-auto custom-scroll" onScroll={event => { if (viewer.status === "ready" && viewer.active) scrollPositions.current.set(viewer.active.target, event.currentTarget.scrollTop); }}>
-        {viewer.status === "loading" ? <div className="p-5"><PreviewSkeleton /></div> : viewer.status === "error" ? <div role="alert" className="p-8 text-sm text-red-700 dark:text-red-300"><p>{viewer.error}</p><Button variant="outline" className="mt-3" onClick={() => void viewer.retry()}>重试</Button></div> : viewer.active && viewer.preview && (
+        {viewer.status === "loading" ? <div className="p-5"><PreviewSkeleton /></div> : viewer.status === "error" ? <div role="alert" className="p-8 text-sm text-red-700 dark:text-red-300">
+          <p>{viewer.error}</p>
+          <p className="mt-1 text-xs text-muted-foreground">文件可能已被删除或移动;若刚恢复,可点「重试」重新读取。</p>
+          <div className="mt-3 flex gap-2">
+            <Button variant="outline" onClick={() => void viewer.retry()}>重试</Button>
+            {viewer.active && <Button variant="ghost" onClick={() => viewer.closeTab(viewer.active!.target)}>关闭此标签</Button>}
+          </div>
+        </div> : viewer.active && viewer.preview && (
           viewer.editing ? <textarea aria-label={`编辑 ${viewer.active.name}`} value={viewer.draft} onChange={event => viewer.setDraft(event.target.value)} spellCheck={false} className="w-full h-full min-h-[320px] p-5 font-mono text-sm bg-card text-foreground resize-none" />
             : <ViewerContent key={viewer.active.target} file={viewer.active} preview={viewer.preview} source={viewer.mode === "source"} />
         )}

@@ -6,6 +6,7 @@ import { ResponsiveList } from "@/components/shared/ResponsiveList";
 import { toast } from "sonner";
 import { USE_BACKEND } from "@/lib/api/client";
 import { useFiles } from "@/hooks/useFiles";
+import { useFileViewer } from "@/hooks/useFileViewer";
 
 interface TrashBrowserProps {
   /** 退出回收站,回到文件中心根视图 */
@@ -58,6 +59,8 @@ export function TrashBrowser({ onExit }: TrashBrowserProps) {
     try {
       const n = await filesApi.purgeTrash(ids);
       toast.success(`已彻底删除 ${n} 个文件`);
+      // 彻底删除后查看器标签即时失效(软删仍在回收站时可恢复,不标记)
+      useFileViewer.getState().markMissing(ids.map(id => `file:${id}`));
       void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "删除失败");

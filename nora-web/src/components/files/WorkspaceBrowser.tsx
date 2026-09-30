@@ -42,6 +42,8 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
     try {
       await workspaceApi.deleteFile(path);
       toast.success("已删除");
+      // 删除成功即标记查看器标签失效(打开中的文件立即提示,不等用户刷新)
+      useFileViewer.getState().markMissing([`workspace:${path}`]);
       if (useFileViewer.getState().active?.target === `workspace:${path}`) void useFileViewer.getState().refresh();
       void refresh();
     } catch (e) {

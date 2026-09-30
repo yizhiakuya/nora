@@ -222,6 +222,8 @@ export default function FilesPage() {
       filesApi.deleteFiles(selection.selectedIds)
         .then(() => {
           toast.success(`已删除 ${count} 个文件`);
+          // 删除成功即标记查看器标签失效(打开中的文件立即提示,不等用户刷新)
+          useFileViewer.getState().markMissing(selection.selectedIds.map(id => `file:${id}`));
           void syncFromBackend();
           refreshFolders();
         })
@@ -654,7 +656,12 @@ export default function FilesPage() {
                   onDelete={(f) => {
                     if (USE_BACKEND) {
                       filesApi.deleteFiles([f.id])
-                        .then(() => { toast.success("已删除"); void syncFromBackend(); refreshFolders(); })
+                        .then(() => {
+                          toast.success("已删除");
+                          useFileViewer.getState().markMissing([`file:${f.id}`]);
+                          void syncFromBackend();
+                          refreshFolders();
+                        })
                         .catch((e: Error) => toast.error(`删除失败：${e.message}`));
                       return;
                     }
@@ -674,7 +681,12 @@ export default function FilesPage() {
                   onDelete={(f) => {
                     if (USE_BACKEND) {
                       filesApi.deleteFiles([f.id])
-                        .then(() => { toast.success("已删除"); void syncFromBackend(); refreshFolders(); })
+                        .then(() => {
+                          toast.success("已删除");
+                          useFileViewer.getState().markMissing([`file:${f.id}`]);
+                          void syncFromBackend();
+                          refreshFolders();
+                        })
                         .catch((e: Error) => toast.error(`删除失败：${e.message}`));
                       return;
                     }

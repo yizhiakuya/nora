@@ -399,6 +399,9 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
         // 才回来（emitter 已 complete），事件会丢。这里轮询补一次。
         if (sessionId) void useChatSessions.getState().awaitGeneratedTitle(sessionId);
         void useFileViewer.getState().refresh(true);
+        // 轮次结束批量校验所有打开的标签:agent 本轮可能删/移了文件,
+        // 失效标签即时标记,不等用户点刷新才发现
+        void useFileViewer.getState().validateTabs();
       }
     },
     [responder, sessionId, model, reasoningLevel, permissionMode, updateMessage, effectiveProviderId]

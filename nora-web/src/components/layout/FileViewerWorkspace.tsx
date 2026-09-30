@@ -36,7 +36,11 @@ export function FileViewerWorkspace({ children }: { children: ReactNode }) {
     previouslyOpen.current = open;
   }, [open, target, setParams]);
   useEffect(() => {
-    const check = () => { void useFileViewer.getState().refresh(true); };
+    const check = () => {
+      void useFileViewer.getState().refresh(true);
+      // 窗口重新聚焦时同时校验其余标签(切走期间外部可能删了文件)
+      void useFileViewer.getState().validateTabs();
+    };
     window.addEventListener("focus", check);
     return () => window.removeEventListener("focus", check);
   }, []);

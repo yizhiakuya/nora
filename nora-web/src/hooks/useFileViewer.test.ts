@@ -15,7 +15,7 @@ vi.mock("@/lib/services/viewerApi", () => ({ viewerApi: {
 
 beforeEach(() => useFileViewer.setState({
   active: null, tabs: [], preview: null, isOpen: false, editing: false, saving: false,
-  pendingAction: null, pendingReference: null, run: null, newFiles: 0, wide: true,
+  pendingAction: null, pendingReference: null, run: null, newFiles: 0, wide: true, missing: new Set<string>(),
 }));
 
 // 单测仅执行冒烟路径；行为验收走 scripts/viewer-e2e.ps1 和真实浏览器。

@@ -29,6 +29,8 @@ interface ViewerState {
   pendingAction: (() => void) | null;
   pendingReference: { sessionId: string; ref: ChatRef } | null;
   newFiles: number;
+  /** 已失效的标签(target):文件被删除/移动后标记,标签加警示,不静默保留 */
+  missing: Set<string>;
   run: { id: string; sessionId: string; suppressed: boolean; focused: boolean; seen: Set<string> } | null;
   open: (file: FileItem, list?: FileItem[]) => Promise<void>;
   openTargets: (targets: string[], focus?: string, origin?: Origin, automatic?: boolean) => Promise<void>;
@@ -45,6 +47,10 @@ interface ViewerState {
   save: (overwrite?: boolean) => Promise<boolean>;
   cancelEdit: () => void;
   refresh: (checkOnly?: boolean) => Promise<void>;
+  /** 本地删除/移动成功后即时标记标签失效(不等轮次结束的批量校验) */
+  markMissing: (targets: string[]) => void;
+  /** 批量校验所有打开的标签是否仍可解析;失效的打 missing 标记,已恢复的清除 */
+  validateTabs: () => Promise<void>;
   attach: (sessionId: string) => void;
   beginRun: (id: string, sessionId: string) => void;
   receiveFiles: (runId: string, stepId: string, files: ViewerFile[], focus?: string) => void;
@@ -86,7 +92,7 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
   active: null, tabs: [], preview: null, status: "idle", error: null, isOpen: false,
   retry: async () => {}, expanded: false, wide: false, width: savedWidth(), origin: {}, mode: "preview",
   editing: false, draft: "", saving: false, externalChange: false, pendingAction: null,
-  pendingReference: null, newFiles: 0, run: null,
+  pendingReference: null, newFiles: 0, missing: new Set<string>(), run: null,
   suppressAutoOpen: () => {
     const run = get().run;
     if (run && !run.suppressed) set({ run: { ...run, suppressed: true } });
@@ -124,6 +130,12 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
         if (!file) throw new Error(resolved.errors[0]?.message ?? "文件无法打开");
         if (resolved.errors.length) toast.warning(`${resolved.errors.length} 个文件无法打开`, { description: resolved.errors.map(item => item.message).join("；") });
         const tabs = mergeTabs(get().tabs, incoming, file.target);
+        // 成功解析 → 清除失效标记(文件可能被恢复/重建)
+        if (get().missing.size) {
+          const next = new Set(get().missing);
+          for (const item of incoming) next.delete(item.target);
+          set({ missing: next });
+        }
         set({ active: file, tabs, preview: null });
         const preview = cachedPreview(file) ?? await viewerApi.preview(file);
         cachePreview(file, preview);
@@ -151,7 +163,10 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
   closeTab: target => get().requestAction(() => {
     get().suppressAutoOpen();
     const next = get().tabs.filter(file => file.target !== target);
-    set({ tabs: next });
+    // 清理该标签的失效标记,避免长期累积
+    const missing = new Set(get().missing);
+    missing.delete(target);
+    set({ tabs: next, missing });
     // 最后一个标签页:无论 active 是否匹配都关闭面板——文件解析失败时
     // active 为 null,旧逻辑的 active?.target === target 判定会漏掉,面板
     // 停在「无法打开文件」错误态关不掉(2026-09-30 实测:关已删文件标签后残留)
@@ -217,12 +232,50 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
       const preview = await viewerApi.preview(file);
       if (seq !== requestSeq) return;
       cachePreview(file, preview);
+      if (get().missing.has(file.target)) {
+        const next = new Set(get().missing);
+        next.delete(file.target);
+        set({ missing: next });
+      }
       set({ active: file, preview, status: "ready", error: null, tabs: mergeTabs(get().tabs, [file], file.target) });
       if (checkOnly) toast.info("文件已更新");
     } catch (error) {
       if (get().active?.target !== state.active.target) return;
       if (get().editing) { set({ externalChange: true }); return; }
       set({ status: "error", preview: null, error: error instanceof Error ? error.message : "刷新失败" });
+    }
+  },
+  markMissing: targets => {
+    if (!targets.length) return;
+    const next = new Set(get().missing);
+    for (const target of targets) next.add(target);
+    set({ missing: next });
+  },
+  validateTabs: async () => {
+    const state = get();
+    // 仅校验 workspace:/file: 类稳定引用;history: 临时视图无对应文件
+    const targets = state.tabs.map(tab => tab.target).filter(target => !target.startsWith("history:"));
+    if (!targets.length) return;
+    let result: { files: ViewerFile[]; errors: { target: string }[] };
+    try {
+      result = await viewerApi.resolve(targets);
+    } catch {
+      return; // 校验失败(离线等)不误标失效,等下次
+    }
+    const alive = new Set(result.files.map(file => file.target));
+    const failed = new Set(result.errors.map(error => error.target));
+    const next = new Set(get().missing);
+    let changed = false;
+    for (const target of targets) {
+      if (failed.has(target) && !next.has(target)) { next.add(target); changed = true; }
+      // 已恢复(可解析)的清除失效标记
+      if (alive.has(target) && next.has(target)) { next.delete(target); changed = true; }
+    }
+    if (changed) set({ missing: next });
+    // 当前查看的文件已失效且非编辑中:立即切错误态(不等用户点刷新)
+    const active = get().active;
+    if (active && failed.has(active.target) && !get().editing && get().status !== "error") {
+      set({ status: "error", preview: null, error: "文件不存在或已被删除" });
     }
   },
   attach: sessionId => {
@@ -239,7 +292,14 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     if (!run || run.id !== runId || run.seen.has(stepId) || !files.length) return;
     const seen = new Set(run.seen).add(stepId);
     const shouldOpen = state.wide && !run.focused && !run.suppressed;
+    // 重新交付的文件视为有效:清除此前的失效标记(可能刚被重建/恢复)
+    const missing = new Set(state.missing);
+    let missingChanged = false;
+    for (const file of files) {
+      if (missing.delete(file.target)) missingChanged = true;
+    }
     set({ run: { ...run, seen, focused: run.focused || shouldOpen }, newFiles: state.newFiles + files.length,
+      ...(missingChanged ? { missing } : {}),
       ...(!state.editing ? { tabs: mergeTabs(state.tabs, files, shouldOpen ? focus : state.active?.target) } : {}) });
     if (shouldOpen) void get().openTargets(files.map(file => file.target), focus, { sessionId: run.sessionId }, true);
   },

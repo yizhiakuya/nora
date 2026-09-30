@@ -57,6 +57,8 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
     try {
       await mediaCacheApi.remove(item.key);
       toast.success("已删除");
+      // 缓存删除后查看器标签即时失效(缓存可再生,但当前打开的内容已不可读)
+      useFileViewer.getState().markMissing([`media:${item.key}`]);
       void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "删除失败");
