@@ -2,7 +2,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
-import { Sparkles, Trash2, Copy, Check } from "lucide-react";
+import { Cpu, MessageSquarePlus, Trash2, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { ChatConversation } from "@/components/chat/ChatConversation";
@@ -143,7 +143,7 @@ export default function ChatPage() {
               className="px-2 py-1 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900 rounded text-xs flex items-center gap-1.5 min-w-0 max-w-[88px] [@container(min-width:400px)]:max-w-[112px] [@container(min-width:600px)]:max-w-[160px] hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer transition-colors"
               title="点击管理模型服务商"
             >
-              <Sparkles className="w-3 h-3 shrink-0" /> <span className="truncate">{defaultModel}</span>
+              <Cpu className="w-3 h-3 shrink-0" /> <span className="truncate">{defaultModel}</span>
             </button>
             <Button
               variant="ghost"
@@ -180,7 +180,7 @@ export default function ChatPage() {
                 setActiveSession(s);
               }}
             >
-              <Sparkles className="w-3.5 h-3.5 mr-1.5" /> 开始新对话
+              <MessageSquarePlus className="w-3.5 h-3.5 mr-1.5" /> 开始新对话
             </Button>
             <p className="text-xs opacity-70">或从左侧「新建对话」开始</p>
           </div>

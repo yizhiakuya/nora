@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { KeyRound, Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { KeyRound, Loader2, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { setAuthToken, getAuthToken } from "@/lib/auth";
@@ -89,9 +89,7 @@ export default function LoginPage() {
     <div className="h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg mb-3">
-            <ShieldCheck className="w-6 h-6 text-white" />
-          </div>
+          <img src="/logo-mark.svg" alt="Nora" width={48} height={48} className="w-12 h-12 mb-3" />
           <h1 className="text-lg font-bold text-foreground">Nora</h1>
           <p className="text-xs text-muted-foreground mt-1">输入访问令牌以继续</p>
         </div>

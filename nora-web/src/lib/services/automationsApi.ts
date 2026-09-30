@@ -80,7 +80,7 @@ function describeAction(actionJson: string): string {
     const action = JSON.parse(actionJson) as { type?: string; sql?: string; prompt?: string; connectionId?: number };
     if (action.type === "agent" && action.prompt) {
       const oneLine = action.prompt.replace(/\s+/g, " ");
-      return "🤖 " + (oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine);
+      return "对话: " + (oneLine.length > 60 ? oneLine.slice(0, 60) + "…" : oneLine);
     }
     if (action.type === "sql" && action.sql) {
       const oneLine = action.sql.replace(/\s+/g, " ");

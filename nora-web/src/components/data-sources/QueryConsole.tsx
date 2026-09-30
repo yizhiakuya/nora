@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Play, History, Loader2, Download, Zap, Sparkles } from "lucide-react";
+import { Play, History, Loader2, Download, Zap, SquarePen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { useAutomations } from "@/hooks/useAutomations";
@@ -224,7 +224,7 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
             onClick={askAi}
             className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
           >
-            <Sparkles className="w-2.5 h-2.5" /> {isRedis ? "让 AI 写命令（跳转对话）" : "让 AI 写 SQL（跳转对话，可读表结构）"}
+            <SquarePen className="w-2.5 h-2.5" /> {isRedis ? "让 AI 写命令（跳转对话）" : "让 AI 写 SQL（跳转对话，可读表结构）"}
           </button>
           <span className="text-[11px] text-muted-foreground ml-auto">⌘+Enter 运行</span>
         </div>

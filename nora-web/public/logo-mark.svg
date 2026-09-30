@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Nora 品牌标(N 字母标,2026-09-30):矢量版,任意尺寸清晰。
+     几何:左竖笔 x=102、右竖笔 x=409、帽心 y=101/411,描边 124 圆帽,
+     对角线连接左上帽心→右下帽心;渐变 135° azure→indigo。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="nora-grad" x1="102" y1="101" x2="409" y2="411" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2c7cfe"/>
+      <stop offset="1" stop-color="#523ae7"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#nora-grad)" stroke-width="124" stroke-linecap="round">
+    <path d="M102 101 L102 411"/>
+    <path d="M102 101 L409 411"/>
+    <path d="M409 101 L409 411"/>
+  </g>
+</svg>

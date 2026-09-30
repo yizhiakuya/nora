@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Terminal, Zap, Check, Activity, Wifi, WifiOff, ArrowDownToLine } from "lucide-react";
+import { Stethoscope, Terminal, Zap, Check, Activity, Wifi, WifiOff, ArrowDownToLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/shared/Markdown";
+import { NoraMark } from "@/components/shared/NoraMark";
 import type { LogEntry, ServiceInstance } from "@/types";
 import { useServices } from "@/hooks/useServices";
 import { useAutomations } from "@/hooks/useAutomations";
@@ -221,7 +222,7 @@ export function LogStream() {
           disabled={!USE_BACKEND || !activeSource?.sourceId || analyzing}
           onClick={runAnalysis}
         >
-          <Sparkles className="w-2.5 h-2.5 mr-0.5" />
+          <Stethoscope className="w-2.5 h-2.5 mr-0.5" />
           {analyzing ? "分析中…" : "AI 分析最近日志"}
         </Button>
       </div>
@@ -253,7 +254,7 @@ export function LogStream() {
       {selected && (
         <div className="border-t border-border p-3 bg-blue-50/50 dark:bg-blue-950/20 animate-in fade-in">
           <div className="flex items-start gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+            <NoraMark className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             <div className="min-w-0">
               <div className="text-xs font-bold text-foreground mb-1">AI 诊断</div>
               <p className="text-xs text-muted-foreground leading-relaxed break-all">

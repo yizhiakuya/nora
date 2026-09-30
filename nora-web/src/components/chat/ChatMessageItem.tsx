@@ -1,4 +1,4 @@
-import { Sparkles, Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock, User } from "lucide-react";
+import { Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock, User, KeyRound, Cpu } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -25,10 +25,10 @@ import { usePreferences } from "@/hooks/usePreferences";
 /** 错误图标与配色(按 kind 微调,不喧宾夺主) */
 const ERROR_ICON: Record<string, React.ElementType> = {
   network: Server,
-  auth: Sparkles,
+  auth: KeyRound,
   "rate-limit": AlertTriangle,
   timeout: AlertTriangle,
-  provider: Sparkles,
+  provider: Cpu,
   approval: BookOpen,
   unknown: AlertTriangle,
 };
@@ -361,8 +361,8 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
   return (
     <>
       <div className="flex gap-4 animate-in fade-in slide-in-from-bottom-2">
-          <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center text-white flex-shrink-0 shadow-sm mt-1">
-              <Sparkles className="w-4 h-4" />
+          <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm mt-1">
+              <img src="/logo-mark-white.svg" alt="Nora" width={18} height={18} className="w-[18px] h-[18px]" />
           </div>
           <div className="flex-1 overflow-hidden">
               <div className="text-sm font-medium flex items-center gap-2 mb-4">Nora <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>

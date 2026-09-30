@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, SquarePen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/hooks/useConnections";
 
@@ -56,7 +56,7 @@ export function ConnectionActions({ connectionId, name, database }: ConnectionAc
         onClick={handleAskAi}
         className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
       >
-        ✨ 让 AI 帮我写 SQL
+        <SquarePen className="w-3 h-3" /> 让 AI 帮我写 SQL
       </button>
       <Button variant="outline" size="sm" className="h-8 text-xs px-3" onClick={handleTest} disabled={testing}>
         {testing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}

@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MoreHorizontal, Trash2, Download, Plus, Eye, ChevronRight, Pencil, FolderInput, Sparkles } from "lucide-react";
+import { Search, MoreHorizontal, Trash2, Download, Plus, Eye, ChevronRight, Pencil, FolderInput, MessageSquarePlus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -305,7 +305,7 @@ export function BatchActionBar({ selection, onDownloadSelected, onMoveSelected, 
       <div className="flex items-center gap-2">
         {onAskAssistant && (
           <Button size="sm" className="h-7 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={onAskAssistant}>
-            <Sparkles className="w-3.5 h-3.5 mr-1" /> 交给助手
+            <MessageSquarePlus className="w-3.5 h-3.5 mr-1" /> 交给助手
           </Button>
         )}
         {onDownloadSelected && (
