@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { filesApi, type TrashedFile, toFileItem, humanSize } from "@/lib/services/filesApi";
 import { ResponsiveList } from "@/components/shared/ResponsiveList";
 import { toast } from "sonner";
-import { USE_BACKEND } from "@/lib/api/client";
 import { useFiles } from "@/hooks/useFiles";
 import { useFileViewer } from "@/hooks/useFileViewer";
 
@@ -91,12 +90,8 @@ export function TrashBrowser({ onExit }: TrashBrowserProps) {
         <span className="text-foreground font-medium">回收站</span>
       </div>
 
-      {!USE_BACKEND ? (
-        <div className="bg-card rounded-xl border border-border shadow-sm py-16 text-center text-xs text-muted-foreground">
-          回收站仅在后端模式可用
-        </div>
-      ) : (
-        <>
+      <>
+
           <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
             <div className="text-xs text-muted-foreground">
               {loading ? "加载中…" : `共 ${items.length} 个已删除文件`}
@@ -184,8 +179,8 @@ export function TrashBrowser({ onExit }: TrashBrowserProps) {
               </div>
             }
           />
-        </>
-      )}
+      </>
+
     </>
   );
 }

@@ -7,7 +7,6 @@ import MarkdownContent from "@/components/shared/MarkdownContent";
 import { Button } from "@/components/ui/button";
 import type { ExecutionRecord } from "@/types";
 import { automationsApi } from "@/lib/services/automationsApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { executionStatusMeta } from "@/lib/executionStatus";
 
 /**
@@ -29,10 +28,6 @@ export function RecentResults() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!USE_BACKEND) {
-        setLoaded(true);
-        return;
-      }
       try {
         const items = await automationsApi.listExecutions(5);
         if (!cancelled) setRecords(items);

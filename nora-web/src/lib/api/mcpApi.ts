@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "./client";
-
+import { requestJson, defaultTimeoutSignal } from "./client";
 /** MCP 服务器视图(后端 ServerView;secrets 已脱敏) */
 export interface McpServer {
   id: number;
@@ -41,13 +40,11 @@ export interface McpRefreshResult {
 }
 
 export async function fetchMcpServers(): Promise<McpServer[]> {
-  if (!USE_BACKEND) return [];
   return requestJson("/mcp/servers");
 }
 
 /** 读取某服务器缓存的工具清单(名称/描述/参数 Schema);未测试过时为空数组 */
 export async function fetchMcpTools(id: number): Promise<McpToolDetail[]> {
-  if (!USE_BACKEND) return [];
   const result = await requestJson<{ tools: McpToolDetail[] }>(`/mcp/servers/${id}/tools`);
   return result.tools ?? [];
 }
@@ -71,12 +68,10 @@ export async function createMcpServer(input: {
 }
 
 export async function deleteMcpServer(id: number): Promise<void> {
-  if (!USE_BACKEND) return;
   await requestJson(`/mcp/servers/${id}`, { method: "DELETE" });
 }
 
 export async function setMcpServerEnabled(id: number, enabled: boolean): Promise<void> {
-  if (!USE_BACKEND) return;
   await requestJson(`/mcp/servers/${id}/enabled`, {
     method: "PUT",
     body: JSON.stringify({ enabled }),
@@ -85,7 +80,6 @@ export async function setMcpServerEnabled(id: number, enabled: boolean): Promise
 
 /** 设置工具加载策略(2026-09-18 P2-9):lazy=不挂载,按需经 agent tools/call 使用。 */
 export async function setMcpServerToolPolicy(id: number, toolPolicy: "eager" | "lazy"): Promise<void> {
-  if (!USE_BACKEND) return;
   await requestJson(`/mcp/servers/${id}/tool-policy`, {
     method: "PUT",
     body: JSON.stringify({ toolPolicy }),
@@ -93,7 +87,6 @@ export async function setMcpServerToolPolicy(id: number, toolPolicy: "eager" | "
 }
 
 export async function refreshMcpServer(id: number): Promise<McpRefreshResult> {
-  if (!USE_BACKEND) return { status: "connected", error: null, tools: [] };
   // refresh 会真实连远端:STDIO 首次 npx 下载放宽 120s(见 McpClientPool)、
   // 远程服务器慢时也可能超过默认 30s——前端必须给足窗口,否则先断流报错,
   // 而后端连接其实成功并已缓存工具清单(2026-09-21 修超时错配)。
@@ -133,9 +126,6 @@ export interface GitHubOAuthPoll {
 }
 
 export async function fetchGitHubOAuthStatus(): Promise<GitHubOAuthStatus> {
-  if (!USE_BACKEND) {
-    return { clientIdConfigured: false, serverName: null, serverTransport: null, serverStatus: null, toolCount: null };
-  }
   return requestJson("/mcp/oauth/github/status");
 }
 

@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ServiceInstance, LogEntry } from "@/types";
 import { environmentApi } from "@/lib/services/environmentApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { nowHms } from "@/lib/format";
 
 interface ServicesState {
@@ -52,7 +51,7 @@ function extractLogTime(line: string): string {
 /**
  * 环境微服务唯一数据源：环境控制台、顶部 Header 状态指标、
  * 首页环境看板共享，实现服务启停全站实时联动。
- * USE_BACKEND 时服务列表/启停走 env-service 的真实 Docker 操作。
+ * 服务列表/启停走 env-service 的真实 Docker 操作。
  */
 export const useServices = create<ServicesState>()(
   persist(
@@ -64,7 +63,6 @@ export const useServices = create<ServicesState>()(
       clearLogsFor: (service) =>
         set((state) => ({ logs: state.logs.filter((l) => l.service !== service) })),
       syncFromBackend: async () => {
-        if (!USE_BACKEND) return;
         try {
           const services = await environmentApi.listServices();
           // 纳管清单是唯一事实来源:空列表也覆盖(空态引导用户添加),
@@ -75,37 +73,16 @@ export const useServices = create<ServicesState>()(
         }
       },
       addManaged: async (input) => {
-        if (!USE_BACKEND) {
-          // mock 模式:本地直接加一张卡片
-          const item: ServiceInstance = {
-            id: Date.now(),
-            name: input.name,
-            image: input.kind === "FILE" ? "进程日志源" : input.kind === "PROC" ? "平台托管进程" : "容器",
-            port: 0,
-            status: "running",
-            health: "healthy",
-            uptime: "—",
-            cpu: "—",
-            memory: "—",
-            kind: input.kind,
-            fileLogPath: input.fileLogPath,
-            detail: "本地 mock",
-          };
-          set((state) => ({ services: [item, ...state.services] }));
-          return;
-        }
         await environmentApi.addManaged(input);
         await useServices.getState().syncFromBackend();},
       removeManaged: async (id) => {
         // PROC 源:先停托管进程再删记录,避免子进程变孤儿继续跑
         const target = get().services.find((s) => s.id === id);
-        if (USE_BACKEND && target?.kind === "PROC" && target.sourceId) {
+        if (target?.kind === "PROC" && target.sourceId) {
           await environmentApi.stopService(target.name).catch(() => { /* 停失败也让删除继续,守护会按 STOPPED 意愿调和 */ });
         }
         set((state) => ({ services: state.services.filter((s) => s.id !== id) }));
-        if (USE_BACKEND) {
-          await environmentApi.deleteManaged(id).catch(() => { /* 乐观删除已生效 */ });
-        }
+        await environmentApi.deleteManaged(id).catch(() => { /* 乐观删除已生效 */ });
       },
       toggleService: async (id) => {
         const target = get().services.find((s) => s.id === id);
@@ -148,7 +125,6 @@ export const useServices = create<ServicesState>()(
         ];
         set((state) => ({ logs: [...newLogs, ...state.logs].slice(0, 100) }));
 
-        if (!USE_BACKEND) return { ok: true, nextStatus, name: target.name };
 
         // 后端模式:等真实结果——后端以 code=0 + status:"error" 表达操作失败
         // (docker 不可用/容器不存在/PROC 启动失败),必须检查 status 字段
@@ -185,7 +161,6 @@ export const useServices = create<ServicesState>()(
           ),
           logs: [restartLog, ...state.logs].slice(0, 100),
         }));
-        if (!USE_BACKEND) return { ok: true, name: target.name };
         try {
           const result = await environmentApi.restartService(target.name);
           if (result.status === "error") {

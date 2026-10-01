@@ -3,8 +3,7 @@ import { CheckCircle2, Globe, Loader2, Network, RotateCcw, XCircle } from "lucid
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import { toast } from "sonner";
+import { requestJson } from "@/lib/api/client";import { toast } from "sonner";
 
 /** GET/PUT /api/network/proxy 响应 */
 interface ProxyView {
@@ -58,7 +57,6 @@ export function NetworkSettings() {
   const mounted = useRef(true);
 
   const loadProxy = useCallback(() => {
-    if (!USE_BACKEND) return;
     requestJson<ProxyView>("/network/proxy")
       .then((p) => {
         if (!mounted.current) return;
@@ -140,7 +138,7 @@ export function NetworkSettings() {
             <span className="text-[10px] text-muted-foreground">{enabled ? "已启用" : "未启用"}</span>
             <Switch
               checked={enabled}
-              disabled={!USE_BACKEND || saving}
+              disabled={saving}
               onCheckedChange={(v) => { setEnabled(v); void save(v); }}
               title={enabled ? "点击停用代理" : "点击启用代理"}
             />
@@ -158,7 +156,7 @@ export function NetworkSettings() {
               placeholder="127.0.0.1"
               value={host}
               onChange={(e) => setHost(e.target.value)}
-              disabled={!USE_BACKEND || saving}
+              disabled={saving}
             />
           </div>
           <div className="w-24">
@@ -169,10 +167,10 @@ export function NetworkSettings() {
               inputMode="numeric"
               value={port}
               onChange={(e) => setPort(e.target.value.replace(/[^\d]/g, ""))}
-              disabled={!USE_BACKEND || saving}
+              disabled={saving}
             />
           </div>
-          <Button size="sm" variant="outline" className="h-8 px-3 text-xs shrink-0" onClick={() => void save(enabled)} disabled={!USE_BACKEND || saving}>
+          <Button size="sm" variant="outline" className="h-8 px-3 text-xs shrink-0" onClick={() => void save(enabled)} disabled={saving}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             保存
           </Button>
@@ -200,7 +198,7 @@ export function NetworkSettings() {
             onChange={(e) => setProbeUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void probe(); }}
           />
-          <Button size="sm" className="h-9 px-3 shrink-0" onClick={() => void probe()} disabled={probing || !USE_BACKEND}>
+          <Button size="sm" className="h-9 px-3 shrink-0" onClick={() => void probe()} disabled={probing}>
             {probing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
             {probing ? "测试中…" : "测试"}
           </Button>

@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { userPreferencesApi, type UserPreferences } from "@/lib/services/userPreferencesApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 /**
  * 用户偏好设置(M2-05,2026-09-20,方案 §9):
@@ -22,10 +21,6 @@ export function UserPreferencesSettings() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!USE_BACKEND) {
-        setLoading(false);
-        return;
-      }
       try {
         const loaded = await userPreferencesApi.get();
         if (!cancelled) setPrefs(loaded);
@@ -39,10 +34,6 @@ export function UserPreferencesSettings() {
   }, []);
 
   const save = async () => {
-    if (!USE_BACKEND) {
-      toast.info("偏好保存需要连接后端服务");
-      return;
-    }
     setSaving(true);
     try {
       const saved = await userPreferencesApi.update(prefs);

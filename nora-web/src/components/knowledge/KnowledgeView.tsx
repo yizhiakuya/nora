@@ -12,7 +12,6 @@ import { KnowledgeTabs } from "@/components/knowledge/KnowledgeTabs";
 import { DocumentLibrary } from "@/components/knowledge/DocumentLibrary";
 import { RetrievalTest } from "@/components/knowledge/RetrievalTest";
 import { IndexStatus } from "@/components/knowledge/IndexStatus";
-import { USE_BACKEND } from "@/lib/api/client";
 import { FileItem } from "@/types";
 
 /**
@@ -22,36 +21,24 @@ import { FileItem } from "@/types";
 export function KnowledgeView() {
   const [activeTab, setActiveTab] = useState("文档库");
   const upload = useSimulatedUpload();
-  const indexFile = useKnowledgeDocs((s) => s.indexFile);
   const indexFileFromBackend = useKnowledgeDocs((s) => s.indexFileFromBackend);
   const syncFromBackend = useKnowledgeDocs((s) => s.syncFromBackend);
   const addNotification = useNotifications((s) => s.addNotification);
 
-  useEffect(() => { if (USE_BACKEND) void syncFromBackend().catch(() => undefined); }, [syncFromBackend]);
+  useEffect(() => { void syncFromBackend().catch(() => undefined); }, [syncFromBackend]);
 
-  const handleImport = (fileName?: string, uploadedFile?: FileItem) => {
-    if (USE_BACKEND && uploadedFile) {
-      // 上传已完成,再触发 rag-service 索引(异步)
-      indexFileFromBackend(uploadedFile.id, uploadedFile.name)
-        .then(() => {
-          addNotification(
-            "文档索引入库",
-            `「${uploadedFile.name}」已开始清洗与向量化，完成后 AI 即可检索其内容。`,
-            "indexed"
-          );
-          toast.success(`「${uploadedFile.name}」索引任务已提交`);
-        })
-        .catch((e: Error) => toast.error(`索引失败：${e.message}`));
-      return;
-    }
-    const name = fileName ?? `导入文档_${Date.now().toString().slice(-4)}.pdf`;
-    indexFile(name);
-    addNotification(
-      "文档索引入库",
-      `「${name}」已完成清洗与向量化，AI 现在可以检索其内容。`,
-      "indexed"
-    );
-    toast.success(`「${name}」已导入知识库`);
+  const handleImport = (uploadedFile: FileItem) => {
+    // 上传已完成,再触发 rag-service 索引(异步)
+    indexFileFromBackend(uploadedFile.id, uploadedFile.name)
+      .then(() => {
+        addNotification(
+          "文档索引入库",
+          `「${uploadedFile.name}」已开始清洗与向量化，完成后 AI 即可检索其内容。`,
+          "indexed"
+        );
+        toast.success(`「${uploadedFile.name}」索引任务已提交`);
+      })
+      .catch((e: Error) => toast.error(`索引失败：${e.message}`));
   };
 
   return (

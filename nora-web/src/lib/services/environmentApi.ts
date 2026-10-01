@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "@/lib/api/client";
-import { authHeaders, withAuthToken } from "@/lib/auth";
+import { requestJson, defaultTimeoutSignal } from "@/lib/api/client";import { authHeaders, withAuthToken } from "@/lib/auth";
 import type { ServiceInstance } from "@/types";
 
 /** 后端纳管源列表行(/environment/services 返回,FILE/DOCKER/PROC 合一) */
@@ -70,7 +69,7 @@ export interface AddManagedInput {
 }
 
 /**
- * 环境控制台后端接入层(USE_BACKEND 开关):
+ * 环境控制台后端接入层:
  * - listServices     → GET    /api/environment/services           → 纳管源(运行时状态已合并)
  * - addManaged       → POST   /api/environment/managed            → SourceView
  * - deleteManaged    → DELETE /api/environment/managed/{id}
@@ -83,7 +82,6 @@ export interface AddManagedInput {
  */
 export const environmentApi = {
   async listServices(): Promise<ServiceInstance[]> {
-    if (!USE_BACKEND) return [];
     const items = await requestJson<BackendServiceItem[]>("/environment/services");
     const used = new Set<number>();
     return items.map((item) => toService(item, used));
@@ -144,10 +142,6 @@ export function subscribeSourceLogs(
   onError?: (error: Error) => void,
   onStatus?: (status: "connecting" | "open" | "reconnecting" | "closed") => void
 ): () => void {
-  if (!USE_BACKEND) {
-    onError?.(new Error("mock mode"));
-    return () => undefined;
-  }
   const controller = new AbortController();
   void (async () => {
     let attempt = 0;

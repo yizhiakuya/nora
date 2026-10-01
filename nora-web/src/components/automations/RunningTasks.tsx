@@ -5,7 +5,6 @@ import { Loader2, Inbox, MessageSquare, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { fetchChatRuns, type ChatRunInfo } from "@/lib/api/agentApi";
 import { useChatSessions } from "@/hooks/useChatSessions";
-import { USE_BACKEND } from "@/lib/api/client";
 
 /**
  * 「正在处理」视图(M3-01,2026-09-20,方案 §4.3):
@@ -34,10 +33,6 @@ export function RunningTasks({ compact = false }: { compact?: boolean } = {}) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!USE_BACKEND) {
-        setLoading(false);
-        return;
-      }
       try {
         // 进行中 + 中断(单独呈现)——均属"需要用户关注"的运行
         const items = await fetchChatRuns([...ACTIVE_STATUSES, "interrupted"], 30);

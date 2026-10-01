@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/custom/Modal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { addChunk, createBase, deleteChunk, fetchBases, fetchDocDetail, reindexDoc, setChunkEnabled, setDocBase, setDocEnabled, updateChunk } from "@/lib/services/ragService";
-import { USE_BACKEND } from "@/lib/api/client";
 import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
 import { toast } from "sonner";
 
@@ -132,7 +131,6 @@ export function DocumentLibrary() {
   };
 
   const refreshBases = () => {
-    if (!USE_BACKEND) return;
     fetchBases().then(setBases).catch(() => undefined);
   };
   useEffect(refreshBases, []);
@@ -216,7 +214,7 @@ export function DocumentLibrary() {
       setDetail(d);
       // A2(2026-09-27):对话保存的文档(source=chat)查登记表拿来源会话——
       // 知识库详情可直接回到那次对话(sessionId 为空/非对话产出则不显示)
-      if (USE_BACKEND && doc.source === "chat") {
+      if (doc.source === "chat") {
         try {
           const artifacts = await savedArtifactsApi.list(200);
           const match = artifacts.find((a) => a.kind === "knowledge_doc" && a.path === String(doc.id));
@@ -300,7 +298,7 @@ export function DocumentLibrary() {
   return (
     <div className="space-y-6">
       {/* 资料库管理(阶段 B 闭环):库列表 + 新建——建库后文档可用「移动到资料库」归组 */}
-      {USE_BACKEND && (
+      {(
         <div className="bg-card border border-border rounded-xl p-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground shrink-0">资料库:</span>
@@ -472,7 +470,7 @@ export function DocumentLibrary() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-44">
                               {/* 移动到资料库(阶段 B 闭环;仅后端模式且已有多个库时显示) */}
-                              {USE_BACKEND && bases.length > 1 && (
+                              {bases.length > 1 && (
                                 <DropdownMenuItem onClick={() => setMoving(doc)}>
                                   <FolderInput className="w-3.5 h-3.5 mr-2" /> 移动到资料库…
                                 </DropdownMenuItem>

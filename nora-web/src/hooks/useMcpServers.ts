@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { fetchMcpServers, fetchMcpTools, type McpServer, type McpToolDetail } from "@/lib/api/mcpApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 interface McpServersState {
   servers: McpServer[];
@@ -20,7 +19,6 @@ export const useMcpServers = create<McpServersState>()((set, get) => ({
   servers: [],
   toolsByServer: {},
   syncServers: async () => {
-    if (!USE_BACKEND) return;
     try {
       set({ servers: await fetchMcpServers() });
     } catch {
@@ -28,7 +26,6 @@ export const useMcpServers = create<McpServersState>()((set, get) => ({
     }
   },
   loadTools: async (serverId) => {
-    if (!USE_BACKEND) return;
     if (get().toolsByServer[serverId]) return;
     try {
       const tools = await fetchMcpTools(serverId);

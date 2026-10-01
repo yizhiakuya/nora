@@ -4,12 +4,11 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { Input } from "@/components/ui/input";
 import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
-import { USE_BACKEND } from "@/lib/api/client";
 import type { ChatRef } from "@/lib/chatRefs";
 
 /**
  * 引用选择器(2026-09-17):对话框 📄(文件中心文件)与 @(知识库文档)共用。
- * - kind=file:列出文件中心的文件(USE_BACKEND 时打开即拉最新,失败回退本地缓存);
+ * - kind=file:列出文件中心的文件(打开即拉最新,失败回退本地缓存);
  * - kind=doc:列出知识库已索引文档;
  * - 点选即回调 ChatRef(带真实 id),由输入区序列化进消息。
  */
@@ -33,7 +32,6 @@ export function ReferencePicker({
   useEffect(() => {
     if (!isOpen) return;
     setQuery("");
-    if (!USE_BACKEND) return;
     setLoading(true);
     const sync =
       kind === "file"

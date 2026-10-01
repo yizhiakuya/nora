@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 import { datasourcesApi, type BackendColumn, type BackendTable } from "@/lib/services/datasourcesApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 interface SchemaBrowserProps {
   database: string;
@@ -19,13 +18,13 @@ interface SchemaBrowserProps {
 }
 
 /**
- * Schema 浏览:USE_BACKEND 时走 datasource-service 的 DatabaseMetaData。
+ * Schema 浏览:走 datasource-service 的 DatabaseMetaData。
  * 布局:左侧表列表(可过滤) + 右侧选中表的字段详情,卡片限高内部滚动,
  * 表多/字段多时不再把整页撑成长滚动。
  */
 export function SchemaBrowser({ database, connectionId, engine, onQueryTable }: SchemaBrowserProps) {
   // 未选连接时显示空态(不提供假 schema 数据)
-  const backendMode = USE_BACKEND && connectionId !== undefined;
+  const backendMode = connectionId !== undefined;
   const [serverTables, setServerTables] = useState<BackendTable[] | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);

@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-
+import { requestJson } from "@/lib/api/client";
 /**
  * 用户偏好接入层(M2-05,方案 §9):
  * - get    → GET /api/user-preferences
@@ -19,7 +18,6 @@ export interface UserPreferences {
 
 export const userPreferencesApi = {
   async get(): Promise<UserPreferences> {
-    if (!USE_BACKEND) return {};
     return requestJson<UserPreferences>("/user-preferences");
   },
   async update(patch: UserPreferences): Promise<UserPreferences> {

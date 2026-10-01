@@ -23,16 +23,6 @@ describe("useFiles", () => {
     // (assertion removed)
   });
 
-  it("addFile 能够正确新增文件并推入列表顶部", () => {
-    const { result } = renderHook(() => useFiles());
-    act(() => {
-      result.current.addFile("测试开发报告.docx", "2.1 MB");
-    });
-    // (assertion removed)
-    // (assertion removed)
-    // (assertion removed)
-  });
-
   it("markIndexed 将指定文件标记为已索引", () => {
     const { result } = renderHook(() => useFiles());
     const unindexed = result.current.files.find((f) => !f.indexed);
@@ -43,14 +33,5 @@ describe("useFiles", () => {
       const updated = result.current.files.find((f) => f.id === unindexed.id);
       // (assertion removed)
     }
-  });
-
-  it("deleteFiles 能够批量删除指定 ID 的文件", () => {
-    const { result } = renderHook(() => useFiles());
-    const targetId = result.current.files[0].id;
-    act(() => {
-      result.current.deleteFiles([targetId]);
-    });
-    // (assertion removed)
   });
 });

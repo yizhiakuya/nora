@@ -8,7 +8,6 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAutomations } from "@/hooks/useAutomations";
 import { automationsApi, type ScheduleSpec } from "@/lib/services/automationsApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 const TRIGGER_OPTIONS = [
   { value: "manual", label: "手动触发" },
@@ -92,10 +91,6 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
   const handlePreview = async () => {
     const schedule = buildSchedule();
     if (!schedule) return;
-    if (!USE_BACKEND) {
-      setPreviewError("预览需要连接后端服务");
-      return;
-    }
     setPreviewError(null);
     try {
       const times = await automationsApi.previewSchedule(schedule, trigger);

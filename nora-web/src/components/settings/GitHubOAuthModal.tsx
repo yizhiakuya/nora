@@ -14,7 +14,6 @@ import {
   type GitHubOAuthStatus,
   type GitHubOAuthStart,
 } from "@/lib/api/mcpApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 type Phase = "loading" | "need-client-id" | "ready" | "waiting" | "done" | "failed";
 
@@ -50,10 +49,6 @@ export function GitHubOAuthModal({ isOpen, onClose, onLoggedIn }: {
     setWarning(null);
     setToolCount(null);
     setFlow(null);
-    if (!USE_BACKEND) {
-      setPhase("need-client-id");
-      return;
-    }
     void fetchGitHubOAuthStatus()
       .then((s) => {
         setStatus(s);

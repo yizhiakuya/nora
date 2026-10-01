@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import { useNotifications } from "@/hooks/useNotifications";
-import { USE_BACKEND } from "@/lib/api/client";
 
 /**
  * 通知中心同步器(2026-09-19 架构升级为独立服务后)。
@@ -19,7 +18,6 @@ export function NotificationWatcher() {
   const syncFromBackend = useNotifications((s) => s.syncFromBackend);
 
   useEffect(() => {
-    if (!USE_BACKEND) return;
     let disposed = false;
 
     const poll = () => {

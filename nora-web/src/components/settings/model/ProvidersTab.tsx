@@ -25,11 +25,10 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
       toast[status === "ok" ? "success" : "error"](
         status === "ok" ? "连接成功，端点可用" : "连接失败，请检查端点与密钥"
       );
-    } catch {
-      // Mock 模式(或后端异常):本地启发式回退
-      const ok = /^https?:\/\//.test(p.url);
-      markStatus(p.id, ok ? "ok" : "fail");
-      toast[ok ? "success" : "error"](ok ? "连接成功，端点可用" : "连接失败，请检查 URL");
+    } catch (e) {
+      // 后端异常:如实报错,不做本地启发式判定
+      markStatus(p.id, "fail");
+      toast.error(`连接测试失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setTesting(false);
     }

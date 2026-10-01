@@ -4,7 +4,6 @@ import { ApiError } from "@/lib/api/client";
 import { toast } from "sonner";
 import type { FileItem, FilePreview, ViewerFile } from "@/types";
 import { viewerApi } from "@/lib/services/viewerApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import type { ChatRef } from "@/lib/chatRefs";
 
 export type FileViewerStatus = "idle" | "loading" | "ready" | "error";
@@ -109,7 +108,6 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     action?.();
   },
   open: async (file, list) => {
-    if (!USE_BACKEND) { toast.info("文件查看需要连接后端服务"); return; }
     await get().openTargets([`file:${file.id}`], undefined, { collection: list?.map(item => `file:${item.id}`) });
   },
   openTargets: async (targets, focus, origin = {}, automatic = false) => {

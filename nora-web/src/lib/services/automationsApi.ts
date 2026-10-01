@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND, defaultTimeoutSignal } from "@/lib/api/client";
-import { mdHmFromLocalIso } from "@/lib/format";
+import { requestJson, defaultTimeoutSignal } from "@/lib/api/client";import { mdHmFromLocalIso } from "@/lib/format";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 
 /** 后端 automation_rule 行(M4-01 扩展日程字段) */
@@ -136,7 +135,7 @@ function summarize(detail: string, max: number): string {
 }
 
 /**
- * 自动任务后端接入层(USE_BACKEND 开关):
+ * 自动任务后端接入层:
  * - listRules      → GET    /api/automations            → AutomationRule[]
  * - createRule     → POST   /api/automations            → AutomationRule
  * - toggleRule     → POST   /api/automations/{id}/toggle
@@ -146,7 +145,6 @@ function summarize(detail: string, max: number): string {
  */
 export const automationsApi = {
   async listRules(): Promise<AutomationRule[]> {
-    if (!USE_BACKEND) return [];
     const items = await requestJson<BackendRule[]>("/automations");
     return items.map(toRule);
   },
@@ -202,7 +200,6 @@ export const automationsApi = {
   },
 
   async listExecutions(limit = 50): Promise<ExecutionRecord[]> {
-    if (!USE_BACKEND) return [];
     const items = await requestJson<BackendExecution[]>(`/automations/executions?limit=${limit}`);
     return items.map(toExecution);
   },

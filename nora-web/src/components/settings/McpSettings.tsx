@@ -13,7 +13,6 @@ import {
   refreshMcpServer,
   type McpServer,
 } from "@/lib/api/mcpApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { McpToolsModal } from "@/components/settings/McpToolsModal";
 
 const STATUS_META: Record<McpServer["status"], { label: string; className: string; dot: string }> = {
@@ -46,8 +45,7 @@ export function McpManager({ listVersion }: { listVersion: number }) {
   }, []);
 
   useEffect(() => {
-    if (USE_BACKEND) void reload();
-    else setLoading(false);
+    void reload();
   }, [reload, listVersion]);
 
   const withBusy = async (id: number, action: () => Promise<void>, okMsg?: string) => {

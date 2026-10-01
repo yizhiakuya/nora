@@ -1,12 +1,12 @@
-# RAG 服务层 · 后端 API 契约预留（2026-09-04）
+# RAG 服务层 · 后端 API 契约（2026-09-04;2026-10-01 更新）
 
-> 状态：已实现（前端 Mock）· 目标：业务 mock 走通，给 API 留好位置，后端接入只改一个文件
+> 状态:全部接入真实后端。**前端 Mock 已于 2026-10-01 整体删除**——`ragService.ts` 只保留
+> 直连后端 API 的函数,本文档「Mock 评分逻辑」等小节为历史记录。
 
 ## 1. 设计原则
 
-所有调用方（知识库组件 / 对话页）只依赖 `src/lib/services/ragService.ts` 导出的函数。
-当前函数体是前端 Mock（本地文档列表 + 关键词评分），后端接入时只需将函数体替换为
-`fetch` 请求，调用方零改动。
+所有调用方(知识库组件 / 对话页)只依赖 `src/lib/services/ragService.ts` 导出的函数,
+函数体直接调后端 API(`requestJson`),调用方零改动。
 
 ## 2. API 契约
 
@@ -20,29 +20,26 @@
 
 | 组件 | 使用函数 | 说明 |
 |------|---------|------|
-| `RetrievalTest`（知识库 → 检索测试） | `searchDocs(query, docs)` | 输入问题 → 实时召回相关文档片段 |
-| `IndexStatus`（知识库 → 索引状态） | `computeIndexStats(docs)` | 文档数 / chunks / 待处理 / 健康检查 |
-| `MockChatAPI.sendMessage`（对话页） | `generateCitations(message, docs)` | AI 回答附带知识库引用来源卡片 |
+| `RetrievalTest`（知识库 → 检索测试） | `searchDocsAsync(query, topK)` | 输入问题 → 实时召回相关文档片段 |
+| `IndexStatus`（知识库 → 索引状态） | `fetchIndexStats()` | 文档数 / chunks / 待处理 / 健康检查 |
+| 对话页 | `generateCitationsAsync(query, topK)` | AI 回答附带知识库引用来源卡片 |
 
-## 4. 当前 Mock 评分逻辑
+## 4. (历史) Mock 评分逻辑(已删除)
 
 - 中文按单字切分，英文/数字按完整 token
 - 文档名匹配（文件名近似替代 chunk 内容，后端返回真实内容）
 - 英文关键词（如 `redis`、`orders`）完整命中给保底分 0.62（模拟向量语义召回）
 - 结果按分数降序，取 top-K
 
-## 5. 后端接入方式（已于 2026-09 完成）
+## 5. 后端接入方式(2026-10-01 收口)
 
-后端三个端点已实现并接入，接入方式不是替换原函数体，而是**新增异步版本、保留同步 Mock 作为回退**：
+后端端点全部接入,前端 Mock 整体删除:
 
-| 能力 | Mock 回退（`USE_BACKEND=false`） | 后端实现（`USE_BACKEND=true`） |
-|------|------------------------------|---------------------------|
-| 检索 | `searchDocs(query, docs, topK)` | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
-| 索引统计 | `computeIndexStats(docs)` | `fetchIndexStats()` → `GET /api/rag/index/stats` |
-| 引用来源 | `generateCitations(query, docs, topK)` | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
-
-同步函数保留供 `USE_BACKEND=false` 与离线演示使用，其 JSDoc 已注明为回退实现。
-各调用方按 `USE_BACKEND` 分流选择同步或异步版本，组件层无侵入。
+| 能力 | 实现 |
+|------|------|
+| 检索 | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
+| 索引统计 | `fetchIndexStats()` → `GET /api/rag/index/stats` |
+| 引用来源 | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
 
 ## 6. 验收记录（2026-09-04）
 

@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 import { FileText, ChevronRight, Loader2, MessageSquare, FileDown, BookOpen, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { savedArtifactsApi, type SavedArtifact } from "@/lib/services/savedArtifactsApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { useFileViewer } from "@/hooks/useFileViewer";
 
 /**
@@ -29,10 +28,6 @@ export function SavedArtifactsView() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!USE_BACKEND) {
-        setLoading(false);
-        return;
-      }
       try {
         const list = await savedArtifactsApi.list(50);
         if (!cancelled) setItems(list);

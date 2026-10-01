@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-
+import { requestJson } from "@/lib/api/client";
 /** 后端 agent_skill 行(camelCase);列表接口 instructions 为 null(渐进披露)。 */
 export interface BackendSkill {
   id: number;
@@ -13,7 +12,7 @@ export interface BackendSkill {
 }
 
 /**
- * 技能后端接入层(USE_BACKEND 开关):
+ * 技能后端接入层:
  * - listSkills   → GET    /api/skills           → Skill[](不含正文)
  * - getSkill     → GET    /api/skills/{id}      → Skill(含正文)
  * - createSkill  → POST   /api/skills
@@ -22,7 +21,6 @@ export interface BackendSkill {
  */
 export const skillsApi = {
   async listSkills(): Promise<BackendSkill[]> {
-    if (!USE_BACKEND) return [];
     return requestJson<BackendSkill[]>("/skills");
   },
   async getSkill(id: number): Promise<BackendSkill> {

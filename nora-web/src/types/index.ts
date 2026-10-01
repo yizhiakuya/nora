@@ -270,7 +270,7 @@ export interface ServiceInstance {
   uptime: string;
   cpu: string;
   memory: string;
-  /** 纳管源类型:DOCKER=容器(可启停)| FILE=进程日志源(只观测)| PROC=平台拉起的程序(可启停/守护重启);mock/旧数据缺省视为 DOCKER */
+  /** 纳管源类型:DOCKER=容器(可启停)| FILE=进程日志源(只观测)| PROC=平台拉起的程序(可启停/守护重启);旧数据缺省视为 DOCKER */
   kind?: "DOCKER" | "FILE" | "PROC";
   /** PROC 源:启动命令(java -jar xx.jar / node server.js …) */
   command?: string;

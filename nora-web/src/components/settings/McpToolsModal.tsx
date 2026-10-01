@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
 import { fetchMcpTools, refreshMcpServer, type McpServer, type McpToolDetail } from "@/lib/api/mcpApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 /**
  * MCP 工具列表/详情弹窗:展示某服务器缓存的工具快照(名称/描述/参数 Schema),
@@ -42,8 +41,7 @@ export function McpToolsModal({ server, onClose }: {
     setTools(null);
     setQuery("");
     setExpanded(new Set());
-    if (USE_BACKEND) void load(server.id);
-    else setTools([]);
+    void load(server.id);
   }, [server, load]);
 
   /** 测试连接(刷新 tools_cache)后重新拉取,保证看到的是最新快照 */

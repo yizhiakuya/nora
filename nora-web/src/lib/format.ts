@@ -28,7 +28,7 @@ export function nowHms(): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/** 当前本地时间 "YYYY-MM-DD HH:mm"(mock 模式的时间戳字段用;不走 toISOString——那是 UTC)。 */
+/** 当前本地时间 "YYYY-MM-DD HH:mm"(不走 toISOString——那是 UTC)。 */
 export function nowDateTime(): string {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;

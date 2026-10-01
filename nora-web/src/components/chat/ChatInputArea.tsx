@@ -13,7 +13,6 @@ import { filesApi } from "@/lib/services/filesApi";
 import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useMcpServers } from "@/hooks/useMcpServers";
-import { USE_BACKEND } from "@/lib/api/client";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -152,7 +151,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   }, [mentionOpen, mention?.trigger]);
 
   useEffect(() => {
-    if (!mentionOpen || mention?.trigger !== "/" || !USE_BACKEND) return;
+    if (!mentionOpen || mention?.trigger !== "/") return;
     void syncMcpServers();
   }, [mentionOpen, mention?.trigger, syncMcpServers]);
 

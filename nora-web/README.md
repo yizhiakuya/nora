@@ -2,8 +2,7 @@
 
 Nora 个人 AI 助手的前端仓库。
 
-> 后端 `nora-api` 已上线（8 个微服务），本仓库通过 `VITE_USE_BACKEND` 开关接入真实 API；
-> 全部业务域已对接后端，Mock 仅作 `USE_BACKEND=false` 的本地回退。详见下方[「后端接入现状」](#后端接入现状)。
+> 后端 `nora-api`（8 个微服务）为唯一数据源,前端不内置 Mock——所有业务域均走真实 API。
 
 ## 技术栈
 
@@ -77,19 +76,18 @@ nora-web/
 
 ## 后端接入现状
 
-开关在 `src/lib/api/client.ts`：`USE_BACKEND` 读取 `VITE_USE_BACKEND`（`.env.local` 当前为 `true`），
-开发时 Vite 把 `/api` 代理到 gateway `http://localhost:18080`。所有请求经 `requestJson` 统一解开
-`{code,data,message}` 信封，`code != 0` 直接抛错。
+前端不内置 Mock——所有数据都经 `requestJson` 走真实后端(开发时 Vite 把 `/api` 代理到
+gateway `http://localhost:18080`)。请求统一解开 `{code,data,message}` 信封,`code != 0` 直接抛错。
 
-以 `ragService.ts` 为例，同一能力提供**同步 Mock**与**异步后端**两套函数：
+以 `ragService.ts` 为例,检索/统计/引用都直接调用后端:
 
-| 能力 | Mock 回退（USE_BACKEND=false） | 后端实现（USE_BACKEND=true） |
-|------|------------------------------|---------------------------|
-| 检索 | `searchDocs(query, docs, topK)` | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
-| 索引统计 | `computeIndexStats(docs)` | `fetchIndexStats()` → `GET /api/rag/index/stats` |
-| 引用来源 | `generateCitations(query, docs, topK)` | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
+| 能力 | 实现 |
+|------|------|
+| 检索 | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
+| 索引统计 | `fetchIndexStats()` → `GET /api/rag/index/stats` |
+| 引用来源 | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
 
-其余域同样按「`lib/services/xxxApi.ts` + Hook 内 `USE_BACKEND` 分流」的模式接入。
+各域统一按「`lib/services/xxxApi.ts` 契约层 + Hook 内调真实接口」的模式接入。
 
 | 域 | 状态 |
 |----|------|
@@ -123,7 +121,6 @@ nora-web/
 
 - **只用 pnpm**——npm/npx 会破坏 pnpm 结构的 node_modules
 - **页面仅胶水**——`src/app/*/page.tsx` ≤150 行，业务在 `components/{domain}`，逻辑在 `hooks`
-- **Mock 只作回退**——`src/lib/mockData.ts` / `devData.ts` / `knowledgeData.ts` 仅用于 `USE_BACKEND=false`
-  或后端尚未提供的域，已接后端的域不得用 Mock 覆盖真实返回值
+- **不造假数据**——后端模式不内置 Mock;接口失败如实报错(humanize + hint),空态引导操作
 - **dev 固定 3001**——HMR 即时生效，改代码不刷新页面
 - **路由集中**——`src/App.tsx` 统一注册，`/src/app` 下只放页面胶水组件

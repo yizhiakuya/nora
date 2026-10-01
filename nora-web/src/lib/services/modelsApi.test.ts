@@ -19,7 +19,6 @@ describe("modelsApi", () => {
   let modelsApi: typeof import("./modelsApi").modelsApi;
 
   beforeAll(async () => {
-    vi.stubEnv("VITE_USE_BACKEND", "true");
     modelsApi = (await import("./modelsApi")).modelsApi;
   });
 

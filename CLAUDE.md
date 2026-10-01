@@ -24,7 +24,7 @@ mvn -q -pl services/<svc> package -DskipTests
 (java -jar services/<svc>/target/<svc>-0.1.0-SNAPSHOT.jar > <svc>.stdout.log 2> <svc>.stderr.log &)
 
 # 前端(在 nora-web 目录)
-pnpm dev                # VITE_USE_BACKEND=true 走真实后端
+pnpm dev                # 直连真实后端(前端无 mock 模式)
 pnpm exec tsc --noEmit  # 类型检查
 pnpm exec vitest run    # 单测
 ```
@@ -42,4 +42,4 @@ pnpm exec vitest run    # 单测
 - **代码查找优先用知识图谱**:codebase-memory MCP 已为仓库建索引(项目名 `D-claude-Nora`)——找符号用 `search_graph`、查调用链用 `trace_path`、取源码用 `get_code_snippet`、复杂多跳用 `query_graph`、先摸架构用 `get_architecture`;仅在字面文本/非代码内容、或图谱覆盖不足时才回退 Grep/Glob
 - 代码注释、UI 文案用中文;错误消息带可操作的 hint
 - 前端 API 统一走 `src/lib/api/client.ts` 的 envelope(`{code,data,message}`,code=0 为成功)
-- `USE_BACKEND`(VITE_USE_BACKEND)开关控制本地 mock / 真实后端,新功能两条路都要能走
+- 前端无 Mock 模式(2026-10-01 删除):所有域直连真实后端;接口失败如实报错,空态引导操作

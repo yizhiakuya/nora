@@ -3,7 +3,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ChatMessage, type ChatResponder, type PermissionMode, type TaskContextPayload } from "@/lib/api/chatApi";
 import { AgentAPI, attachLiveTurnStream, cancelTurnOnBackend, fetchAgentSettings, fetchLiveTurn, saveAgentSettings, truncateMessagesFrom, normalizeStep } from "@/lib/api/agentApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { useChatSessions } from "./useChatSessions";
 import { useModelProviders, resolveDefaultProvider } from "./useModelProviders";
 import { humanizeError } from "@/lib/errorMessages";
@@ -32,14 +31,13 @@ export const useAgentSettings = create<AgentSettingsState>()(
       reasoningLevelOverride: undefined,
       setPermissionMode: (permissionMode) => {
         set({ permissionMode });
-        if (USE_BACKEND) void saveAgentSettings({ permissionMode });
+        void saveAgentSettings({ permissionMode });
       },
       setReasoningLevelOverride: (reasoningLevelOverride) => {
         set({ reasoningLevelOverride });
-        if (USE_BACKEND) void saveAgentSettings({ reasoningLevel: reasoningLevelOverride ?? null });
+        void saveAgentSettings({ reasoningLevel: reasoningLevelOverride ?? null });
       },
       syncFromBackend: async () => {
-        if (!USE_BACKEND) return;
         try {
           const s = await fetchAgentSettings();
           if (s.permissionMode === "ask" || s.permissionMode === "assist" || s.permissionMode === "full") {
@@ -192,10 +190,10 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
    * 进行中轮次恢复:刷新/切页回来时,后端那一轮还在跑(事件进 TurnStreamRegistry
    * 缓冲)。探测到 live 轮就接上事件流,重建一条流式中的 assistant 消息;
    * done 后由持久化写回自然收敛进会话 store。
-   * 仅 USE_BACKEND 且本会话无本地流式时执行(避免与挂载中的流双开)。
+   * 仅本会话无本地流式时执行(避免与挂载中的流双开)。
    */
   useEffect(() => {
-    if (!USE_BACKEND || !sessionId) return;
+    if (!sessionId) return;
     if (isSending) return; // 本地正在流式:轮次是本组件自己发起的,无需恢复
     if (recoverActiveRef.current) return; // 已接续中:接续流生命周期独立,不重复探测
     if (stopRequestedRef.current) return; // 用户已停止:本挂载周期不再自动接续
@@ -539,7 +537,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
   const stopGenerating = useCallback(() => {
     stopRequestedRef.current = true; // 本挂载周期不再自动接续(否则「停掉又被接上」)
     abortRef.current?.abort();
-    if (USE_BACKEND && sessionId) {
+    if (sessionId) {
       void cancelTurnOnBackend(sessionId);
     }
     // 接续流模式(切页返回恢复的轮次,无本地 abortRef):后端取消后
@@ -575,7 +573,7 @@ export function useChat({ initialMessages = [], initialInput = "", initialRefs =
 
       const kept = messages.slice(0, idx);
       setMessages(kept);
-      if (USE_BACKEND && sessionId) {
+      if (sessionId) {
         try {
           await truncateMessagesFrom(sessionId, idx);
         } catch {

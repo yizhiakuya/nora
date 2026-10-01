@@ -1,6 +1,5 @@
 import { FileItem, FilePreview, FilePreviewKind } from "@/types";
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import { invalidateForPath } from "@/lib/api/requestCache";
+import { requestJson } from "@/lib/api/client";import { invalidateForPath } from "@/lib/api/requestCache";
 import { authHeaders, withAuthToken } from "@/lib/auth";
 import { FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
 
@@ -212,7 +211,7 @@ async function requestRaw<T>(path: string, init?: RequestInit): Promise<T> {
 import { defaultTimeoutSignal } from "@/lib/api/client";
 
 /**
- * 文件中心后端接入层(USE_BACKEND 开关):
+ * 文件中心后端接入层:
  * - listFiles    → GET  /api/files          → FileItem[]
  * - uploadFile   → POST /api/files/upload   (multipart) → FileItem
  * - deleteFiles  → DELETE /api/files?ids=   → void
@@ -221,7 +220,6 @@ import { defaultTimeoutSignal } from "@/lib/api/client";
  */
 export const filesApi = {
   async listFiles(): Promise<FileItem[]> {
-    if (!USE_BACKEND) return [];
     // 拉全量(含 folderId),文件夹过滤在前端做——store 是唯一数据源,
     // 避免每个文件夹切换都发一次请求
     const items = await requestJson<BackendFileItem[]>("/files");
@@ -286,7 +284,6 @@ export const filesApi = {
   // ---------- 文件夹 ----------
 
   async listFolders(): Promise<BackendFolder[]> {
-    if (!USE_BACKEND) return [];
     return requestJson<BackendFolder[]>("/files/folders");
   },
 
@@ -318,7 +315,6 @@ export const filesApi = {
   // ---------- 回收站 ----------
 
   async listTrash(): Promise<TrashedFile[]> {
-    if (!USE_BACKEND) return [];
     return requestJson<TrashedFile[]>("/files/trash");
   },
 

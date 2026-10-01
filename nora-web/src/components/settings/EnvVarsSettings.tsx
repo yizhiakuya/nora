@@ -6,14 +6,12 @@ import { Plus, Trash2, Copy, Check, KeyRound, Braces } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-
+import { requestJson } from "@/lib/api/client";
 /**
  * 自定义环境变量(2026-09-19 真实落地):存 agent-service app_setting 表
  * (跨浏览器一致),run_command 执行时注入子进程环境——「设置后 AI 能用到」
  * 从空头承诺变为真实行为。secret 值读取时打码(服务端只回前 3+后 3)。
  *
- * Mock 模式(USE_BACKEND=false):纯本地状态,仅 UI 演示。
  */
 interface EnvVar {
   key: string;
@@ -24,7 +22,7 @@ interface EnvVar {
 
 export function EnvVarsSettings() {
   const [vars, setVars] = useState<EnvVar[]>([]);
-  const [loading, setLoading] = useState(USE_BACKEND);
+  const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
 
   const [newKey, setNewKey] = useState("");
@@ -33,10 +31,6 @@ export function EnvVarsSettings() {
   const [newSecret, setNewSecret] = useState(true);
 
   const load = useCallback(async () => {
-    if (!USE_BACKEND) {
-      setLoading(false);
-      return;
-    }
     try {
       const rows = await requestJson<EnvVar[]>("/chat/settings/env-vars");
       setVars(rows);
@@ -55,7 +49,6 @@ export function EnvVarsSettings() {
   const persist = useCallback(async (next: EnvVar[]) => {
     const prev = vars;
     setVars(next);
-    if (!USE_BACKEND) return;
     try {
       const rows = await requestJson<EnvVar[]>("/chat/settings/env-vars", {
         method: "PUT",

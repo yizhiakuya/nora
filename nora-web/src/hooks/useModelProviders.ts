@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { modelsApi } from "@/lib/services/modelsApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 export type ProviderProtocol = "openai" | "responses" | "ollama" | "anthropic";
 
@@ -71,7 +70,7 @@ interface ModelProvidersState {
   markStatus: (id: number, status: ModelProvider["status"]) => void;
   /** 更新单个模型的设置(上下文窗口/思考等级);merge 语义 */
   updateModelSettings: (id: number, model: string, patch: Partial<PerModelSettings>) => void;
-  /** 真实连通测试(后端模式走 /test,Mock 模式由调用方自行模拟) */
+  /** 真实连通测试(走 /test 端点) */
   testProvider: (id: number) => Promise<"ok" | "fail">;
 }
 
@@ -94,7 +93,7 @@ export function resolveDefaultProvider(
   return providers.find((p) => p.enabled && p.models.includes(defaultModel));
 }
 
-/** 本地新增(后端不可用或 Mock 模式的回退路径) */
+/** 本地乐观条目(先展示,服务端返回后替换为真实行) */
 function localProvider(input: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }): ModelProvider {
   return {
     id: Date.now(),
@@ -111,7 +110,7 @@ function localProvider(input: { name: string; url: string; key: string; protocol
 /**
  * 模型服务商接入唯一数据源：模型管理页与对话页模型选择器共享。
  * 完整接入 = 名称 + 端点 URL + 密钥。
- * USE_BACKEND 时 CRUD 与连通测试走 agent-service /api/models/providers。
+ * CRUD 与连通测试走 agent-service /api/models/providers。
  */
 export const useModelProviders = create<ModelProvidersState>()(
   persist(
@@ -120,7 +119,6 @@ export const useModelProviders = create<ModelProvidersState>()(
       defaultModel: "未配置",
       defaultProviderId: null,
       syncFromBackend: async () => {
-        if (!USE_BACKEND) return;
         try {
           const providers = await modelsApi.listProviders();
           // 后端为准:有数据时整体替换本地
@@ -152,15 +150,13 @@ export const useModelProviders = create<ModelProvidersState>()(
         const optimistic = localProvider({ name, url, key, protocol, models });
         if (modelSettings) optimistic.modelSettings = { ...optimistic.modelSettings, ...modelSettings };
         set((state) => ({ providers: [...state.providers, optimistic] }));
-        if (USE_BACKEND) {
-          modelsApi.createProvider({ name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models, ...(modelSettings ? { modelSettings: modelSettings as never } : {}) })
-            .then((saved) => {
-              set((state) => ({
-                providers: state.providers.map((p) => (p.id === optimistic.id ? saved : p)),
-              }));
-            })
-            .catch(() => { /* 保留本地乐观条目,错误由调用方 toast */ });
-        }
+        modelsApi.createProvider({ name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models, ...(modelSettings ? { modelSettings: modelSettings as never } : {}) })
+          .then((saved) => {
+            set((state) => ({
+              providers: state.providers.map((p) => (p.id === optimistic.id ? saved : p)),
+            }));
+          })
+          .catch(() => { /* 保留本地乐观条目,错误由调用方 toast */ });
       },
       editProvider: (id, { name, url, key, protocol }) => {
         set((state) => ({
@@ -177,7 +173,7 @@ export const useModelProviders = create<ModelProvidersState>()(
               : p
           ),
         }));
-        if (USE_BACKEND && id < 1e12) {
+        if (id < 1e12) {
           modelsApi.updateProvider(id, {
             name: name.trim(),
             protocol,
@@ -203,7 +199,7 @@ export const useModelProviders = create<ModelProvidersState>()(
           patch.defaultProviderId = stillValid.id;
         }
         set(patch as ModelProvidersState);
-        if (USE_BACKEND && id < 1e12) {
+        if (id < 1e12) {
           // 服务端 id(BIGSERIAL 小值)才发删除;本地 Date.now() 乐观条目跳过
           modelsApi.deleteProvider(id).catch(() => { /* 本地已删,服务端失败不打断 */ });
         }
@@ -213,14 +209,14 @@ export const useModelProviders = create<ModelProvidersState>()(
         set((state) => ({
           providers: state.providers.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
         }));
-        if (USE_BACKEND && target) {
+        if (target) {
           modelsApi.updateProvider(id, { enabled: !target.enabled }).catch(() => { /* 乐观更新已生效 */ });
         }
       },
       setDefaultModel: (m, providerId) => set({
         defaultModel: m,
         // 未显式传渠道(旧调用点)时按模型名解析一次,尽量钉到具体渠道;
-        // 找不到(未配置/mock)时置 null,后端按模型名回落
+        // 找不到(未配置)时置 null,后端按模型名回落
         defaultProviderId: providerId !== undefined
           ? providerId
           : resolveDefaultProvider(get().providers, m, null)?.id ?? null,
@@ -234,7 +230,7 @@ export const useModelProviders = create<ModelProvidersState>()(
             return { ...p, modelSettings: merged };
           }),
         }));
-        if (USE_BACKEND && id < 1e12) {
+        if (id < 1e12) {
           // 后端以 provider 为粒度整体保存 modelSettings;从最新状态取
           const current = get().providers.find((p) => p.id === id);
           if (current?.modelSettings) {
@@ -248,9 +244,6 @@ export const useModelProviders = create<ModelProvidersState>()(
           providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)),
         })),
       testProvider: async (id) => {
-        if (!USE_BACKEND) {
-          throw new Error("mock mode: caller simulates the test");
-        }
         // 测试成功时后端会自动用上游 /v1/models 覆盖模型列表,这里取回刷新后的 provider
         const result = await modelsApi.testAndRefresh(id, (updated) => {
           set((state) => ({

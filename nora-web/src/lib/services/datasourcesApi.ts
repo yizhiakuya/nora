@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import type { DbConnection } from "@/types";
+import { requestJson } from "@/lib/api/client";import type { DbConnection } from "@/types";
 
 /** 后端 db_connection 行(camelCase,密码脱敏) */
 export interface BackendConnection {
@@ -71,7 +70,7 @@ function toConnection(c: BackendConnection): DbConnection {
 }
 
 /**
- * 数据源后端接入层(USE_BACKEND 开关):
+ * 数据源后端接入层:
  * - listConnections  → GET    /api/datasources            → DbConnection[]
  * - createConnection → POST   /api/datasources            → DbConnection
  * - deleteConnection → DELETE /api/datasources/{id}
@@ -82,7 +81,6 @@ function toConnection(c: BackendConnection): DbConnection {
  */
 export const datasourcesApi = {
   async listConnections(): Promise<DbConnection[]> {
-    if (!USE_BACKEND) return [];
     const items = await requestJson<BackendConnection[]>("/datasources");
     return items.map(toConnection);
   },

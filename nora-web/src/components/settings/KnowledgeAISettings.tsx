@@ -8,7 +8,6 @@ import { useSkills } from "@/hooks/useSkills";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { usePreferences } from "@/hooks/usePreferences";
 import { fetchIndexStats } from "@/lib/services/ragService";
-import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 
 /**
@@ -33,7 +32,6 @@ export function KnowledgeAISettings() {
   // 后端真实嵌入配置(只读展示;服务端 application.yml 决定)
   const [serverStats, setServerStats] = useState<{ model: string; vectorDim: number } | null>(null);
   useEffect(() => {
-    if (!USE_BACKEND) return;
     let mounted = true;
     fetchIndexStats()
       .then((s) => { if (mounted) setServerStats({ model: s.model, vectorDim: s.vectorDim }); })
@@ -59,7 +57,7 @@ export function KnowledgeAISettings() {
           <div className="w-full max-w-sm h-10 rounded-lg border border-border bg-muted/40 px-3 flex items-center text-sm text-foreground">
             {serverStats
               ? `${serverStats.model} (${serverStats.vectorDim} 维)`
-              : USE_BACKEND ? "加载中…" : "本地模式(未连接后端)"}
+              : "加载中…"}
           </div>
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
             <Info className="w-3 h-3" /> 切换模型需改服务端配置并重建索引,故不在此提供修改入口。

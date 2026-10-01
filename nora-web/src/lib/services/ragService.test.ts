@@ -2,8 +2,6 @@ import {describe, it, vi, beforeEach, afterEach} from "vitest";
 
 /**
  * 后端接入层测试：mock fetch 验证 requestJson 信封解包 + 请求形状。
- * USE_BACKEND 为编译期常量（import.meta.env），无法在单测内切换，
- * 因此直接测 requestJson 路径的请求构造与解包行为。
  */
 import { requestJson } from "@/lib/api/client";
 

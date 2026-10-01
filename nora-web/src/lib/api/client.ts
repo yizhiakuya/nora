@@ -3,7 +3,6 @@ import { authHeaders, handleUnauthorized } from "@/lib/auth";
 import { cached, invalidateForPath } from "./requestCache";
 
 export const API_BASE = "/api";
-export const USE_BACKEND = import.meta.env.VITE_USE_BACKEND === "true";
 
 /**
  * 浏览器侧链路 ID:每个页面会话一个(per-tab session),随全部 API 请求以

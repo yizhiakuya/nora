@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-
+import { requestJson } from "@/lib/api/client";
 /**
  * 对话保存成果登记(B1,2026-09-27)。
  *
@@ -30,7 +29,6 @@ export const savedArtifactsApi = {
     sessionId?: string;
     messageKey?: string;
   }): Promise<SavedArtifact | null> {
-    if (!USE_BACKEND) return null;
     try {
       return await requestJson<SavedArtifact>("/saved-artifacts", {
         method: "POST",
@@ -43,13 +41,11 @@ export const savedArtifactsApi = {
 
   /** 列表(最新在前)。 */
   async list(limit = 50): Promise<SavedArtifact[]> {
-    if (!USE_BACKEND) return [];
     return requestJson<SavedArtifact[]>(`/saved-artifacts?limit=${limit}`);
   },
 
   /** 删除登记(不删实际文件)。 */
   async remove(id: number): Promise<void> {
-    if (!USE_BACKEND) return;
     await requestJson<void>(`/saved-artifacts?id=${id}`, { method: "DELETE" });
   },
 };

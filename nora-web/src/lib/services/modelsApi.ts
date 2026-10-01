@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import type { ModelProvider, ProviderProtocol, ModelSettings } from "@/hooks/useModelProviders";
+import { requestJson } from "@/lib/api/client";import type { ModelProvider, ProviderProtocol, ModelSettings } from "@/hooks/useModelProviders";
 
 /** 后端 model_provider 行(ProviderView,camelCase) */
 export interface BackendProvider {
@@ -29,7 +28,7 @@ function toProvider(p: BackendProvider): ModelProvider {
 }
 
 /**
- * 模型服务商后端接入层(USE_BACKEND 开关):
+ * 模型服务商后端接入层:
  * - listProviders  → GET    /api/models/providers        → ModelProvider[]
  * - createProvider → POST   /api/models/providers        → ModelProvider
  * - updateProvider → PUT    /api/models/providers/{id}   → ModelProvider
@@ -38,7 +37,6 @@ function toProvider(p: BackendProvider): ModelProvider {
  */
 export const modelsApi = {
   async listProviders(): Promise<ModelProvider[]> {
-    if (!USE_BACKEND) return [];
     const items = await requestJson<BackendProvider[]>("/models/providers");
     return items.map(toProvider);
   },

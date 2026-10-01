@@ -2,9 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Database, Layers, Boxes, Clock, CheckCircle2, AlertCircle } from "lucide-react";
-import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
-import { computeIndexStats, fetchIndexStats } from "@/lib/services/ragService";
-import { USE_BACKEND } from "@/lib/api/client";
+import { fetchIndexStats } from "@/lib/services/ragService";
 import type { IndexStats } from "@/types";
 
 function StatCard({ icon: Icon, label, value, sub, color }: {
@@ -22,17 +20,20 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
   );
 }
 
+/** 空统计占位(后端拉取完成前/失败时展示,不编造数值) */
+const EMPTY_STATS: IndexStats = {
+  totalDocs: 0, totalChunks: 0, vectorDim: 0, model: "—",
+  lastUpdate: "—", pendingDocs: 0, vectorReady: false,
+};
+
 export function IndexStatus() {
-  const docs = useKnowledgeDocs((state) => state.docs);
-  const localStats = computeIndexStats(docs);
-  const [stats, setStats] = useState<IndexStats>(localStats);
+  const [stats, setStats] = useState<IndexStats>(EMPTY_STATS);
 
   useEffect(() => {
-    if (!USE_BACKEND) return;
     let mounted = true;
     fetchIndexStats()
       .then((s) => { if (mounted) setStats(s); })
-      .catch(() => { /* 后端不可用时保留本地推导值 */ });
+      .catch(() => { /* 后端不可用时保留空态 */ });
     return () => { mounted = false; };
   }, []);
 

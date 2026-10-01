@@ -8,7 +8,6 @@ import { Modal } from "@/components/ui/custom/Modal";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnections } from "@/hooks/useConnections";
 import { DbConnection } from "@/types";
-import { USE_BACKEND } from "@/lib/api/client";
 
 const ENGINES: { value: DbConnection["engine"]; label: string; defaultPort: number }[] = [
   { value: "postgresql", label: "PostgreSQL", defaultPort: 5432 },
@@ -35,14 +34,12 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 后端模式支持 postgresql/mysql/redis(sqlite 仅本地 mock)
-  const engineOptions = USE_BACKEND
-    ? ENGINES.filter((e) => e.value === "postgresql" || e.value === "mysql" || e.value === "redis")
-    : ENGINES;
+  // 支持 postgresql/mysql/redis
+  const engineOptions = ENGINES.filter((e) => e.value === "postgresql" || e.value === "mysql" || e.value === "redis");
 
   useEffect(() => {
     if (isOpen) {
-      setEngine(USE_BACKEND ? "postgresql" : "postgresql");
+      setEngine("postgresql");
       setName("");
       setHost("localhost");
       setPort("5432");
@@ -81,7 +78,7 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
       return;
     }
     // Redis 允许无认证(开发环境常见),用户名密码可留空
-    if (USE_BACKEND && engine !== "redis" && !username.trim()) {
+    if (engine !== "redis" && !username.trim()) {
       setError("用户名不能为空");
       return;
     }
@@ -161,8 +158,7 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
           />
         </div>
 
-        {USE_BACKEND && (
-          <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-foreground">
                 用户名{engine === "redis" && <span className="font-normal text-muted-foreground">（可选,ACL）</span>}
@@ -187,7 +183,6 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
               />
             </div>
           </div>
-        )}
 
         {error && <p className="text-[11px] text-red-500 dark:text-red-400">{error}</p>}
       </div>

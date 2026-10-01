@@ -4,7 +4,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 
 ## 关键链路
 
-- `lib/api/client.ts` — 统一请求:envelope(`{code,data,message}`,code=0 成功)、默认 30s 超时(调用方显式传 signal 时以其为准)、`USE_BACKEND` 开关(VITE_USE_BACKEND=true 走真实后端)
+- `lib/api/client.ts` — 统一请求:envelope(`{code,data,message}`,code=0 成功)、默认 30s 超时(调用方显式传 signal 时以其为准)。**前端无 Mock 模式(2026-10-01 删除)**:所有域直连真实后端
 - `lib/api/agentApi.ts` — SSE 解析(reasoning_delta 聚合为 s-reasoning-N step)
 - `lib/chatRefs.ts` + `components/chat/RefChip.tsx` + `components/chat/ReferencePicker.tsx` — 输入框引用体系(2026-09-17):**三触发符分工**(对齐 Claude Code/Codex):`@` 文件中心 · `#` 知识库文档 · `/` 技能与 MCP 工具;内联菜单(↑↓/Enter/Esc、光标位置感知)、拖拽文件上传、📎 附件多选;引用以固定行格式序列化在消息尾部(`[引用文件] 名 (file_id=N)` / `[引用知识库] 名 (doc_id=N)` / `[引用技能] 名 (skill_id=N)` / `[引用MCP服务器] 名 (server_id=N)`)——随 content 持久化、历史可解析;后端 `MessageRefResolver` 解析后把真实内容注入上下文(排在检索命中前;MCP 按服务器 tool_policy 生成 eager/lazy 对应指引,前端只写中性文案)。改行格式必须两端同步(chatRefs.ts ↔ MessageRefResolver.java)
 - `hooks/useModelProviders` — provider 唯一数据源(Zustand persist + 后端同步)
@@ -23,7 +23,7 @@ React 18 + Vite(3001) + Tailwind + shadcn 风格 ui + Zustand persist。
 
 ## 约定
 
-- 新功能必须兼容 USE_BACKEND=false(本地 mock)与 true(真实后端)两条路;后端模式不造假数据,空态引导操作
+- 前端不内置 Mock,不造假数据;接口失败如实报错(humanize + hint),空态引导操作
 - 后端模式错误要 humanize:错误文案 + hint + 技术详情(errorRaw 折叠)+ 会话 ID 可复制
 - UI 文案中文;样式用 Tailwind + CSS 变量(bg-card/text-foreground/border 等),明暗两套都要看一眼
 

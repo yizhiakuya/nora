@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 import { useNotifications } from "./useNotifications";
 import { automationsApi } from "@/lib/services/automationsApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { humanizeError } from "@/lib/errorMessages";
 import { nowHm } from "@/lib/format";
 
@@ -62,7 +61,7 @@ function looksLikeSql(action: string): boolean {
 /**
  * 自动任务唯一数据源：自动任务页、查询控制台「保存为自动任务」、
  * 环境「AI 诊断 → 创建修复任务」共享。
- * USE_BACKEND 时 CRUD 与执行走 automation-service /api/automations。
+ * CRUD 与执行走 automation-service /api/automations。
  */
 export const useAutomations = create<AutomationsState>()(
   persist(
@@ -70,7 +69,6 @@ export const useAutomations = create<AutomationsState>()(
       rules: [],
       executions: [],
       syncFromBackend: async () => {
-        if (!USE_BACKEND) return;
         try {
           const [rules, executions] = await Promise.all([
             automationsApi.listRules(),
@@ -85,40 +83,10 @@ export const useAutomations = create<AutomationsState>()(
       },
       addRule: async (name, trigger, action, schedule, connectionId) => {
         const isSqlAction = looksLikeSql(action);
-        if (USE_BACKEND) {
-          // 后端模式:等服务器真实结果再落状态(2026-09-19 修假成功)。
-          // 此前先插乐观条目、失败也保留,且弹窗立即提示"创建成功"——
-          // 后端失败时用户看到一条从未存在的规则,点运行还会走本地假执行。
-          const optimistic: AutomationRule = {
-            id: Date.now(),
-            name,
-            trigger,
-            action,
-            enabled: true,
-            lastRun: "—",
-            status: "active",
-          };
-          set((state) => ({ rules: [optimistic, ...state.rules] }));
-          try {
-            const saved = await automationsApi.createRule(
-              isSqlAction
-                ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action, schedule: schedule ? JSON.stringify(schedule) : undefined, connectionId }
-                : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action, schedule: schedule ? JSON.stringify(schedule) : undefined },
-            );
-            set((state) => ({
-              rules: state.rules.map((r) => (r.id === optimistic.id ? saved : r)),
-            }));
-            useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
-            return saved;
-          } catch (e) {
-            // 失败:回滚乐观条目 + 明确报错,不产生幽灵规则
-            set((state) => ({ rules: state.rules.filter((r) => r.id !== optimistic.id) }));
-            toast.error(`创建自动任务失败：${friendly(e)}`);
-            return null;
-          }
-        }
-        // Mock 模式:本地行为
-        const rule: AutomationRule = {
+        // 后端模式:等服务器真实结果再落状态(2026-09-19 修假成功)。
+        // 此前先插乐观条目、失败也保留,且弹窗立即提示"创建成功"——
+        // 后端失败时用户看到一条从未存在的规则,点运行还会走本地假执行。
+        const optimistic: AutomationRule = {
           id: Date.now(),
           name,
           trigger,
@@ -127,9 +95,24 @@ export const useAutomations = create<AutomationsState>()(
           lastRun: "—",
           status: "active",
         };
-        set((state) => ({ rules: [rule, ...state.rules] }));
-        useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
-        return rule;
+        set((state) => ({ rules: [optimistic, ...state.rules] }));
+        try {
+          const saved = await automationsApi.createRule(
+            isSqlAction
+              ? { name, triggerType: triggerTypeFromLabel(trigger), actionType: "sql", sql: action, schedule: schedule ? JSON.stringify(schedule) : undefined, connectionId }
+              : { name, triggerType: triggerTypeFromLabel(trigger), actionType: "agent", prompt: action, schedule: schedule ? JSON.stringify(schedule) : undefined },
+          );
+          set((state) => ({
+            rules: state.rules.map((r) => (r.id === optimistic.id ? saved : r)),
+          }));
+          useNotifications.getState().addNotification("新任务已创建", `自动任务「${name}」已添加，触发条件：${trigger}。`);
+          return saved;
+        } catch (e) {
+          // 失败:回滚乐观条目 + 明确报错,不产生幽灵规则
+          set((state) => ({ rules: state.rules.filter((r) => r.id !== optimistic.id) }));
+          toast.error(`创建自动任务失败：${friendly(e)}`);
+          return null;
+        }
       },
       toggleRule: async (id) => {
         const target = get().rules.find((r) => r.id === id);
@@ -146,7 +129,6 @@ export const useAutomations = create<AutomationsState>()(
               : r
           ),
         }));
-        if (!USE_BACKEND) return true;
         if (id >= 1e12) {
           // 乐观条目(尚未保存成功):不能切;回滚并提示(与 markRun 同语义)
           rollback();
@@ -167,62 +149,41 @@ export const useAutomations = create<AutomationsState>()(
       markRun: async (id) => {
         const rule = get().rules.find((r) => r.id === id);
         if (!rule) return false;
-        if (USE_BACKEND) {
-          if (id >= 1e12) {
-            // 乐观条目(尚未拿到服务端 id):此前会落入本地假执行分支,
-            // 生成固定"1.2s / success"记录——后端失败也能"执行成功"(2026-09-19 修)。
-            // 现在明确拒绝,等创建结果落定后再运行。
-            toast.error(`「${rule.name}」尚未保存成功，无法运行；请稍后重试或重新创建`);
-            return false;
-          }
-          try {
-            const exec = await automationsApi.runRule(id);
-            useNotifications.getState().addNotification(
-              "任务执行完成",
-              `自动任务「${rule.name}」${execStatusText(exec.status)}，耗时 ${exec.duration}。`,
-              exec.status === "success" ? "taskDone" : "taskFail"
-            );
-            set((state) => ({
-              rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
-              executions: [exec, ...state.executions].slice(0, 50),
-            }));
-            return exec.status === "success";
-          } catch (e) {
-            useNotifications.getState().addNotification(
-              "任务执行失败",
-              `自动任务「${rule.name}」执行失败：${friendly(e)}`,
-              "taskDone"
-            );
-            return false;
-          }
+        if (id >= 1e12) {
+          // 乐观条目(尚未拿到服务端 id):此前会落入本地假执行分支,
+          // 生成固定"1.2s / success"记录——后端失败也能"执行成功"(2026-09-19 修)。
+          // 现在明确拒绝,等创建结果落定后再运行。
+          toast.error(`「${rule.name}」尚未保存成功，无法运行；请稍后重试或重新创建`);
+          return false;
         }
-        // Mock 模式:本地模拟(仅 USE_BACKEND=false 时可达)
-        useNotifications.getState().addNotification(
-          "任务执行完成",
-          `自动任务「${rule.name}」已成功触发，耗时 1.2s。`,
-          "taskDone"
-        );
-        const newExec: ExecutionRecord = {
-          id: Date.now(),
-          ruleName: rule.name,
-          time: nowHm(),
-          duration: "1.2s",
-          status: "success",
-          detail: `${rule.action}（触发完成）`,
-        };
-        set((state) => ({
-          rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
-          executions: [newExec, ...state.executions].slice(0, 50),
-        }));
-        return true;
+        try {
+          const exec = await automationsApi.runRule(id);
+          useNotifications.getState().addNotification(
+            "任务执行完成",
+            `自动任务「${rule.name}」${execStatusText(exec.status)}，耗时 ${exec.duration}。`,
+            exec.status === "success" ? "taskDone" : "taskFail"
+          );
+          set((state) => ({
+            rules: state.rules.map((r) => (r.id === id ? { ...r, lastRun: "刚刚" } : r)),
+            executions: [exec, ...state.executions].slice(0, 50),
+          }));
+          return exec.status === "success";
+        } catch (e) {
+          useNotifications.getState().addNotification(
+            "任务执行失败",
+            `自动任务「${rule.name}」执行失败：${friendly(e)}`,
+            "taskDone"
+          );
+          return false;
+        }
       },
       retryExecution: (id) => {
         // 真实重试(2026-09-19 去假功能):此前只本地改状态 + 假动画,
         // 从未真正重跑。现在按执行记录定位规则,真调后端 run 端点,
         // 完成后拉一次执行历史刷新(与手动「立即运行」同一条链路)。
         const exec = get().executions.find((e) => e.id === id);
-        if (!exec || !USE_BACKEND || !exec.ruleId) {
-          // Mock 模式/旧数据无 ruleId:本地提示(不假装成功)
+        if (!exec || !exec.ruleId) {
+          // 旧数据无 ruleId:本地提示(不假装成功)
           useNotifications.getState().addNotification(
             "无法重试", `「${exec?.ruleName ?? "?"}」缺少规则信息,请到自动任务页手动运行。`, "taskDone");
           return;

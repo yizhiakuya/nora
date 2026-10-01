@@ -4,22 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Play, History, Loader2, Download, Zap, SquarePen } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { useAutomations } from "@/hooks/useAutomations";
 import { QueryHistory } from "@/types";
 import { toast } from "sonner";
 import { datasourcesApi, type BackendQueryResult } from "@/lib/services/datasourcesApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { nowDate } from "@/lib/format";
 
 const AI_SUGGEST = "SELECT status, COUNT(*) as count FROM orders GROUP BY status ORDER BY count DESC;";
-
-const RESULT_COLUMNS = ["status", "count"];
-const RESULT_ROWS: string[][] = [
-  ["paid", "5214"],
-  ["shipped", "2380"],
-  ["pending", "826"],
-];
 
 /**
  * CSV \u5B57\u6BB5\u8F6C\u4E49(RFC 4180,2026-09-21 \u4FEE\u590D):\u542B\u9017\u53F7/\u5F15\u53F7/\u6362\u884C\u7684\u5355\u5143\u683C
@@ -45,20 +36,19 @@ function downloadCsv(columns: string[], rows: (string | null)[][]) {
 
 interface QueryConsoleProps {
   database: string;
-  /** 服务端连接 id(后端模式必传) */
-  connectionId?: number;
+  /** 服务端连接 id */
+  connectionId: number;
   /** 引擎类型:redis 时执行只读 Redis 命令而非 SQL */
   engine?: string;
   initialSql?: string;
 }
 
 /**
- * 查询控制台:USE_BACKEND 时走 datasource-service 只读执行(限 200 行,
- * 非 SELECT/SHOW/EXPLAIN 会被后端 SqlGuard 拒绝),历史来自服务端;Mock 模式沿用模拟行为。
+ * 查询控制台:走 datasource-service 只读执行(限 200 行,
+ * 非 SELECT/SHOW/EXPLAIN 会被后端 SqlGuard 拒绝),历史来自服务端。
  */
 export function QueryConsole({ database, connectionId, engine, initialSql }: QueryConsoleProps) {
   const navigate = useNavigate();
-  const backendMode = USE_BACKEND && connectionId !== undefined;
   const isRedis = engine === "redis";
   const [sql, setSql] = useState(initialSql ?? "");
   const [isRunning, setIsRunning] = useState(false);
@@ -67,7 +57,6 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
   const [runError, setRunError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistory[]>([]);
   const addRule = useAutomations((s) => s.addRule);
-  const { schedule, cancelAll } = useTimedSequence();
 
   useEffect(() => {
     if (initialSql) {
@@ -91,7 +80,7 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
 
   // 后端模式:拉取服务端查询历史
   const loadHistory = useCallback(async () => {
-    if (!backendMode || connectionId === undefined) return;
+    if (connectionId === undefined) return;
     try {
       const rows = await datasourcesApi.fetchHistory(connectionId, 50);
       setHistory(rows.map((h) => ({
@@ -105,42 +94,28 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
     } catch {
       /* 历史拉取失败不打断 */
     }
-  }, [backendMode, connectionId]);
+  }, [connectionId]);
 
   useEffect(() => {
-    if (backendMode) void loadHistory();
-  }, [backendMode, loadHistory]);
+    void loadHistory();
+  }, [loadHistory]);
 
   const handleRun = async () => {
     if (!sql.trim() || isRunning) return;
-    cancelAll();
     setIsRunning(true);
     setRunError(null);
-    if (backendMode && connectionId !== undefined) {
-      try {
-        const r = await datasourcesApi.runQuery(connectionId, sql.trim());
-        setResult(r);
-        setHasRun(true);
-      } catch (e) {
-        setRunError((e as Error).message);
-        setResult(null);
-        setHasRun(true);
-      } finally {
-        setIsRunning(false);
-        void loadHistory();
-      }
-      return;
-    }
-    // Mock 模式
-    schedule(() => {
-      setIsRunning(false);
+    try {
+      const r = await datasourcesApi.runQuery(connectionId, sql.trim());
+      setResult(r);
       setHasRun(true);
-      setResult({ columns: RESULT_COLUMNS, rows: RESULT_ROWS, rowCount: 3, durationMs: 8 });
-      setHistory((prev) => [
-        { id: Date.now(), sql, duration: "8ms", rowsAffected: 3, time: "刚刚", status: "success" as const },
-        ...prev,
-      ].slice(0, 50));
-    }, 800);
+    } catch (e) {
+      setRunError((e as Error).message);
+      setResult(null);
+      setHasRun(true);
+    } finally {
+      setIsRunning(false);
+      void loadHistory();
+    }
   };
 
   const saveAsAutomation = async () => {
@@ -170,25 +145,19 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
    * 仍指向正确目标,方案 §4.1/§6.2)。
    */
   const askAi = () => {
-    const refs = connectionId !== undefined
-      ? [{ kind: "datasource" as const, id: connectionId, name: database }]
-      : [];
-    // HandoffRef 目前支持 file/doc/skill/mcp;datasource 走独立参数(后端 context 已支持)
     const prompt = isRedis
       ? `请基于 Redis 数据源「${database}」帮我写一条只读命令：`
       : `请基于数据源「${database}」的表结构帮我写一条 SQL：`;
     const params = new URLSearchParams();
     params.set("prompt", prompt);
-    if (connectionId !== undefined) {
-      params.set("refs", JSON.stringify([{ kind: "datasource", id: connectionId, name: database }]));
-    }
+    params.set("refs", JSON.stringify([{ kind: "datasource", id: connectionId, name: database }]));
     // B6(2026-09-27):跨页发起 = 新建处理(不接着旧会话);沿用统一语义
     params.set("new", "1");
     navigate(`/chat?${params.toString()}`);
   };
 
-  const displayColumns = backendMode ? result?.columns ?? [] : RESULT_COLUMNS;
-  const displayRows = backendMode ? result?.rows ?? [] : RESULT_ROWS;
+  const displayColumns = result?.columns ?? [];
+  const displayRows = result?.rows ?? [];
 
   return (
     <div className="space-y-4">

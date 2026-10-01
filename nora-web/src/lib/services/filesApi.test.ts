@@ -16,11 +16,9 @@ function jsonResponse(data: unknown, code = 0) {
 }
 
 describe("filesApi", () => {
-  // USE_BACKEND 在模块加载时求值;动态 import 确保 stubEnv 先生效
   let filesApi: typeof import("./filesApi").filesApi;
 
   beforeAll(async () => {
-    vi.stubEnv("VITE_USE_BACKEND", "true");
     filesApi = (await import("./filesApi")).filesApi;
   });
 

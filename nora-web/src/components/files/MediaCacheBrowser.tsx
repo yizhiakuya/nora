@@ -11,7 +11,6 @@ import {
   type CachedMediaList,
 } from "@/lib/services/mediaCacheApi";
 import { toast } from "sonner";
-import { USE_BACKEND } from "@/lib/api/client";
 import { mdHm } from "@/lib/format";
 
 interface MediaCacheBrowserProps {
@@ -102,12 +101,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
         <span className="text-foreground font-medium">媒体缓存</span>
       </div>
 
-      {!USE_BACKEND ? (
-        <div className="bg-card rounded-xl border border-border shadow-sm py-16 text-center text-xs text-muted-foreground">
-          媒体缓存仅在后端模式可用
-        </div>
-      ) : (
-        <>
+      <>
           {/* 概览条 */}
           <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
             <div className="text-xs text-muted-foreground">
@@ -203,8 +197,7 @@ export function MediaCacheBrowser({ onExit }: MediaCacheBrowserProps) {
               真实目录:{data.dir}
             </div>
           )}
-        </>
-      )}
+      </>
 
     </>
   );

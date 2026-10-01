@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { usePreferences } from "./usePreferences";
 import { notificationsApi, type ServerNotification } from "@/lib/services/notificationsApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { nowHm, hmFromLocalIso } from "@/lib/format";
 
 export type NotificationEvent =
@@ -30,7 +29,6 @@ export interface AppNotification {
  * - syncFromBackend:轮询拉取(NotificationWatcher 挂载时启动,60s);
  * - addNotification:上报服务端 + 乐观本地插入(立即出角标,失败静默——
  *   通知是增益,不打断用户动作);
- * - Mock 模式(USE_BACKEND=false):纯本地行为。
  */
 interface NotificationsState {
   notifications: AppNotification[];
@@ -85,7 +83,6 @@ export const useNotifications = create<NotificationsState>()((set, get) => {
   notifications: [],
 
   syncFromBackend: async () => {
-    if (!USE_BACKEND) return;
     try {
       const rows = await notificationsApi.list(50);
       // 服务端为准;但保留本地乐观插入的临时负 id 项(上报成功前的短暂窗口)
@@ -109,30 +106,24 @@ export const useNotifications = create<NotificationsState>()((set, get) => {
         ...state.notifications,
       ].slice(0, 50),
     }));
-    if (USE_BACKEND) {
-      // 上报服务端(跨浏览器一致);成功后移除乐观项并拉一次同步换真实行,
-      // 失败静默(乐观项保留,角标仍可见)
-      void notificationsApi.create(event, title, detail)
-        .then(() => {
-          set((state) => ({ notifications: state.notifications.filter((n) => n.id !== localId) }));
-          return get().syncFromBackend();
-        })
-        .catch(() => { /* 通知上报失败静默 */ });
-    }
+    // 上报服务端(跨浏览器一致);成功后移除乐观项并拉一次同步换真实行,
+    // 失败静默(乐观项保留,角标仍可见)
+    void notificationsApi.create(event, title, detail)
+      .then(() => {
+        set((state) => ({ notifications: state.notifications.filter((n) => n.id !== localId) }));
+        return get().syncFromBackend();
+      })
+      .catch(() => { /* 通知上报失败静默 */ });
   },
 
   markAllRead: () => {
     set((state) => ({ notifications: state.notifications.map((n) => ({ ...n, read: true })) }));
-    if (USE_BACKEND) {
-      void notificationsApi.markAllRead().catch(() => { /* 静默 */ });
-    }
+    void notificationsApi.markAllRead().catch(() => { /* 静默 */ });
   },
 
   clearAll: () => {
     set({ notifications: [] });
-    if (USE_BACKEND) {
-      void notificationsApi.clearAll().catch(() => { /* 静默 */ });
-    }
+    void notificationsApi.clearAll().catch(() => { /* 静默 */ });
   },
   };
 });

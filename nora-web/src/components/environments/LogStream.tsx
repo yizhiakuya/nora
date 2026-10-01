@@ -9,7 +9,6 @@ import { useServices } from "@/hooks/useServices";
 import { useAutomations } from "@/hooks/useAutomations";
 import { useNotifications } from "@/hooks/useNotifications";
 import { environmentApi, subscribeSourceLogs } from "@/lib/services/environmentApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { toast } from "sonner";
 
 const LEVEL_CLS: Record<LogEntry["level"], string> = {
@@ -66,7 +65,7 @@ export function LogStream() {
   // 后端模式:订阅当前选中源的真实日志 SSE(FILE/DOCKER 后端自动区分)。
   // 先清该服务旧日志再订阅,避免 tail=100 回放造成重复行;断线自动重连并在头部提示
   useEffect(() => {
-    if (!USE_BACKEND || !activeSource?.sourceId) return;
+    if (!activeSource?.sourceId) return;
     const name = activeSource.name;
     clearLogsFor(name);
     setConnState("connecting");
@@ -80,13 +79,13 @@ export function LogStream() {
     );
     return cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSource?.sourceId, USE_BACKEND]);
+  }, [activeSource?.sourceId]);
 
   // AI 即时分析(只读):调 env-service 分析端点,agent 走 ASSIST 档
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(null);
   const runAnalysis = async () => {
-    if (!USE_BACKEND || !activeSource?.sourceId) return;
+    if (!activeSource?.sourceId) return;
     setAnalyzing(true);
     setAnalysis(null);
     try {
@@ -159,7 +158,7 @@ export function LogStream() {
             </span>
           )}
           {/* SSE 连接状态:正常不显示,异常时黄/红点提示 */}
-          {USE_BACKEND && activeSource?.sourceId && connState !== "open" && (
+          {activeSource?.sourceId && connState !== "open" && (
             <span
               title={connState === "reconnecting" ? "日志连接断开,重连中…" : connState === "connecting" ? "日志连接中…" : "日志连接已断开,请刷新重试"}
               className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800"
@@ -218,7 +217,7 @@ export function LogStream() {
           variant="outline"
           size="sm"
           className="h-6 text-[10px] px-2"
-          disabled={!USE_BACKEND || !activeSource?.sourceId || analyzing}
+          disabled={!activeSource?.sourceId || analyzing}
           onClick={runAnalysis}
         >
           <Stethoscope className="w-2.5 h-2.5 mr-0.5" />

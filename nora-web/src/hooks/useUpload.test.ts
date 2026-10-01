@@ -12,7 +12,7 @@ describe("useSimulatedUpload", () => {
   it("完整上传流程: idle -> uploading -> success -> 关闭复位", async () => {
     vi.useFakeTimers();
     const onSuccess = vi.fn();
-    const { result } = renderHook(() => useSimulatedUpload(2000, 1500));
+    const { result } = renderHook(() => useSimulatedUpload(1500));
 
     // (assertion removed)
     // (assertion removed)

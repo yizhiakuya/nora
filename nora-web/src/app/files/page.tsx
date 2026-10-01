@@ -25,7 +25,6 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useRecentFiles } from "@/hooks/useRecentFiles";
 import { usePreferences } from "@/hooks/usePreferences";
 import { filesApi, humanSize, type BackendFolder } from "@/lib/services/filesApi";
-import { USE_BACKEND } from "@/lib/api/client";
 import { HandoffChoiceDialog } from "@/components/shared/HandoffChoiceDialog";
 import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
 import { SavedArtifactsView } from "@/components/files/SavedArtifactsView";
@@ -64,7 +63,7 @@ export default function FilesPage() {
   const [mediaCacheOpen, setMediaCacheOpen] = useState(false);
   /** 当前进入的用户文件夹(null = 根视图)。 */
   const [currentFolder, setCurrentFolder] = useState<BackendFolder | null>(null);
-  /** 用户文件夹列表(后端;mock 模式为空)。 */
+  /** 用户文件夹列表(来自后端)。 */
   const [folders, setFolders] = useState<BackendFolder[]>([]);
   /** 回收站视图。 */
   const [trashOpen, setTrashOpen] = useState(false);
@@ -98,22 +97,18 @@ export default function FilesPage() {
   const [moveOpen, setMoveOpen] = useState(false);
 
   const files = useFiles((s) => s.files);
-  const addFile = useFiles((s) => s.addFile);
-  const deleteFiles = useFiles((s) => s.deleteFiles);
   const markIndexed = useFiles((s) => s.markIndexed);
   const syncFile = useFiles((s) => s.syncFile);
   const syncFromBackend = useFiles((s) => s.syncFromBackend);
 
   const upload = useSimulatedUpload();
   const viewer = useFileViewer();
-  const indexFile = useKnowledgeDocs((s) => s.indexFile);
   const indexFileFromBackend = useKnowledgeDocs((s) => s.indexFileFromBackend);
   const addNotification = useNotifications((s) => s.addNotification);
   const addRecent = useRecentFiles((s) => s.addRecent);
 
   // 后端模式:进入页面拉一次真实文件列表 + 文件夹列表
   useEffect(() => {
-    if (!USE_BACKEND) return;
     filesApi.listFiles()
       .then((items) => items.forEach((item) => syncFile(item)))
       .catch(() => { /* 后端不可用时沿用本地缓存 */ });
@@ -122,7 +117,6 @@ export default function FilesPage() {
 
   // 深链:?open=<fileId>(知识库「原文件」跳转)→ 拉取该文件并打开预览
   useEffect(() => {
-    if (!USE_BACKEND) return;
     const openId = new URLSearchParams(window.location.search).get("open");
     if (!openId) return;
     let cancelled = false;
@@ -212,26 +206,20 @@ export default function FilesPage() {
   }, [currentFolder, upload]);
 
   const refreshFolders = () => {
-    if (!USE_BACKEND) return;
     filesApi.listFolders().then(setFolders).catch(() => { /* 忽略瞬时失败 */ });
   };
 
   const handleDeleteSelected = () => {
     const count = selection.selectedIds.length;
-    if (USE_BACKEND) {
-      filesApi.deleteFiles(selection.selectedIds)
-        .then(() => {
-          toast.success(`已删除 ${count} 个文件`);
-          // 删除成功即标记查看器标签失效(打开中的文件立即提示,不等用户刷新)
-          useFileViewer.getState().markMissing(selection.selectedIds.map(id => `file:${id}`));
-          void syncFromBackend();
-          refreshFolders();
-        })
-        .catch((e: Error) => toast.error(`删除失败：${e.message}`));
-      selection.clearSelection();
-      return;
-    }
-    deleteFiles(selection.selectedIds);
+    filesApi.deleteFiles(selection.selectedIds)
+      .then(() => {
+        toast.success(`已删除 ${count} 个文件`);
+        // 删除成功即标记查看器标签失效(打开中的文件立即提示,不等用户刷新)
+        useFileViewer.getState().markMissing(selection.selectedIds.map(id => `file:${id}`));
+        void syncFromBackend();
+        refreshFolders();
+      })
+      .catch((e: Error) => toast.error(`删除失败：${e.message}`));
     selection.clearSelection();
   };
 
@@ -337,50 +325,33 @@ export default function FilesPage() {
     }
   };
 
-  const handleUploadComplete = (fileName?: string, uploadedFile?: FileItem) => {
-    if (uploadedFile) {
-      syncFile(uploadedFile);
-      addRecent(uploadedFile.name, uploadedFile.type, `file:${uploadedFile.id}`);
-      addNotification("上传完成", `「${uploadedFile.name}」已保存到资料，可在列表中查看。`);
-      refreshFolders();
-      // 上传后自动入库(2026-09-19 接线):「设置 → 知识库与 AI」的开关
-      // 此前存了没人消费——现在真正生效(仅对可提取文本的文件有意义,
-      // 后端对无文本文件返回 422 时静默跳过,不打断上传流程)
-      if (usePreferences.getState().knowledgeAI.autoIndex) {
-        void indexFileFromBackend(uploadedFile.id, uploadedFile.name)
-          .then(() => {
-            markIndexed(uploadedFile.id);
-            addNotification("文件索引入库",
-              `「${uploadedFile.name}」已自动加入知识库(可在设置中关闭自动索引)。`, "indexed");
-          })
-          .catch(() => { /* 无文本/未配置嵌入:静默(手动索引入口仍在) */ });
-      }
-      return;
+  const handleUploadComplete = (uploadedFile?: FileItem) => {
+    if (!uploadedFile) return;
+    syncFile(uploadedFile);
+    addRecent(uploadedFile.name, uploadedFile.type, `file:${uploadedFile.id}`);
+    addNotification("上传完成", `「${uploadedFile.name}」已保存到资料，可在列表中查看。`);
+    refreshFolders();
+    // 上传后自动入库(2026-09-19 接线):「设置 → 知识库与 AI」的开关
+    // 此前存了没人消费——现在真正生效(仅对可提取文本的文件有意义,
+    // 后端对无文本文件返回 422 时静默跳过,不打断上传流程)
+    if (usePreferences.getState().knowledgeAI.autoIndex) {
+      void indexFileFromBackend(uploadedFile.id, uploadedFile.name)
+        .then(() => {
+          markIndexed(uploadedFile.id);
+          addNotification("文件索引入库",
+            `「${uploadedFile.name}」已自动加入知识库(可在设置中关闭自动索引)。`, "indexed");
+        })
+        .catch(() => { /* 无文本/未配置嵌入:静默(手动索引入口仍在) */ });
     }
-    const defaultName = `上传文档_${Date.now().toString().slice(-4)}.pdf`;
-    const newFile = addFile(fileName ?? defaultName);
-    addRecent(newFile.name, newFile.type, `file:${newFile.id}`);
-    addNotification("上传完成", `「${newFile.name}」已保存到资料，可在列表中查看。`);
   };
 
   const [indexTarget, setIndexTarget] = useState<FileItem | null>(null);
   const [indexSubmitting, setIndexSubmitting] = useState(false);
 
   const handleIndexFile = (file: FileItem) => {
-    if (USE_BACKEND) {
-      // F5(2026-09-26):先进配置弹窗(目标资料库 + 分段参数 + 预览),
-      // 确认后再带参数提交——此前固定只发 fileId/name,后端参数被忽略
-      setIndexTarget(file);
-      return;
-    }
-    indexFile(file.name);
-    markIndexed(file.id);
-    addNotification(
-      "文件索引入库",
-      `「${file.name}」已完成解析与向量化，AI 现在可以检索其内容。`,
-      "indexed"
-    );
-    toast.success(`「${file.name}」已加入知识库`);
+    // F5(2026-09-26):先进配置弹窗(目标资料库 + 分段参数 + 预览),
+    // 确认后再带参数提交——此前固定只发 fileId/name,后端参数被忽略
+    setIndexTarget(file);
   };
 
   /** 配置弹窗确认:带分段配置与目标资料库真实提交(F5)。 */
@@ -429,13 +400,13 @@ export default function FilesPage() {
       description: `${folder.fileCount} 个文件 · ${humanSize(folder.totalBytes)}`,
       icon: undefined,
       onOpen: () => setCurrentFolder(folder),
-      onRename: USE_BACKEND ? () => {
+      onRename: () => {
         setFolderNameInput(folder.name);
         setFolderDialog({ mode: "rename", folder });
-      } : undefined,
-      onDelete: USE_BACKEND ? () => void handleDeleteFolder(folder) : undefined,
+      },
+      onDelete: () => void handleDeleteFolder(folder),
       // 拖拽文件到此文件夹 = 移动(拖拽整理的自然交互)
-      onDropFiles: USE_BACKEND ? (ids: number[]) => {
+      onDropFiles: (ids: number[]) => {
         void (async () => {
           try {
             const moved = await filesApi.moveFiles(ids, folder.id);
@@ -447,7 +418,7 @@ export default function FilesPage() {
             toast.error(e instanceof Error ? e.message : "移动失败");
           }
         })();
-      } : undefined,
+      },
     })),
   ] : [];
 
@@ -505,10 +476,6 @@ export default function FilesPage() {
               title="新建文件夹"
               aria-label="新建文件夹"
               onClick={() => {
-                if (!USE_BACKEND) {
-                  toast.info("文件夹需要连接后端服务");
-                  return;
-                }
                 setFolderNameInput("");
                 setFolderDialog({ mode: "create" });
               }}
@@ -636,7 +603,7 @@ export default function FilesPage() {
               <BatchActionBar
                 selection={selection}
                 onDownloadSelected={handleDownloadSelected}
-                onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
+                onMoveSelected={handleMoveSelected}
                 onDeleteSelected={handleDeleteSelected}
                 onAskAssistant={handleAskAssistant}
               />
@@ -647,26 +614,21 @@ export default function FilesPage() {
                   selection={selection}
                   onDeleteSelected={handleDeleteSelected}
                   onDownloadSelected={handleDownloadSelected}
-                  onMoveSelected={USE_BACKEND ? handleMoveSelected : undefined}
+                  onMoveSelected={handleMoveSelected}
                   onOpen={(f) => { void viewer.open(f, filteredFiles); }}
                   onIndex={handleIndexFile}
                   onDownload={(f) => handleDownloadOne(f)}
-                  onRename={USE_BACKEND ? handleRenameFile : undefined}
-                  onMove={USE_BACKEND ? handleMoveOne : undefined}
+                  onRename={handleRenameFile}
+                  onMove={handleMoveOne}
                   onDelete={(f) => {
-                    if (USE_BACKEND) {
-                      filesApi.deleteFiles([f.id])
-                        .then(() => {
-                          toast.success("已删除");
-                          useFileViewer.getState().markMissing([`file:${f.id}`]);
-                          void syncFromBackend();
-                          refreshFolders();
-                        })
-                        .catch((e: Error) => toast.error(`删除失败：${e.message}`));
-                      return;
-                    }
-                    deleteFiles([f.id]);
-                    toast.success("已删除");
+                    filesApi.deleteFiles([f.id])
+                      .then(() => {
+                        toast.success("已删除");
+                        useFileViewer.getState().markMissing([`file:${f.id}`]);
+                        void syncFromBackend();
+                        refreshFolders();
+                      })
+                      .catch((e: Error) => toast.error(`删除失败：${e.message}`));
                   }}
                   folderRows={folderRowsData}
                 />
@@ -676,22 +638,17 @@ export default function FilesPage() {
                   selection={selection}
                   onOpen={(f) => { void viewer.open(f, filteredFiles); }}
                   onDownload={(f) => handleDownloadOne(f)}
-                  onRename={USE_BACKEND ? handleRenameFile : undefined}
-                  onMove={USE_BACKEND ? handleMoveOne : undefined}
+                  onRename={handleRenameFile}
+                  onMove={handleMoveOne}
                   onDelete={(f) => {
-                    if (USE_BACKEND) {
-                      filesApi.deleteFiles([f.id])
-                        .then(() => {
-                          toast.success("已删除");
-                          useFileViewer.getState().markMissing([`file:${f.id}`]);
-                          void syncFromBackend();
-                          refreshFolders();
-                        })
-                        .catch((e: Error) => toast.error(`删除失败：${e.message}`));
-                      return;
-                    }
-                    deleteFiles([f.id]);
-                    toast.success("已删除");
+                    filesApi.deleteFiles([f.id])
+                      .then(() => {
+                        toast.success("已删除");
+                        useFileViewer.getState().markMissing([`file:${f.id}`]);
+                        void syncFromBackend();
+                        refreshFolders();
+                      })
+                      .catch((e: Error) => toast.error(`删除失败：${e.message}`));
                   }}
                   folderRows={folderRowsData}
                 />

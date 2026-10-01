@@ -6,7 +6,6 @@
  * - 上报走 fire-and-forget,自身失败静默(排障通道不能成为故障源)。
  */
 import { browserTraceId } from "@/lib/api/client";
-import { USE_BACKEND } from "@/lib/api/client";
 import { authHeaders } from "@/lib/auth";
 
 const DEDUP_WINDOW_MS = 10_000;
@@ -34,7 +33,6 @@ export interface FrontendLogPayload {
 }
 
 export function reportToBackend(payload: FrontendLogPayload): void {
-  if (!USE_BACKEND) return;
   const key = `${payload.event}:${payload.message?.slice(0, 120) ?? ""}`;
   if (!shouldSend(key)) return;
   try {

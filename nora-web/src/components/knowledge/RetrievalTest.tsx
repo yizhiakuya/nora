@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { SOURCE_META } from "@/lib/knowledgeSourceMeta";
 import { fetchBases, fetchRetrievalLogs, searchDocsAsync } from "@/lib/services/ragService";
-import { USE_BACKEND } from "@/lib/api/client";
 import { KnowledgeBase, KnowledgeSource, RetrievalLog, RetrievalOutcome } from "@/types";
 
 const SOURCE_ICONS: Record<KnowledgeSource, React.ElementType> = {
@@ -63,7 +62,6 @@ export function RetrievalTest() {
   const searchResults = outcome?.results ?? [];
 
   useEffect(() => {
-    if (!USE_BACKEND) return;
     fetchBases().then(setBases).catch(() => undefined);
     fetchRetrievalLogs(10).then(setLogs).catch(() => undefined);
   }, []);
@@ -83,19 +81,12 @@ export function RetrievalTest() {
         setHasSearched(true);
         setSearchMs(Math.max(1, Math.round(performance.now() - startedAt)));
         // 刷新检索记录(本次查询刚落库)
-        if (USE_BACKEND) {
-          fetchRetrievalLogs(10).then(setLogs).catch(() => undefined);
-        }
+        fetchRetrievalLogs(10).then(setLogs).catch(() => undefined);
       } finally {
         setIsSearching(false);
       }
     };
-    // Mock 模式保留 800ms 演示延迟；真实后端直接请求
-    if (USE_BACKEND) {
-      await run();
-    } else {
-      schedule(() => { void run(); }, 800);
-    }
+    await run();
   };
 
   return (
@@ -105,7 +96,7 @@ export function RetrievalTest() {
           <h3 className="text-sm font-bold text-foreground">检索测试</h3>
           <div className="flex items-center gap-2">
             {/* 范围选择(阶段 B):默认全库;选资料库后只在库内检索 */}
-            {USE_BACKEND && bases.length > 0 && (
+            {bases.length > 0 && (
               <select
                 value={scopeBaseId ?? ""}
                 onChange={(e) => setScopeBaseId(e.target.value ? Number(e.target.value) : null)}
@@ -118,7 +109,7 @@ export function RetrievalTest() {
                 ))}
               </select>
             )}
-            <span className="text-[10px] text-muted-foreground">{USE_BACKEND ? "pgvector 语义检索" : "模拟向量 + 关键词混合检索"}</span>
+            <span className="text-[10px] text-muted-foreground">pgvector 语义检索</span>
           </div>
         </div>
         <div className="flex gap-2">
@@ -140,7 +131,7 @@ export function RetrievalTest() {
       </div>
 
       {/* 检索记录(阶段 B,方案 §7):为什么找不到——查过的查询、范围、通道状态与耗时 */}
-      {USE_BACKEND && logs.length > 0 && (
+      {logs.length > 0 && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <button
             type="button"

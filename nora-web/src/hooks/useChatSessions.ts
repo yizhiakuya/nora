@@ -3,7 +3,6 @@ import { persist } from "zustand/middleware";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { AgentAPI, fetchSessions, fetchSessionMessages, deleteSessionOnBackend } from "@/lib/api/agentApi";
 import { subscribeSessionTitle } from "@/lib/api/sessionTitleEvents";
-import { USE_BACKEND } from "@/lib/api/client";
 
 export interface ChatSession {
   id: string;
@@ -182,7 +181,7 @@ export const useChatSessions = create<ChatSessionsState>()(
        * 仍拿不到就放弃（下次进对话页 syncFromBackend 自然会拉到），不为它设长任务。
        */
       awaitGeneratedTitle: async (id) => {
-        if (!USE_BACKEND || !id) return;
+        if (!id) return;
         const current = get().sessions.find((s) => s.id === id);
         if (!current || current.titleGenerated) return; // 已经是 AI 标题，无需轮询
         for (const delay of [1500, 1500, 1500]) {
@@ -203,7 +202,6 @@ export const useChatSessions = create<ChatSessionsState>()(
         }
       },
       syncFromBackend: async () => {
-        if (!USE_BACKEND) return;
         if (get().syncing) return;
         set({ syncing: true });
         try {
@@ -253,7 +251,7 @@ export const useChatSessions = create<ChatSessionsState>()(
         }
       },
       loadHistory: async (id) => {
-        if (!USE_BACKEND || !id) return;
+        if (!id) return;
         // 快照新鲜度:请求发起后本会话若有过本地消息写入(流式写回/新回合
         // 终态),返回的快照已落后于本地,整份丢弃——否则晚到的旧历史会把
         // 停止/刚结束轮次的本地终态(stopped、部分内容)整个冲掉

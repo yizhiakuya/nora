@@ -8,12 +8,10 @@ import { splitChatRefs, refKey } from "@/lib/chatRefs";
 import { RefChip } from "./RefChip";
 import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
-import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { saveTextAsync } from "@/lib/services/ragService";
 import { workspaceApi } from "@/lib/services/workspaceApi";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
-import { USE_BACKEND } from "@/lib/api/client";
 import { contentKey, contentHashSuffix, getSavedRecord, markSaved } from "@/lib/saveState";
 import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
 import { FileDeliveryCards } from "./FileDeliveryCards";
@@ -122,28 +120,23 @@ function SaveToKnowledgeButton({ msg, sessionId }: { msg: ChatMessage; sessionId
   // 已保存状态按 (会话+内容哈希) 持久化:刷新/切屏后恢复(2026-09-21 修复重复保存)
   const key = contentKey(sessionId, msg.content);
   const [saved, setSaved] = useState(() => getSavedRecord(key).knowledgeSaved === true);
-  const addChatDoc = useKnowledgeDocs((s) => s.addChatDoc);
 
   const handleSave = async () => {
     if (saved) return;
     const title = `对话结论 · ${msg.content.slice(0, 24).replace(/[#*\n]/g, "").trim()}`;
-    // 本地始终留底;后端模式再真实入库(name-keyed 同名覆盖,可在知识库检索)
-    addChatDoc(`${title}…`, msg.content);
     let docId: number | null = null;
-    if (USE_BACKEND) {
-      try {
-        const doc = await saveTextAsync(title, msg.content);
-        docId = doc?.id ?? null;
-      } catch (e) {
-        toast.error(`入库失败：${(e as Error).message}`);
-        return;
-      }
+    try {
+      const doc = await saveTextAsync(title, msg.content);
+      docId = doc?.id ?? null;
+    } catch (e) {
+      toast.error(`入库失败：${(e as Error).message}`);
+      return;
     }
     setSaved(true);
     markSaved(key, { knowledgeSaved: true, knowledgeDocId: docId ?? undefined });
     // B1(2026-09-27):服务端登记归属(来自哪次对话)——换浏览器也能从
     // 资料页找到;登记失败静默(保存本身已成功,登记是增益)
-    if (USE_BACKEND && docId != null) {
+    if (docId != null) {
       void savedArtifactsApi.register({
         kind: "knowledge_doc",
         path: String(docId),
@@ -152,7 +145,7 @@ function SaveToKnowledgeButton({ msg, sessionId }: { msg: ChatMessage; sessionId
         messageKey: key,
       });
     }
-    toast.success(USE_BACKEND ? "已入库，可在知识库检索" : "已保存到本地知识库");
+    toast.success("已入库，可在知识库检索");
   };
 
   return (
@@ -186,10 +179,6 @@ function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: st
   const handleSave = async () => {
     if (savedPath) { void useFileViewer.getState().openTargets([`workspace:${savedPath}`], undefined, { sessionId }); return; }
     if (saving) return;
-    if (!USE_BACKEND) {
-      toast.info("保存为文件需要连接后端服务");
-      return;
-    }
     setSaving(true);
     try {
       // 文件名:首行标题(去 Markdown 标记)+ 内容哈希后缀——同一回答重复保存

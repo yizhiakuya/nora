@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import { withAuthToken } from "@/lib/auth";
+import { requestJson } from "@/lib/api/client";import { withAuthToken } from "@/lib/auth";
 
 /** 工作区文件条目(后端相对路径)。 */
 export interface WorkspaceEntry {
@@ -17,7 +16,7 @@ export interface WorkspaceStats {
 }
 
 /**
- * Agent 工作区接入层(USE_BACKEND 开关):
+ * Agent 工作区接入层:
  * - getStats    → GET    /api/workspace
  * - listFiles   → GET    /api/workspace/files?dir=
  * - readFile    → GET    /api/workspace/file?path=
@@ -26,11 +25,9 @@ export interface WorkspaceStats {
  */
 export const workspaceApi = {
   async getStats(): Promise<WorkspaceStats | null> {
-    if (!USE_BACKEND) return null;
     return requestJson<WorkspaceStats>("/workspace");
   },
   async listFiles(dir?: string): Promise<WorkspaceEntry[]> {
-    if (!USE_BACKEND) return [];
     const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
     return requestJson<WorkspaceEntry[]>(`/workspace/files${q}`);
   },

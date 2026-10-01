@@ -1,5 +1,4 @@
-import { requestJson, USE_BACKEND } from "@/lib/api/client";
-import { withAuthToken } from "@/lib/auth";
+import { requestJson } from "@/lib/api/client";import { withAuthToken } from "@/lib/auth";
 
 /** 媒体缓存条目(后端 MediaCacheService.CachedItem)。 */
 export interface CachedMediaItem {
@@ -35,15 +34,12 @@ export interface CachedMediaList {
  */
 export const mediaCacheApi = {
   async list(): Promise<CachedMediaList | null> {
-    if (!USE_BACKEND) return null;
     return requestJson<CachedMediaList>("/media/cached");
   },
   async remove(key: string): Promise<void> {
-    if (!USE_BACKEND) return;
     await requestJson<boolean>(`/media/cached/${encodeURIComponent(key)}`, { method: "DELETE" });
   },
   async clear(): Promise<number> {
-    if (!USE_BACKEND) return 0;
     return requestJson<number>("/media/cached", { method: "DELETE" });
   },
   /**

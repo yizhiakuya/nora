@@ -5,9 +5,9 @@
 目标用户：个人用户（文件管理）+ 开发者（数据源查询、环境控制、自动任务）。
 技术栈：Vite 7 (React SPA) · react-router-dom v7 · Tailwind CSS 3 · Radix UI · Zustand 5 · TypeScript 5 · Vitest 4。
 
-> **后端已接入（2026-09 更新）**：本仓库不再"纯前端"。后端 `nora-api`（Spring Boot 3.3 微服务）已提供
-> file / rag / agent / datasource / env / automation 六组 API，前端通过 `VITE_USE_BACKEND` 开关切换
-> 真实后端与本地 Mock。详见下方[「后端接入现状」](#-后端接入现状)。
+> **后端已接入（2026-10 更新）**：本仓库不再"纯前端"。后端 `nora-api`（Spring Boot 3.3 微服务）提供
+> 全部业务 API，**前端不内置 Mock——所有域都走真实后端**（Mock 模式已整体删除）。
+> 详见下方[「后端接入现状」](#-后端接入现状)。
 
 ## 🤖 AI 智能体开发职责边界 (Agent Boundaries)
 
@@ -21,16 +21,15 @@
 1. **不在前端实现后端业务逻辑**：不在此项目中引入 Prisma、Supabase、PostgreSQL 或任何 ORM / 直连数据库。
 2. **不绕过契约层直连**：组件与 Hook 不得直接 `fetch`，必须经由 `src/lib/api/client.ts` 的 `requestJson`
    （统一解开 `{code,data,message}` 信封、统一错误抛出）与 `src/lib/services/*Api.ts`。
-3. **不在前端伪造业务结果**：后端返回真实数据时不要用 Mock 覆盖；Mock 只作为 `USE_BACKEND=false` 的回退路径。
+3. **不在前端伪造业务结果**：前端不内置 Mock,不造假数据；接口失败如实报错(humanize + hint),空态引导操作。
 4. **不改动后端仓库**：后端代码在 `../nora-api`，需要改接口时提出契约需求而非在此处绕过。
 
 ## 🏗️ 前端架构与模块化规范 (Architecture & Modularization)
 **核心原则：高内聚、低耦合，严禁出现数百行的臃肿组件。**
 
-1. **业务解耦 (Mock 数据层)**：
-   - Mock 数据按模块使用：`src/lib/mockData.ts`（文件/能力）、`src/lib/devData.ts`（数据源/环境/自动任务）、`src/lib/knowledgeData.ts`（知识库 RAG）。
-   - 配合 `@faker-js/faker` 与 `src/lib/api/mockApi.ts` 模拟后端延迟(`setTimeout`)与分页机制。
-   - **Mock 仅用于 `USE_BACKEND=false` 或后端尚未提供的域**，不得覆盖后端真实返回值。
+1. **业务解耦 (契约层)**：
+   - 所有数据经 `src/lib/services/*Api.ts` 契约层调用真实后端,组件与 Hook 不直接 fetch。
+   - 接口失败走统一错误体系(humanize + hint + errorRaw 折叠),空态引导操作,不造假数据。
 2. **UI 模块化拆分 (UI Componentization)**：
    - 页面级文件 (`src/app/*/page.tsx`) **仅作为胶水层**，负责引入组件、使用 Hook 传递状态（建议 ≤150 行）。
    - 任何超过 100-150 行，或承担独立业务的 UI 区块，必须抽离为独立组件，存放在按领域划分的目录中（例如 `src/components/chat/ChatMessageItem.tsx`、`src/components/ui/custom/Modal.tsx`）。
@@ -44,9 +43,8 @@
 
 ## 🔌 后端接入现状
 
-- 开关：`src/lib/api/client.ts` 中的 `USE_BACKEND`（读取 `import.meta.env.VITE_USE_BACKEND`）。
-- 开发环境：`.env.local` 当前为 `VITE_USE_BACKEND=true`；`vite.config.ts` 将 `/api` 代理到 `http://localhost:8080`（gateway）。
-- 契约层：`src/lib/services/*Api.ts` + `src/lib/api/{agentApi,chatApi,sse}.ts`。
+- 全部域直连真实后端(无开关、无 Mock);`vite.config.ts` 将 `/api` 代理到 `http://localhost:18080`(gateway)。
+- 契约层:`src/lib/services/*Api.ts` + `src/lib/api/{agentApi,chatApi,sse}.ts`。
 
 | 域 | 契约文件 | 后端端点 | 状态 |
 |---|---|---|---|
@@ -64,8 +62,8 @@
 | 媒体缓存 | `mediaCacheApi.ts` | `/api/media/**` | ✅ 已接入（缓存列表/删除/保存到文件中心/代理预览） |
 | 登录 | `auth.ts` | `/api/auth/**` | ✅ 已接入（令牌登录,缺省免登录；SSE/img 走 `?token=`） |
 
-新增接入时遵循同一模式：在 `lib/services/` 建 `xxxApi.ts`，导出 async 函数并在内部 `requestJson`；
-Hook 中按 `USE_BACKEND` 分流；保留同步 Mock 函数作为回退，**并在 JSDoc 中注明它是回退实现**。
+新增接入时遵循同一模式:在 `lib/services/` 建 `xxxApi.ts`,导出 async 函数并在内部 `requestJson`;
+Hook 直接调契约层,接口失败如实报错、空态引导操作。
 **带令牌的媒体/下载入口必须用 `withAuthToken()`**（`<img>`/`window.open`/EventSource 无法带 header，2026-09-20 统一修复过一批遗漏）。
 
 ## 📁 目录约定 (Directory Structure)
@@ -76,10 +74,10 @@ Hook 中按 `USE_BACKEND` 分流；保留同步 Mock 函数作为回退，**并�
 - `/src/components/layout`: Sidebar, Header, NotificationBell, ThemeProvider。
 - `/src/components/shared`: Markdown 等跨域组件。
 - `/src/hooks`: 前端业务逻辑钩子（Zustand store + persist 或纯状态机）。
-- `/src/lib/api`: HTTP 客户端、SSE 客户端、Mock API（`client.ts` / `sse.ts` / `agentApi.ts` / `chatApi.ts` / `mockApi.ts`）。
+- `/src/lib/api`: HTTP 客户端、SSE 客户端（`client.ts` / `sse.ts` / `agentApi.ts` / `chatApi.ts`）。
 - `/src/lib/services`: 后端 API 契约层（`filesApi.ts` / `ragService.ts` / `datasourcesApi.ts` / `environmentApi.ts` / `automationsApi.ts` / `modelsApi.ts`）。
 - `/src/lib/next-shims`: Next.js 兼容残留（仅 `dynamic.tsx`；Link / Image / navigation / usePathname / redirect 已于 2026-09-16 删除——全仓库零引用）。
-- `/src/lib`: 全局工具函数与静态 Mock 数据总线。
+- `/src/lib`: 全局工具函数。
 - `/src/types`: 全局 TypeScript 接口定义。
 
 ## 🔄 Next.js 兼容层 (next-shims)
@@ -111,7 +109,7 @@ Hook 中按 `USE_BACKEND` 分流；保留同步 Mock 函数作为回退，**并�
 3. 保持模块化：页面只做胶水，业务进组件，逻辑进 Hook，类型进 `src/types`。
 4. 文档随代码更新：接入新域或改契约后，同步更新本文件的「后端接入现状」表。
 
-5. **不要以次充好**：缺依赖就安装依赖（pnpm add），不要手写临时替代品、不要降级实现、不要 mock 绕过。标准组件用标准库（如 radix-ui），与项目既有技术栈保持一致。
+5. **不要以次充好**:缺依赖就安装依赖(pnpm add),不要手写临时替代品、不要降级实现、不要 mock 绕过。标准组件用标准库(如 radix-ui),与项目既有技术栈保持一致。
 
 6. **单测不写断言**（2026-09-12 用户明确要求）：前端单元测试仅作冒烟——执行渲染/交互路径、不校验结果（抛异常即失败）；行为正确性由 E2E 实测验证。写测试时不要加 `expect(...)` 断言；改动相关文件时顺手移除已有断言。
 

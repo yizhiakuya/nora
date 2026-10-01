@@ -8,7 +8,6 @@ import { Loader2 } from "lucide-react";
 import type { FileItem, KnowledgeBase } from "@/types";
 import { fetchBases, previewChunks, type ChunkPreview } from "@/lib/services/ragService";
 import { filesApi } from "@/lib/services/filesApi";
-import { USE_BACKEND } from "@/lib/api/client";
 
 /** 入知识库的分段配置(与后端 /index 的 chunkMode/chunkSize/overlap/separator 对齐)。 */
 export interface IndexChunkConfig {
@@ -47,7 +46,7 @@ export function IndexToKnowledgeModal({ file, onClose, onConfirm, submitting = f
 
   // 打开时加载资料库列表(默认库在前,含文档数)
   useEffect(() => {
-    if (!file || !USE_BACKEND) return;
+    if (!file) return;
     setBaseId(null);
     setMode("");
     setChunkSize("");
