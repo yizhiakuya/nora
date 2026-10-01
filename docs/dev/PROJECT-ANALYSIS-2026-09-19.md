@@ -83,7 +83,7 @@ flowchart TD
 
 ### P1：相册中继缓存绕过鉴权（隔离 HTTP 实测）
 
-位置：[relay.mjs:267](D:/claude/Nora/phone-album-mcp/relay/relay.mjs:267)、[relay.mjs:918](D:/claude/Nora/phone-album-mcp/relay/relay.mjs:918)。
+位置：[relay.mjs:267](../../phone-album-mcp/relay/relay.mjs:267)、[relay.mjs:918](../../phone-album-mcp/relay/relay.mjs:918)。
 
 缓存键主动删除 `t` 令牌；HTTP 处理在转发手机前先查缓存，命中后直接返回。手机端鉴权不会再运行。仓库中的中继 Nginx 配置也没有为图片路径补充独立鉴权。
 
@@ -100,7 +100,7 @@ RELAY wrong-token 200 cache HIT syntheticBody True
 
 ### P1：“只读 SQL”检查不能保证只读（隔离调用实测）
 
-位置：[SqlGuard.java:87](D:/claude/Nora/nora-api/services/datasource-service/src/main/java/com/nora/datasource/service/SqlGuard.java:87)、[DatasourceServiceImpl.java:192](D:/claude/Nora/nora-api/services/datasource-service/src/main/java/com/nora/datasource/service/DatasourceServiceImpl.java:192)。
+位置：[SqlGuard.java:87](../../nora-api/services/datasource-service/src/main/java/com/nora/datasource/service/SqlGuard.java:87)、[DatasourceServiceImpl.java:192](../../nora-api/services/datasource-service/src/main/java/com/nora/datasource/service/DatasourceServiceImpl.java:192)。
 
 `EXPLAIN ANALYZE` 检查只看紧接着的首个动词；内部是 `WITH` 时无法识别 CTE 内的写操作。隔离调用真实编译类确认以下字符串被放行：
 
@@ -116,7 +116,7 @@ SELECT * FROM x
 
 ### P1：自动任务可能在后端失败后显示“执行成功”（源码确认）
 
-位置：[useAutomations.ts:59](D:/claude/Nora/nora-web/src/hooks/useAutomations.ts:59)、[useAutomations.ts:116](D:/claude/Nora/nora-web/src/hooks/useAutomations.ts:116)、[NewAutomationModal.tsx:40](D:/claude/Nora/nora-web/src/components/automations/NewAutomationModal.tsx:40)。
+位置：[useAutomations.ts:59](../../nora-web/src/hooks/useAutomations.ts:59)、[useAutomations.ts:116](../../nora-web/src/hooks/useAutomations.ts:116)、[NewAutomationModal.tsx:40](../../nora-web/src/components/automations/NewAutomationModal.tsx:40)。
 
 创建任务先加入 `Date.now()` ID 的乐观条目，请求失败后仍保留，弹窗立即提示创建成功。之后点击运行时，只有 `id < 1e12` 才会调用后端；该乐观条目会进入本地分支，生成固定“1.2s / success”的记录。因而在真实后端模式下也能出现未创建、未执行却报告成功的情况。
 
@@ -126,7 +126,7 @@ SELECT * FROM x
 
 ### P1（部署条件风险）：网关鉴权依赖下游端口隔离
 
-位置：[AuthGatewayFilter.java:58](D:/claude/Nora/nora-api/services/gateway-service/src/main/java/com/nora/gateway/auth/AuthGatewayFilter.java:58)、[deploy-megumin.sh:59](D:/claude/Nora/scripts/deploy-megumin.sh:59)。
+位置：[AuthGatewayFilter.java:58](../../nora-api/services/gateway-service/src/main/java/com/nora/gateway/auth/AuthGatewayFilter.java:58)、[deploy-megumin.sh:59](../../scripts/deploy-megumin.sh:59)。
 
 本机实测 `/api/auth/status` 返回 `authRequired:false`，8080–8087 监听地址为 `::`，直接请求 8083 的 skills 接口无需令牌得到 200。下游服务依赖网关作为鉴权入口，通用 JWT 模块的存在不代表这些路径已受保护。
 
@@ -136,7 +136,7 @@ SELECT * FROM x
 
 ### P2：审批结果存在先完成后等待的竞态（隔离调用实测）
 
-位置：[ApprovalService.java:106](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ApprovalService.java:106)、[ToolStepEmitter.java:159](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:159)。
+位置：[ApprovalService.java:106](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ApprovalService.java:106)、[ToolStepEmitter.java:159](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:159)。
 
 register 在 Future 完成回调中立即删除 pending；await 又通过 token 去 pending 查 Future。注册后先 resolve(true)、再 await 的实际结果是：
 
@@ -148,7 +148,7 @@ APPROVAL resolve=true await=false
 
 ### P2：SSE 接续同时存在游标协议不一致和缓存截断
 
-位置：[TurnStreamController.java:96](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/controller/TurnStreamController.java:96)、[TurnStreamController.java:143](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/controller/TurnStreamController.java:143)、[TurnStreamRegistry.java:56](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/TurnStreamRegistry.java:56)。
+位置：[TurnStreamController.java:96](../../nora-api/services/agent-service/src/main/java/com/nora/agent/controller/TurnStreamController.java:96)、[TurnStreamController.java:143](../../nora-api/services/agent-service/src/main/java/com/nora/agent/controller/TurnStreamController.java:143)、[TurnStreamRegistry.java:56](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/TurnStreamRegistry.java:56)。
 
 - 源码确认：解析 Last-Event-ID 要求 `turnId:seq`，实际发送的事件 id 却只有 `seq`。浏览器自动重连传回的数字无法通过解析，游标退回 0，可能重复回放并追加文本。
 - 隔离复现：append 8,002 条事件后，lastSeq 为 8,002，但 snapshotAfter(8000) 返回 0 条。达到 8,000 上限后停止记录新事件，仍继续给在线连接推送；掉线期间的新内容无法回放。
@@ -157,7 +157,7 @@ APPROVAL resolve=true await=false
 
 ### P2：同一会话缺少服务端并发轮次保护（源码确认）
 
-位置：[AgentController.java:127](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/controller/AgentController.java:127)、[TurnStreamRegistry.java:124](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/TurnStreamRegistry.java:124)。
+位置：[AgentController.java:127](../../nora-api/services/agent-service/src/main/java/com/nora/agent/controller/AgentController.java:127)、[TurnStreamRegistry.java:124](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/TurnStreamRegistry.java:124)。
 
 发送入口使用 activeTurns.put 覆盖句柄；实时流也按 sessionId 覆盖，取消标志在新轮次开始时重置。两个标签页或重复请求并发发送时，旧轮次没有被拒绝或明确终止，会发生两轮同时执行，而取消只控制其中一个句柄的问题。
 
@@ -165,7 +165,7 @@ APPROVAL resolve=true await=false
 
 ### P2：首次索引失败状态会随事务回滚（源码确认）
 
-位置：[IndexingService.java:68](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:68)、[IndexingService.java:106](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:106)。
+位置：[IndexingService.java:68](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:68)、[IndexingService.java:106](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:106)。
 
 indexDocument 的整个方法带 @Transactional，在事务里调用外部 embedding；异常时 markFailed 使用默认 TransactionTemplate，随后重抛 RuntimeException。失败标记没有独立于外层事务提交，新 processing 行及 failed 更新会一起回滚。长时间 embedding 还会占用事务连接。
 
@@ -173,7 +173,7 @@ reindexChunks 已采用事务外 embedding + 短事务写入，但首次索引�
 
 ### P2：文件生命周期同步失败后缺少自动补偿（源码确认）
 
-位置：[RagIndexClient.java:69](D:/claude/Nora/nora-api/services/file-service/src/main/java/com/nora/file/client/RagIndexClient.java:69)。
+位置：[RagIndexClient.java:69](../../nora-api/services/file-service/src/main/java/com/nora/file/client/RagIndexClient.java:69)。
 
 文件删除 / 恢复 / 永久删除的 RAG 通知是 @Async HTTP，失败只记日志。已有索引完成时复查文件的补偿，但无法覆盖“文档早已索引，删除时 RAG 不可用，随后 RAG 恢复”这一场景，旧文档仍可能进入检索。
 
@@ -181,7 +181,7 @@ reindexChunks 已采用事务外 embedding + 短事务写入，但首次索引�
 
 ### P2：开启登录后部分媒体入口遗漏令牌（源码确认）
 
-位置：[mediaCacheApi.ts:59](D:/claude/Nora/nora-web/src/lib/services/mediaCacheApi.ts:59)、[MediaCacheBrowser.tsx:154](D:/claude/Nora/nora-web/src/components/files/MediaCacheBrowser.tsx:154)、[FileViewerModal.tsx:59](D:/claude/Nora/nora-web/src/components/files/viewer/FileViewerModal.tsx:59)。
+位置：[mediaCacheApi.ts:59](../../nora-web/src/lib/services/mediaCacheApi.ts:59)、[MediaCacheBrowser.tsx:154](../../nora-web/src/components/files/MediaCacheBrowser.tsx:154)、[FileViewerModal.tsx:59](../../nora-web/src/components/files/viewer/FileViewerModal.tsx:59)。
 
 缓存浏览器的 img / video 使用 previewUrl 生成的裸 `/api/media/cache`，原文件打开路径也直接 window.open 裸 raw URL。它们无法携带 Bearer header，又没有添加 token。启用网关令牌后会被 401 拦截；其他媒体路径已有 withAuthToken，可统一复用。
 
@@ -189,7 +189,7 @@ reindexChunks 已采用事务外 embedding + 短事务写入，但首次索引�
 
 ### P2：自动任务 UI 提供尚未接通的触发条件
 
-位置：[NewAutomationModal.tsx:11](D:/claude/Nora/nora-web/src/components/automations/NewAutomationModal.tsx:11)、[AutomationService.java:170](D:/claude/Nora/nora-api/services/automation-service/src/main/java/com/nora/automation/service/AutomationService.java:170)。
+位置：[NewAutomationModal.tsx:11](../../nora-web/src/components/automations/NewAutomationModal.tsx:11)、[AutomationService.java:170](../../nora-api/services/automation-service/src/main/java/com/nora/automation/service/AutomationService.java:170)。
 
 浏览器实见“文件上传时”和“服务异常时”；后端 create 也接受 file / error，但当前调度只扫描 daily / weekly。在 automation 服务实现及调用方中未找到这些事件驱动的执行接线。用户可以保存出看似有效但不会因相应事件自动运行的规则。
 

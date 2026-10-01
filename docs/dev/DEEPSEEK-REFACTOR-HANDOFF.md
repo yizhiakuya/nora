@@ -1,12 +1,12 @@
 # 给 DeepSeek 的 Nora 改造执行说明
 
-完整方案：`D:\claude\Nora\NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md`
+完整方案：`../../NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md`
 
 把下面内容发给有该仓库访问权限的 DeepSeek。如果对方只能接收附件，同时提供完整方案和必要仓库文件；不要只给这份短说明。
 
 ---
 
-请按完整方案实施 Nora 产品改造。项目目录是 `D:\claude\Nora`。
+请按完整方案实施 Nora 产品改造。项目目录是仓库根。
 
 先完整阅读 `NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md`，再读根目录及目标模块的 `AGENTS.md`。不要依赖你拥有前面聊天上下文，完整方案已经包含目标、现状、范围、实施任务和验收条件。
 

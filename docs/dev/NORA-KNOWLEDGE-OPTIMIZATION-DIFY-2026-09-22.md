@@ -266,18 +266,18 @@ Embedding 模型、维度和影响向量语义的配置属于索引身份。缓�
 
 | 核对内容 | 入口 |
 |---|---|
-| 召回顺序、融合分和 500 字符截取 | [RetrievalService.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/RetrievalService.java:107) |
-| 分段边界 | [ChunkingService.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/ChunkingService.java) |
-| 建索引和原地重建的不同事务顺序 | [IndexingService.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:78) |
-| 预览接口用于入库、检索参数、重建接口 | [RagController.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/controller/RagController.java) |
-| Tika 提取上限和异常返回 | [TextExtractionService.java](D:/claude/Nora/nora-api/services/file-service/src/main/java/com/nora/file/service/TextExtractionService.java:59) |
-| 文件预览读取原文件并提取 | [FileStorageService.java](D:/claude/Nora/nora-api/services/file-service/src/main/java/com/nora/file/service/FileStorageService.java:416) |
-| 文件生命周期待同步与记录清理 | [RagIndexClient.java](D:/claude/Nora/nora-api/services/file-service/src/main/java/com/nora/file/client/RagIndexClient.java) |
-| 生命周期版本推进 | [KnowledgeDocService.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/KnowledgeDocService.java:129) |
-| Embedding 缓存模型隔离 | [EmbeddingService.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/EmbeddingService.java:140) |
-| 初始文档结构与 vector(1024) | [V1__init.sql](D:/claude/Nora/nora-api/services/rag-service/src/main/resources/db/migration/V1__init.sql) |
-| 检索传输字段 | [RetrievalResult.java](D:/claude/Nora/nora-api/api/rag-api/src/main/java/com/nora/rag/api/RetrievalResult.java) |
-| 聊天使用 snippet 及文件名引用 | [ChatContextAssembler.java](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:599) |
-| 检索异常映射为空结果 | [RagRetrievalClient.java](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/RagRetrievalClient.java) |
-| 检索测试中的百分比分数和调用参数 | [RetrievalTest.tsx](D:/claude/Nora/nora-web/src/components/knowledge/RetrievalTest.tsx) |
-| 现有知识入口与导入交互 | [KnowledgeView.tsx](D:/claude/Nora/nora-web/src/components/knowledge/KnowledgeView.tsx) |
+| 召回顺序、融合分和 500 字符截取 | [RetrievalService.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/RetrievalService.java:107) |
+| 分段边界 | [ChunkingService.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/ChunkingService.java) |
+| 建索引和原地重建的不同事务顺序 | [IndexingService.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:78) |
+| 预览接口用于入库、检索参数、重建接口 | [RagController.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/controller/RagController.java) |
+| Tika 提取上限和异常返回 | [TextExtractionService.java](../../nora-api/services/file-service/src/main/java/com/nora/file/service/TextExtractionService.java:59) |
+| 文件预览读取原文件并提取 | [FileStorageService.java](../../nora-api/services/file-service/src/main/java/com/nora/file/service/FileStorageService.java:416) |
+| 文件生命周期待同步与记录清理 | [RagIndexClient.java](../../nora-api/services/file-service/src/main/java/com/nora/file/client/RagIndexClient.java) |
+| 生命周期版本推进 | [KnowledgeDocService.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/KnowledgeDocService.java:129) |
+| Embedding 缓存模型隔离 | [EmbeddingService.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/EmbeddingService.java:140) |
+| 初始文档结构与 vector(1024) | [V1__init.sql](../../nora-api/services/rag-service/src/main/resources/db/migration/V1__init.sql) |
+| 检索传输字段 | [RetrievalResult.java](../../nora-api/api/rag-api/src/main/java/com/nora/rag/api/RetrievalResult.java) |
+| 聊天使用 snippet 及文件名引用 | [ChatContextAssembler.java](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:599) |
+| 检索异常映射为空结果 | [RagRetrievalClient.java](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/RagRetrievalClient.java) |
+| 检索测试中的百分比分数和调用参数 | [RetrievalTest.tsx](../../nora-web/src/components/knowledge/RetrievalTest.tsx) |
+| 现有知识入口与导入交互 | [KnowledgeView.tsx](../../nora-web/src/components/knowledge/KnowledgeView.tsx) |

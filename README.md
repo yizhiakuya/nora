@@ -189,6 +189,7 @@ Nora/
 | [nora-api/docs/architecture-v2.md](nora-api/docs/architecture-v2.md) | **微服务架构设计**(服务划分 / 数据流 / 路线图) |
 | [nora-api/docs/agent-implementation-spec.md](nora-api/docs/agent-implementation-spec.md) | **Agent 实施规格**(ReAct 协议 / 工具契约 / 审批协议) |
 | [nora-api/docs/agent-permission-and-tools-design.md](nora-api/docs/agent-permission-and-tools-design.md) | 权限与风险分级权威参考 |
+| [docs/dev/](docs/dev/) | 开发文档:设计评审 / 改造方案 / 实施记录(演进档案) |
 | [nora-web/README.md](nora-web/README.md) | 前端技术栈与项目结构 |
 | [nora-api/README.md](nora-api/README.md) | 后端服务清单与端点 |
 | [phone-album-mcp/README.md](phone-album-mcp/README.md) | 手机相册 MCP(Android App + 中继部署) |

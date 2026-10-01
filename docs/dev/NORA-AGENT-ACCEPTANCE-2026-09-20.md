@@ -20,7 +20,7 @@
 
 ### F1 · P1：历史裁剪会把已经作废的目标重新提升为 system 指令
 
-位置：[ChatContextAssembler.java:168](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:168)、[taskAnchor:185](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:185)。
+位置：[ChatContextAssembler.java:168](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:168)、[taskAnchor:185](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:185)。
 
 当前实现寻找被裁掉历史中的第一条用户消息，截取前 400 字，作为 system 消息注入，并写明“继续以它为准”。它没有合并用户后续的纠正、撤销或任务切换。
 
@@ -34,7 +34,7 @@
 
 ### F2 · P2：MCP 的自动重放直接信任远端只读声明
 
-位置：[McpServerService.java:331](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/McpServerService.java:331)、[declaredReadOnly:361](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/McpServerService.java:361)。
+位置：[McpServerService.java:331](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/McpServerService.java:331)、[declaredReadOnly:361](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/McpServerService.java:361)。
 
 是否重做调用，直接取决于缓存中的 `readOnlyHint`。这条调用路径没有进一步确认本地是否信任该声明，与设计中“远端注解仅供参考，执行策略需要本地信任配置”不一致。
 
@@ -48,7 +48,7 @@
 
 ### F3 · P2：全部下载失败被标为“部分成功”
 
-位置：[ChatToolExecutor.java:1394](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatToolExecutor.java:1394)。
+位置：[ChatToolExecutor.java:1394](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatToolExecutor.java:1394)。
 
 只要 `failed > 0` 就设置 `partial=true`，没有判断是否存在成功或可用的已存在文件。前面的清单失败分支只覆盖 `total == 0`，不能处理清单成功、文件全部下载失败的情况。
 
@@ -60,7 +60,7 @@
 
 ### F4 · P2：调用指纹仍然同时存在漏拦和误拦
 
-位置：[ToolStepEmitter.java:135](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:135)、[normalizeArgs:527](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:527)。
+位置：[ToolStepEmitter.java:135](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:135)、[normalizeArgs:527](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:527)。
 
 工作区、MCP 等工具直接使用原始 JSON 作为指纹，包含展示用的 `description`，也受字段顺序影响。另一边，`manage_file` 只使用文件目标，不包含 action、改名或移动目的地。
 
@@ -72,7 +72,7 @@
 
 ### F5 · P2：只比较结果头尾，会把真实变化误判为没有进展
 
-位置：[ToolStepEmitter.java:266](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:266)。
+位置：[ToolStepEmitter.java:266](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:266)。
 
 超过 2000 字符的结果，只比较前后各 1000 字符和总长度。中间内容变化但长度不变时，结果指纹完全相同。
 
@@ -84,7 +84,7 @@
 
 ### F6 · P2：截断提示给出的续读路径和起始行不可靠
 
-位置：[AgentWorkspaceService.java:417](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/AgentWorkspaceService.java:417)。
+位置：[AgentWorkspaceService.java:417](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/AgentWorkspaceService.java:417)。
 
 初次读取按 200000 字符截断，提示却固定从第 501 行继续；路径也只保留文件名，丢失目录。
 
@@ -96,7 +96,7 @@
 
 ### F7 · P2：本地参数解析失败也被报告为远端结果未知
 
-位置：[McpServerService.java:323](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/McpServerService.java:323)。
+位置：[McpServerService.java:323](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/McpServerService.java:323)。
 
 参数 JSON 解析与远端调用处在同一个异常处理分支。即使解析尚未完成、请求未发出，也会提示“该操作可能已在远端生效，不要直接重发”。
 
@@ -147,7 +147,7 @@
 
 ## 6. 本机复现证据
 
-临时探针目录：`C:/Users/24883/AppData/Local/Temp/nora-agent-acceptance-ehen37ee`。
+临时探针目录：系统临时目录下的验收探针目录。
 
 - `probe.py` / `AcceptanceProbe.java`：参数别名、循环检测、上下文装配和文件续读。
 - `probe-output.txt`：对应实际输出。
@@ -214,7 +214,7 @@ F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `M
 
 #### R1 · P2：最后一条旧用户消息不能替代有效任务状态（F1 未闭环）
 
-位置：[ChatContextAssembler.java:199](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:199)。
+位置：[ChatContextAssembler.java:199](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:199)。
 
 当前实现把被裁历史中最后一条用户消息覆盖到 `latest`。如果这条消息只是“继续”，更早的任务目标和有效限制都会消失。
 
@@ -224,7 +224,7 @@ F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `M
 
 #### R2 · P2：工作区参数规则被应用到全部 MCP 工具，造成误拦（F4 修复引入）
 
-位置：[ToolStepEmitter.java:547](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:547)。
+位置：[ToolStepEmitter.java:547](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:547)。
 
 `canonicalArgs` 不接收工具名，却统一删除 `description`、合并 `filename/file/path`，并将 `save/fetch/download` 归为 `import`。这些规则只适用于已明确约定的内置工具；MCP 中的 description 可能是要更新的正文，path 与 filename 可以同时有独立含义，save 和 fetch 也可以是不同动作。
 
@@ -236,7 +236,7 @@ F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `M
 
 #### R3 · P2：只对最外层排序，lazy MCP 的嵌套参数仍能绕过重复检测（F4 未闭环）
 
-位置：[ToolStepEmitter.java:568](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:568)。
+位置：[ToolStepEmitter.java:568](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:568)。
 
 外层键放入 TreeMap，但值仍直接调用 `JsonNode.toString()`。`manage_mcp action=call` 的真实参数在 arguments 对象内，其键顺序仍参与指纹。
 
@@ -246,7 +246,7 @@ F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `M
 
 #### R4 · P2：续读参数直接拼接路径，Windows 路径使 JSON 非法（F6 未闭环）
 
-位置：[AgentWorkspaceService.java:428](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/AgentWorkspaceService.java:428)。
+位置：[AgentWorkspaceService.java:428](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/AgentWorkspaceService.java:428)。
 
 只有 originalPath 为空时才将反斜杠转成斜杠；正常传入 `C:\Users\…\long.txt` 时，会原样插进 JSON 字符串，未转义反斜杠。
 
@@ -262,7 +262,7 @@ F1–F7 全部修复，逐项按本文复验标准重跑探针（`probe.py` / `M
 - 本轮没有重跑真实模型对话或浏览器交互；结论针对上述修复路径，不代表所有 Agent 场景均验收通过。
 - 没有沿用旧脚本硬编码的错误续读路径作为新证据；本轮从当前工具返回值提取续读参数再执行。也没有用“输出中不再包含旧目标”代替“正确目标仍被保留”的检查。
 
-复现材料：`C:/Users/24883/AppData/Local/Temp/nora-agent-reacceptance-20260920/` 下的 `RoundTwoProbe.java`、`run.py` 和 `observations.txt`。运行 `rtk proxy python -X utf8 <该目录>/run.py` 可执行；它读取项目已编译类，因此改代码后须先重新编译。探针不带单测断言，观察值保存在文本中。
+复现材料：系统临时目录下的复现材料目录 下的 `RoundTwoProbe.java`、`run.py` 和 `observations.txt`。运行 `rtk proxy python -X utf8 <该目录>/run.py` 可执行；它读取项目已编译类，因此改代码后须先重新编译。探针不带单测断言，观察值保存在文本中。
 
 ```text
 CONTEXT_KEEP_PRESENT=false OLD_TASK_PRESENT=false
@@ -312,7 +312,7 @@ R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.p
 
 #### T1 · P2：只保留最后一条实质消息，仍会丢失先前有效限制
 
-位置：[ChatContextAssembler.java:203](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:203)。
+位置：[ChatContextAssembler.java:203](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatContextAssembler.java:203)。
 
 实际场景：用户先要求“统计报告数量，全程只读，禁止删除或覆盖原文件”，随后补充“先处理 2026 目录，其余规则不变”；多轮继续后触发裁剪。最终上下文只保留第二条的处理范围，统计目标及只读限制均消失。第二条明确没有撤销原规则，不能替代第一条。补测“继续吧”也会被当成实质消息，覆盖任务信息。
 
@@ -322,7 +322,7 @@ R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.p
 
 #### T2 · P2：路径别名回退仍与执行器不同，连续空值会误拦另一文件
 
-位置：[ToolStepEmitter.java:573](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:573)，对照 [RiskClassifier.java:244](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/RiskClassifier.java:244)。
+位置：[ToolStepEmitter.java:573](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:573)，对照 [RiskClassifier.java:244](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/RiskClassifier.java:244)。
 
 指纹选择 filename 时只检查字段存在；filename 存在但为空时，不会继续选择 file，随后又把两字段都删除。实际执行器却会连续跳过空 path 和空 filename，使用 file。
 
@@ -332,7 +332,7 @@ R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.p
 
 #### T3 · P2：arguments 为 JSON 字符串时，重复检测仍未按执行语义归一
 
-位置：[ToolStepEmitter.java:589](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:589)，对照 [ChatToolExecutor.java:1099](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatToolExecutor.java:1099)。
+位置：[ToolStepEmitter.java:589](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ToolStepEmitter.java:589)，对照 [ChatToolExecutor.java:1099](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatToolExecutor.java:1099)。
 
 当前递归排序处理对象与数组，但文本节点原样保留。执行器明确支持 arguments 传 JSON 字符串，并将其解析为对象再调用远端；所以两个语义相同的调用，在指纹层仍可能不同。
 
@@ -345,7 +345,7 @@ R1–R4 全部修复，第二轮探针（`nora-agent-reacceptance-20260920/run.p
 - 后端 135 项测试通过，0 失败、0 错误、0 跳过。
 - 前端 typecheck、lint、126 项测试、build 通过；此前两条构建警告仍在。
 - 验证覆盖实际上下文装配、实际文件读取、工具步骤和本机 MCP HTTP 请求计数；未运行真实模型完整对话或浏览器 E2E，不扩展为全项目验收结论。
-- 本轮只更新本文件。临时探针及输出：`C:/Users/24883/AppData/Local/Temp/nora-agent-reacceptance3-20260920/` 中的 `RoundTwoProbe.java`、`run.py`、`observations.txt`。运行前需重新编译项目，脚本通过实际输出复验，不含单测断言。
+- 本轮只更新本文件。临时探针及输出：系统临时目录下的复现材料目录 中的 `RoundTwoProbe.java`、`run.py`、`observations.txt`。运行前需重新编译项目，脚本通过实际输出复验，不含单测断言。
 
 ```text
 旧场景：CONTEXT_KEEP_PRESENT=true OLD_TASK_PRESENT=false

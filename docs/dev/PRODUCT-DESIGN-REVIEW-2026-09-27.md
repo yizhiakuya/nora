@@ -46,7 +46,7 @@ Nora 已经具备个人 AI 助手需要的主要执行能力：使用资料、�
 
 自动任务调用正常的 `/sessions/{id}/messages`，复用步骤、回答、审批语义和运行记录。用户还能在规则专属会话中查看处理过程。这个设计减少了两套 Agent 行为逐渐分叉的问题。
 
-依据：[ActionExecutor.java](D:/claude/Nora/nora-api/services/automation-service/src/main/java/com/nora/automation/service/ActionExecutor.java:130)。应继续保持“定时发消息”的既有语义，改进输入和结果关联即可。
+依据：[ActionExecutor.java](../../nora-api/services/automation-service/src/main/java/com/nora/automation/service/ActionExecutor.java:130)。应继续保持“定时发消息”的既有语义，改进输入和结果关联即可。
 
 ### 3.2 引用使用稳定 ID，结果使用原生组件
 
@@ -58,7 +58,7 @@ Nora 已经具备个人 AI 助手需要的主要执行能力：使用资料、�
 
 RAG 采用先构建再发布，失败时保留旧的已发布版本；向量与关键词通道状态分开。文件删除/恢复与 RAG 待投递状态已放进同一事务。它们解决的是实际业务问题：新版构建失败不应让旧资料消失，跨服务短暂失败不应永久丢失资料状态。
 
-依据：[IndexingService.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:102)、[FileLifecycleService.java](D:/claude/Nora/nora-api/services/file-service/src/main/java/com/nora/file/service/FileLifecycleService.java:53)。
+依据：[IndexingService.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/service/IndexingService.java:102)、[FileLifecycleService.java](../../nora-api/services/file-service/src/main/java/com/nora/file/service/FileLifecycleService.java:53)。
 
 ### 3.4 用户保有过程与动作控制
 
@@ -106,7 +106,7 @@ flowchart LR
 
 因此，用户保存的报告不由“已保存成果”列表统一呈现，而未产生可用成果的执行也会出现在这里。9 月 26 日页面观察中，“已保存成果”确实包含“错过计划点”的记录。
 
-依据：[RecentResults.tsx](D:/claude/Nora/nora-web/src/components/home/RecentResults.tsx:19)、[SavedResultsView.tsx](D:/claude/Nora/nora-web/src/components/files/SavedResultsView.tsx:19)、[ChatMessageItem.tsx](D:/claude/Nora/nora-web/src/components/chat/ChatMessageItem.tsx:159)、[saveState.ts](D:/claude/Nora/nora-web/src/lib/saveState.ts:13)。
+依据：[RecentResults.tsx](../../nora-web/src/components/home/RecentResults.tsx:19)、[SavedResultsView.tsx](../../nora-web/src/components/files/SavedResultsView.tsx:19)、[ChatMessageItem.tsx](../../nora-web/src/components/chat/ChatMessageItem.tsx:159)、[saveState.ts](../../nora-web/src/lib/saveState.ts:13)。
 
 **建议：** 近期先让名称与内容一致，执行记录留在任务历史。随后让成果列表聚合已经保存的文件和可打开的结果，保留来源会话/运行及已有文件位置。内容无需复制第三份；浏览器缓存也不应承担成果归属的权威记录。
 
@@ -118,7 +118,7 @@ flowchart LR
 
 例如，上次回答是“已完成整理，文件位于某目录”，这是一段结果陈述，不能完整表达“下周重新查找符合条件的文件并整理”的操作要求。原始筛选范围、目标和来源未通过这个按钮一并带入。
 
-依据：[ExecutionHistory.tsx](D:/claude/Nora/nora-web/src/components/automations/ExecutionHistory.tsx:104)、[NewAutomationModal.tsx](D:/claude/Nora/nora-web/src/components/automations/NewAutomationModal.tsx:65)。
+依据：[ExecutionHistory.tsx](../../nora-web/src/components/automations/ExecutionHistory.tsx:104)、[NewAutomationModal.tsx](../../nora-web/src/components/automations/NewAutomationModal.tsx:65)。
 
 **建议：** 从原始请求复用指令和上下文，原回答作为参考结果。沿用现有任务规则，保存实际需要的输入字段。固定文件集合和“每周新增内容”要分别表达；创建页面展示即将执行的指令、来源和目标。
 
@@ -135,7 +135,7 @@ flowchart LR
 
 在存在多个数据库时，用户在 B 库保存的查询可能在 A 库执行。这是执行目标丢失，优先级高于界面优化。本次通过源码确认，没有对真实数据库发起验证查询。
 
-依据：[QueryConsole.tsx](D:/claude/Nora/nora-web/src/components/data-sources/QueryConsole.tsx:146)、[useAutomations.ts](D:/claude/Nora/nora-web/src/hooks/useAutomations.ts:99)、[AutomationController.java](D:/claude/Nora/nora-api/services/automation-service/src/main/java/com/nora/automation/controller/AutomationController.java:91)、[ActionExecutor.java](D:/claude/Nora/nora-api/services/automation-service/src/main/java/com/nora/automation/service/ActionExecutor.java:107)。
+依据：[QueryConsole.tsx](../../nora-web/src/components/data-sources/QueryConsole.tsx:146)、[useAutomations.ts](../../nora-web/src/hooks/useAutomations.ts:99)、[AutomationController.java](../../nora-api/services/automation-service/src/main/java/com/nora/automation/controller/AutomationController.java:91)、[ActionExecutor.java](../../nora-api/services/automation-service/src/main/java/com/nora/automation/service/ActionExecutor.java:107)。
 
 **建议：** 将连接 ID 贯穿保存与执行。缺少目标的历史 SQL 规则标为需配置，用户指定后执行；创建时展示数据库与计划时间。连接名称仅作为显示信息。
 
@@ -147,7 +147,7 @@ flowchart LR
 
 所以当前“引用某份资料”的实际含义是优先加入该资料；它不会使其他知识库内容自动退出检索。这个行为可以作为默认策略，但界面需要说明，限定资料分析场景需要另有可执行的范围。
 
-依据：[ChatOrchestrationService.java](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatOrchestrationService.java:367)、[RagRetrievalClient.java](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/RagRetrievalClient.java:41)、[RagController.java](D:/claude/Nora/nora-api/services/rag-service/src/main/java/com/nora/rag/controller/RagController.java:215)。
+依据：[ChatOrchestrationService.java](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatOrchestrationService.java:367)、[RagRetrievalClient.java](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/RagRetrievalClient.java:41)、[RagController.java](../../nora-api/services/rag-service/src/main/java/com/nora/rag/controller/RagController.java:215)。
 
 此外，`TaskContext` 声明了 output、origin、dataSelection，但在检查的 Agent/Automation 主代码与前端请求组装中，实际消费主要集中于 refs；前端 `contextFromRefs` 只发送 version/refs。不能仅凭 DTO 的字段认定输出目标和动态范围已经完成接线。
 
@@ -161,7 +161,7 @@ flowchart LR
 
 这会造成同一条记录在任务历史显示“结果未知”，在成果入口显示“失败”。用户接下来应该等待、核对、补配置还是重试，会因此变得含糊。
 
-依据：[ExecutionHistory.tsx](D:/claude/Nora/nora-web/src/components/automations/ExecutionHistory.tsx:13)、[SavedResultsView.tsx](D:/claude/Nora/nora-web/src/components/files/SavedResultsView.tsx:83)、[RecentResults.tsx](D:/claude/Nora/nora-web/src/components/home/RecentResults.tsx:65)。
+依据：[ExecutionHistory.tsx](../../nora-web/src/components/automations/ExecutionHistory.tsx:13)、[SavedResultsView.tsx](../../nora-web/src/components/files/SavedResultsView.tsx:83)、[RecentResults.tsx](../../nora-web/src/components/home/RecentResults.tsx:65)。
 
 **建议：** 复用同一份状态展示映射；给每种状态配对应动作。结果未知优先打开原会话核对，部分完成展示已有成果与剩余项，取消展示已经发生的操作。
 
@@ -173,7 +173,7 @@ flowchart LR
 
 文件等页面的 `buildAssistantHandoffUrl` 只携带 prompt/refs，未指定新会话；对话页会使用当前 active 会话。这样，从另一份资料发起新需求时，可能接着旧会话工作。对需要延续旧讨论的用户有用，但界面目前没有清楚表达这个选择。
 
-依据：[首页](D:/claude/Nora/nora-web/src/app/page.tsx:50)、[handoff.ts](D:/claude/Nora/nora-web/src/lib/handoff.ts:20)、[对话页](D:/claude/Nora/nora-web/src/app/chat/page.tsx:61)。
+依据：[首页](../../nora-web/src/app/page.tsx:50)、[handoff.ts](../../nora-web/src/lib/handoff.ts:20)、[对话页](../../nora-web/src/app/chat/page.tsx:61)。
 
 **建议：** 保留已选定的首页自动发送体验，让资料和连接可以在发送前加入。跨页入口明确提供“新建处理”或“加入当前对话”；同一个入口的默认行为保持稳定。
 
@@ -181,7 +181,7 @@ flowchart LR
 
 前端用 `/chat/health` 设置唯一的 online 状态，`App` 在 online=false 时替换整个工作区及导航。即使文件或数据源服务仍可用，用户也无法通过正常导航进入。
 
-依据：[useBackendHealth.ts](D:/claude/Nora/nora-web/src/hooks/useBackendHealth.ts:31)、[App.tsx](D:/claude/Nora/nora-web/src/App.tsx:48)。
+依据：[useBackendHealth.ts](../../nora-web/src/hooks/useBackendHealth.ts:31)、[App.tsx](../../nora-web/src/App.tsx:48)。
 
 **建议：** Gateway 不可达显示入口故障；Agent 不可用影响助手；某领域请求失败影响该区域。保留能够提供诊断和配置的入口。已有服务分离应落实为用户能感知的故障隔离。
 
@@ -227,7 +227,7 @@ React SPA、统一 API 客户端、领域 Hook、Spring 服务、PostgreSQL/pgve
 - **进程恢复：** `markStaleRunsInterrupted()` 会将未结束运行标记为 interrupted，不能据此承诺原工具自动接着执行。
 - **单实例：** 该恢复 SQL 没有实例归属过滤；当前应按单 Agent 实例理解部署能力。
 
-依据：[ChatStoreService.java](D:/claude/Nora/nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatStoreService.java:381)。
+依据：[ChatStoreService.java](../../nora-api/services/agent-service/src/main/java/com/nora/agent/service/ChatStoreService.java:381)。
 
 定时扫描先领取计划点再同步执行，领取与实际发出请求之间仍有进程中断窗口，长任务也会延后后续扫描。这些是后续可靠性和容量验收应覆盖的边界；本次没有进行故障注入或负载测试。
 

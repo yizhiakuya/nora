@@ -110,7 +110,7 @@ sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://local
   - **改代码指引**:加工具动 ChatToolsSpec+ChatToolExecutor;改流式/降级动 UpstreamLlmClient+ModelCapabilityRegistry;改历史装配/压缩动 ChatContextAssembler;facade 只留主循环/配置。测试反射目标已同步(toolExecutorOf/contextAssemblerOf/stepEmitterOf 辅助取 facade 字段)。
 - **执行层再拆(2026-09-17 晚)**:`ToolStepEmitter`(603 行,emitToolStep 全生命周期+审批构建+args 脱敏/重放,`ParsedArgs` 在这里);`ChatToolExecutor.executeTool` 拆为 71 行分发器 + 11 个 `exec*` handler(每工具一个方法,加工具=加一个 handler+分发一行+ChatToolsSpec 一段);facade 累计 4178 → 946 行(-77%)。
 - **控制层与服务层拆分(2026-09-17,审计建议 #2/#3 完成)**:`AgentController` 760 → 426 行(只留端点/执行器管理),轮次执行引擎在 **ChatTurnRunner**(394 行:编排调用+事件双写+落库+取消收尾+标题生成+SSE 发送+5 个载荷 record);`McpServerService` 863 → 593 行(注册表 CRUD+工具调用),连接池/进程树在 **McpClientPool**(243 行,clientFor/evict/杀树/shutdown),命令解析在 **McpCommandResolver**(91 行,resolveCommand);前端 `AgentThoughtBlock` 651 → 235 行,工具行在 **ToolStepRow.tsx**(280 行)、注入行在 **ContextStepRow.tsx**(140 行)。
-- **P1 安全/真实性修复(2026-09-20,按 PROJECT-ANALYSIS-2026-09-19.md)**:
+- **P1 安全/真实性修复(2026-09-20,按 `docs/dev/PROJECT-ANALYSIS-2026-09-19.md`)**:
   - **只读 SQL 硬边界**:`JdbcConnections.open(params, readOnly=true)` 走数据库级只读(实测 PG JDBC **必须 `readOnly=true + readOnlyMode=always` 组合**,单 readOnly 只是客户端提示不拦服务端;MySQL 靠 `readOnlyPropagatesToServer` + `setReadOnly`),`executeReadOnly` 已接入——「EXPLAIN ANALYZE 包裹写 CTE」这类语句解析识别不出的绕过由数据库直接拒绝(SQLState 25006 → 400 + 可操作提示)。改连接参数前先跑隔离验证(见 /tmp 思路:两个 Properties 对照组打真实库)
   - **自动任务真实性**:`useAutomations.addRule` 返回 `Promise<AutomationRule|null>`(失败回滚乐观条目 + toast 人话)、`markRun` 返回 `Promise<boolean>`(乐观条目 id≥1e12 明确拒绝,不再落本地假执行分支);`syncFromBackend` 空数组也覆盖(服务端是权威);调用方(NewAutomationModal/QueryConsole/LogStream/AutomationList)已全部适配;错误文案统一 `humanizeError`(网关 JSON 兜底也能出人话)
   - **中继缓存鉴权**:relay 缓存命中不经过手机 → 命中前必须过 `cacheReadAuthorized`(新 App hello 上报令牌 sha256 落盘;旧 App 学习式授权——手机 2xx 即记住该令牌哈希,仅内存);未授权回源手机(401/503),不再裸回缓存。改动 relay.mjs 后跑 `node --check` + /tmp/pa-relay-auth-test 的四个隔离测试(stub ws 合成缓存 + 真 ws 假手机学习链路)
@@ -126,7 +126,7 @@ sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://local
   - **lint 全绿**:ImageLightbox 拖拽态从 render 读 ref 改 React state(`isDragging`)
   - **路由懒加载**:`App.tsx` 11 页面 `React.lazy + Suspense`(RouteLoading 占位),主包 gzip 240KB→**97.7KB**(目标 ≤180KB);页面独立 chunk
   - **文档漂移同步**:根/后端/前端 README + AGENTS 接入表全部对齐当前行为(8 服务/Kafka 通知/令牌登录/全部域已接入);报告本身已入库
-- **产品改造 M0–M5(2026-09-20 同日,按 `NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md`;实施记录 `NORA-REFACTOR-IMPLEMENTATION-LOG.md`)**:
+- **产品改造 M0–M5(2026-09-20 同日,按 `docs/dev/NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md`;实施记录 `docs/dev/NORA-REFACTOR-IMPLEMENTATION-LOG.md`)**:
   - **四入口导航(M1)**:助手(`/` 输入需求/继续处理/最近成果)/资料(`/files?view=files|knowledge|results`)/任务(`/tasks?view=running|schedules|history`)/设置(`?section=` 深链);旧路由全兼容(`/automations→/tasks`、`/knowledge`/`/skills`/`/mcp` 直达保留);视图组件抽为 `KnowledgeView`/`SkillsView`/`ConnectionsView` 复用
   - **结构化任务上下文(M2-01)**:`TaskContext` DTO(refs/output/origin/dataSelection);`MessageRefResolver.resolveContext` 结构化优先+旧行回退+去重,失败项**可见**;前端 `ChatResponder` 透传 context,`ChatRef` 扩展 datasource 类型
   - **跨页交接(M2-02)**:`lib/handoff.ts` 统一 URL 协议(`/chat?prompt=&refs=` JSON);文件页批量栏「交给助手」、QueryConsole 带 connectionId
@@ -136,7 +136,7 @@ sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://local
   - **定期任务(M4)**:`schedule` JSONB 唯一权威 + `next_run_at` 派生(V5 迁移;`ScheduleCalculator` DST 安全);`/schedule-preview` 未来 3 次;调度按 nextRunAt+10min 宽限,错过落 `missed_schedule` 不补跑;条件 UPDATE 领取计划点去重;存量规则标 `needs_config`
   - **注意**:创建 daily/weekly 规则**必须带 schedule**;`file/error` 触发类型 create 已拒绝
 
-## 状态契约与提交边界修复(2026-09-26,按 PROJECT-ANALYSIS-2026-09-26.md F1–F5)
+## 状态契约与提交边界修复(2026-09-26,按 `docs/dev/PROJECT-ANALYSIS-2026-09-26.md` F1–F5)
 
 - **F1 文件生命周期通知原子提交**:`FileLifecycleService`(file-service)把「文件状态变更 + RAG 通知入队」放同一事务——delete/restore 用 `RETURNING id` 只对真实变化的文件入队,purge 的磁盘删除与投递都在提交后;`RagIndexClient.enqueueLifecycle` 在事务内分配版本+写 pending 行(upsert 带 `WHERE EXCLUDED.version > pending_rag_sync.version` 单调守卫,低版本晚到不覆盖高版本),`deliverPendingAsync(fileId, traceId)` 在事务外读回最新行投递(traceId 显式透传,异步线程 MDC 不继承)。**E2E 验证过**:删除→恢复→再删除收敛、RAG 停机期间删除通知保留并在恢复后送达、低版本被守卫拒绝
 - **F3 统一轮次终态**:`done` 事件新增 `status` 字段(completed/partial/failed/cancelled),与 `chat_run` 落库同源同一判定(ChatTurnRunner 收尾一次算出)。判定:异常轮有可用成果(回答文本或**带 toolName 的已完成工具调用**——检索/上下文注入步骤不算)为 partial,否则 failed。**踩坑**:s-rag 步骤 type=tool 但 toolName=null,只看 type 会把零成果失败误标 partial
@@ -144,7 +144,7 @@ sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://local
 - **F4 工具评测终态门**:`tool-eval.sh` 先验 done.status——`error` 事件或 `status != completed`(partial/failed/cancelled)都不作工具选择判定(判 ERROR),不再让「模型失败但工具选对」计 PASS
 - **F5 文件索引参数闭环**:`POST /api/rag/index` 的 IndexRequest 支持 `chunkMode/chunkSize/overlap/separator/baseId`(与 /index/text 对齐;不存在的 baseId 返回 404);前端文件页「入知识库」改为配置弹窗(`IndexToKnowledgeModal`:选库/分段模式/高级参数/试切预览),确认后带参提交。**验证要点**:UI 提交后查 `knowledge_doc.chunk_config` 与 `base_id` 确认参数真实落库
 
-## 产品语义修复(2026-09-27,按 PRODUCT-DESIGN-REVIEW-2026-09-27.md B1–B7)
+## 产品语义修复(2026-09-27,按 `docs/dev/PRODUCT-DESIGN-REVIEW-2026-09-27.md` B1–B7)
 
 - **B1 成果入口对齐实际保存行为**:新增 `saved_artifact` 表(agent-service V26)+ `/api/saved-artifacts`(POST 幂等 upsert by kind+path / GET / DELETE);对话「保存为文件/保存到知识库」成功后登记 `{kind, path, name, sessionId, messageKey}`(服务端权威,此前只有 localStorage);资料页「已保存成果」tab 改为读它(`SavedArtifactsView`:类型徽章/打开工作区深链 `?workspace=`/回到来源会话 `/chat?session=`);执行记录只留在任务页。**E2E 验证过**:UI 保存 → 服务端登记 → 成果列表 → 来源会话跳转全链路
 - **B5 状态映射统一**:`nora-web/src/lib/executionStatus.ts` 的 `EXECUTION_STATUS_META`(icon/cls/label/actionHint)为唯一映射——ExecutionHistory/RecentResults/SavedResultsView 共用;首页「最近成果」改名「最近任务结果」(内容是执行记录含失败/取消)
