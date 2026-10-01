@@ -171,10 +171,13 @@ function extractResultImages(content: string | null | undefined): { alt: string;
 
 /** 工具步骤：单行 chip,可展开参数与结果详情。 */
 export function ToolRow({ step }: { step: ChatStep }) {
+  // 初始:running 的步骤展开(实时输出可见);历史/已完成步骤收起(紧凑,点击回看)。
+  // 展开状态是组件本地 state,状态流转(running→completed)不会重置它——
+  // 执行中展开的输出在完成后**保持可见**(2026-10-02 修复:此前完成即自动
+  // 折叠,用户看到输出"消失";对齐 Codex/Claude Code 过程常驻)。
   const [open, setOpen] = useState(step.status === "running");
-  const [userTouched, setUserTouched] = useState(false);
   const sessionId = useChatSessions(state => state.activeId) ?? undefined;
-  const effectiveOpen = userTouched ? open : step.status === "running";
+  const effectiveOpen = open;
   const expandable = Boolean(step.input || step.result || step.detail);
   const lines = outputLineCount(step);
   const preview = argsPreview(step);
@@ -198,7 +201,6 @@ export function ToolRow({ step }: { step: ChatStep }) {
         aria-expanded={effectiveOpen}
         onClick={() => {
           if (expandable) {
-            setUserTouched(true);
             setOpen((v) => !v);
           }
         }}

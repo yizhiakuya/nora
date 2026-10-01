@@ -58,8 +58,8 @@ interface FileTableProps {
   onDelete?: (file: FileItem) => void;
 }
 
-export function FileTable({ files, selection, onDeleteSelected, onOpen, onIndex, folderRow, folderRows,
-                            onDownloadSelected, onMoveSelected, onDownload, onRename, onMove, onDelete }: FileTableProps) {
+export function FileTable({ files, selection, onOpen, onIndex, folderRow, folderRows,
+                            onDownload, onRename, onMove, onDelete }: FileTableProps) {
   // 统一为列表:folderRows 优先,兼容既有单行调用
   const folders: FolderRow[] = folderRows ?? (folderRow ? [folderRow] : []);
   return (

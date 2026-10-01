@@ -98,7 +98,7 @@ export function GitHubOAuthModal({ isOpen, onClose, onLoggedIn }: {
               setMessage(result.message ?? "授权失败");
               break;
           }
-        } catch (e) {
+        } catch {
           // 网络抖动:继续轮询(后端也容错)
           if (!stopped.current) poll(fid, sec);
         }

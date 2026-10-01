@@ -21,6 +21,10 @@ spring:
           uri: lb://agent-service
           predicates:
             - Path=/api/models/**
+        - id: user-preferences
+          uri: lb://agent-service
+          predicates:
+            - Path=/api/user-preferences
         - id: network
           uri: lb://agent-service
           predicates:

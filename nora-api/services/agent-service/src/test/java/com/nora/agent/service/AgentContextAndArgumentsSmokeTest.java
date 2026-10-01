@@ -65,10 +65,23 @@ class AgentContextAndArgumentsSmokeTest {
     }
 
     @Test
+    void scrubsNestedAndEncodedToolCredentials() throws Exception {
+        var emitter = new ToolStepEmitter(mapper, null, null, null);
+        var scrub = ToolStepEmitter.class.getDeclaredMethod("scrubArgsForLog", String.class);
+        scrub.setAccessible(true);
+        for (String args : List.of(
+                "{\"password\":\"dummy\",\"rows\":[{\"access_token\":\"dummy\"}]}",
+                "{\"arguments\":\"{\\\"apiKey\\\":\\\"dummy\\\",\\\"env\\\":{\\\"CUSTOM\\\":\\\"dummy\\\"}}\"}",
+                "{\"headers\":{\"Custom-Auth\":\"dummy\"}}", "{broken", "\"dummy\"")) {
+            scrub.invoke(emitter, args);
+        }
+    }
+
+    @Test
     void parsesMcpObjectsAndRejectsInvalidShapes() throws Exception {
         for (String json : List.of("{}", "null", "\"{}\"", "\"  \"", "[]", "\"[]\"", "\"{broken\"")) {
             try {
-                System.out.println("MCP parsed: " + ChatToolExecutor.mcpArguments(mapper, mapper.readTree(json)));
+                System.out.println("MCP parsed: " + McpManagementTools.mcpArguments(mapper, mapper.readTree(json)));
             } catch (IllegalArgumentException e) {
                 System.out.println("MCP rejected: " + e.getMessage());
             }

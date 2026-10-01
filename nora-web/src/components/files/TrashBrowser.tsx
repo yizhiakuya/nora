@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2, RotateCcw, FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
+import { Trash2, RotateCcw, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { filesApi, type TrashedFile, toFileItem, humanSize } from "@/lib/services/filesApi";
 import { ResponsiveList } from "@/components/shared/ResponsiveList";

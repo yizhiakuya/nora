@@ -2,5 +2,6 @@ target/
 *.iml
 .idea/
 .env*
+!.env.example
 data/
 *.log

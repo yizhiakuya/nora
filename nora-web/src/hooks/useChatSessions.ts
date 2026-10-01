@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ChatMessage } from "@/lib/api/chatApi";
-import { AgentAPI, fetchSessions, fetchSessionMessages, deleteSessionOnBackend } from "@/lib/api/agentApi";
+import { AgentAPI, fetchSessions, fetchSessionMessages } from "@/lib/api/agentApi";
 import { subscribeSessionTitle } from "@/lib/api/sessionTitleEvents";
 
 export interface ChatSession {

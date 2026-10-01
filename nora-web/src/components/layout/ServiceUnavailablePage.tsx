@@ -1,4 +1,3 @@
-import { CloudOff } from "lucide-react";
 
 /**
  * 全屏「服务不可用」页:**仅网关不可达时**替换整个应用(B7,2026-09-27)。

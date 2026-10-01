@@ -9,7 +9,7 @@
 FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /build
 # 固定 pnpm 主版本(与 lockfile 生成版本一致,避免 corepack 拉最新导致 lockfile 不匹配)
-RUN npm install -g pnpm@11
+RUN npm install -g pnpm@11.23.0
 # patches 目录参与安装(pnpm patchedDependencies 需要补丁文件存在)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches

@@ -61,15 +61,15 @@ interface ModelProvidersState {
   defaultProviderId?: number | null;
   /** 后端模式:拉取服务端 provider 列表 */
   syncFromBackend: () => Promise<void>;
-  addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[]; modelSettings?: Record<string, { protocol?: ProviderProtocol }> }) => void;
+  addProvider: (p: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[]; modelSettings?: ModelSettings }) => Promise<void>;
   /** 编辑服务商基础信息;key 留空 = 保持原密钥 */
-  editProvider: (id: number, patch: { name: string; url: string; key?: string; protocol: ProviderProtocol }) => void;
-  removeProvider: (id: number) => void;
-  toggleEnabled: (id: number) => void;
+  editProvider: (id: number, patch: { name: string; url: string; key?: string; protocol: ProviderProtocol; models?: string[]; modelSettings?: ModelSettings }) => Promise<void>;
+  removeProvider: (id: number) => Promise<void>;
+  toggleEnabled: (id: number) => Promise<void>;
   setDefaultModel: (m: string, providerId?: number | null) => void;
   markStatus: (id: number, status: ModelProvider["status"]) => void;
   /** 更新单个模型的设置(上下文窗口/思考等级);merge 语义 */
-  updateModelSettings: (id: number, model: string, patch: Partial<PerModelSettings>) => void;
+  updateModelSettings: (id: number, model: string, patch: Partial<PerModelSettings>) => Promise<void>;
   /** 真实连通测试(走 /test 端点) */
   testProvider: (id: number) => Promise<"ok" | "fail">;
 }
@@ -93,20 +93,6 @@ export function resolveDefaultProvider(
   return providers.find((p) => p.enabled && p.models.includes(defaultModel));
 }
 
-/** 本地乐观条目(先展示,服务端返回后替换为真实行) */
-function localProvider(input: { name: string; url: string; key: string; protocol?: ProviderProtocol; models?: string[] }): ModelProvider {
-  return {
-    id: Date.now(),
-    name: input.name.trim(),
-    url: input.url.trim(),
-    masked: input.key.slice(0, 4) + "••••••••" + input.key.slice(-4),
-    enabled: true,
-    status: "untested",
-    protocol: input.protocol ?? "openai",
-    models: input.models?.length ? input.models : ["默认模型"],
-  };
-}
-
 /**
  * 模型服务商接入唯一数据源：模型管理页与对话页模型选择器共享。
  * 完整接入 = 名称 + 端点 URL + 密钥。
@@ -121,68 +107,43 @@ export const useModelProviders = create<ModelProvidersState>()(
       syncFromBackend: async () => {
         try {
           const providers = await modelsApi.listProviders();
-          // 后端为准:有数据时整体替换本地
-          if (providers.length > 0) {
-            set((state) => {
-              const defaultStillThere = resolveDefaultProvider(
-                providers, state.defaultModel, state.defaultProviderId);
-              if (defaultStillThere) {
-                // 保留用户的显式渠道选择(渠道临时禁用/恢复后仍能回到原选择);
-                // 仅旧数据(只有模型名、无渠道)时把它一次性钉到当前解析出的渠道
-                return {
-                  providers,
-                  defaultProviderId: state.defaultProviderId ?? defaultStillThere.id,
-                };
-              }
-              const fallback = providers.find((p) => p.enabled);
+          set((state) => {
+            const defaultStillThere = resolveDefaultProvider(
+              providers, state.defaultModel, state.defaultProviderId);
+            if (defaultStillThere) {
+              // 保留用户的显式渠道选择(渠道临时禁用/恢复后仍能回到原选择);
+              // 仅旧数据(只有模型名、无渠道)时把它一次性钉到当前解析出的渠道
               return {
                 providers,
-                defaultModel: fallback?.models[0] ?? state.defaultModel,
-                defaultProviderId: fallback?.id ?? state.defaultProviderId ?? null,
+                defaultProviderId: state.defaultProviderId ?? defaultStillThere.id,
               };
-            });
-          }
+            }
+            const fallback = providers.find((p) => p.enabled && p.models.length > 0);
+            return {
+              providers,
+              defaultModel: fallback?.models[0] ?? "未配置",
+              defaultProviderId: fallback?.id ?? null,
+            };
+          });
         } catch {
           /* 后端不可用时沿用本地缓存 */
         }
       },
-      addProvider: ({ name, url, key, protocol = "openai", models, modelSettings }) => {
-        const optimistic = localProvider({ name, url, key, protocol, models });
-        if (modelSettings) optimistic.modelSettings = { ...optimistic.modelSettings, ...modelSettings };
-        set((state) => ({ providers: [...state.providers, optimistic] }));
-        modelsApi.createProvider({ name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models, ...(modelSettings ? { modelSettings: modelSettings as never } : {}) })
-          .then((saved) => {
-            set((state) => ({
-              providers: state.providers.map((p) => (p.id === optimistic.id ? saved : p)),
-            }));
-          })
-          .catch(() => { /* 保留本地乐观条目,错误由调用方 toast */ });
+      addProvider: async ({ name, url, key, protocol = "openai", models, modelSettings }) => {
+        const saved = await modelsApi.createProvider({
+          name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models, modelSettings,
+        });
+        set((state) => ({ providers: [...state.providers, saved] }));
       },
-      editProvider: (id, { name, url, key, protocol }) => {
-        set((state) => ({
-          providers: state.providers.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  name: name.trim(),
-                  url: url.trim(),
-                  protocol,
-                  masked: key ? key.slice(0, 4) + "••••••••" + key.slice(-4) : p.masked,
-                  status: "untested" as const,
-                }
-              : p
-          ),
-        }));
-        if (id < 1e12) {
-          modelsApi.updateProvider(id, {
-            name: name.trim(),
-            protocol,
-            endpoint: url.trim(),
-            ...(key ? { apiKey: key } : {}),
-          }).catch(() => { /* 乐观更新已生效 */ });
-        }
+      editProvider: async (id, { name, url, key, protocol, models, modelSettings }) => {
+        const saved = await modelsApi.updateProvider(id, {
+          name: name.trim(), protocol, endpoint: url.trim(), models, modelSettings,
+          ...(key?.trim() ? { apiKey: key.trim() } : {}),
+        });
+        set((state) => ({ providers: state.providers.map((p) => p.id === id ? saved : p) }));
       },
-      removeProvider: (id) => {
+      removeProvider: async (id) => {
+        await modelsApi.deleteProvider(id);
         const { providers, defaultModel, defaultProviderId } = get();
         const next = providers.filter((p) => p.id !== id);
         const patch: Partial<ModelProvidersState> = { providers: next };
@@ -191,27 +152,20 @@ export const useModelProviders = create<ModelProvidersState>()(
         const stillValid = resolveDefaultProvider(next, defaultModel,
             defaultProviderId === id ? null : defaultProviderId);
         if (!stillValid) {
-          const fallback = next.find((p) => p.enabled);
+          const fallback = next.find((p) => p.enabled && p.models.length > 0);
           patch.defaultModel = fallback?.models[0] ?? "未配置";
           patch.defaultProviderId = fallback?.id ?? null;
         } else if (defaultProviderId === id) {
           // 同名模型回落到了另一渠道:把默认渠道改钉到回落结果,保持唯一解析
           patch.defaultProviderId = stillValid.id;
         }
-        set(patch as ModelProvidersState);
-        if (id < 1e12) {
-          // 服务端 id(BIGSERIAL 小值)才发删除;本地 Date.now() 乐观条目跳过
-          modelsApi.deleteProvider(id).catch(() => { /* 本地已删,服务端失败不打断 */ });
-        }
+        set(patch);
       },
-      toggleEnabled: (id) => {
+      toggleEnabled: async (id) => {
         const target = get().providers.find((p) => p.id === id);
-        set((state) => ({
-          providers: state.providers.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)),
-        }));
-        if (target) {
-          modelsApi.updateProvider(id, { enabled: !target.enabled }).catch(() => { /* 乐观更新已生效 */ });
-        }
+        if (!target) throw new Error("服务商已不存在,请刷新列表");
+        const saved = await modelsApi.updateProvider(id, { enabled: !target.enabled });
+        set((state) => ({ providers: state.providers.map((p) => p.id === id ? saved : p) }));
       },
       setDefaultModel: (m, providerId) => set({
         defaultModel: m,
@@ -221,30 +175,22 @@ export const useModelProviders = create<ModelProvidersState>()(
           ? providerId
           : resolveDefaultProvider(get().providers, m, null)?.id ?? null,
       }),
-      updateModelSettings: (id, model, patch) => {
-        set((state) => ({
-          providers: state.providers.map((p) => {
-            if (p.id !== id) return p;
-            const merged: ModelSettings = { ...(p.modelSettings ?? {}) };
-            merged[model] = { ...(merged[model] ?? {}), ...patch };
-            return { ...p, modelSettings: merged };
-          }),
-        }));
-        if (id < 1e12) {
-          // 后端以 provider 为粒度整体保存 modelSettings;从最新状态取
-          const current = get().providers.find((p) => p.id === id);
-          if (current?.modelSettings) {
-            modelsApi.updateProvider(id, { modelSettings: current.modelSettings })
-              .catch(() => { /* 乐观更新已生效 */ });
-          }
-        }
+      updateModelSettings: async (id, model, patch) => {
+        const current = get().providers.find((p) => p.id === id);
+        if (!current) throw new Error("服务商已不存在,请刷新列表");
+        const modelSettings = {
+          ...current.modelSettings,
+          [model]: { ...current.modelSettings?.[model], ...patch },
+        };
+        const saved = await modelsApi.updateProvider(id, { modelSettings });
+        set((state) => ({ providers: state.providers.map((p) => p.id === id ? saved : p) }));
       },
       markStatus: (id, status) =>
         set((state) => ({
           providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)),
         })),
       testProvider: async (id) => {
-        // 测试成功时后端会自动用上游 /v1/models 覆盖模型列表,这里取回刷新后的 provider
+        // 测试只更新连通状态;刷新已保存配置,保留用户选择的模型。
         const result = await modelsApi.testAndRefresh(id, (updated) => {
           set((state) => ({
             providers: state.providers.map((p) => (p.id === id ? updated : p)),

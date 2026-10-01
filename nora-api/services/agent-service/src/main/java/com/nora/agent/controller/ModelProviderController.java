@@ -28,15 +28,8 @@ import com.nora.common.response.ApiResponse;
 public class ModelProviderController {
 
     private final ModelProviderService providerService;
-    private final RestClient testClient;
-    private final com.nora.common.http.ProxyProperties proxyProperties;
-
-    public ModelProviderController(ModelProviderService providerService,
-                                   org.springframework.beans.factory.ObjectProvider<com.nora.common.http.ProxyProperties> proxyProperties) {
+    public ModelProviderController(ModelProviderService providerService) {
         this.providerService = providerService;
-        this.proxyProperties = proxyProperties.getIfAvailable();
-        // 无 baseUrl:每个 provider 有自己的端点
-        this.testClient = RestClient.builder().build();
     }
 
     /** 列出全部 provider(key 脱敏)。 */
@@ -81,8 +74,9 @@ public class ModelProviderController {
 
     /**
      * 连通测试:用已存 key GET {@code {endpoint}/models}(OpenAI 兼容 /v1/models)。
-     * 标记 provider ok/fail,且上游返回模型列表时替换已存模型,让
-     * UI's 模型列表 always reflects what the relay actually serves.
+     * 标记 provider ok/fail;返回上游发现的模型清单供前端选择——**不落库覆盖**,
+     * 已选模型以保存时的勾选为唯一权威(2026-10-01 实测修复:此前测试会把
+     * 用户只勾选的 1 个模型重置成上游全部 41 个)。
      */
     @PostMapping("/{id}/test")
     public ApiResponse<TestResult> test(@PathVariable long id) {
@@ -90,7 +84,41 @@ public class ModelProviderController {
         if (credentials == null) {
             throw new BusinessException(404, "provider not found: " + id);
         }
-        String base = credentials.endpoint() == null ? "" : credentials.endpoint().replaceAll("/+$", "");
+        try {
+            TestResult result = discoverModels(credentials.endpoint(), credentials.apiKey());
+            providerService.markStatus(id, "ok");
+            return ApiResponse.ok(result);
+        } catch (BusinessException e) {
+            providerService.markStatus(id, "fail");
+            throw e;
+        }
+    }
+
+    /** 探测草稿配置,不写库;编辑时仅密钥留空才读取已存密钥。 */
+    @PostMapping("/probe")
+    public ApiResponse<TestResult> probe(@RequestBody ProbeRequest request) {
+        String apiKey = request.apiKey();
+        if ((apiKey == null || apiKey.isBlank()) && request.providerId() != null) {
+            ModelProviderService.StoredCredentials stored = providerService.credentials(request.providerId());
+            if (stored == null) throw new BusinessException(404, "provider not found");
+            apiKey = stored.apiKey();
+        }
+        return ApiResponse.ok(discoverModels(request.endpoint(), apiKey));
+    }
+
+    private TestResult discoverModels(String endpoint, String apiKey) {
+        if (endpoint == null || endpoint.isBlank()) throw new BusinessException(400, "endpoint is required");
+        java.net.URI uri;
+        try {
+            uri = java.net.URI.create(endpoint);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(400, "invalid endpoint URL");
+        }
+        if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getUserInfo() != null) {
+            throw new BusinessException(400, "endpoint must be an http(s) URL without credentials");
+        }
+        String base = endpoint.replaceAll("/+$", "");
         try {
             // 外网端点走配置的出站代理(内网/直连目标不受影响)
             org.springframework.http.client.SimpleClientHttpRequestFactory factory =
@@ -106,9 +134,9 @@ public class ModelProviderController {
             RestClient.RequestHeadersSpec<?> spec = perCallClient.get()
                     .uri(base + "/models")
                     .accept(MediaType.APPLICATION_JSON);
-            if (credentials.apiKey() != null && !credentials.apiKey().isBlank()) {
+            if (apiKey != null && !apiKey.isBlank()) {
                 spec = ((RestClient.RequestHeadersSpec<?>) spec)
-                        .header("Authorization", "Bearer " + credentials.apiKey());
+                        .header("Authorization", "Bearer " + apiKey);
             }
             String body = spec.retrieve()
                     .onStatus(HttpStatusCode::isError, (req, res) -> {
@@ -119,16 +147,10 @@ public class ModelProviderController {
                     .toEntity(String.class)
                     .getBody();
             List<String> models = parseModelIds(body);
-            if (!models.isEmpty()) {
-                providerService.updateModels(id, models);
-            }
-            providerService.markStatus(id, "ok");
-            return ApiResponse.ok(new TestResult("ok", null, models.size(), models));
+            return new TestResult("ok", null, models.size(), models);
         } catch (BusinessException e) {
-            providerService.markStatus(id, "fail");
             throw e;
         } catch (Exception e) {
-            providerService.markStatus(id, "fail");
             throw new BusinessException(502, "connection failed: " + e.getMessage());
         }
     }
@@ -167,6 +189,9 @@ public class ModelProviderController {
     public record UpdateRequest(String name, String protocol, String endpoint, String apiKey,
                                 Boolean enabled, List<String> models,
                                 ModelProviderService.ModelSettings modelSettings) {
+    }
+
+    public record ProbeRequest(String endpoint, String apiKey, Long providerId) {
     }
 
     /** POST /test 响应。models = 上游发现的 id(供选择器 UI)。 */

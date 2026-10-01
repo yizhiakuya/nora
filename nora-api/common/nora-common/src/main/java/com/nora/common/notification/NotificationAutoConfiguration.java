@@ -1,12 +1,11 @@
 package com.nora.common.notification;
 
+import org.apache.kafka.clients.producer.KafkaProducer;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-
-import org.apache.kafka.clients.producer.KafkaProducer;
 
 /**
  * 通知发布门面的自动装配:任何依赖 nora-common 且带 kafka-clients 的服务

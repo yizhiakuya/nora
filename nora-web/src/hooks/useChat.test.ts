@@ -1,5 +1,5 @@
 import { renderHook, act } from "@testing-library/react";
-import {describe, it, vi} from "vitest";
+import {describe, it} from "vitest";
 import { useChat } from "./useChat";
 import { ChatMessage, ChatResponder } from "@/lib/api/chatApi";
 
@@ -34,7 +34,7 @@ describe("useChat", () => {
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)
-    const assistant = result.current.messages[1];
+
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)
@@ -102,7 +102,7 @@ describe("useChat", () => {
       { id: "m1", role: "user", content: "问题", timestamp: "10:00" },
       { id: "m2", role: "assistant", content: "回答", timestamp: "10:00" },
     ];
-    const { result } = renderHook(() => useChat({ initialMessages: initial }));
+    renderHook(() => useChat({ initialMessages: initial }));
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)

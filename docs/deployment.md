@@ -33,7 +33,7 @@ Nora 支持两种部署形态:**Docker 一键部署(推荐)** 与**本地开发�
 # 1. 拉取仓库
 git clone https://github.com/yizhiakuya/nora.git && cd nora/nora-api
 
-# 2. 配置(按需修改端口/密钥)
+# 2. 配置(必须设置 DB_PASSWORD,按需修改端口/密钥)
 cp .env.example .env
 
 # 3. 一键拉起(镜像从 GHCR 拉取,多架构自动匹配)
@@ -90,12 +90,12 @@ docker compose -f docker-compose.prod.yml -f docker-compose.test.yml up -d --bui
 |---|---|---|
 | `NORA_TAG` | `latest` | 镜像版本 |
 | `GATEWAY_PORT` / `WEB_PORT` | 18080 / 13001 | 对外端口 |
-| `POSTGRES_PORT` / `REDIS_PORT` / `NACOS_PORT` | 15432 / 16379 / 18848 | 基础设施端口(仅本机访问可不暴露) |
+| `POSTGRES_PORT` / `REDIS_PORT` / `NACOS_PORT` | 15432 / 16379 / 18848 | 基础设施端口(仅绑定 127.0.0.1;远程管理走 SSH 隧道) |
 | `NORA_AUTH_TOKEN` | 空 | 网关访问令牌;**公网暴露务必设置**(留空=免登录) |
 | `NORA_LLM_API_KEY` / `NORA_LLM_BASE_URL` | 空 / openai | LLM 通道(OpenAI 兼容) |
 | `NORA_EMBEDDING_API_KEY` / `NORA_EMBEDDING_BASE_URL` | 空 / Jina | 知识库嵌入 |
 | `NORA_PROXY_ENABLED` 等 | false | 出站代理(外网受限环境) |
-| `DB_USER` / `DB_PASSWORD` | nora / nora | 数据库凭据 |
+| `DB_USER` / `DB_PASSWORD` | nora / 必填 | 数据库凭据(显式设置强密码) |
 
 ## 部署踩坑(2026-10-01 megumin 实机部署记录)
 
@@ -108,6 +108,9 @@ docker compose -f docker-compose.prod.yml -f docker-compose.test.yml up -d --bui
 | 服务启动后报 `chat_session 不存在` | `NORA_DB_URL` 覆盖了各服务默认值,丢了 `currentSchema` | compose 已按服务内置各自 schema 的 URL |
 | 上游 404: Model | 静态兜底模型名(`nora.llm.model`)在上游不存在 | `.env` 设 `NORA_LLM_MODEL=<上游可用模型名>`(或在设置页配置 provider) |
 | gateway 容器重建后 web 502 | nginx 启动时解析一次容器名并缓存,IP 变更后失效 | nginx 已用 `resolver 127.0.0.11` + 变量化 proxy_pass 重解析 |
+| 检索步骤总显示「检索降级(部分通道失败)」 | Flyway 在 schema_rag 的 search_path 下执行 `CREATE EXTENSION pg_trgm`,扩展落在 schema_rag;运行时连接的 search_path(`"$user", public`)看不到 `<<%` 操作符 | rag 迁移 V13 把扩展挪回 public(已内置;已有环境可手动 `ALTER EXTENSION pg_trgm SET SCHEMA public`) |
+| 环境控制台纳管源全显示「日志文件不存在」 | 种子路径是开发机 Windows 绝对路径(D:\claude\Nora\logs\...),容器里不存在 | env 迁移 V11 归一化为裸文件名,运行时按 `LOG_PATH` 解析(已内置);且全部服务已挂共享日志卷 `nora-logs:/app/logs` |
+| 所有 DOCKER 纳管源报「docker 不可用」 | env-service 容器内无 docker CLI 且未挂 docker.sock | 镜像内置 docker 静态 CLI(28.5.2,amd64/arm64)+ compose 默认挂载 `/var/run/docker.sock`;多人共享环境可移除挂载 |
 
 > 提示:全新部署首次启动即自动完成全部数据库迁移(Flyway),无需手工建表;pgvector 扩展由初始化脚本自动创建。
 
@@ -145,4 +148,4 @@ cd ../nora-web
 pnpm install && pnpm dev  # http://localhost:3001
 ```
 
-环境要求:Java 21、Maven 3.9+、Node 20+、pnpm。详见仓库根 README。
+环境要求:Java 21、Maven 3.9+、Node 22.12+、pnpm 11.23.0。详见仓库根 README。

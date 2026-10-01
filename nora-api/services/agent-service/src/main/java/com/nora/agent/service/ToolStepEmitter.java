@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
-import com.nora.agent.dto.QuestionRequestDto;
 
 /**
  * 工具步骤发射器(2026-09-17 从 ChatOrchestrationService 拆出,拆分方案收尾):
@@ -793,7 +792,7 @@ class ToolStepEmitter {
                     && "call".equals(obj.path("action").asText(""))) {
                 // action 已归一为小写 call;arguments 对象与 JSON 字符串按同一
                 // 执行语义解析(验收 T3)——两个入口得到相同指纹
-                obj.set("arguments", ChatToolExecutor.mcpArguments(objectMapper, obj.path("arguments")));
+                obj.set("arguments", McpManagementTools.mcpArguments(objectMapper, obj.path("arguments")));
             }
             // 递归规范化(嵌套对象排序;数组顺序保留)
             return canonicalJson(obj).toString();
@@ -1191,29 +1190,43 @@ class ToolStepEmitter {
         }
         try {
             JsonNode node = objectMapper.readTree(args);
-            if (!(node instanceof ObjectNode obj)) {
-                return args;
-            }
-            JsonNode headers = obj.get("headers");
-            if (headers != null && headers.isObject()) {
-                ObjectNode masked = objectMapper.createObjectNode();
-                headers.fieldNames().forEachRemaining(k -> masked.put(k, "***"));
-                obj.set("headers", masked);
-            }
-            JsonNode env = obj.get("env");
-            if (env != null && env.isObject()) {
-                ObjectNode masked = objectMapper.createObjectNode();
-                env.fieldNames().forEachRemaining(k -> masked.put(k, "***"));
-                obj.set("env", masked);
-            }
-            for (String key : new String[]{"password", "token", "apiKey", "api_key", "secret"}) {
-                if (obj.hasNonNull(key)) {
-                    obj.put(key, "***");
-                }
-            }
-            return obj.toString();
+            if (!node.isContainerNode()) return "{}";
+            scrubCredentials(node);
+            return node.toString();
         } catch (Exception e) {
-            return args; // 非法 JSON:原样保留(上游模型参数问题,不含结构化凭据)
+            return "{}"; // 非法 JSON 也可能包含凭据,不写入日志或历史。
+        }
+    }
+
+    private void scrubCredentials(JsonNode node) {
+        if (node instanceof ObjectNode obj) {
+            obj.fieldNames().forEachRemaining(key -> {
+                String normalized = key.replace("_", "").replace("-", "").toLowerCase(java.util.Locale.ROOT);
+                switch (normalized) {
+                    case "password", "token", "apikey", "secret", "authorization", "accesstoken", "refreshtoken" ->
+                            obj.put(key, "***");
+                    case "headers", "env" -> {
+                        JsonNode values = obj.get(key);
+                        if (values instanceof ObjectNode fields) {
+                            fields.fieldNames().forEachRemaining(field -> fields.put(field, "***"));
+                        } else {
+                            obj.put(key, "***");
+                        }
+                    }
+                    case "arguments" -> {
+                        JsonNode value = obj.get(key);
+                        if (value != null && value.isTextual()) {
+                            // MCP 参数允许 JSON 字符串;日志与重放保留字符串形态。
+                            obj.put(key, scrubArgsForLog(value.asText()));
+                        } else {
+                            scrubCredentials(value);
+                        }
+                    }
+                    default -> scrubCredentials(obj.get(key));
+                }
+            });
+        } else if (node != null && node.isArray()) {
+            node.forEach(this::scrubCredentials);
         }
     }
 }

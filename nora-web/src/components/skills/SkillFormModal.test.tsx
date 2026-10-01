@@ -63,7 +63,7 @@ describe("SkillFormModal", () => {
   });
 
   it("合法提交调用 onSubmit 并传递表单值", () => {
-    const { onSubmit } = renderForm();
+    renderForm();
     fireEvent.change(screen.getByPlaceholderText("例如：周报生成"), { target: { value: "周报生成" } });
     fireEvent.change(screen.getByPlaceholderText("何时该用这个技能（会展示给 AI）"), { target: { value: "生成周报时使用" } });
     fireEvent.change(screen.getByPlaceholderText(/任务步骤/), { target: { value: "# 步骤\n1. 查数据" } });

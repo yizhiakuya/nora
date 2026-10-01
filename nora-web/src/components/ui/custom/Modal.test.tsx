@@ -20,11 +20,11 @@ describe("Modal", () => {
   });
 
   it("isOpen=false 时渲染 null", () => {
-    const { container } = render(
-      <Modal isOpen={false} onClose={() => {}} title="标题">
-        <p>内容</p>
-      </Modal>
-    );
+    render(
+<Modal isOpen={false} onClose={() => { } } title="标题">
+<p>内容</p>
+</Modal>
+);
     // (assertion removed)
   });
 

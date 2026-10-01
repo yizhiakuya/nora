@@ -38,10 +38,14 @@ export function ConnectionActions({ connectionId, name, database }: ConnectionAc
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!window.confirm(`确定删除连接「${name}」?该操作不可恢复。`)) return;
-    removeConnection(connectionId);
-    toast.success(`已删除「${name}」`);
+    try {
+      await removeConnection(connectionId);
+      toast.success(`已删除「${name}」`);
+    } catch (e) {
+      toast.error(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   /** 让 AI 在对话页基于该连接生成 SQL(真实 agent,不是本地假生成;B6:新建处理) */

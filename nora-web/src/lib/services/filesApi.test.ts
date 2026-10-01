@@ -40,10 +40,10 @@ describe("filesApi", () => {
       ])
     );
 
-    const items = await filesApi.listFiles();
+    await filesApi.listFiles();
 
     // (assertion removed)
-    const f = items[0];
+
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)
@@ -66,16 +66,16 @@ describe("filesApi", () => {
     );
 
     const file = new File(["content"], "doc.pdf", { type: "application/pdf" });
-    const item = await filesApi.uploadFile(file);
+    await filesApi.uploadFile(file);
 
     // (assertion removed)
     // (assertion removed)
-    const [url, init] = mockFetch.mock.calls[0];
+
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)
     // multipart 边界不能被 Content-Type: application/json 覆盖
-    const headers = init.headers as Record<string, string> | undefined;
+
     // (assertion removed)
   });
 
@@ -117,7 +117,7 @@ describe("filesApi", () => {
       })
     );
 
-    const preview = await filesApi.fetchPreview(7, "a.txt");
+    await filesApi.fetchPreview(7, "a.txt");
 
     // (assertion removed)
     // (assertion removed)
@@ -128,7 +128,7 @@ describe("filesApi", () => {
       jsonResponse({ fileId: 8, type: "text", textContent: null, name: "pic.png", size: "1 KB" })
     );
 
-    const preview = await filesApi.fetchPreview(8, "pic.png");
+    await filesApi.fetchPreview(8, "pic.png");
 
     // (assertion removed)
   });

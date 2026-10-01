@@ -31,7 +31,7 @@ interface KnowledgeDocsState {
  */
 export const useKnowledgeDocs = create<KnowledgeDocsState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       docs: [],
       syncFromBackend: async () => {
         const docs = await requestJson<BackendKnowledgeDoc[]>("/rag/docs");

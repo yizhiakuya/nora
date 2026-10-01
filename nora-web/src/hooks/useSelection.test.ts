@@ -12,7 +12,7 @@ const items = [
 
 describe("useSelection", () => {
   it("初始状态为空选择", () => {
-    const { result } = renderHook(() => useSelection(items, "id"));
+    renderHook(() => useSelection(items,"id"));
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)

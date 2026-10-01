@@ -23,8 +23,6 @@ export function ThemeProvider({
   children,
   attribute = "class",
   defaultTheme = "system",
-  enableSystem = true,
-  disableTransitionOnChange = true,
 }: {
   children: ReactNode;
   attribute?: string;

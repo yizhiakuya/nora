@@ -2,10 +2,15 @@ package com.nora.common.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import com.nora.common.response.ApiResponse;
 
@@ -23,7 +28,8 @@ import com.nora.common.response.ApiResponse;
  * <p>每个依赖 nora-common 且扫描 {@code com.nora} 的服务自动继承。
  */
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
@@ -70,25 +76,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(mapped.getCategory().status()).body(ApiResponse.error(mapped));
     }
 
-    /**
-     * 静态资源未命中(prometheus/actuator 抓取 404 等):高频且无排障价值,
-     * 降为 DEBUG 单行,不再刷 ERROR 堆栈。
-     */
-    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
-    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(
-            org.springframework.web.servlet.resource.NoResourceFoundException ex) {
-        if (log.isDebugEnabled()) {
-            log.debug("No static resource: {}", ex.getResourcePath());
-        }
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ApiResponse.error(404, "Not found: " + ex.getResourcePath()));
+    /** Spring MVC 自身的 400/404/405/415 等保留状态和响应头,统一包装信封。 */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        log.debug("HTTP {}: {}", status.value(), ex.getClass().getSimpleName());
+        HttpStatus knownStatus = HttpStatus.resolve(status.value());
+        String message = knownStatus == null ? "Request failed" : knownStatus.getReasonPhrase();
+        return new ResponseEntity<>(ApiResponse.error(status.value(), message), headers, status);
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception ex) {
         log.error("Unexpected error", ex);
         BusinessException mapped = new BusinessException(ErrorCategory.INTERNAL,
-                null, "Internal server error: " + ex.getMessage(), "请把 traceId 提供给管理员排障", ex);
+                null, "Internal server error", "请把 traceId 提供给管理员排障", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.error(mapped));
     }
 }

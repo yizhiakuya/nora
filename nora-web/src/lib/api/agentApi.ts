@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResponder, ChatStep, ChatStepResult, ApprovalRequest, QuestionRequest, PermissionMode } from "./chatApi";
+import type { ChatMessage, ChatResponder, ChatStep, ChatStepResult, ApprovalRequest, QuestionRequest } from "./chatApi";
 import { emitSessionTitle } from "./sessionTitleEvents";
 import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
 import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";

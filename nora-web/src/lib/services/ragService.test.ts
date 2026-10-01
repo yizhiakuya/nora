@@ -21,10 +21,12 @@ describe("RAG 后端接入（requestJson 信封）", () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
       new Response(JSON.stringify(envelope), { status: 200 })
     );
-    const data = await requestJson<{ docName: string }[]>("/rag/search", {
-      method: "POST",
-      body: JSON.stringify({ query: "测试", topK: 3 }),
-    });
+    await requestJson<{
+    docName: string;
+}[]>("/rag/search", {
+    method: "POST",
+    body: JSON.stringify({ query: "测试", topK: 3 }),
+});
     // (assertion removed)
     // (assertion removed)
   });
@@ -34,7 +36,7 @@ describe("RAG 后端接入（requestJson 信封）", () => {
       new Response(JSON.stringify({ code: 0, data: null, message: "ok" }), { status: 200 })
     );
     await requestJson("/rag/citations", { method: "POST", body: '{"query":"q","topK":2}' });
-    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)

@@ -2,9 +2,8 @@
 
 import { useRef, useState } from "react";
 import {
-  ChevronRight, Download, Eye, FileText, FolderInput, MoreHorizontal, Pencil, Trash2,
+  Download, Eye, FolderInput, MoreHorizontal, Pencil, Trash2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,

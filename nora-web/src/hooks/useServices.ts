@@ -79,10 +79,11 @@ export const useServices = create<ServicesState>()(
         // PROC 源:先停托管进程再删记录,避免子进程变孤儿继续跑
         const target = get().services.find((s) => s.id === id);
         if (target?.kind === "PROC" && target.sourceId) {
-          await environmentApi.stopService(target.name).catch(() => { /* 停失败也让删除继续,守护会按 STOPPED 意愿调和 */ });
+          const result = await environmentApi.stopService(target.name);
+          if (result.status === "error") throw new Error(result.detail ?? "停止进程失败,未删除纳管记录");
         }
+        await environmentApi.deleteManaged(id);
         set((state) => ({ services: state.services.filter((s) => s.id !== id) }));
-        await environmentApi.deleteManaged(id).catch(() => { /* 乐观删除已生效 */ });
       },
       toggleService: async (id) => {
         const target = get().services.find((s) => s.id === id);

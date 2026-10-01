@@ -5,7 +5,6 @@ import type { AutomationRule, ExecutionRecord } from "@/types";
 import { useNotifications } from "./useNotifications";
 import { automationsApi } from "@/lib/services/automationsApi";
 import { humanizeError } from "@/lib/errorMessages";
-import { nowHm } from "@/lib/format";
 
 /** 错误 → 人话(优先按结构化分类;网关 JSON/网络异常走启发式兜底)。 */
 function friendly(e: unknown): string {

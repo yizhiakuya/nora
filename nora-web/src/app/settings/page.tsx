@@ -10,7 +10,6 @@ import { SecuritySettings } from "@/components/settings/SecuritySettings";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 import { EnvVarsSettings } from "@/components/settings/EnvVarsSettings";
 import { NetworkSettings } from "@/components/settings/NetworkSettings";
-import { McpManager } from "@/components/settings/McpSettings";
 import { SkillsView } from "@/components/skills/SkillsView";
 import { ConnectionsView } from "@/components/settings/ConnectionsView";
 import { UserPreferencesSettings } from "@/components/settings/UserPreferencesSettings";

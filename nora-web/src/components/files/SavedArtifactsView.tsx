@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FileText, ChevronRight, Loader2, MessageSquare, FileDown, BookOpen, FolderOpen } from "lucide-react";
+import { FileText, Loader2, MessageSquare, FileDown, BookOpen, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { savedArtifactsApi, type SavedArtifact } from "@/lib/services/savedArtifactsApi";
 import { useFileViewer } from "@/hooks/useFileViewer";

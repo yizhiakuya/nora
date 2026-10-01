@@ -7,7 +7,7 @@
 # 说明:
 # - 镜像来自 GHCR(ghcr.io/yizhiakuya/nora/*),多架构(amd64/arm64);
 #   本地构建替换:docker compose -f docker-compose.prod.yml up -d --build
-# - 对外只暴露网关(18080)与必要基础设施端口;服务间走容器名解析。
+# - 对外暴露网关和前端;基础设施管理端口仅绑定宿主机回环地址。
 # - 数据卷:nora-pgdata / nora-kafka-data / nora-data(文件+工作区+日志)。
 name: nora
 
@@ -28,7 +28,7 @@ x-service-defaults: &service-defaults
 x-app-env: &app-env
   # —— 基础设施连接(容器名;NORA_DB_URL 在每服务单独给,带各自 currentSchema) ——
   SPRING_DATASOURCE_USERNAME: ${DB_USER:-nora}
-  SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-nora}
+  SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?请在 .env 设置 DB_PASSWORD}
   NORA_REDIS_HOST: redis
   NORA_REDIS_PORT: "6379"
   NORA_NACOS_SERVER: nacos:8848
@@ -57,9 +57,9 @@ services:
     environment:
       POSTGRES_DB: nora
       POSTGRES_USER: ${DB_USER:-nora}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-nora}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?请在 .env 设置 DB_PASSWORD}
     ports:
-      - "${POSTGRES_PORT:-15432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # 首次创建数据卷时自动建 pgvector 扩展(rag-service 依赖)
@@ -75,7 +75,7 @@ services:
     container_name: nora-redis
     restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-16379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -91,7 +91,7 @@ services:
       JVM_XMS: 256m
       JVM_XMX: 512m
     ports:
-      - "${NACOS_PORT:-18848}:8848"
+      - "127.0.0.1:${NACOS_PORT:-18848}:8848"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
       interval: 10s
@@ -134,6 +134,9 @@ services:
       <<: *app-env
       NORA_PORT: "18080"
       NORA_AUTH_TOKEN: ${NORA_AUTH_TOKEN:-}
+    volumes:
+      # 共享日志卷:环境控制台/agent read_service_logs 经 env-service 读取
+      - nora-logs:/app/logs
     ports:
       - "${GATEWAY_PORT:-18080}:18080"
     depends_on:
@@ -163,6 +166,7 @@ services:
       NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_file
     volumes:
       - nora-data:/app/data
+      - nora-logs:/app/logs
     depends_on:
       postgres: { condition: service_healthy }
       nacos: { condition: service_healthy }
@@ -181,6 +185,8 @@ services:
       NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
       NORA_PROXY_HOST: ${NORA_PROXY_HOST:-127.0.0.1}
       NORA_PROXY_PORT: ${NORA_PROXY_PORT:-7897}
+    volumes:
+      - nora-logs:/app/logs
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -218,6 +224,8 @@ services:
       <<: *app-env
       NORA_PORT: "18084"
       NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_datasource
+    volumes:
+      - nora-logs:/app/logs
     depends_on:
       postgres: { condition: service_healthy }
       nacos: { condition: service_healthy }
@@ -231,10 +239,14 @@ services:
       <<: *app-env
       NORA_PORT: "18085"
       NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_env
-      # 容器内看不到宿主机 docker;要用容器管理能力需挂载 docker.sock(见 README 部署说明)
     volumes:
       # 日志目录(可写:env-service 自己也要写日志;纳管 FILE 源读日志文件)
       - nora-logs:/app/logs
+      # 宿主机 Docker 控制权(2026-10-02):环境控制台的 DOCKER 纳管源(启停容器、
+      # 读 docker logs)与 agent 的 manage_container 工具都经此 socket。
+      # 单用户自部署场景的既定设计;多人共享环境请移除本行(容器管理功能随之不可用)。
+      # 镜像内 nora 用户已加入 docker 组(GID 默认 999,与常见宿主机一致)。
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres: { condition: service_healthy }
       nacos: { condition: service_healthy }
@@ -248,6 +260,8 @@ services:
       <<: *app-env
       NORA_PORT: "18086"
       NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_automation
+    volumes:
+      - nora-logs:/app/logs
     depends_on:
       postgres: { condition: service_healthy }
       nacos: { condition: service_healthy }
@@ -262,6 +276,8 @@ services:
       <<: *app-env
       NORA_PORT: "18087"
       NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_notification
+    volumes:
+      - nora-logs:/app/logs
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }

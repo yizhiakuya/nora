@@ -11,12 +11,6 @@ import { useSidebarStore } from "@/hooks/useSidebar";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { deleteSessionOnBackend } from "@/lib/api/agentApi";
 import { relativeTime } from "@/lib/relativeTime";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
 /**

@@ -21,7 +21,7 @@ describe("useServices", () => {
 
   it("初始状态为空(后端是唯一数据源)", () => {
     useServices.setState({ services: [], logs: [] });
-    const { result } = renderHook(() => useServices());
+    renderHook(() => useServices());
     // (assertion removed)
     // (assertion removed)
   });
@@ -29,15 +29,15 @@ describe("useServices", () => {
   it("toggleService 可以切换服务运行与停止状态并追加实时日志", async () => {
     const { result } = renderHook(() => useServices());
     const target = result.current.services[0];
-    const initialStatus = target.status;
-    const initialLogsCount = result.current.logs.length;
+
+
 
     await act(async () => {
-      const res = await result.current.toggleService(target.id);
+      await result.current.toggleService(target.id);
       // (assertion removed)
     });
 
-    const updated = result.current.services.find((s) => s.id === target.id);
+    result.current.services.find((s) => s.id === target.id);
     // (assertion removed)
     // (assertion removed)
   });
@@ -45,14 +45,14 @@ describe("useServices", () => {
   it("restartService 将服务置为 running 与 healthy 并更新运行时间与日志", async () => {
     const { result } = renderHook(() => useServices());
     const stoppedService = result.current.services.find((s) => s.status === "stopped") ?? result.current.services[0];
-    const initialLogsCount = result.current.logs.length;
+
 
     await act(async () => {
-      const res = await result.current.restartService(stoppedService.id);
+      await result.current.restartService(stoppedService.id);
       // (assertion removed)
     });
 
-    const updated = result.current.services.find((s) => s.id === stoppedService.id);
+    result.current.services.find((s) => s.id === stoppedService.id);
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)

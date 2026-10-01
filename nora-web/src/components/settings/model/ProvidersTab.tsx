@@ -16,6 +16,23 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
   const [testing, setTesting] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const changeProvider = async (remove: boolean) => {
+    setSaving(true);
+    try {
+      if (remove) {
+        await removeProvider(p.id);
+        toast.success(`已移除「${p.name}」`);
+      } else {
+        await toggleEnabled(p.id);
+      }
+    } catch (e) {
+      toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const test = async () => {
     setTesting(true);
@@ -67,7 +84,7 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
             </div>
           </div>
         </div>
-        <Switch checked={p.enabled} onCheckedChange={() => toggleEnabled(p.id)} />
+        <Switch checked={p.enabled} disabled={saving} onCheckedChange={() => changeProvider(false)} />
       </div>
 
       {/* 详情：URL + 密钥 + 操作 */}
@@ -123,7 +140,8 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
                 variant="ghost"
                 size="sm"
                 className="h-7 text-[11px] px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={() => { removeProvider(p.id); toast.success(`已移除「${p.name}」`); }}
+                disabled={saving}
+                onClick={() => changeProvider(true)}
               >
                 确认移除
               </Button>

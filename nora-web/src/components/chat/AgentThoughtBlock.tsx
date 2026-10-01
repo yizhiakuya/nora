@@ -1,4 +1,4 @@
-import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info } from "lucide-react";
+import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info, Loader2 } from "lucide-react";
 import { useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
@@ -135,12 +135,13 @@ export function AgentThoughtBlock({ steps }: { steps: ChatStep[] }) {
 }
 
 /**
- * 工作过程块（对齐 Codex/Claude Code 的折叠语义）：
- * - 执行中（isTyping）：完整时间线实时展示——过程要看得见；
- * - 完成后：自动折叠为一行「查看工作过程 · N 次工具调用 · 耗时」，
- *   点击展开回看完整时间线；
+ * 工作过程块（对齐 Codex/Claude Code 的执行流心智）：
+ * - 过程与输出**常驻可见**：执行中完整时间线实时展示，完成后保持展开——
+ *   此前完成后整块自动折叠为一行，执行中可见的输出在轮次结束瞬间"消失"
+ *   （2026-10-02 用户反馈："过程里面的输出消失了，不会像 codex/claude code 那样"）；
+ * - 用户手动收起后尊重用户选择（可随时再展开回看）；
  * - 折叠态仍保留「结果类」内容（photos_showcase 的画廊卡片）——
- *   过程可折叠，结果必须可见（散图/拼图属过程，随过程一起折叠）。
+ *   过程可收起，结果必须可见（散图/拼图属过程，随过程一起收起）。
  */
 export function AgentProcessBlock({
   steps,
@@ -151,13 +152,13 @@ export function AgentProcessBlock({
   isTyping: boolean;
   durationMs?: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  // 默认展开:过程常驻可见;用户点击收起后保持收起
+  const [collapsed, setCollapsed] = useState(false);
   if (steps.length === 0) return null;
-  if (isTyping) return <AgentThoughtBlock steps={steps} />;
 
   const toolCount = steps.filter((s) => s.type === "tool").length;
   const summary = toolCount > 0 ? `${toolCount} 次工具调用` : `${steps.length} 个步骤`;
-  // 结果类内容:产物画廊(过程折叠后仍展示;旧 nora-gallery 自动转换)。
+  // 结果类内容:产物画廊(过程收起后仍展示;旧 nora-gallery 自动转换)。
   // 一条消息可能含多条画廊实例(每个工具结果一或多条),展平渲染。
   const galleries = steps
     .flatMap((s) => parseArtifactsFence(s.result?.content) ?? parseLegacyGalleryFence(s.result?.content) ?? [])
@@ -167,26 +168,23 @@ export function AgentProcessBlock({
     <div className="animate-in fade-in">
       <button
         type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((v) => !v)}
         className="group flex items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors"
       >
         <ChevronRight
-          className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform ${expanded ? "rotate-90" : ""}`}
+          className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform ${collapsed ? "" : "rotate-90"}`}
         />
         <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-          {expanded ? "工作过程" : "查看工作过程"}
+          {collapsed ? "查看工作过程" : "工作过程"}
         </span>
         <span className="text-[10px] text-muted-foreground/70 tabular-nums">
           · {summary}
           {durationMs != null && ` · ${(durationMs / 1000).toFixed(1)}s`}
         </span>
+        {isTyping && <Loader2 className="w-3 h-3 text-blue-500 animate-spin shrink-0" />}
       </button>
-      {expanded ? (
-        <div className="mt-1">
-          <AgentThoughtBlock steps={steps} />
-        </div>
-      ) : (
+      {collapsed ? (
         galleries.length > 0 && (
           <div className="mt-1.5 space-y-1.5">
             {galleries.map((g, i) => (
@@ -194,6 +192,10 @@ export function AgentProcessBlock({
             ))}
           </div>
         )
+      ) : (
+        <div className="mt-1">
+          <AgentThoughtBlock steps={steps} />
+        </div>
       )}
     </div>
   );

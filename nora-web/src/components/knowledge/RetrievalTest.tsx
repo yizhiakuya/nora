@@ -48,7 +48,7 @@ export function RetrievalTest() {
   const [hasSearched, setHasSearched] = useState(false);
   const [query, setQuery] = useState("");
   const [lastQuery, setLastQuery] = useState("");
-  const { schedule, cancelAll } = useTimedSequence();
+  const { cancelAll } = useTimedSequence();
   const [outcome, setOutcome] = useState<RetrievalOutcome | null>(null);
   const [searchMs, setSearchMs] = useState(34);
   /** 展开查看完整证据的条目序号(阶段 A:预览与模型证据分离) */

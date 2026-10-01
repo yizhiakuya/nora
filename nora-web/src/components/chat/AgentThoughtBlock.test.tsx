@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import {describe, it, vi} from "vitest";
+import {describe, it} from "vitest";
 import { AgentProcessBlock, AgentThoughtBlock } from "./AgentThoughtBlock";
 import type { ChatStep } from "@/lib/api/chatApi";
 
@@ -86,7 +86,7 @@ describe("AgentThoughtBlock ContextRow", () => {
     render(<AgentThoughtBlock steps={[memoryContext]} />);
     fireEvent.click(screen.getByRole("button", { name: /加载长期记忆/ }));
     // STYLE.md 缺失 → 行内无 aria-expanded(不可点击展开)
-    const missingRow = screen.getByText("STYLE.md").closest("button");
+    screen.getByText("STYLE.md").closest("button");
     // (assertion removed)
   });
 
@@ -222,7 +222,7 @@ describe("AgentThoughtBlock ReasoningRow", () => {
   });
 });
 
-describe("AgentProcessBlock 过程折叠(对齐 Codex:执行中展示、完成后合并)", () => {
+describe("AgentProcessBlock 过程常驻可见(对齐 Codex:输出不随完成消失)", () => {
   const toolStep: ChatStep = {
     id: "s-tool-1",
     type: "tool",
@@ -234,23 +234,26 @@ describe("AgentProcessBlock 过程折叠(对齐 Codex:执行中展示、完成�
   };
   const steps: ChatStep[] = [runningThink, toolStep];
 
-  it("执行中(isTyping)完整展示过程,无折叠行", () => {
+  it("执行中(isTyping)完整展示过程", () => {
     render(<AgentProcessBlock steps={steps} isTyping durationMs={undefined} />);
-    // 过程步骤直接可见(不经过折叠按钮)
+    // 过程步骤直接可见
     screen.getByText(/思考中|已深度思考/);
     // 2026-09-29:折叠行显示人类可读标题(step.title),不再显示原始工具名
     // (toolName 降为悬浮提示)
     screen.getByText("检索照片");
   });
 
-  it("完成后折叠为一行,点击展开回看", () => {
+  it("完成后保持展开(输出不消失),点击可收起回看", () => {
     render(<AgentProcessBlock steps={steps} isTyping={false} durationMs={3200} />);
-    const toggle = screen.getByRole("button", { name: /查看工作过程/ });
-    fireEvent.click(toggle); // 展开
+    // 2026-10-02:默认展开——此前完成后自动折叠,执行中可见的输出在轮次结束
+    // 瞬间消失(用户反馈);现在过程常驻,用户可手动收起
+    screen.getByText("检索照片");
     fireEvent.click(screen.getByRole("button", { name: /工作过程/ })); // 收起
+    screen.getByRole("button", { name: /查看工作过程/ });
+    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ })); // 再展开
   });
 
-  it("折叠态保留结果类内容(画廊卡片)", () => {
+  it("收起后保留结果类内容(画廊卡片)", () => {
     const gallery = {
       version: 1,
       title: "最近的猫照",
@@ -266,7 +269,10 @@ describe("AgentProcessBlock 过程折叠(对齐 Codex:执行中展示、完成�
       result: { content: "画廊已生成。\n```nora-gallery\n" + JSON.stringify(gallery) + "\n```\n" },
     };
     render(<AgentProcessBlock steps={[showcaseStep]} isTyping={false} durationMs={800} />);
-    // 折叠态:画廊标题可见(结果必须可见),过程行在折叠按钮内
+    // 默认展开:画廊由工具行渲染
+    screen.getByText("最近的猫照");
+    // 收起:画廊仍可见(结果必须可见),过程行折叠进按钮
+    fireEvent.click(screen.getByRole("button", { name: /工作过程/ }));
     screen.getByText("最近的猫照");
     screen.getByRole("button", { name: /查看工作过程/ });
   });

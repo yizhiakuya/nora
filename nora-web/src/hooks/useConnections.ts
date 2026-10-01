@@ -7,8 +7,8 @@ interface ConnectionsState {
   connections: DbConnection[];
   /** 后端模式:拉取服务端连接列表 */
   syncFromBackend: () => Promise<void>;
-  addConnection: (conn: Omit<DbConnection, "id" | "status" | "activeConn" | "maxConn"> & { username?: string; password?: string }) => Promise<DbConnection> | DbConnection;
-  removeConnection: (id: number) => void;
+  addConnection: (conn: Omit<DbConnection, "id" | "status" | "activeConn" | "maxConn"> & { username?: string; password?: string }) => Promise<DbConnection>;
+  removeConnection: (id: number) => Promise<void>;
   markStatus: (id: number, status: DbConnection["status"]) => void;
 }
 
@@ -18,32 +18,20 @@ interface ConnectionsState {
  */
 export const useConnections = create<ConnectionsState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       connections: [],
       syncFromBackend: async () => {
         try {
           const connections = await datasourcesApi.listConnections();
-          if (connections.length > 0) {
-            set({ connections });
-          }
+          set({ connections });
         } catch {
           /* 后端不可用时沿用本地缓存 */
         }
       },
-      addConnection: (partial) => {
+      addConnection: async (partial) => {
         // 用户名可空(Redis 无认证/仅密码场景)
-        const { username, password, ...rest } = partial;
-        // 先建记录,再立即测连通
-        const optimistic: DbConnection = {
-          ...rest,
-          id: Date.now(),
-          status: "connecting",
-          activeConn: 0,
-          maxConn: 10,
-        };
-        set((state) => ({ connections: [...state.connections, optimistic] }));
-        return datasourcesApi
-          .createConnection({
+        const { username, password } = partial;
+        const saved = await datasourcesApi.createConnection({
             name: partial.name,
             engine: partial.engine === "mysql" ? "mysql"
               : partial.engine === "redis" ? "redis" : "postgresql",
@@ -52,23 +40,23 @@ export const useConnections = create<ConnectionsState>()(
             database: partial.database,
             username: username ?? "",
             password: password ?? "",
-          })
-          .then(async (saved) => {
-            await datasourcesApi.testConnection(saved.id).catch(() => null);
-            const tested = await datasourcesApi.listConnections();
-            const serverRow = tested.find((c) => c.id === saved.id) ?? saved;
-            set((state) => ({
-              connections: state.connections.map((c) => (c.id === optimistic.id ? serverRow : c)),
-            }));
-            return serverRow;
-          })
-          .catch(() => optimistic);
-      },
-      removeConnection: (id) => {
-        set((state) => ({ connections: state.connections.filter((c) => c.id !== id) }));
-        if (id < 1e12) {
-          datasourcesApi.deleteConnection(id).catch(() => { /* 本地已删 */ });
+          });
+        // 创建成功才展示;测试失败时保留真实记录供用户排查或删除。
+        set((state) => ({ connections: [...state.connections, saved] }));
+        let result;
+        try {
+          result = await datasourcesApi.testConnection(saved.id);
+        } catch (e) {
+          set((state) => ({ connections: state.connections.map((c) => c.id === saved.id ? { ...c, status: "error" } : c) }));
+          throw new Error(`连接记录已保存，但连通测试未完成：${e instanceof Error ? e.message : "请稍后重试"}`);
         }
+        const tested = { ...saved, status: result.ok ? "connected" as const : "error" as const };
+        set((state) => ({ connections: state.connections.map((c) => c.id === saved.id ? tested : c) }));
+        return tested;
+      },
+      removeConnection: async (id) => {
+        await datasourcesApi.deleteConnection(id);
+        set((state) => ({ connections: state.connections.filter((c) => c.id !== id) }));
       },
       markStatus: (id, status) =>
         set((state) => ({

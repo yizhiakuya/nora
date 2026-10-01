@@ -37,7 +37,7 @@ describe("useNotifications 事件开关联动", () => {
       "indexed"
     );
 
-    const items = useNotifications.getState().notifications;
+
     // (assertion removed)
     // (assertion removed)
   });

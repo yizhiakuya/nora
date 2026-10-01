@@ -70,8 +70,10 @@ public final class JdbcConnections {
             props.setProperty("password", params.password());
         }
         // 短连接超时:坏主机快速失败而不是挂起请求
-        props.setProperty("connectTimeout", "5000");
-        props.setProperty("socketTimeout", "30000");
+        // PostgreSQL 驱动用秒,MySQL Connector/J 用毫秒。
+        boolean postgres = "postgresql".equals(params.engine());
+        props.setProperty("connectTimeout", postgres ? "5" : "5000");
+        props.setProperty("socketTimeout", postgres ? "30" : "30000");
         if (readOnly) {
             switch (params.engine()) {
                 case "postgresql" -> {

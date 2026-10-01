@@ -1,6 +1,8 @@
 'use client';
 
 import { Zap, Plus } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/custom/States";
 import { useModelProviders, resolveDefaultProvider, type PerModelSettings } from "@/hooks/useModelProviders";
@@ -9,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 
 /**
  * 模型列表 tab:按服务商分组的表格(实际请求模型 / 上下文窗口 / 思考等级)。
- * 每行的上下文窗口与思考等级即时保存(乐观更新 + PUT model_provider.modelSettings)。
+ * 保存成功才更新列表;上下文窗口在失焦时提交,避免每次按键写库。
  */
 export function ModelsTab({ onAdd }: { onAdd: () => void }) {
   const providers = useModelProviders((s) => s.providers);
@@ -20,6 +22,20 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
   const enabledModels = enabledProviders.flatMap((p) => p.models);
   // 默认标记只落在真实生效的「渠道 + 模型」组合上(同名模型跨渠道时只有一条)
   const activeProvider = resolveDefaultProvider(providers, defaultModel, defaultProviderId);
+  const [saving, setSaving] = useState(false);
+  const [revision, setRevision] = useState(0);
+
+  const saveSettings = async (id: number, model: string, patch: Partial<PerModelSettings>) => {
+    setSaving(true);
+    try {
+      await updateModelSettings(id, model, patch);
+    } catch (e) {
+      toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+      setRevision((value) => value + 1);
+    }
+  };
 
   if (enabledModels.length === 0) {
     return (
@@ -68,12 +84,12 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
             <span title="开启后工具返回的图片会作为图像附件发给模型；自适应 = 先尝试，不支持时自动跳过">识图</span>
             <span>思考等级</span>
           </div>
-          <div className="divide-y divide-border/40">
+          <fieldset disabled={saving} className="divide-y divide-border/40">
             {p.models.map((m) => {
               const settings: PerModelSettings = p.modelSettings?.[m] ?? {};
               const levels = settings.reasoningLevels ?? [];
               const defaultLevel = settings.defaultReasoningLevel ?? null;
-              const setPatch = (patch: Partial<PerModelSettings>) => updateModelSettings(p.id, m, patch);
+              const setPatch = (patch: Partial<PerModelSettings>) => saveSettings(p.id, m, patch);
               return (
                 <div key={m} className="grid grid-cols-[1fr_110px_90px_220px] gap-3 px-4 py-2 items-center hover:bg-muted/20 transition-colors">
                   <div className="min-w-0">
@@ -82,11 +98,19 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
                   </div>
                   <input
                     type="number"
-                    value={settings.contextWindow ?? ""}
+                    key={revision}
+                    defaultValue={settings.contextWindow ?? ""}
                     placeholder="自动"
-                    onChange={(e) => {
+                    min={1}
+                    onBlur={(e) => {
                       const raw = e.target.value;
-                      setPatch({ contextWindow: raw === "" ? null : Number(raw) });
+                      const value = raw === "" ? null : Number(raw);
+                      if (value !== null && (!Number.isSafeInteger(value) || value < 1)) {
+                        e.target.value = String(settings.contextWindow ?? "");
+                        toast.error("上下文窗口必须是正整数");
+                      } else if (value !== (settings.contextWindow ?? null)) {
+                        void setPatch({ contextWindow: value });
+                      }
                     }}
                     className="h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500 transition-colors"
                   />
@@ -108,7 +132,7 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
                 </div>
               );
             })}
-          </div>
+          </fieldset>
         </div>
       ))}
     </div>

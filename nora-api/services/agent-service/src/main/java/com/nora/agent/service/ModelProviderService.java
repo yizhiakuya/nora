@@ -159,12 +159,6 @@ public class ModelProviderService {
         jdbcTemplate.update("UPDATE model_provider SET status = ? WHERE id = ? AND deleted_at IS NULL", status, id);
     }
 
-    /** 替换 provider 的模型列表(自上游自动发现;仅存活行)。 */
-    public void updateModels(long id, List<String> models) {
-        jdbcTemplate.update("UPDATE model_provider SET models = ? WHERE id = ? AND deleted_at IS NULL",
-                models.toArray(new String[0]), id);
-    }
-
     /** 加载 provider 的原始 endpoint+key(连通测试/对话用;仅存活行)。 */
     public StoredCredentials credentials(long id) {
         List<StoredCredentials> rows = jdbcTemplate.query(

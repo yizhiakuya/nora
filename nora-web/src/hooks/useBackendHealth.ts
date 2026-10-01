@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { API_BASE } from "@/lib/api/client";
+import { authHeaders } from "@/lib/auth";
 
 /**
  * 后端可达性全局状态:所有页面共享。
@@ -47,7 +48,7 @@ async function probeGateway(): Promise<boolean> {
 /** agent 探活:chat/health 经网关路由到 agent-service。 */
 async function probeAgent(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/chat/health`);
+    const response = await fetch(`${API_BASE}/chat/health`, { headers: authHeaders() });
     return response.ok;
   } catch {
     return false;

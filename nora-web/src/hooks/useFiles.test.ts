@@ -19,7 +19,7 @@ describe("useFiles", () => {
 
   it("初始状态为空(后端是唯一数据源)", () => {
     useFiles.setState({ files: [] });
-    const { result } = renderHook(() => useFiles());
+    renderHook(() => useFiles());
     // (assertion removed)
   });
 
@@ -30,7 +30,7 @@ describe("useFiles", () => {
       act(() => {
         result.current.markIndexed(unindexed.id);
       });
-      const updated = result.current.files.find((f) => f.id === unindexed.id);
+      result.current.files.find((f) => f.id === unindexed.id);
       // (assertion removed)
     }
   });

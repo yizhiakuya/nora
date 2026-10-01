@@ -7,7 +7,7 @@ import { useAgentSettings } from "@/hooks/useChat";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { ChatInputArea } from "./ChatInputArea";
-import { ChatMessage, PermissionMode } from "@/lib/api/chatApi";
+import { ChatMessage } from "@/lib/api/chatApi";
 
 interface ChatConversationProps {
   sessionId: string;

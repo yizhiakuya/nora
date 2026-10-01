@@ -1,6 +1,6 @@
 import { render, act } from "@testing-library/react";
 import {describe, it, beforeEach} from "vitest";
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useImperativeHandle } from "react";
 import { useAutoScroll } from "./useAutoScroll";
 
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行渲染/交互路径,不校验结果。

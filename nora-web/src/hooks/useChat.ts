@@ -26,7 +26,7 @@ interface AgentSettingsState {
 
 export const useAgentSettings = create<AgentSettingsState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       permissionMode: "assist",
       reasoningLevelOverride: undefined,
       setPermissionMode: (permissionMode) => {

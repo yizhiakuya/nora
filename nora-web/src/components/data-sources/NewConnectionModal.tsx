@@ -93,9 +93,12 @@ export function NewConnectionModal({ isOpen, onClose, onCreated }: NewConnection
         username: username.trim(),
         password,
       });
-      toast.success(`连接「${conn.name}」已建立`);
+      if (conn.status === "connected") toast.success(`连接「${conn.name}」已建立`);
+      else toast.error(`连接「${conn.name}」已保存,连通测试失败,请检查配置`);
       onCreated?.(conn.id);
       onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }

@@ -98,7 +98,7 @@ Nora 可以通过 MCP 连接**手机相册**——照片不用搬到电脑,直�
 
 ```bash
 git clone https://github.com/yizhiakuya/nora.git && cd nora/nora-api
-cp .env.example .env                                  # 按需改端口/密钥
+cp .env.example .env                                  # 必须设置 DB_PASSWORD,按需改端口/密钥
 docker compose -f docker-compose.prod.yml up -d       # 镜像从 GHCR 拉取
 # 打开 http://<主机>:13001
 ```
@@ -107,7 +107,7 @@ docker compose -f docker-compose.prod.yml up -d       # 镜像从 GHCR 拉取
 
 ### 本地开发
 
-环境要求:**Java 21**、**Maven 3.9+**、**Node 20+**、**pnpm**、**Docker**(基础设施)。
+环境要求:**Java 21**、**Maven 3.9+**、**Node 22.12+**、**pnpm 11.23.0**、**Docker**(基础设施)。
 
 ```bash
 # 1. 基础设施(PG+pgvector / Redis / Nacos / Kafka)
@@ -134,7 +134,7 @@ java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
 ```bash
 cd nora-web
 pnpm install
-pnpm dev                 # http://localhost:3001(VITE_USE_BACKEND=true 接入真实后端)
+pnpm dev                 # http://localhost:3001(所有域直接接入真实后端)
 ```
 
 ### 配置模型(首次)
@@ -148,7 +148,6 @@ pnpm dev                 # http://localhost:3001(VITE_USE_BACKEND=true 接入真
 
 ```bash
 NORA_AUTH_TOKEN=<访问令牌,留空则免登录>
-NORA_LLM_API_KEY=<模型服务 Key，也可只在设置页配置>
 NORA_EMBEDDING_API_KEY=<Jina 嵌入 Key>
 NORA_PROXY_ENABLED=true
 NORA_PROXY_HOST=127.0.0.1
@@ -156,6 +155,12 @@ NORA_PROXY_PORT=7897
 ```
 
 </details>
+
+## 质量检查
+
+前端执行 `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`;后端执行 `mvn verify`(含单测与 Spotless)。CI 在 PR/分支推送时检查,镜像发布必须先通过同一套检查。
+
+模型配置仅来自「设置 → 模型」保存的数据库记录,无静态环境变量兜底。生产 PostgreSQL/Redis/Nacos 管理端口仅绑定 `127.0.0.1`,远程管理使用 SSH 隧道。
 
 ## 目录结构
 

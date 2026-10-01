@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Globe, Loader2, Network, RotateCcw, XCircle } from "lucide-react";
+import { CheckCircle2, Globe, Loader2, Network, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";

@@ -80,7 +80,14 @@ export const modelsApi = {
     );
   },
 
-  /** 测试连通并返回刷新后的 provider(模型列表已被后端自动更新为上游模型) */
+  /** 草稿模型发现:不创建或修改服务商。留空密钥可由服务端按 id 读取。 */
+  async probeProvider(input: { endpoint: string; apiKey?: string; providerId?: number }) {
+    return requestJson<{ status: "ok"; models: string[]; modelCount: number }>(
+      "/models/providers/probe", { method: "POST", body: JSON.stringify(input) }
+    );
+  },
+
+  /** 测试连通并刷新已保存配置;已选模型不随探测结果覆盖。 */
   async testAndRefresh(
     id: number,
     applyProvider: (p: ModelProvider) => void

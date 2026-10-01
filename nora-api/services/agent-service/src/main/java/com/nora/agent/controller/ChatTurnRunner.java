@@ -291,7 +291,12 @@ class ChatTurnRunner {
                         // 用户主动取消(线程中断→上游读中止):静默收尾,不发 error 不记失败
                         boolean userCancelled = error instanceof java.util.concurrent.CancellationException
                                 || (error != null && Thread.currentThread().isInterrupted());
-                        String answerText = turn != null ? turn.answer() : answer.toString();
+                        // 持久化「流式全文」:answer 累积了全部 delta(含工具轮之间的
+                        // 中间叙述),即用户流式期间实际看到的内容。此前优先用
+                        // turn.answer()(仅最终轮文本),重载后中间叙述全部消失,
+                        // 与流式期间所见不一致(2026-10-02 用户反馈「过程输出消失」)。
+                        String answerText = answer.length() > 0 ? answer.toString()
+                                : (turn != null ? turn.answer() : "");
                         long durationMs = System.currentTimeMillis() - turnStart;
                         var usage = turn != null ? turn.usage() : null;
                         if (userCancelled) {

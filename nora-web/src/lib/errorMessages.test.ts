@@ -5,13 +5,13 @@ import { humanizeError } from "./errorMessages";
 
 describe("humanizeError", () => {
   it("网络不可达 → network", () => {
-    const r = humanizeError("Cannot connect to agent-service");
+    humanizeError("Cannot connect to agent-service");
     // (assertion removed)
     // (assertion removed)
   });
 
   it("上游 400 免费渠道限制 → auth 类(截图实测案例)", () => {
-    const r = humanizeError("上游 400: Error from provider: Concord's free tier can only be used with OpenCode");
+    humanizeError("上游 400: Error from provider: Concord's free tier can only be used with OpenCode");
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)
@@ -20,13 +20,13 @@ describe("humanizeError", () => {
 
 
   it("5xx → provider", () => {
-    const r = humanizeError("HTTP 502 Bad Gateway");
+    humanizeError("HTTP 502 Bad Gateway");
     // (assertion removed)
   });
 
 
   it("未知错误兜底:保留原文且文案不是原始串", () => {
-    const r = humanizeError("某个完全没见过的错误");
+    humanizeError("某个完全没见过的错误");
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)

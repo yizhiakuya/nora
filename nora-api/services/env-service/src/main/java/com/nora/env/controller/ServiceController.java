@@ -129,20 +129,45 @@ public class ServiceController {
                 out.add(item);
             } else {
                 // FILE 源:按日志文件 mtime 分级活性——5 分钟内健康,30 分钟内降级,更久/不存在视为失联
-                Long ageMin = fileAgeMinutes(s.fileLogPath());
+                String logPath = logPathOf(s);
+                Long ageMin = fileAgeMinutes(logPath);
                 boolean exists = ageMin != null;
                 String health = !exists ? "down" : ageMin <= 5 ? "healthy" : ageMin <= 30 ? "degraded" : "down";
                 out.add(new java.util.LinkedHashMap<>(Map.of(
                         "id", String.valueOf(s.id()),
                         "name", s.name(),
                         "kind", "FILE",
-                        "fileLogPath", s.fileLogPath(),
+                        "fileLogPath", logPath,
                         "status", exists ? "running" : "error",
                         "health", health,
                         "detail", !exists ? "日志文件不存在" : "日志活跃于 " + humanAge(ageMin))));
             }
         }
         return ApiResponse.ok(out);
+    }
+
+    /**
+     * FILE 源日志路径解析(2026-10-01 跨环境部署修复):
+     * 裸文件名(如 {@code gateway-service-text.log})= 当前环境的日志目录
+     * ({@code LOG_PATH} 环境变量,缺省 {@code D:/claude/Nora/logs})下的文件;
+     * 含路径分隔符的值视为绝对/自定义路径,原样使用。
+     *
+     * <p>V11 迁移把种子源归一化为裸文件名——开发机与容器(卷 /app/logs)下
+     * 都能解析到实际日志,不再是写死的 Windows 绝对路径。
+     */
+    private String logPathOf(ManagedSourceService.SourceView s) {
+        String path = s.fileLogPath();
+        if (path == null || path.isBlank()) {
+            return path;
+        }
+        if (path.contains("/") || path.contains("\\")) {
+            return path;
+        }
+        String logDir = System.getenv("LOG_PATH");
+        if (logDir == null || logDir.isBlank()) {
+            logDir = "D:/claude/Nora/logs";
+        }
+        return logDir.replaceAll("/+$", "") + "/" + path;
     }
 
     /** 日志文件距今的分钟数;文件不存在/不可读返回 null。 */
@@ -283,7 +308,7 @@ public class ServiceController {
         try {
             List<String> lines;
             if ("FILE".equals(s.kind())) {
-                lines = managed.tailFile(s.fileLogPath(), bounded);
+                lines = managed.tailFile(logPathOf(s), bounded);
             } else if ("PROC".equals(s.kind())) {
                 // PROC 源:平台重定向的受管日志文件,FILE 链路复用
                 lines = managed.tailFile(supervisor.logFileFor(s.id()), bounded);
@@ -324,7 +349,7 @@ public class ServiceController {
                 }
                 // 增量游标:FILE/PROC 用字节偏移,DOCKER 用 --since 时间戳
                 // (旧实现按「行数」比较,日志超过 tail 窗口后游标永不前进 → 初始批次后断流)
-                String incrementalPath = isFile ? s.fileLogPath()
+                String incrementalPath = isFile ? logPathOf(s)
                         : isProc ? supervisor.logFileFor(s.id()) : null;
                 long[] fileOffset = {incrementalPath != null ? new java.io.File(incrementalPath).length() : 0};
                 long[] fileMtime = {incrementalPath != null ? new java.io.File(incrementalPath).lastModified() : 0};
@@ -363,7 +388,7 @@ public class ServiceController {
     private List<String> fetchTail(ManagedSourceService.SourceView s, int bounded) {
         try {
             if ("FILE".equals(s.kind())) {
-                return managed.tailFile(s.fileLogPath(), bounded);
+                return managed.tailFile(logPathOf(s), bounded);
             }
             if ("PROC".equals(s.kind())) {
                 return managed.tailFile(supervisor.logFileFor(s.id()), bounded);
