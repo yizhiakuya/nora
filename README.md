@@ -1,3 +1,5 @@
+
+https://github.com/user-attachments/assets/aa8d18f0-dc0b-4e68-b496-dd1deb121dbb
 <div align="center">
 
 # Nora
@@ -19,7 +21,7 @@
 
 https://github.com/user-attachments/assets/dcb1bde9-23d5-4be7-a923-655be7ac3157
 
-> 真实浏览器录制的完整操作流(真实后端 + 真实模型对话,无剪辑拼接):**① 手机相册 MCP → ② 对话交付文件闭环 → ③ 知识库问答 → ④ 数据源查询 → ⑤ 文件中心**。分场景短片见 [docs/demo/](docs/demo/)。
+> 真实浏览器录制的完整操作流(真实后端 + 真实模型对话,无剪辑拼接):**① 手机相册 MCP → ② 对话交付文件闭环 → ③ 知识库问答 → ④ 数据源查询**。分场景短片见 [docs/demo/](docs/demo/)。
 
 ## 手机相册 MCP(配套能力)
 
