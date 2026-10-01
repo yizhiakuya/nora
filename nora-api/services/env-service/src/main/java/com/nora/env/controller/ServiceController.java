@@ -149,7 +149,7 @@ public class ServiceController {
     /**
      * FILE 源日志路径解析(2026-10-01 跨环境部署修复):
      * 裸文件名(如 {@code gateway-service-text.log})= 当前环境的日志目录
-     * ({@code LOG_PATH} 环境变量,缺省 {@code D:/claude/Nora/logs})下的文件;
+     * ({@code LOG_PATH} 环境变量,缺省 {@code logs};容器由镜像设 {@code /app/logs})下的文件;
      * 含路径分隔符的值视为绝对/自定义路径,原样使用。
      *
      * <p>V11 迁移把种子源归一化为裸文件名——开发机与容器(卷 /app/logs)下
@@ -165,7 +165,7 @@ public class ServiceController {
         }
         String logDir = System.getenv("LOG_PATH");
         if (logDir == null || logDir.isBlank()) {
-            logDir = "D:/claude/Nora/logs";
+            logDir = "logs";
         }
         return logDir.replaceAll("/+$", "") + "/" + path;
     }

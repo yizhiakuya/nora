@@ -9,8 +9,10 @@
 #   deploy [all]     一键部署最新代码(仅后端):自动检测变更→停→并行构建→并发启动→健康轮询
 #                    (共享模块 common/*,api/* 变更时自动 install 并全量重建;all=强制全量)
 set -u
-ROOT=/d/claude/Nora/nora-api
-LOGDIR=/d/claude/Nora/nora-api
+# 路径从脚本位置推导(克隆到任意目录都可用;Git Bash 下 dirname 为 /d/... 形态)
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$REPO_ROOT/nora-api"
+LOGDIR="$ROOT"
 PORTS=(gateway:18080 file:18081 rag:18082 agent:18083 datasource:18084 env:18085 automation:18086 notification:18087)
 ALL=(gateway file rag agent datasource env automation notification)
 SHARED_MODULES=common/nora-common,common/nora-security,api/rag-api,api/file-api,api/datasource-api
@@ -42,9 +44,9 @@ stop_svc() { stop_many "$1"; }
 # 本地开发固定传入工作区/日志/pwsh 包路径(与历史数据位置一致;生产由 compose 环境变量覆盖)
 start_svc() {
   cd "$ROOT" || return 1
-  (NORA_AGENT_WORKSPACE=/d/claude/Nora/agent-workspace \
-   LOG_PATH=/d/claude/Nora/logs \
-   NORA_PWSH_BUNDLE=/d/claude/Nora/tools/pwsh/PowerShell-7.6.6-win-x64.zip \
+  (NORA_AGENT_WORKSPACE="$REPO_ROOT/agent-workspace" \
+   LOG_PATH="$REPO_ROOT/logs" \
+   NORA_PWSH_BUNDLE="$REPO_ROOT/tools/pwsh/PowerShell-7.6.6-win-x64.zip" \
     java -jar services/$1-service/target/$1-service-0.1.0-SNAPSHOT.jar \
     > "$LOGDIR/$1-service.stdout.log" 2> "$LOGDIR/$1-service.stderr.log" &)
   echo "starting $1 ..."
