@@ -1,0 +1,17 @@
+# 预构建镜像的构建上下文排除(与 .dockerignore 相反:保留 target/ 里的 jar)
+**/*.log
+**/logs/
+**/data/
+**/agent-workspace/
+**/.env.local
+**/.git/
+**/node_modules/
+docs/
+# 保留 target/ 下的 jar(预构建版依赖);但排除其他构建噪音
+**/target/classes/
+**/target/test-classes/
+**/target/maven-status/
+**/target/generated-sources/
+**/target/generated-test-sources/
+**/target/surefire-reports/
+**/target/*.jar.original

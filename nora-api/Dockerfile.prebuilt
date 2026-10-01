@@ -1,0 +1,47 @@
+# Nora 服务镜像(预构建 jar 版,2026-10-02)
+#
+# 为什么有这个文件:主 Dockerfile 在容器内跑 Maven,而 .dockerignore 排除
+# **/target/,任何源码改动都会让构建层失效 → 容器内全量重新下载依赖
+# (国内网络实测卡 40 分钟+)。本文件改为「本地 mvn package 后用现成 jar」——
+# 本地依赖已全量缓存,打包秒级;Docker 只做镜像组装(秒级)。
+#
+# 用法(在 nora-api 目录):
+#   mvn -q -pl services/<svc> package -DskipTests    # 先本地打包
+#   docker build -f Dockerfile.prebuilt --build-arg SERVICE=<svc> -t ghcr.io/.../<svc>:latest .
+#
+# 注意:build-push.sh 默认用主 Dockerfile;本地快速发布用本文件。
+
+# ---- 运行阶段:JRE 21(精简) ----
+FROM eclipse-temurin:21-jre
+ARG SERVICE
+WORKDIR /app
+
+# docker CLI(静态二进制,从官方 docker:28-cli 镜像拷贝):env-service 管理容器时
+# 需要 docker 命令(经挂载的 docker.sock)。多架构由 buildkit 自动选对应平台镜像层。
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
+
+# 非 root 运行(容器安全基线);docker 组 GID 用 build-arg 匹配宿主机
+ARG DOCKER_GID=999
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r nora && useradd -r -g nora -d /app -s /sbin/nologin nora \
+    && { groupadd -g "${DOCKER_GID}" docker 2>/dev/null || groupadd docker 2>/dev/null || true; } \
+    && usermod -aG docker nora \
+    && mkdir -p /app/data /app/logs /app/agent-workspace \
+    && chown -R nora:nora /app
+
+# 预构建 jar(本地 mvn package 产物;构建上下文需含 target/,见 .dockerignore.prebuilt)
+COPY --chown=nora:nora services/${SERVICE}/target/${SERVICE}-0.1.0-SNAPSHOT.jar /app/app.jar
+
+USER nora
+
+ENV TZ=Asia/Shanghai \
+    LOG_PATH=/app/logs \
+    JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseG1GC"
+
+EXPOSE 18080 18081 18082 18083 18084 18085 18086 18087
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
+    CMD ["sh", "-c", "curl -fsS --max-time 4 http://localhost:${NORA_PORT:-18080}/actuator/health >/dev/null || exit 1"]
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

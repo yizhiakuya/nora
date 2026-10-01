@@ -11,37 +11,40 @@ FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
 ARG SERVICE
 WORKDIR /build
 
-# 先拷 pom 体系,利用层缓存预热依赖
+# Maven 依赖走阿里云镜像(容器内直连 Maven Central 在国内极慢/超时,
+# 实测单次全量下载 >40 分钟;镜像源秒级)。settings.xml 放独立路径——
+# /root/.m2 被 cache mount 覆盖,不能放那里。
+RUN mkdir -p /build/.mvn-config && printf '%s' '<settings><mirrors><mirror><id>aliyun</id><mirrorOf>central</mirrorOf><url>https://maven.aliyun.com/repository/central</url></mirror></mirrors></settings>' > /build/.mvn-config/settings.xml
+
+# 分层缓存(2026-10-02 修复构建卡死):
+# 1) --mount=type=cache 持久化 .m2 仓库,跨构建复用——此前无 cache mount,
+#    任何源码改动(COPY 层失效)都会让容器内全量重新下载依赖,实测卡 40 分钟
+# 2) 源码改动仍会重新编译(正确性所需),但依赖下载不再重复
 COPY pom.xml .
 COPY common ./common
 COPY api ./api
 COPY services ./services
-# 先 install 父 pom 与共享模块(子模块 parent 需要从本地仓库解析),
-# 再单独构建目标服务(-o 离线:依赖已全部就位,避免重复联网)
-RUN mvn -q -N install -DskipTests \
-    && mvn -q -pl common/nora-common,common/nora-security,api/rag-api,api/file-api,api/datasource-api install -DskipTests \
-    && mvn -q -pl services/${SERVICE} package -DskipTests
+RUN --mount=type=cache,target=/root/.m2,sharing=locked \
+    mvn -q -s /build/.mvn-config/settings.xml -N install -DskipTests \
+    && mvn -q -s /build/.mvn-config/settings.xml -pl common/nora-common,common/nora-security,api/rag-api,api/file-api,api/datasource-api install -DskipTests \
+    && mvn -q -s /build/.mvn-config/settings.xml -pl services/${SERVICE} package -DskipTests
 
 # ---- 运行阶段:JRE 21(精简) ----
 FROM eclipse-temurin:21-jre
 ARG SERVICE
 WORKDIR /app
 
-# 非 root 运行(容器安全基线)
-# curl:健康检查;docker CLI(静态二进制,2026-10-02):env-service 管理容器时
+# docker CLI(静态二进制,从官方 docker:28-cli 镜像拷贝):env-service 管理容器时
 # 需要 docker 命令(经挂载的 docker.sock),此前镜像内没有 docker → 所有
-# DOCKER 纳管源报「docker 不可用」(megumin 实测);其他服务不用但共享镜像,
-# 多装 ~40MB 可接受。
-# docker 组 GID 用 build-arg 匹配宿主机(默认 999,常见 docker 组 GID;
-# 挂载 docker.sock 后 nora 用户靠组成员身份访问)。
-ARG TARGETARCH
+# DOCKER 纳管源报「docker 不可用」(megumin 实测)。其他服务不用但共享镜像,
+# 多装 ~40MB 可接受。用 --from 拷贝而非容器内 curl 下载:构建期不走外网、
+# 多架构(amd64/arm64)由 buildkit 自动选对应平台镜像层。
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
+
+# 非 root 运行(容器安全基线);docker 组 GID 用 build-arg 匹配宿主机
+# (默认 999,常见 docker 组 GID;挂载 docker.sock 后 nora 用户靠组成员身份访问)。
 ARG DOCKER_GID=999
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && case "${TARGETARCH:-amd64}" in arm64) DOCKER_ARCH=aarch64 ;; *) DOCKER_ARCH=x86_64 ;; esac \
-    && curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-28.5.2.tgz" -o /tmp/docker.tgz \
-    && tar -xzf /tmp/docker.tgz -C /tmp \
-    && mv /tmp/docker/docker /usr/local/bin/docker \
-    && rm -rf /tmp/docker /tmp/docker.tgz \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r nora && useradd -r -g nora -d /app -s /sbin/nologin nora \
     && { groupadd -g "${DOCKER_GID}" docker 2>/dev/null || groupadd docker 2>/dev/null || true; } \

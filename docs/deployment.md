@@ -121,17 +121,12 @@ docker compose -f docker-compose.prod.yml -f docker-compose.test.yml up -d --bui
 | 服务本体(全部 API) | ✅ | ✅ | ✅ |
 | `run_command` 终端工具 | PowerShell(内置 pwsh 7) | 系统 bash | 系统 bash |
 | MCP STDIO(本地进程) | ✅(npx.cmd) | ✅(npx) | 取决于镜像内命令 |
-| 容器管理(env-service) | Docker Desktop | Docker | 需挂载 docker.sock |
+| 容器管理(env-service) | Docker Desktop | Docker | 已默认挂载 docker.sock(可移除) |
 | 工作区/日志路径 | 相对 cwd(可配) | 相对 cwd | `/app/...` 卷内 |
 
-**env-service 管理宿主机 Docker**(可选):在 `docker-compose.prod.yml` 的 `env-service` 增加挂载:
+**env-service 管理宿主机 Docker**:`docker-compose.prod.yml` 已默认挂载 `/var/run/docker.sock`(单用户自部署的既定设计——环境控制台的容器启停/日志与 agent 的 `manage_container` 工具依赖它;镜像内置 docker 静态 CLI)。
 
-```yaml
-volumes:
-  - /var/run/docker.sock:/var/run/docker.sock
-```
-
-> 注意:挂载 docker.sock 等于把宿主机 Docker 控制权交给该容器,单用户自部署场景可接受,多人共享环境不建议。
+> 注意:挂载 docker.sock 等于把宿主机 Docker 控制权交给该容器。多人共享环境请在 compose 中移除 `env-service` 的该挂载行,容器管理功能随之不可用。
 
 ## 本地开发部署(不用 Docker 跑服务)
 
