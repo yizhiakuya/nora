@@ -26,8 +26,7 @@ x-service-defaults: &service-defaults
       condition: service_healthy
 
 x-app-env: &app-env
-  # —— 基础设施连接(容器名) ——
-  NORA_DB_URL: jdbc:postgresql://postgres:5432/nora
+  # —— 基础设施连接(容器名;NORA_DB_URL 在每服务单独给,带各自 currentSchema) ——
   SPRING_DATASOURCE_USERNAME: ${DB_USER:-nora}
   SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-nora}
   NORA_REDIS_HOST: redis
@@ -161,6 +160,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18081"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_file
     volumes:
       - nora-data:/app/data
     depends_on:
@@ -175,6 +175,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18082"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora
       NORA_EMBEDDING_API_KEY: ${NORA_EMBEDDING_API_KEY:-}
       NORA_EMBEDDING_BASE_URL: ${NORA_EMBEDDING_BASE_URL:-https://api.jina.ai/v1}
       NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
@@ -193,6 +194,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18083"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_agent
       NORA_LLM_API_KEY: ${NORA_LLM_API_KEY:-}
       NORA_LLM_BASE_URL: ${NORA_LLM_BASE_URL:-https://api.openai.com/v1}
       NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
@@ -217,6 +219,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18084"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_datasource
     depends_on:
       postgres: { condition: service_healthy }
       nacos: { condition: service_healthy }
@@ -229,6 +232,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18085"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_env
       # 容器内看不到宿主机 docker;要用容器管理能力需挂载 docker.sock(见 README 部署说明)
     volumes:
       # 日志目录(可写:env-service 自己也要写日志;纳管 FILE 源读日志文件)
@@ -245,6 +249,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18086"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_automation
     depends_on:
       postgres: { condition: service_healthy }
       nacos: { condition: service_healthy }
@@ -258,6 +263,7 @@ services:
     environment:
       <<: *app-env
       NORA_PORT: "18087"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_notification
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
