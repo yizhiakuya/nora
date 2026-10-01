@@ -1,5 +1,5 @@
 server:
-  port: 8081
+  port: ${NORA_PORT:18081}
 
 spring:
   jackson:
@@ -7,7 +7,7 @@ spring:
   application:
     name: file-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_file
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora?currentSchema=schema_file}
     username: nora
     password: nora
   flyway:
@@ -19,6 +19,7 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
   servlet:
     multipart:
       max-file-size: 100MB
@@ -29,7 +30,7 @@ nora:
   file:
     storage-dir: ./data/files/
   rag:
-    base-url: http://localhost:8082
+    base-url: ${NORA_RAG_URL:http://localhost:18082}
 
 management:
   endpoints:

@@ -106,13 +106,13 @@ units)
   ok=1
   for i in $(seq 1 60); do
     ok=1
-    for p in 8080 8081 8082 8083 8084 8085 8086 8087; do
+    for p in 18080 18081 18082 18083 18084 18085 18086 18087; do
       [ "$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 3 http://localhost:$p/actuator/health)" = "200" ] || ok=0
     done
     [ $ok -eq 1 ] && break
     sleep 3
   done
-  for p in 8080 8081 8082 8083 8084 8085 8086 8087; do
+  for p in 18080 18081 18082 18083 18084 18085 18086 18087; do
     printf "port %s: %s\n" $p "$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 3 http://localhost:$p/actuator/health)"
   done
   echo "OK-units ok=$ok"
@@ -151,7 +151,7 @@ server {
     auth_basic_user_file /etc/nginx/nora.htpasswd;
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:18080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -175,7 +175,7 @@ EOF
   ;;
 verify)
   echo "== 内部 =="
-  curl -s -o /dev/null -w "gateway api: %{http_code}\n" --noproxy '*' --max-time 5 "http://localhost:8080/api/chat/sessions?limit=1"
+  curl -s -o /dev/null -w "gateway api: %{http_code}\n" --noproxy '*' --max-time 5 "http://localhost:18080/api/chat/sessions?limit=1"
   echo "== nginx(https, 本机) =="
   curl -sk -o /dev/null -w "web: %{http_code}\n" --max-time 5 -u "$(cut -d: -f1 /etc/nginx/nora.htpasswd)" https://localhost:8900/ -H "Host: nora.rainaki.top" || true
   echo "OK-verify"

@@ -25,7 +25,7 @@ public class AutomationConfig {
      */
     @Bean
     public RestClient datasourceServiceRestClient(
-            @Value("${nora.datasource.base-url:http://localhost:8084}") String baseUrl) {
+            @Value("${nora.datasource.base-url:http://localhost:18084}") String baseUrl) {
         return RestClient.builder().baseUrl(baseUrl)
                 .defaultStatusHandler(org.springframework.http.HttpStatusCode::isError, EnvelopeErrorHandler.create()).build();
     }
@@ -39,7 +39,7 @@ public class AutomationConfig {
      */
     @Bean
     public RestClient agentServiceRestClient(
-            @Value("${nora.agent.base-url:http://localhost:8083}") String baseUrl) {
+            @Value("${nora.agent.base-url:http://localhost:18083}") String baseUrl) {
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);

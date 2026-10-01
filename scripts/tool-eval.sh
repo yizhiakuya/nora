@@ -15,15 +15,15 @@
 # Windows 注意:所有 python 调用带 -X utf8(payload 直接写文件,不经 stdout,避免 GBK 编码炸)。
 set -uo pipefail
 
-API="http://localhost:8083/api/chat/sessions"
+API="http://localhost:18083/api/chat/sessions"
 MODEL="${NORA_EVAL_MODEL:-deepseek-v4.1-flash}"
 FILTER="${1:-}"
 CASES="scripts/tool-eval-cases.json"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-if ! curl -sS --noproxy '*' -o /dev/null --max-time 3 "http://localhost:8083/actuator/health" 2>/dev/null; then
-  echo "ERROR: agent-service(8083)不可达——先启动服务" >&2
+if ! curl -sS --noproxy '*' -o /dev/null --max-time 3 "http://localhost:18083/actuator/health" 2>/dev/null; then
+  echo "ERROR: agent-service(18083)不可达——先启动服务" >&2
   exit 1
 fi
 

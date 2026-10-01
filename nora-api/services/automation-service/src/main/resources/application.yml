@@ -1,5 +1,5 @@
 server:
-  port: 8086
+  port: ${NORA_PORT:18086}
 
 spring:
   jackson:
@@ -7,7 +7,7 @@ spring:
   application:
     name: automation-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_automation
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora?currentSchema=schema_automation}
     username: nora
     password: nora
   flyway:
@@ -19,6 +19,7 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
 
 nora:
   notification:
@@ -29,9 +30,9 @@ nora:
     source: automation-service
   timezone: Asia/Shanghai
   datasource:
-    base-url: http://localhost:8084
+    base-url: ${NORA_DATASOURCE_URL:http://localhost:18084}
   agent:
-    base-url: http://localhost:8083
+    base-url: ${NORA_AGENT_URL:http://localhost:18083}
 
 management:
   endpoints:

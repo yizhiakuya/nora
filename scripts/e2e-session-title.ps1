@@ -6,7 +6,7 @@
 #
 # 用法: powershell -ExecutionPolicy Bypass -File scripts/e2e-session-title.ps1
 $ErrorActionPreference = "Stop"
-$base = "http://localhost:8083/api/chat"
+$base = "http://localhost:18083/api/chat"
 $sessionId = "sess-title-e2e-" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 # 刻意用一条远超 255 字符的消息（旧实现必崩）

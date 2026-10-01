@@ -1,0 +1,11 @@
+# 构建上下文瘦身:排除本地构建产物与运行数据
+**/target/
+**/*.log
+**/logs/
+**/data/
+**/agent-workspace/
+**/.env.local
+**/.git/
+**/node_modules/
+# 开发文档不参与构建
+docs/

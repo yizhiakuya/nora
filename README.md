@@ -70,19 +70,19 @@ Nora 可以通过 MCP 连接**手机相册**——照片不用搬到电脑,直�
 └────────────────────────┬────────────────────────────────┘
                          │ HTTP / SSE（令牌鉴权）
 ┌────────────────────────▼────────────────────────────────┐
-│  网关 (gateway:8080)  Spring Cloud Gateway + Nacos       │
+│  网关 (gateway:18080)  Spring Cloud Gateway + Nacos       │
 └──┬────────┬────────┬────────┬────────┬────────┬─────────┘
    │        │        │        │        │        │
 ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐
 │file │  │ rag │  │agent│  │data │  │ env │  │auto │
-│8081 │  │8082 │  │8083 │  │8084 │  │8085 │  │8086 │
+│18081│  │18082│  │18083│  │18084│  │18085│  │18086│
 └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
    │        │        │        │        │        │
 ┌──▼────────▼────────▼────────▼────────▼────────▼──────┐
 │  PostgreSQL 16 + pgvector      Redis         Kafka   │
 │  （业务数据 + 向量检索）      （缓存/票据）  （通知总线） │
 └───────────────────────────────────────────────────────┘
-     另有 notification-service(8087):Kafka → 通知落库
+     另有 notification-service(18087):Kafka → 通知落库
 ```
 
 | 层 | 选型 |
@@ -94,24 +94,27 @@ Nora 可以通过 MCP 连接**手机相册**——照片不用搬到电脑,直�
 
 ## 快速开始
 
-### 环境要求
-
-- **Java 21**、**Maven 3.9+**
-- **Node.js 20+**、**pnpm**
-- **Docker**(基础设施:PostgreSQL / Redis / Nacos / Kafka)
-
-### 1. 启动基础设施
+### Docker 一键部署(推荐)
 
 ```bash
-cd nora-api
-docker compose --profile dev-basic up -d   # PG+pgvector / Redis / Nacos / Kafka
+git clone https://github.com/yizhiakuya/nora.git && cd nora/nora-api
+cp .env.example .env                                  # 按需改端口/密钥
+docker compose -f docker-compose.prod.yml up -d       # 镜像从 GHCR 拉取
+# 打开 http://<主机>:13001
 ```
 
-### 2. 启动后端(8 个服务)
+完整部署说明(端口设计/环境变量/备份/跨平台)见 [docs/deployment.md](docs/deployment.md)。
+
+### 本地开发
+
+环境要求:**Java 21**、**Maven 3.9+**、**Node 20+**、**pnpm**、**Docker**(基础设施)。
 
 ```bash
-cd nora-api
-./nora.sh start          # 并发拉起 + 健康轮询
+# 1. 基础设施(PG+pgvector / Redis / Nacos / Kafka)
+cd nora-api && docker compose --profile dev-basic up -d
+
+# 2. 后端(8 服务,并发拉起 + 健康轮询)
+./nora.sh start          # 或 ./nora.sh deploy(自动检测变更并重建)
 ./nora.sh status         # 端口/健康一览
 ```
 
@@ -126,7 +129,7 @@ java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
 
 </details>
 
-### 3. 启动前端
+### 启动前端
 
 ```bash
 cd nora-web
@@ -134,7 +137,7 @@ pnpm install
 pnpm dev                 # http://localhost:3001(VITE_USE_BACKEND=true 接入真实后端)
 ```
 
-### 4. 配置模型(首次)
+### 配置模型(首次)
 
 打开 `设置 → 模型`,添加一个 OpenAI 兼容的模型服务商(端点 + API Key),即可开始对话。
 

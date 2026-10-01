@@ -8,9 +8,11 @@ services:
       POSTGRES_USER: nora
       POSTGRES_PASSWORD: nora
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # 首次创建数据卷时自动建 pgvector 扩展(rag-service 依赖)
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-nora-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nora -d nora"]
       interval: 5s
@@ -23,7 +25,7 @@ services:
     container_name: nora-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "16379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -38,8 +40,8 @@ services:
     environment:
       MODE: standalone
     ports:
-      - "8848:8848"
-      - "9848:9848"
+      - "18848:8848"
+      - "19848:9848"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
       interval: 10s
@@ -59,7 +61,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:29092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
@@ -72,7 +74,7 @@ services:
       # nora.notifications topic 要手动重建(实测踩过)
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
-      - "9092:9092"
+      - "29092:9092"
     volumes:
       - kafkadata:/var/lib/kafka/data
     healthcheck:

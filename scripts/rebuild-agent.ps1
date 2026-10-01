@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Continue'
 
-Write-Host "=== 1. stop agent-service on :8083 (PowerShell, no bash quoting) ==="
-$conn = Get-NetTCPConnection -LocalPort 8083 -State Listen -ErrorAction SilentlyContinue
+Write-Host "=== 1. stop agent-service on :18083 (PowerShell, no bash quoting) ==="
+$conn = Get-NetTCPConnection -LocalPort 18083 -State Listen -ErrorAction SilentlyContinue
 if ($conn) {
   foreach ($c in $conn) {
     Write-Host ("stopping PID " + $c.OwningProcess)
@@ -11,7 +11,7 @@ if ($conn) {
 } else {
   Write-Host "not listening"
 }
-$still = Get-NetTCPConnection -LocalPort 8083 -State Listen -ErrorAction SilentlyContinue
+$still = Get-NetTCPConnection -LocalPort 18083 -State Listen -ErrorAction SilentlyContinue
 Write-Host ("still listening: " + [bool]$still)
 
 Write-Host "=== 2. package (clean package, with tests) ==="

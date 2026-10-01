@@ -35,14 +35,14 @@ Nora(个人 AI 助手)的 Java 后端。设计文档见 [docs/](docs/)：
 
 | 服务 | 端口 | 主要端点 |
 |------|------|---------|
-| gateway-service | 8080 | 路由 `/api/{chat,files,rag,datasources,automations,environment,notifications,media,mcp,skills,workspace,log}/**`；令牌鉴权 |
-| file-service | 8081 | 文件/文件夹 CRUD、`POST /upload`、`GET /{id}/preview|raw`、`GET /download`（zip）、`POST /{id}/index`；**RAG 生命周期通知带持久化重试**（`pending_rag_sync`） |
-| rag-service | 8082 | `POST /rag/index[/text]`、docs CRUD/reindex、`POST /rag/search`、`POST /rag/citations`、`POST /rag/docs/by-file/{id}`（文件生命周期联动） |
-| agent-service | 8083 | `POST /chat/sessions/{id}/messages`（SSE）、审批、会话/消息、`/turn/live|stream`（断线重连）、`/models`、MCP 管理、技能、工作区、媒体缓存 |
-| datasource-service | 8084 | 连接 CRUD、test、schema、`POST /{id}/query`（**数据库级只读连接**）、`POST /{id}/execute`（受控写）、history；引擎 postgresql / mysql / redis |
-| env-service | 8085 | 容器/进程/日志纳管、`GET /services`、start/stop/restart、日志流、守护事件 |
-| automation-service | 8086 | 规则 CRUD、`POST /{id}/toggle|run`、`GET /executions` |
-| notification-service | 8087 | `GET /api/notifications`、unread-count、read-all、清空（Kafka 消费落库） |
+| gateway-service | 18080 | 路由 `/api/{chat,files,rag,datasources,automations,environment,notifications,media,mcp,skills,workspace,log}/**`；令牌鉴权 |
+| file-service | 18081 | 文件/文件夹 CRUD、`POST /upload`、`GET /{id}/preview|raw`、`GET /download`（zip）、`POST /{id}/index`；**RAG 生命周期通知带持久化重试**（`pending_rag_sync`） |
+| rag-service | 18082 | `POST /rag/index[/text]`、docs CRUD/reindex、`POST /rag/search`、`POST /rag/citations`、`POST /rag/docs/by-file/{id}`（文件生命周期联动） |
+| agent-service | 18083 | `POST /chat/sessions/{id}/messages`（SSE）、审批、会话/消息、`/turn/live|stream`（断线重连）、`/models`、MCP 管理、技能、工作区、媒体缓存 |
+| datasource-service | 18084 | 连接 CRUD、test、schema、`POST /{id}/query`（**数据库级只读连接**）、`POST /{id}/execute`（受控写）、history；引擎 postgresql / mysql / redis |
+| env-service | 18085 | 容器/进程/日志纳管、`GET /services`、start/stop/restart、日志流、守护事件 |
+| automation-service | 18086 | 规则 CRUD、`POST /{id}/toggle|run`、`GET /executions` |
+| notification-service | 18087 | `GET /api/notifications`、unread-count、read-all、清空（Kafka 消费落库） |
 
 ## 快速开始
 
@@ -58,7 +58,7 @@ java -jar services/file-service/target/file-service-0.1.0-SNAPSHOT.jar
 java -jar services/rag-service/target/rag-service-0.1.0-SNAPSHOT.jar
 java -jar services/agent-service/target/agent-service-0.1.0-SNAPSHOT.jar
 java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
-# 验证：curl http://localhost:8080/api/chat/health → ok（经 Nacos 服务发现转发）
+# 验证：curl http://localhost:18080/api/chat/health → ok（经 Nacos 服务发现转发）
 ```
 
 Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local` 的 `NORA_EMBEDDING_API_KEY`
@@ -92,5 +92,5 @@ Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local
 ## 前端对接
 
 与 `nora-web` 完全独立，各自安装 / 启动。前端通过 `VITE_USE_BACKEND=true` 接入，
-开发时 Vite 将 `/api` 代理到 gateway :8080。API 契约以 v1 文档第 5、6 章 + v2 文档第 8 章为准，
+开发时 Vite 将 `/api` 代理到 gateway :18080。API 契约以 v1 文档第 5、6 章 + v2 文档第 8 章为准，
 前端接入现状见 `nora-web/AGENTS.md` 的「后端接入现状」表。

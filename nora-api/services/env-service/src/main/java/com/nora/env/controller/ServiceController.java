@@ -42,7 +42,7 @@ public class ServiceController {
 
     public ServiceController(DockerClientService docker, ManagedSourceService managed,
                              ProcessSupervisorService supervisor,
-                             @Value("${nora.agent.base-url:http://localhost:8083}") String agentBaseUrl) {
+                             @Value("${nora.agent.base-url:http://localhost:18083}") String agentBaseUrl) {
         this.docker = docker;
         this.managed = managed;
         this.supervisor = supervisor;

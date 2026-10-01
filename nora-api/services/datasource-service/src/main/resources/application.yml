@@ -1,5 +1,5 @@
 server:
-  port: 8084
+  port: ${NORA_PORT:18084}
 
 spring:
   jackson:
@@ -7,7 +7,7 @@ spring:
   application:
     name: datasource-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_datasource
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora?currentSchema=schema_datasource}
     username: nora
     password: nora
   flyway:
@@ -19,6 +19,7 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
 
 management:
   endpoints:

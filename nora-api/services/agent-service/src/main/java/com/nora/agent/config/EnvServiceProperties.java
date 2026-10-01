@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "nora.env")
 public record EnvServiceProperties(String baseUrl) {
 
-    public static final String DEFAULT_BASE_URL = "http://localhost:8085";
+    public static final String DEFAULT_BASE_URL = "http://localhost:18085";
 
     public EnvServiceProperties {
         if (baseUrl == null || baseUrl.isBlank()) {

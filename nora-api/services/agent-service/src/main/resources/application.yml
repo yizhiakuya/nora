@@ -1,5 +1,5 @@
 server:
-  port: 8083
+  port: ${NORA_PORT:18083}
 
 spring:
   application:
@@ -8,7 +8,7 @@ spring:
     # 全局统一时区:Date/Instant 序列化偏移(JVM 默认时区由 nora-common TimeZoneConfig 设置)
     time-zone: Asia/Shanghai
   datasource:
-    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_agent
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora?currentSchema=schema_agent}
     username: nora
     password: nora
   flyway:
@@ -23,6 +23,7 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
 
 nora:
   # 全局统一时区(nora-common TimeZoneConfig 消费;JVM 默认时区)
@@ -32,7 +33,7 @@ nora:
   redis:
     enabled: ${NORA_REDIS_ENABLED:true}
     host: ${NORA_REDIS_HOST:localhost}
-    port: ${NORA_REDIS_PORT:6379}
+    port: ${NORA_REDIS_PORT:16379}
     password: ${NORA_REDIS_PASSWORD:}
     database: ${NORA_REDIS_DATABASE:0}
     timeout-ms: ${NORA_REDIS_TIMEOUT_MS:2000}
@@ -47,7 +48,7 @@ nora:
     # powershell: 显式指定 pwsh 可执行文件(绝对路径或命令名);空=自动(内置→PATH)
     powershell: ${NORA_POWERSHELL:}
     # pwsh-bundle: 内置 pwsh 归档(zip)路径;空=禁用内置(直接用 PATH)
-    pwsh-bundle: ${NORA_PWSH_BUNDLE:D:/claude/Nora/tools/pwsh/PowerShell-7.6.6-win-x64.zip}
+    pwsh-bundle: ${NORA_PWSH_BUNDLE:tools/pwsh/PowerShell-7.6.6-win-x64.zip}
   proxy:
     # 出站代理:外网目标(LLM 上游/Jina embedding)经此转发,内网服务互调始终直连。
     # 环境变量覆盖:NORA_PROXY_ENABLED / NORA_PROXY_HOST / NORA_PROXY_PORT
@@ -71,15 +72,15 @@ nora:
     base-url: ${NORA_LLM_BASE_URL:http://192.168.0.109:28765/v1}
     model: ${NORA_LLM_MODEL:gpt-5.4-mini}
   rag:
-    base-url: http://localhost:8082
+    base-url: ${NORA_RAG_URL:http://localhost:18082}
   datasource:
-    base-url: http://localhost:8084
+    base-url: ${NORA_DATASOURCE_URL:http://localhost:18084}
   env:
-    base-url: http://localhost:8085
+    base-url: ${NORA_ENV_URL:http://localhost:18085}
   file:
-    base-url: http://localhost:8081
+    base-url: ${NORA_FILE_URL:http://localhost:18081}
   automation:
-    base-url: http://localhost:8086
+    base-url: ${NORA_AUTOMATION_URL:http://localhost:18086}
 
 management:
   endpoints:

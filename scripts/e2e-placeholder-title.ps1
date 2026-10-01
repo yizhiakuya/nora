@@ -5,7 +5,7 @@
 #
 # 用法: powershell -ExecutionPolicy Bypass -File scripts/e2e-placeholder-title.ps1
 $ErrorActionPreference = "Stop"
-$base = "http://localhost:8083/api/chat"
+$base = "http://localhost:18083/api/chat"
 $sessionId = "sess-ph-" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 $long = "帮我分析一下手机相册里最近拍的猫的照片都分布在哪些相册里，顺便统计一下总共有多少张，" +

@@ -9,7 +9,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * nora:
  *   notification:
  *     enabled: true
- *     bootstrap-servers: localhost:9092
+ *     bootstrap-servers: localhost:29092
  *     topic: nora.notifications
  * }</pre>
  *
@@ -17,7 +17,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@link NotificationPublisher} 直接空操作。
  *
  * @param enabled          是否启用(默认 false)
- * @param bootstrapServers Kafka 地址(默认 localhost:9092)
+ * @param bootstrapServers Kafka 地址(默认 localhost:29092)
  * @param topic            事件 topic(默认 nora.notifications)
  * @param source           事件来源名(各服务设为自己的服务名,用于通知归属)
  */
@@ -29,7 +29,7 @@ public record NotificationProperties(Boolean enabled, String bootstrapServers, S
             enabled = false;
         }
         if (bootstrapServers == null || bootstrapServers.isBlank()) {
-            bootstrapServers = "localhost:9092";
+            bootstrapServers = "localhost:29092";
         }
         if (topic == null || topic.isBlank()) {
             topic = "nora.notifications";

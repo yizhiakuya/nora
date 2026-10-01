@@ -1,0 +1,30 @@
+# 全栈集成测试(本地构建镜像,替换 GHCR 镜像)
+# 用法:docker compose -f docker-compose.prod.yml -f docker-compose.test.yml up -d --build
+services:
+  gateway-service:
+    image: nora-test-gateway:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: gateway-service } }
+  file-service:
+    image: nora-test-file:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: file-service } }
+  rag-service:
+    image: nora-test-rag:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: rag-service } }
+  agent-service:
+    image: nora-test-agent:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: agent-service } }
+  datasource-service:
+    image: nora-test-datasource:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: datasource-service } }
+  env-service:
+    image: nora-test-env:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: env-service } }
+  automation-service:
+    image: nora-test-automation:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: automation-service } }
+  notification-service:
+    image: nora-test-notification:latest
+    build: { context: ., dockerfile: Dockerfile, args: { SERVICE: notification-service } }
+  nora-web:
+    image: nora-test-web:latest
+    build: { context: ../nora-web, dockerfile: Dockerfile }

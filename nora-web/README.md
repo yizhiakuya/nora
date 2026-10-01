@@ -78,7 +78,7 @@ nora-web/
 ## 后端接入现状
 
 开关在 `src/lib/api/client.ts`：`USE_BACKEND` 读取 `VITE_USE_BACKEND`（`.env.local` 当前为 `true`），
-开发时 Vite 把 `/api` 代理到 gateway `http://localhost:8080`。所有请求经 `requestJson` 统一解开
+开发时 Vite 把 `/api` 代理到 gateway `http://localhost:18080`。所有请求经 `requestJson` 统一解开
 `{code,data,message}` 信封，`code != 0` 直接抛错。
 
 以 `ragService.ts` 为例，同一能力提供**同步 Mock**与**异步后端**两套函数：

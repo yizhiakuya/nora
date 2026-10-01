@@ -17,7 +17,7 @@ public record RedisProperties(boolean enabled, String host, int port, String pas
             host = "localhost";
         }
         if (port <= 0) {
-            port = 6379;
+            port = 16379;
         }
         if (database < 0) {
             database = 0;
@@ -29,6 +29,6 @@ public record RedisProperties(boolean enabled, String host, int port, String pas
 
     /** 默认禁用(yml 可整块省略)。 */
     public static RedisProperties disabled() {
-        return new RedisProperties(false, "localhost", 6379, null, 0, 2000);
+        return new RedisProperties(false, "localhost", 16379, null, 0, 2000);
     }
 }

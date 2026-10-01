@@ -11,7 +11,7 @@
 set -u
 ROOT=/d/claude/Nora/nora-api
 LOGDIR=/d/claude/Nora/nora-api
-PORTS=(gateway:8080 file:8081 rag:8082 agent:8083 datasource:8084 env:8085 automation:8086 notification:8087)
+PORTS=(gateway:18080 file:18081 rag:18082 agent:18083 datasource:18084 env:18085 automation:18086 notification:18087)
 ALL=(gateway file rag agent datasource env automation notification)
 SHARED_MODULES=common/nora-common,common/nora-security,api/rag-api,api/file-api,api/datasource-api
 
@@ -39,9 +39,13 @@ stop_many() {
 stop_svc() { stop_many "$1"; }
 
 # 并发启动:后台子 shell 立即返回,多个 JVM 同时拉起(不排队)
+# 本地开发固定传入工作区/日志/pwsh 包路径(与历史数据位置一致;生产由 compose 环境变量覆盖)
 start_svc() {
   cd "$ROOT" || return 1
-  (java -jar services/$1-service/target/$1-service-0.1.0-SNAPSHOT.jar \
+  (NORA_AGENT_WORKSPACE=/d/claude/Nora/agent-workspace \
+   LOG_PATH=/d/claude/Nora/logs \
+   NORA_PWSH_BUNDLE=/d/claude/Nora/tools/pwsh/PowerShell-7.6.6-win-x64.zip \
+    java -jar services/$1-service/target/$1-service-0.1.0-SNAPSHOT.jar \
     > "$LOGDIR/$1-service.stdout.log" 2> "$LOGDIR/$1-service.stderr.log" &)
   echo "starting $1 ..."
 }

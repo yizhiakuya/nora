@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${NORA_PORT:18080}
 
 spring:
   jackson:
@@ -10,6 +10,7 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
     gateway:
       routes:
         - id: agent

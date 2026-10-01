@@ -15,13 +15,13 @@ for s in (sys.stdout, sys.stderr):
         pass
 
 PORT_MODULE = {
-    8080: "gateway-service",
-    8081: "file-service",
-    8082: "rag-service",
-    8083: "agent-service",
-    8084: "datasource-service",
-    8085: "env-service",
-    8086: "automation-service",
+    18080: "gateway-service",
+    18081: "file-service",
+    18082: "rag-service",
+    18083: "agent-service",
+    18084: "datasource-service",
+    18085: "env-service",
+    18086: "automation-service",
 }
 
 

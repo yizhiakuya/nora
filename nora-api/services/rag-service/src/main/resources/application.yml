@@ -1,5 +1,5 @@
 server:
-  port: 8082
+  port: ${NORA_PORT:18082}
 
 spring:
   jackson:
@@ -7,7 +7,7 @@ spring:
   application:
     name: rag-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/nora
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora}
     username: nora
     password: nora
   flyway:
@@ -20,6 +20,7 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
 
 nora:
   notification:
@@ -34,7 +35,7 @@ nora:
   redis:
     enabled: ${NORA_REDIS_ENABLED:true}
     host: ${NORA_REDIS_HOST:localhost}
-    port: ${NORA_REDIS_PORT:6379}
+    port: ${NORA_REDIS_PORT:16379}
     password: ${NORA_REDIS_PASSWORD:}
     database: ${NORA_REDIS_DATABASE:0}
     timeout-ms: ${NORA_REDIS_TIMEOUT_MS:2000}
@@ -64,7 +65,7 @@ nora:
     rerank-enabled: ${NORA_RETRIEVAL_RERANK_ENABLED:false}
     rerank-model: ${NORA_RETRIEVAL_RERANK_MODEL:jina-reranker-v2-base-multilingual}
   file-service:
-    base-url: http://localhost:8081
+    base-url: ${NORA_FILE_URL:http://localhost:18081}
 
 management:
   endpoints:

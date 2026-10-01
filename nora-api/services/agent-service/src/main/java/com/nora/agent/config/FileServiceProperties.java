@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "nora.file")
 public record FileServiceProperties(String baseUrl) {
 
-    public static final String DEFAULT_BASE_URL = "http://localhost:8081";
+    public static final String DEFAULT_BASE_URL = "http://localhost:18081";
 
     public FileServiceProperties {
         if (baseUrl == null || baseUrl.isBlank()) {

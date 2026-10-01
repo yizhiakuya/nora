@@ -46,8 +46,11 @@ public class AgentWorkspaceService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentWorkspaceService.class);
 
-    /** 工作区默认位置(与 logs 约定一致:绝对路径落在 D:/claude/Nora)。 */
-    static final String DEFAULT_ROOT = "D:/claude/Nora/agent-workspace";
+    /**
+     * 工作区默认位置:相对 cwd 的 agent-workspace(跨平台;可用 nora.agent.workspace 覆盖,
+     * 也可用环境变量 NORA_AGENT_WORKSPACE 指定绝对路径——compose/脚本即用后者)。
+     */
+    static final String DEFAULT_ROOT = "agent-workspace";
     /** 引导文件逐文件注入上限(字符);total 上限兜底。 */
     static final int BOOTSTRAP_PER_FILE_CHARS = 6_000;
     static final int BOOTSTRAP_TOTAL_CHARS = 16_000;

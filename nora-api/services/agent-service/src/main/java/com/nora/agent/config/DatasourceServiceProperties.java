@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "nora.datasource")
 public record DatasourceServiceProperties(String baseUrl) {
 
-    public static final String DEFAULT_BASE_URL = "http://localhost:8084";
+    public static final String DEFAULT_BASE_URL = "http://localhost:18084";
 
     public DatasourceServiceProperties {
         if (baseUrl == null || baseUrl.isBlank()) {

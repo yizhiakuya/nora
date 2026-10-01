@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "nora.automation")
 public record AutomationServiceProperties(String baseUrl) {
 
-    public static final String DEFAULT_BASE_URL = "http://localhost:8086";
+    public static final String DEFAULT_BASE_URL = "http://localhost:18086";
 
     public AutomationServiceProperties {
         if (baseUrl == null || baseUrl.isBlank()) {

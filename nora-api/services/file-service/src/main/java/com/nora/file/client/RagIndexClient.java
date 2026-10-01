@@ -47,7 +47,7 @@ public class RagIndexClient {
     /** 入队事务(与文件状态变更同一提交边界;REQUIRED 加入调用方已有事务)。 */
     private final TransactionTemplate txTemplate;
 
-    public RagIndexClient(@Value("${nora.rag.base-url:http://localhost:8082}") String ragBaseUrl,
+    public RagIndexClient(@Value("${nora.rag.base-url:http://localhost:18082}") String ragBaseUrl,
                           JdbcTemplate jdbcTemplate,
                           TransactionTemplate txTemplate) {
         this.ragBaseUrl = ragBaseUrl;

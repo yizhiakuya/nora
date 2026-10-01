@@ -16,13 +16,13 @@ docker start nora-postgres nora-nacos nora-redis
 
 | 服务 | 端口 | 模块路径 |
 |---|---|---|
-| gateway | 8080 | services/gateway-service |
-| file | 8081 | services/file-service |
-| rag | 8082 | services/rag-service |
-| agent | 8083 | services/agent-service |
-| datasource | 8084 | services/datasource-service |
-| env | 8085 | services/env-service |
-| automation | 8086 | services/automation-service |
+| gateway | 18080 | services/gateway-service |
+| file | 18081 | services/file-service |
+| rag | 18082 | services/rag-service |
+| agent | 18083 | services/agent-service |
+| datasource | 18084 | services/datasource-service |
+| env | 18085 | services/env-service |
+| automation | 18086 | services/automation-service |
 
 前端:内置浏览器预览启动(端口 3001,`.claude/launch.json` name=nora-web);不要裸 `pnpm dev` 后台进程——启动后截图验证工作台正常、无控制台报错。
 
@@ -42,21 +42,21 @@ done
 ### 查状态
 
 ```bash
-for p in 8080 8081 8082 8083 8084 8085; do printf "%s:" $p; netstat -ano | grep ":$p " | grep -c LISTENING; done
-for p in 8080 8083 8085; do printf "%s health: " $p; curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" "http://localhost:$p/actuator/health" --max-time 5; done
+for p in 18080 18081 18082 18083 18084 18085; do printf "%s:" $p; netstat -ano | grep ":$p " | grep -c LISTENING; done
+for p in 18080 18083 18085; do printf "%s health: " $p; curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" "http://localhost:$p/actuator/health" --max-time 5; done
 ```
 
 ### 停止全部 / 单个
 
 ```bash
 # 全部(按端口找 PID,比记 PID 可靠)
-for p in 8080 8081 8082 8083 8084 8085; do
+for p in 18080 18081 18082 18083 18084 18085; do
   pid=$(netstat -ano | grep ":$p " | grep LISTENING | head -1 | awk '{print $NF}')
   [ -n "$pid" ] && powershell -Command "Stop-Process -Id $pid -Force"
 done
 
 # 单个服务(例:agent)
-pid=$(netstat -ano | grep ":8083 " | grep LISTENING | head -1 | awk '{print $NF}')
+pid=$(netstat -ano | grep ":18083 " | grep LISTENING | head -1 | awk '{print $NF}')
 [ -n "$pid" ] && powershell -Command "Stop-Process -Id $pid -Force"
 ```
 
@@ -71,7 +71,7 @@ mvn -q -pl services/agent-service clean package -DskipTests
 (java -jar services/agent-service/target/agent-service-0.1.0-SNAPSHOT.jar \
   > 仓库根/agent-service.stdout.log 2> 仓库根/agent-service.stderr.log &)
 # 4. 验证
-sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://localhost:8083/actuator/health
+sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://localhost:18083/actuator/health
 ```
 
 ## 已踩过的坑(务必遵守)
@@ -161,7 +161,7 @@ sleep 12 && curl -sS --noproxy '*' -o /dev/null -w "%{http_code}\n" http://local
 
 ```bash
 # 聊天链路(走网关,验证注册与编排)
-curl -sS --noproxy '*' -N -X POST "http://localhost:8083/api/chat/sessions/sess-1788853162156/messages" \
+curl -sS --noproxy '*' -N -X POST "http://localhost:18083/api/chat/sessions/sess-1788853162156/messages" \
   -H "Content-Type: application/json; charset=utf-8" \
   --data-binary '{"content":"一句话介绍自己","model":"hy4-preview","permissionMode":"FULL"}' \
   --max-time 90 | grep -c "event:delta"

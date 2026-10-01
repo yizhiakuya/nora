@@ -1,5 +1,5 @@
 server:
-  port: 8087
+  port: ${NORA_PORT:18087}
 
 spring:
   jackson:
@@ -7,7 +7,7 @@ spring:
   application:
     name: notification-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/nora?currentSchema=schema_notification
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora?currentSchema=schema_notification}
     username: nora
     password: nora
   flyway:
@@ -19,8 +19,9 @@ spring:
     nacos:
       discovery:
         enabled: true
+        server-addr: ${NORA_NACOS_SERVER:localhost:18848}
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${NORA_KAFKA_SERVERS:localhost:29092}
     consumer:
       # 消费组与 topic 在 @KafkaListener 里声明;这里只放公共配置
       auto-offset-reset: earliest

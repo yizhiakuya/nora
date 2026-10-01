@@ -1,0 +1,86 @@
+# 构建 8 个服务镜像并推送到 GHCR(多架构 amd64/arm64)
+#
+# 触发:
+#   - 推送 tag(v*):打版本 tag + latest
+#   - 手动触发(workflow_dispatch):可指定 tag
+# 说明:
+#   - 多架构构建用 QEMU + buildx;amd64 为主、arm64 通过模拟构建
+#   - 每个服务独立 job(并行);构建上下文为 nora-api/(Dockerfile 通用)
+name: Build & Push Images
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "镜像 tag(默认 latest)"
+        required: false
+        default: "latest"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/nora
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: gateway-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: file-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: rag-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: agent-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: datasource-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: env-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: automation-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: notification-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: nora-web, context: ./nora-web, file: ./nora-web/Dockerfile }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # 不拉 git-lfs(pwsh win-x64 包仅 Windows 本地运行需要,镜像里用不到)
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tags=${REGISTRY}/${IMAGE_PREFIX}/${{ matrix.service }}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "tags_latest=${REGISTRY}/${IMAGE_PREFIX}/${{ matrix.service }}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          build-args: |
+            SERVICE=${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+            ${{ steps.tags.outputs.tags_latest }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max

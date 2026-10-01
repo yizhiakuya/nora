@@ -60,9 +60,8 @@ public class TerminalService {
 
     /** 内置 PowerShell 版本(随仓库 tools/pwsh 经 git-lfs 分发,首次使用解压到缓存目录)。 */
     static final String BUNDLED_PWSH_VERSION = "7.6.6";
-    /** 内置 PowerShell 归档的默认路径(仓库根 tools/pwsh;可配 nora.agent.pwsh-bundle)。 */
-    static final String DEFAULT_PWSH_BUNDLE =
-            "D:/claude/Nora/tools/pwsh/PowerShell-" + BUNDLED_PWSH_VERSION + "-win-x64.zip";
+    /** 内置 PowerShell 归档的默认路径(仓库根 tools/pwsh;可配 nora.agent.pwsh-bundle;仅 Windows 使用)。 */
+    static final String DEFAULT_PWSH_BUNDLE = "tools/pwsh/PowerShell-" + BUNDLED_PWSH_VERSION + "-win-x64.zip";
 
     private final Path workspaceRoot;
     /** 显式指定的 pwsh 可执行文件(可配 nora.agent.powershell);空=自动(内置→PATH)。 */
@@ -394,9 +393,10 @@ public class TerminalService {
         return "powershell.exe";
     }
 
-    /** 内置 pwsh 可执行文件路径;未配置/归档缺失/解压失败→null(回退 PATH)。 */
+    /** 内置 pwsh 可执行文件路径;未配置/归档缺失/解压失败/非 Windows→null(回退 PATH)。 */
     private Path bundledPwsh() {
-        if (pwshBundle == null || !Files.isRegularFile(pwshBundle)) {
+        // 内置包是 win-x64:非 Windows 平台直接跳过(用系统 bash/pwsh)
+        if (!isWindows() || pwshBundle == null || !Files.isRegularFile(pwshBundle)) {
             return null;
         }
         Path target = pwshBundle.getParent().resolve("pwsh-" + BUNDLED_PWSH_VERSION);
