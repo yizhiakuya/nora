@@ -6,7 +6,8 @@
 # 平台说明:jar 是平台无关字节码,镜像按目标架构构建(JRE 层随 --platform 走)。
 
 # ---- 构建阶段:JDK 21 + Maven,构建目标服务(含依赖模块) ----
-FROM maven:3.9-eclipse-temurin-21 AS build
+# 固定在 BUILDPLATFORM(原生架构):jar 是平台无关字节码,多架构时避开 QEMU 模拟构建
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
 ARG SERVICE
 WORKDIR /build
 
