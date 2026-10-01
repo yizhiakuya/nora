@@ -6,12 +6,13 @@
 
 | 视频 | 内容 | 时长 |
 |---|---|---|
-| [nora-demo.mp4](nora-demo.mp4) | **完整演示**:① 对话交付文件闭环 → ② 知识库问答 → ③ 数据源查询 → ④ 文件中心(含章节标题卡) | ~96s |
+| [nora-demo.mp4](nora-demo.mp4) | **完整演示**:① 手机相册 MCP → ② 对话交付文件闭环 → ③ 知识库问答 → ④ 数据源查询 → ⑤ 文件中心(含章节标题卡) | ~127s |
 
 分场景短片(同一批录制的分段版):
 
 | 视频 | 内容 | 时长 |
 |---|---|---|
+| [demo-0-phone-album.mp4](demo-0-phone-album.mp4) | **手机相册 MCP**:对话查看手机相册(相册列表 / 照片检索) → 从「猫」相册挑选 4 张真猫照片在对话中展示 | ~28s |
 | [demo-1-chat-file-delivery.mp4](demo-1-chat-file-delivery.mp4) | **对话交付文件闭环**:对话让 Nora 写笔记 → 工具调用链展示 → 「已编辑 1 个文件 +23 -0」编辑卡片 → 文件查看器自动打开 | ~27s |
 | [demo-2-knowledge-qa.mp4](demo-2-knowledge-qa.mp4) | **知识库问答**:基于 RAG 资料回答 + 引用来源标注(引用片段可展开) | ~16s |
 | [demo-3-sql-query.mp4](demo-3-sql-query.mp4) | **数据源真实查询**:execute_sql 两次查询,按 schema 统计表数量,工具调用链完整可见 | ~21s |
