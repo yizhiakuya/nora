@@ -13,6 +13,10 @@ name: nora
 
 x-service-defaults: &service-defaults
   restart: unless-stopped
+  # 纯 IPv4 DNS(宿主 DNS 含 IPv6 服务器;容器无 IPv6 出口,IPv6 解析会超时)
+  dns:
+    - 223.5.5.5
+    - 8.8.8.8
   depends_on:
     postgres:
       condition: service_healthy
@@ -37,6 +41,8 @@ x-app-env: &app-env
   NORA_DATASOURCE_URL: http://datasource-service:18084
   NORA_ENV_URL: http://env-service:18085
   NORA_AUTOMATION_URL: http://automation-service:18086
+  # —— JVM:IPv4 优先(容器默认无 IPv6,DNS 可能返回 IPv6 优先导致外网超时) ——
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+UseG1GC -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true"
   # —— 存储路径(卷内) ——
   LOG_PATH: /app/logs
   NORA_AGENT_WORKSPACE: /app/agent-workspace
