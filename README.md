@@ -2,6 +2,17 @@
 
 个人 AI 助手：使用你的资料和已连接工具完成具体任务、交付成果，并持续处理重复工作。
 
+## 功能演示
+
+真实浏览器录制的操作演示（真实后端 + 真实 LLM 对话，无剪辑拼接）——见 [docs/demo/](docs/demo/)：
+
+| 演示 | 内容 |
+|---|---|
+| [对话交付文件](docs/demo/demo-1-chat-file-delivery.mp4) | 对话让 Nora 写笔记 → 工具调用链 → 编辑卡片（+23 行）→ 文件查看器自动打开 |
+| [知识库问答](docs/demo/demo-2-knowledge-qa.mp4) | 基于 RAG 资料回答 + 引用来源标注 |
+| [数据源查询](docs/demo/demo-3-sql-query.mp4) | execute_sql 真实查询,按 schema 统计表数量 |
+| [文件中心](docs/demo/demo-4-files.mp4) | Agent 工作区浏览 + 文件查看器（预览/源码切换） |
+
 ## 目录结构
 
 ```
@@ -34,6 +45,7 @@ Nora/
 
 | 文档 | 内容 |
 |------|------|
+| [docs/demo/](docs/demo/) | **功能演示视频**（真实浏览器录制） |
 | [NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md](NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md) | **产品改造方案**（信息架构/业务场景/契约/验收矩阵） |
 | [NORA-REFACTOR-IMPLEMENTATION-LOG.md](NORA-REFACTOR-IMPLEMENTATION-LOG.md) | **改造实施记录**（M0–M5 完成项与验证证据、已知限制） |
 | [PROJECT-ANALYSIS-2026-09-19.md](PROJECT-ANALYSIS-2026-09-19.md) | 全面分析（问题清单与推进顺序，P1/P2 已落地） |
