@@ -262,6 +262,15 @@ services:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
 
+networks:
+  default:
+    name: nora_default
+    driver: bridge
+    driver_opts:
+      # 宿主 Wi-Fi 实际路径 MTU < 1500(实测 1428 可通);容器转发路径
+      # 无法做 PMTUD,必须显式降 MTU,否则大包被丢(外网部分站点超时)
+      com.docker.network.driver.mtu: 1400
+
 volumes:
   pgdata:
   kafka-data:
