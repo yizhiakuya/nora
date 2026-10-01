@@ -60,9 +60,10 @@ public class AuthGatewayFilter implements WebFilter, Ordered {
             return chain.filter(exchange);
         }
         String path = exchange.getRequest().getURI().getPath();
-        // 白名单:登录端点自身、健康检查、CORS 预检
+        // 白名单:登录端点自身、健康检查(含 actuator——Docker healthcheck 依赖)、CORS 预检
         if (path.startsWith("/api/auth/")
                 || path.equals("/api/chat/health")
+                || path.startsWith("/actuator/")
                 || "OPTIONS".equalsIgnoreCase(exchange.getRequest().getMethod().name())) {
             return chain.filter(exchange);
         }

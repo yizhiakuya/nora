@@ -124,6 +124,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/gateway-service:${NORA_TAG:-latest}
     container_name: nora-gateway
+    mem_limit: 448m
     environment:
       <<: *app-env
       NORA_PORT: "18080"
@@ -150,6 +151,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/file-service:${NORA_TAG:-latest}
     container_name: nora-file
+    mem_limit: 512m
     environment:
       <<: *app-env
       NORA_PORT: "18081"
@@ -163,6 +165,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/rag-service:${NORA_TAG:-latest}
     container_name: nora-rag
+    mem_limit: 512m
     environment:
       <<: *app-env
       NORA_PORT: "18082"
@@ -180,6 +183,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/agent-service:${NORA_TAG:-latest}
     container_name: nora-agent
+    mem_limit: 768m
     environment:
       <<: *app-env
       NORA_PORT: "18083"
@@ -203,6 +207,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/datasource-service:${NORA_TAG:-latest}
     container_name: nora-datasource
+    mem_limit: 448m
     environment:
       <<: *app-env
       NORA_PORT: "18084"
@@ -214,6 +219,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/env-service:${NORA_TAG:-latest}
     container_name: nora-env
+    mem_limit: 448m
     environment:
       <<: *app-env
       NORA_PORT: "18085"
@@ -229,6 +235,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/automation-service:${NORA_TAG:-latest}
     container_name: nora-automation
+    mem_limit: 448m
     environment:
       <<: *app-env
       NORA_PORT: "18086"
@@ -241,6 +248,7 @@ services:
     <<: *service-defaults
     image: ghcr.io/yizhiakuya/nora/notification-service:${NORA_TAG:-latest}
     container_name: nora-notification
+    mem_limit: 448m
     environment:
       <<: *app-env
       NORA_PORT: "18087"
