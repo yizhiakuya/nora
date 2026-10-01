@@ -97,6 +97,20 @@ docker compose -f docker-compose.prod.yml -f docker-compose.test.yml up -d --bui
 | `NORA_PROXY_ENABLED` 等 | false | 出站代理(外网受限环境) |
 | `DB_USER` / `DB_PASSWORD` | nora / nora | 数据库凭据 |
 
+## 部署踩坑(2026-10-01 megumin 实机部署记录)
+
+以下问题均为真实部署中实测遇到并已修复,新环境部署时若遇类似症状可对照排查:
+
+| 症状 | 根因 | 修复 |
+|---|---|---|
+| 配了 `NORA_AUTH_TOKEN` 后 gateway 容器 unhealthy | healthcheck 走 `/actuator/health` 被鉴权拦截 401 | 网关白名单放行 `/actuator/**`(已内置) |
+| 容器访问部分外网站点超时(如 Jina),常见大站正常 | 宿主走本地代理(sing-box 等),容器直连被墙 | `.env` 设 `NORA_PROXY_ENABLED=true` + `NORA_PROXY_HOST=<docker0 网关 IP, 如 172.17.0.1>` + 代理端口 |
+| 服务启动后报 `chat_session 不存在` | `NORA_DB_URL` 覆盖了各服务默认值,丢了 `currentSchema` | compose 已按服务内置各自 schema 的 URL |
+| 上游 404: Model | 静态兜底模型名(`nora.llm.model`)在上游不存在 | `.env` 设 `NORA_LLM_MODEL=<上游可用模型名>`(或在设置页配置 provider) |
+| gateway 容器重建后 web 502 | nginx 启动时解析一次容器名并缓存,IP 变更后失效 | nginx 已用 `resolver 127.0.0.11` + 变量化 proxy_pass 重解析 |
+
+> 提示:全新部署首次启动即自动完成全部数据库迁移(Flyway),无需手工建表;pgvector 扩展由初始化脚本自动创建。
+
 ## 跨平台说明
 
 | 能力 | Windows | Linux / macOS | 容器内 |
