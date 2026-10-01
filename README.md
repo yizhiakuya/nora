@@ -164,8 +164,22 @@ Nora/
 │   ├── common/       #   共享基座（日志/异常/Redis/事件总线）
 │   └── docs/         #   架构与设计文档
 ├── docs/demo/        # 功能演示视频（分场景短片）
+├── .claude/          # AI 辅助开发配置（见下节）
 └── phone-album-mcp/  # 手机相册 MCP（独立仓库:Android App + 中继服务）
 ```
+
+## AI 辅助开发（.claude/）
+
+本项目**用 AI 深度参与开发**(Claude Code),开发配置随仓库共享——这是项目工程方法的一部分:
+
+| 位置 | 内容 |
+|---|---|
+| `.claude/skills/nora-dev/` | **开发维护手册**:架构、服务端口、启动方式、数据契约、已知坑(改代码前后必读) |
+| `.claude/skills/nora-agent-tools/` | Agent 工具设计权威参考(权限三档 / 风险分级 / 审批协议) |
+| `.claude/skills/flyway/` · `restart-service/` | 迁移检查、服务重启的标准流程 |
+| `.claude/agents/` | 代码审查子代理(后端:SSE/审批/重启坑;前端:双路径/持久化/暗色模式) |
+| `.claude/hooks/` | 自动化守卫:构建前 jar 锁检查、前端改动后自动 eslint --fix、会话结束前 tsc 把关 |
+| `.claude/workflows/` | 项目脚手架与 RAG 实施的工作流定义 |
 
 ## 文档
 
@@ -181,4 +195,4 @@ Nora/
 
 ## 开源许可
 
-个人项目,暂未附许可协议;欢迎参考,转载请注明出处。
+[MIT License](LICENSE) — 可自由使用、修改、分发,保留版权声明即可。

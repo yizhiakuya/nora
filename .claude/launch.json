@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nora-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "nora-web", "dev"],
+      "port": 3001,
+      "autoPort": false
+    }
+  ]
+}

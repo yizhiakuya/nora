@@ -1,8 +1,11 @@
 # dependencies (fallback, normally each subproject has its own)
 node_modules/
 
-# IDE-specific
-.claude/
+# Claude Code 个人文件(团队/公开共享的是 agents/skills/hooks/workflows/settings.json,
+# 个人权限与临时文件不入库)
+.claude/settings.local.json
+.claude/hooks/.tsc-pending
+.claude/tmp_*
 
 # assistant workspace memory (local only)
 .workbuddy/
