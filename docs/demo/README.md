@@ -6,7 +6,7 @@
 
 | 视频 | 内容 | 时长 |
 |---|---|---|
-| [nora-demo.mp4](nora-demo.mp4) | **完整演示**:① 手机相册 MCP → ② 对话交付文件闭环 → ③ 知识库问答 → ④ 数据源查询 → ⑤ 文件中心(含章节标题卡) | ~127s |
+| [nora-demo.mp4](nora-demo.mp4) | **完整演示**:① 手机相册 MCP → ② 对话交付文件闭环 → ③ 知识库问答 → ④ 数据源查询(含章节标题卡) | ~104s |
 
 分场景短片(同一批录制的分段版):
 
@@ -16,7 +16,6 @@
 | [demo-1-chat-file-delivery.mp4](demo-1-chat-file-delivery.mp4) | **对话交付文件闭环**:对话让 Nora 写笔记 → 工具调用链展示 → 「已编辑 1 个文件 +23 -0」编辑卡片 → 文件查看器自动打开 | ~27s |
 | [demo-2-knowledge-qa.mp4](demo-2-knowledge-qa.mp4) | **知识库问答**:基于 RAG 资料回答 + 引用来源标注(引用片段可展开) | ~16s |
 | [demo-3-sql-query.mp4](demo-3-sql-query.mp4) | **数据源真实查询**:execute_sql 两次查询,按 schema 统计表数量,工具调用链完整可见 | ~21s |
-| [demo-4-files.mp4](demo-4-files.mp4) | **文件中心**:Agent 工作区浏览 → 文件查看器(预览/源码切换、标签页) | ~20s |
 
 > README 首页的内嵌播放器走 GitHub 附件(user-attachments),源文件即本目录的 `nora-demo.mp4`;分场景短片以仓库内文件形式提供,点击进文件页可播放。
 
