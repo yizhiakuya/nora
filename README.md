@@ -1,5 +1,3 @@
-
-https://github.com/user-attachments/assets/aa8d18f0-dc0b-4e68-b496-dd1deb121dbb
 <div align="center">
 
 # Nora
