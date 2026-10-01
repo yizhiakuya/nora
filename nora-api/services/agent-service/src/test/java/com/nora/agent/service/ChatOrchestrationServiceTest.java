@@ -14,7 +14,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nora.agent.config.LlmProperties;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
 
@@ -35,11 +34,28 @@ class ChatOrchestrationServiceTest {
 
     @BeforeEach
     void setUp() {
-        // 无 API key:服务仍须跑检索步骤;
-        // LLM 调用本身在下游失败(wire 客户端打到坏 URL)。
-        LlmProperties properties = new LlmProperties("test-key", "http://localhost:9/v1", "test-model");
-        service = new ChatOrchestrationService(properties, ragRetrievalClient,
-                sqlToolClient, serviceLogClient, new ObjectMapper());
+        // 共享 service 带可用 provider store(2026-10-01:静态兜底删除后,
+        // 跑完整 chat 流程必须先"已配置";未配置行为单独测)。
+        // LLM 调用本身的失败在 wire 客户端层(URL 打到坏端口)。
+        service = new ChatOrchestrationService(ragRetrievalClient,
+                sqlToolClient, serviceLogClient, new ObjectMapper(), usableProviderStore(),
+                null, null, null, null, null, null, null, null, null, null, 5, null, null, null, null, null);
+    }
+
+    /**
+     * 可用的 mock provider store(2026-10-01):静态 nora.llm.* 兜底删除后,
+     * 需要跑完整 chat 流程的测试必须提供一个已配置的 provider。
+     */
+    private ModelProviderService usableProviderStore() {
+        ModelProviderService store = mock(ModelProviderService.class);
+        org.mockito.Mockito.lenient().when(store.activeProvider(
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new ModelProviderService.ActiveProvider(
+                        "http://localhost:9/v1", "test-key", List.of("test-model"), "openai", null));
+        org.mockito.Mockito.lenient().when(store.activeProvider())
+                .thenReturn(new ModelProviderService.ActiveProvider(
+                        "http://localhost:9/v1", "test-key", List.of("test-model"), "openai", null));
+        return store;
     }
 
     @Test
@@ -376,9 +392,7 @@ class ChatOrchestrationServiceTest {
 
     /** 构建只接了 MCP 注册表的服务(20 参构造)。 */
     private ChatOrchestrationService buildWithMcp(McpServerService mcp) {
-        return new ChatOrchestrationService(
-                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+        return new ChatOrchestrationService(ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), usableProviderStore(),
                 null, null, null, null, null, null, mcp, null, null, null, 5, null, null, null, null, null);
     }
 
@@ -546,9 +560,7 @@ class ChatOrchestrationServiceTest {
     void repeatedIdenticalCallsTripLoopBreaker() {
         // 同参数第 4 次调用:不再执行工具,直接 declined + 错误回填,模型可自纠
         SqlToolCallRecorder recorder = new SqlToolCallRecorder();
-        ChatOrchestrationService loopService = new ChatOrchestrationService(
-                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                ragRetrievalClient, recorder, serviceLogClient, new ObjectMapper(), 5);
+        ChatOrchestrationService loopService = new ChatOrchestrationService(ragRetrievalClient, recorder, serviceLogClient, new ObjectMapper(), 5);
         LoopDetector loopDetector = new LoopDetector();
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         List<WireSnapshot> wire = new java.util.ArrayList<>();
@@ -578,9 +590,7 @@ class ChatOrchestrationServiceTest {
     void headlessChannelRejectsCriticalTools() {
         // 无会话通道(/agent/run):CRITICAL 工具必须被拒——没有用户在场,审批不可达;
         // step 记 declined,模型收到引导文案,且工具从未执行(下方无 recorder 涉及)
-        ChatOrchestrationService headless = new ChatOrchestrationService(
-                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), 5);
+        ChatOrchestrationService headless = new ChatOrchestrationService(ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), 5);
         LoopDetector loopDetector = new LoopDetector();
         List<ChatStepDto> steps = new java.util.ArrayList<>();
         ChatOrchestrationService.ChatEventConsumer consumer = new NoopConsumer() {
@@ -681,9 +691,7 @@ class ChatOrchestrationServiceTest {
         try {
             AgentWorkspaceService workspace = new AgentWorkspaceService(wsDir.toString());
             workspace.write("memory/2026-09-11.md", "note");
-            ChatOrchestrationService svc = new ChatOrchestrationService(
-                    new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                    ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+            ChatOrchestrationService svc = new ChatOrchestrationService(ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), usableProviderStore(),
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
             when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
                     org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(List.of()));
@@ -720,9 +728,7 @@ class ChatOrchestrationServiceTest {
         when(skills.catalogBundle()).thenReturn(new AgentSkillService.CatalogBundle(
                 "以下是用户启用的技能(Skill)目录。\n- 周报生成 [计算]: 按模板生成周报\n",
                 List.of(new AgentSkillService.CatalogEntry("周报生成", "按模板生成周报", "计算"))));
-        ChatOrchestrationService svc = new ChatOrchestrationService(
-                new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+        ChatOrchestrationService svc = new ChatOrchestrationService(ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), usableProviderStore(),
                 null, null, null, null, null, null, null, null, skills, null, 5, null, null, null, null, null);
         when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
                     org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(List.of()));
@@ -751,9 +757,7 @@ class ChatOrchestrationServiceTest {
         java.nio.file.Path wsDir = java.nio.file.Files.createTempDirectory("nora-ws-dedupe");
         try {
             AgentWorkspaceService workspace = new AgentWorkspaceService(wsDir.toString());
-            ChatOrchestrationService svc = new ChatOrchestrationService(
-                    new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                    ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+            ChatOrchestrationService svc = new ChatOrchestrationService(ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), usableProviderStore(),
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
             when(ragRetrievalClient.searchWithStatus(org.mockito.ArgumentMatchers.anyString(),
                     org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any())).thenReturn(okOutcome(List.of()));
@@ -810,9 +814,7 @@ class ChatOrchestrationServiceTest {
             String marker = "MARKER-LONGMEM-UNIQUE-42";
             java.nio.file.Files.writeString(wsDir.resolve("MEMORY.md"), marker);
             AgentWorkspaceService workspace = new AgentWorkspaceService(wsDir.toString());
-            ChatOrchestrationService svc = new ChatOrchestrationService(
-                    new LlmProperties("test-key", "http://localhost:9/v1", "test-model"),
-                    ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), null,
+            ChatOrchestrationService svc = new ChatOrchestrationService(ragRetrievalClient, sqlToolClient, serviceLogClient, new ObjectMapper(), usableProviderStore(),
                     null, null, null, null, null, null, null, workspace, null, null, 5, null, null, null, null, null);
 
             // 上一轮已落库的助手消息:content=回答正文;steps 携带注入正文(与系统提示同源)
@@ -936,16 +938,11 @@ class ChatOrchestrationServiceTest {
     }
 
     @Test
-    void notConfiguredFlagMirrorsProperties() {
-        LlmProperties unconfigured = new LlmProperties("", "http://localhost:9/v1", "m");
-        ChatOrchestrationService s = new ChatOrchestrationService(unconfigured, ragRetrievalClient,
+    void notConfiguredWithoutProviderStore() {
+        // 2026-10-01:静态 nora.llm.* 兜底已删除——无 provider store 时 configured() 恒 false
+        ChatOrchestrationService s = new ChatOrchestrationService(ragRetrievalClient,
                 sqlToolClient, serviceLogClient, new ObjectMapper());
-
-
-        LlmProperties configured = new LlmProperties("key", "http://localhost:9/v1", "m");
-        ChatOrchestrationService s2 = new ChatOrchestrationService(configured, ragRetrievalClient,
-                sqlToolClient, serviceLogClient, new ObjectMapper());
-        s2.configured();
+        s.configured();
     }
 
     // ---- 思考等级(reasoning level)注入规则 ----

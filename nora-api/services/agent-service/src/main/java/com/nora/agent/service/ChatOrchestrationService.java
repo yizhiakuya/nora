@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.nora.agent.config.LlmProperties;
 import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
@@ -53,7 +52,6 @@ public class ChatOrchestrationService {
 
 
 
-    private final LlmProperties llmProperties;
     private final RagRetrievalClient ragRetrievalClient;
     private final SqlToolClient sqlToolClient;
     private final ServiceLogClient serviceLogClient;
@@ -103,8 +101,7 @@ public class ChatOrchestrationService {
     }
 
     @org.springframework.beans.factory.annotation.Autowired
-    public ChatOrchestrationService(LlmProperties llmProperties,
-                                    RagRetrievalClient ragRetrievalClient,
+    public ChatOrchestrationService(RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper,
@@ -140,7 +137,6 @@ public class ChatOrchestrationService {
                                     QuestionService questionService,
                                     @org.springframework.beans.factory.annotation.Autowired(required = false)
                                     AppSettingStore appSettingStore) {
-        this.llmProperties = llmProperties;
         this.ragRetrievalClient = ragRetrievalClient;
         this.sqlToolClient = sqlToolClient;
         this.serviceLogClient = serviceLogClient;
@@ -172,7 +168,7 @@ public class ChatOrchestrationService {
                 capabilityRegistry, turnCancellation);
         this.turnCancellation = turnCancellation;
         this.upstreamClient = new UpstreamLlmClient(objectMapper, capabilityRegistry);
-        this.modelResolver = new ModelResolver(llmProperties, modelProviderService);
+        this.modelResolver = new ModelResolver(modelProviderService);
         this.contextAssembler = new ChatContextAssembler(objectMapper, agentWorkspaceService,
                 agentSkillService, toolsSpecBuilder, dataSourceManageClient, serviceLogClient, appSettingStore);
         this.messageRefResolver = new MessageRefResolver(fileToolClient, ragRetrievalClient, agentSkillService,
@@ -180,8 +176,7 @@ public class ChatOrchestrationService {
     }
 
     /** 兼容构造(2026-09-18 前测试用):新工具客户端为 null = 不挂载。 */
-    public ChatOrchestrationService(LlmProperties llmProperties,
-                                    RagRetrievalClient ragRetrievalClient,
+    public ChatOrchestrationService(RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper,
@@ -202,7 +197,7 @@ public class ChatOrchestrationService {
                                     MediaFetchService mediaFetchService,
                                     RelayMediaRouter relayMediaRouter,
                                     TurnCancellation turnCancellation) {
-        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper,
+        this(ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper,
                 modelProviderService, approvalService, writeSqlClient, containerControlClient,
                 dataSourceManageClient, serviceManageClient, fileToolClient, mcpServerService,
                 agentWorkspaceService, agentSkillService, terminalService, maxToolRounds, proxyProperties,
@@ -210,24 +205,22 @@ public class ChatOrchestrationService {
                 null, null, null, null, null);
     }
 
-    public ChatOrchestrationService(LlmProperties llmProperties,
-                                    RagRetrievalClient ragRetrievalClient,
+    public ChatOrchestrationService(RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper) {
-        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
+        this(ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
                 null, null, null, null, null, null, null, null, null, null, DEFAULT_MAX_TOOL_ROUNDS, null, null, null, null, null,
                 null, null, null, null, null);
     }
 
     /** 测试入口:显式最大工具轮数,无 provider store。 */
-    public ChatOrchestrationService(LlmProperties llmProperties,
-                                    RagRetrievalClient ragRetrievalClient,
+    public ChatOrchestrationService(RagRetrievalClient ragRetrievalClient,
                                     SqlToolClient sqlToolClient,
                                     ServiceLogClient serviceLogClient,
                                     ObjectMapper objectMapper,
                                     int maxToolRounds) {
-        this(llmProperties, ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
+        this(ragRetrievalClient, sqlToolClient, serviceLogClient, objectMapper, null,
                 null, null, null, null, null, null, null, null, null, null, maxToolRounds, null, null, null, null, null,
                 null, null, null, null, null);
     }

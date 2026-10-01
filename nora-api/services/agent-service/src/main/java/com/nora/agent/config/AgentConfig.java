@@ -13,7 +13,6 @@ import com.nora.common.http.ProxyProperties;
  */
 @Configuration
 @EnableConfigurationProperties({
-        LlmProperties.class,
         RagServiceProperties.class,
         DatasourceServiceProperties.class,
         EnvServiceProperties.class,

@@ -67,10 +67,6 @@ nora:
     relay-base: ${NORA_RELAY_BASE:https://home.rainaki.top:8900}
     # 局域网端点探测周期(秒);探测只打中继 /health,开销可忽略
     lan-probe-seconds: ${NORA_RELAY_LAN_PROBE_SECONDS:120}
-  llm:
-    api-key: ${NORA_LLM_API_KEY:}
-    base-url: ${NORA_LLM_BASE_URL:http://192.168.0.109:28765/v1}
-    model: ${NORA_LLM_MODEL:gpt-5.4-mini}
   rag:
     base-url: ${NORA_RAG_URL:http://localhost:18082}
   datasource:

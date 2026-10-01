@@ -2,20 +2,22 @@ package com.nora.agent.service;
 
 import java.util.List;
 
-import com.nora.agent.config.LlmProperties;
-
 /**
  * 模型/渠道解析器(2026-09-17 从 ChatOrchestrationService 拆出,复杂度审计 Step 3):
- * 请求级模型名 > provider store(设置中心) > 静态 nora.llm.* 兜底;
+ * 请求级模型名 > provider store(设置中心,数据库为唯一配置来源);
  * 思考等级合并:请求级 > 设置页 per-model 默认 > auto(白名单约束)。
+ *
+ * <p>2026-10-01:移除静态 nora.llm.* 环境变量兜底(用户明确)——配置只能来自
+ * 设置中心(数据库)。此前 .env 里有 key 时会绕过 provider 体系直接生效,
+ * 造成「UI 显示未配置、对话却能跑」的不一致;且默认值指向开发者内网地址,
+ * 对任何其他部署者都是无意义的隐形行为。未配置 provider 时 resolve 返回 null,
+ * 由调用方给出「请到设置中心配置」的明确指引。
  */
 class ModelResolver {
 
-    private final LlmProperties llmProperties;
     private final ModelProviderService modelProviderService;
 
-    ModelResolver(LlmProperties llmProperties, ModelProviderService modelProviderService) {
-        this.llmProperties = llmProperties;
+    ModelResolver(ModelProviderService modelProviderService) {
         this.modelProviderService = modelProviderService;
     }
 
@@ -28,23 +30,16 @@ class ModelResolver {
      * 该模型的 reasoningLevels 白名单同时约束请求级取值(不在白名单内则回落默认)。
      *
      * @param providerId 前端选定的渠道 id(同名模型跨渠道时精确定位);null = 按模型名解析
+     * @return 解析结果;未配置任何可用 provider 时返回 null
      */
     ResolvedLlm resolve(String requestedModel, String requestedReasoningLevel, Long providerId) {
-        // 设置中心(数据库 provider store)优先:模型选择/思考等级/每模型协议都源于此。
-        // 静态 nora.llm.* 配置仅作兜底(全新部署还没配 provider 时可用),
-        // 否则环境变量一存在就会短路整个 provider 体系——UI 上怎么选模型都不生效。
-        if (modelProviderService != null) {
-            ResolvedLlm fromStore = resolveFromStore(requestedModel, requestedReasoningLevel, providerId);
-            if (fromStore != null) return fromStore;
+        if (modelProviderService == null) {
+            return null;
         }
-        if (llmProperties.configured()) {
-            return new ResolvedLlm(llmProperties.baseUrl(), llmProperties.apiKey(), llmProperties.model(), "openai",
-                    null, null, null);
-        }
-        return null;
+        return resolveFromStore(requestedModel, requestedReasoningLevel, providerId);
     }
 
-    /** Provider-store leg of {@link #resolveLlm}; providerId 优先,缺失/失效时按模型名回落。 */
+    /** Provider-store leg of {@link #resolve}; providerId 优先,缺失/失效时按模型名回落。 */
     private ResolvedLlm resolveFromStore(String requestedModel, String requestedReasoningLevel, Long providerId) {
         ModelProviderService.ActiveProvider provider = modelProviderService.activeProvider(providerId, requestedModel);
         if (provider == null || provider.endpoint() == null || provider.endpoint().isBlank()) return null;
@@ -55,7 +50,8 @@ class ModelResolver {
                 && (provider.models() == null || provider.models().contains(requestedModel))
                 ? requestedModel
                 : (provider.models() == null || provider.models().isEmpty()
-                        ? LlmProperties.DEFAULT_MODEL : provider.models().get(0));
+                        ? null : provider.models().get(0));
+        if (model == null) return null;
         String effectiveLevel = effectiveReasoningLevel(provider, model, requestedReasoningLevel);
         // 协议按模型覆盖:modelSettings[model].protocol 优先,否则继承 provider 级协议
         ModelProviderService.PerModelSettings perModel =

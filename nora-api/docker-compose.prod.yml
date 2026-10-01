@@ -195,9 +195,6 @@ services:
       <<: *app-env
       NORA_PORT: "18083"
       NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_agent
-      NORA_LLM_API_KEY: ${NORA_LLM_API_KEY:-}
-      NORA_LLM_BASE_URL: ${NORA_LLM_BASE_URL:-https://api.openai.com/v1}
-      NORA_LLM_MODEL: ${NORA_LLM_MODEL:-}
       NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
       NORA_PROXY_HOST: ${NORA_PROXY_HOST:-127.0.0.1}
       NORA_PROXY_PORT: ${NORA_PROXY_PORT:-7897}
