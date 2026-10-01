@@ -1,58 +1,168 @@
+<div align="center">
+
 # Nora
 
-个人 AI 助手：使用你的资料和已连接工具完成具体任务、交付成果，并持续处理重复工作。
+**个人 AI 助手** — 用自己的资料和已连接的工具完成具体任务、交付成果,并接住重复性的日常工作
+
+[![Java](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)](nora-api/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-6DB33F?logo=springboot&logoColor=white)](nora-api/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](nora-web/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](nora-web/)
+
+</div>
+
+---
 
 ## 功能演示
 
-真实浏览器录制的操作演示（真实后端 + 真实 LLM 对话，无剪辑拼接）——见 [docs/demo/](docs/demo/)：
+<!-- 视频经 GitHub 附件上传后,单独一行即渲染为原生播放器 -->
 
-| 演示 | 内容 |
+https://github.com/user-attachments/assets/094a3806-a444-4941-bf83-3dc723f2a3d3
+
+> 真实浏览器录制的完整操作流(真实后端 + 真实模型对话,无剪辑拼接):**① 对话交付文件闭环 → ② 知识库问答 → ③ 数据源查询 → ④ 文件中心**。分场景短片见 [docs/demo/](docs/demo/)。
+
+## Nora 是什么
+
+一个**部署在自己机器上的单用户工作台**:与它对话,它会真实地操作工作台完成事情,而不是只给建议。
+
+- **对话即操作**:查数据库、读服务日志、读写文件、跑命令、管理容器与任务,每一步真实执行、结果可核对
+- **文件即交付**:报告与表格以真实文件落到工作区,聊天里出卡片,可直接在文件查看器中阅读、编辑、引用回对话
+- **资料即上下文**:上传的文件与知识库文档可被引用、被检索,回答带引用来源
+- **权限可知可控**:三档权限(请求批准 / 帮我批准 / 完全访问)+ 三级风险(低 / 高 / 严重),高风险操作必须经过你
+
+## 核心能力
+
+| 能力 | 说明 |
 |---|---|
-| [对话交付文件](docs/demo/demo-1-chat-file-delivery.mp4) | 对话让 Nora 写笔记 → 工具调用链 → 编辑卡片（+23 行）→ 文件查看器自动打开 |
-| [知识库问答](docs/demo/demo-2-knowledge-qa.mp4) | 基于 RAG 资料回答 + 引用来源标注 |
-| [数据源查询](docs/demo/demo-3-sql-query.mp4) | execute_sql 真实查询,按 schema 统计表数量 |
-| [文件中心](docs/demo/demo-4-files.mp4) | Agent 工作区浏览 + 文件查看器（预览/源码切换） |
+| **对话 Agent** | SSE 流式输出 · 思考过程可见 · ReAct 工具循环 · 审批流 · 断线重连 · 上下文自动压缩 |
+| **知识库(RAG)** | 文件解析(Tika)→ 分块 → 向量化(Jina v3 / pgvector)· 混合检索(向量 + 关键词)· 资料库分组 · 引用来源 |
+| **文件中心** | 上传 / 文件夹组织 / 重命名 / 移动 / 下载 · 统一文件查看器(Markdown / 表格 / 图片 / PDF / HTML 隔离预览)· 「已保存成果」登记 |
+| **数据源** | PostgreSQL / MySQL / Redis 连接管理 · Schema 浏览 · 受限只读 SQL + 单条写语句守卫 |
+| **自动任务** | 真实日程(每日 / 每周 / 时区)· 无人值守执行 · 执行记录与失败原因 |
+| **环境控制台** | Docker 容器管理 · 日志流(SSE)· AI 诊断只读结论 |
+| **连接与工具(MCP)** | MCP 服务器管理(远程 / 本地 STDIO)· 工具按需加载 · 图像 / 媒体工具 |
+| **技能** | 可复用的处理方法,AI 按需读取正文执行 · 对话中可自建 |
+| **通知中心** | Kafka 事件总线 · 任务完成 / 索引完成 / 进程异常推送 |
+| **访问控制** | 网关令牌鉴权(单用户)· 未配置即免登录 |
+
+## 技术架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  浏览器 (nora-web)                                        │
+│  React 18 · Vite · Tailwind · Zustand · SSE             │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP / SSE（令牌鉴权）
+┌────────────────────────▼────────────────────────────────┐
+│  网关 (gateway:8080)  Spring Cloud Gateway + Nacos       │
+└──┬────────┬────────┬────────┬────────┬────────┬─────────┘
+   │        │        │        │        │        │
+┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐
+│file │  │ rag │  │agent│  │data │  │ env │  │auto │
+│8081 │  │8082 │  │8083 │  │8084 │  │8085 │  │8086 │
+└──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
+   │        │        │        │        │        │
+┌──▼────────▼────────▼────────▼────────▼────────▼──────┐
+│  PostgreSQL 16 + pgvector      Redis         Kafka   │
+│  （业务数据 + 向量检索）      （缓存/票据）  （通知总线） │
+└───────────────────────────────────────────────────────┘
+     另有 notification-service(8087):Kafka → 通知落库
+```
+
+| 层 | 选型 |
+|---|---|
+| 前端 | React 18 · Vite 7 · TypeScript 5 · Tailwind CSS 3 · Zustand 5 |
+| 后端 | Java 21 · Spring Boot 3.3 · Spring Cloud Alibaba(Nacos)· Maven 多模块(8 个服务) |
+| 数据 | PostgreSQL 16 + pgvector · Redis(可选降级)· Kafka(通知) |
+| 模型接入 | OpenAI 兼容协议(自定义 endpoint / key)· 流式 SSE · 思考等级注入 |
+
+## 快速开始
+
+### 环境要求
+
+- **Java 21**、**Maven 3.9+**
+- **Node.js 20+**、**pnpm**
+- **Docker**(基础设施:PostgreSQL / Redis / Nacos / Kafka)
+
+### 1. 启动基础设施
+
+```bash
+cd nora-api
+docker compose --profile dev-basic up -d   # PG+pgvector / Redis / Nacos / Kafka
+```
+
+### 2. 启动后端(8 个服务)
+
+```bash
+cd nora-api
+./nora.sh start          # 并发拉起 + 健康轮询
+./nora.sh status         # 端口/健康一览
+```
+
+<details>
+<summary>不用脚本时的手动方式</summary>
+
+```bash
+mvn -q -pl services/gateway-service package -DskipTests
+java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
+# 其余服务同理:file / rag / agent / datasource / env / automation / notification
+```
+
+</details>
+
+### 3. 启动前端
+
+```bash
+cd nora-web
+pnpm install
+pnpm dev                 # http://localhost:3001(VITE_USE_BACKEND=true 接入真实后端)
+```
+
+### 4. 配置模型(首次)
+
+打开 `设置 → 模型`,添加一个 OpenAI 兼容的模型服务商(端点 + API Key),即可开始对话。
+
+<details>
+<summary>服务端配置(.env.local,可选)</summary>
+
+`nora-api/.env.local` 支持(最低优先级,真实环境变量优先):
+
+```bash
+NORA_AUTH_TOKEN=<访问令牌,留空则免登录>
+NORA_LLM_API_KEY=<模型服务 Key，也可只在设置页配置>
+NORA_EMBEDDING_API_KEY=<Jina 嵌入 Key>
+NORA_PROXY_ENABLED=true
+NORA_PROXY_HOST=127.0.0.1
+NORA_PROXY_PORT=7897
+```
+
+</details>
 
 ## 目录结构
 
 ```
 Nora/
-├── nora-web/         # 前端 — Vite 7 + React 18 + Tailwind + Zustand（3001）
-├── nora-api/         # 后端 — Spring Boot 3.3 (Java 21) 微服务，设计文档见 nora-api/docs/
-└── phone-album-mcp/  # 手机相册 MCP（独立仓库：Android App + 中继服务）
+├── nora-web/         # 前端 — React 18 + Vite + Tailwind + Zustand
+├── nora-api/         # 后端 — Java 21 微服务（8 服务 · Maven 多模块）
+│   ├── services/     #   gateway / file / rag / agent / datasource / env / automation / notification
+│   ├── common/       #   共享基座（日志/异常/Redis/事件总线）
+│   └── docs/         #   架构与设计文档
+├── docs/demo/        # 功能演示视频（分场景短片）
+└── phone-album-mcp/  # 手机相册 MCP（独立仓库:Android App + 中继服务）
 ```
 
-前后端独立，分别 `pnpm install` / `pnpm dev`；后端用 Maven 构建，Docker Compose 起基础设施（PG+pgvector / Redis / Nacos / Kafka）。
-
-## 当前状态（2026-09-20）
-
-**能实际使用的单用户个人助手**。主导航按任务收敛为四入口：**助手 / 资料 / 任务 / 设置**（技术模块从主导航移到设置与高级工具，旧链接全部兼容）。
-
-| 端 | 状态 |
-|----|------|
-| 后端 | 8 个微服务（gateway/file/rag/agent/datasource/env/automation/notification）；Kafka 事件通知；令牌登录（NORA_AUTH_TOKEN，缺省免登录）；对话运行持久化（chat_run）与定期任务日程契约 |
-| 前端 | 助手首页（输入需求/继续处理/最近成果）+ 资料（文件/长期知识/已保存成果）+ 任务（正在处理/定期任务/执行记录）+ 设置（含连接与工具/技能/我的偏好）；USE_BACKEND 开关保留本地 mock 路径 |
-
-**用户可见的核心闭环**：
-- **资料处理 → 完整成果**：多选资料「交给助手」→ 引用注入真实内容 → 完整报告（画廊原生渲染）→「保存为文件」（工作区真实 Markdown，回读校验）/「保存到知识库」。
-- **任务真实状态**：对话运行持久化（刷新/换页/进程重启可找回）；取消/中断/部分完成各有真实依据；自动结果全文可读。
-- **定期任务**：真实日程（时间/星期/时区，服务端计算 nextRunAt 并可预览）；从成果一键创建；手动试跑不改计划点；错过宽限记录 missed_schedule 不冒充执行。
-- **可信度**：删除/恢复/索引的生命周期同步带持久化重试与版本防乱序；「运行中/已启用/已完成/执行失败」文案与后台实际状态一致。
-
-**近期修复记录**：见 [NORA-REFACTOR-IMPLEMENTATION-LOG.md](NORA-REFACTOR-IMPLEMENTATION-LOG.md)（M0–M5 各阶段验证证据）与 [PROJECT-ANALYSIS-2026-09-19.md](PROJECT-ANALYSIS-2026-09-19.md)（P1/P2 问题清单）。
-
-## 文档索引
+## 文档
 
 | 文档 | 内容 |
-|------|------|
-| [docs/demo/](docs/demo/) | **功能演示视频**（真实浏览器录制） |
-| [NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md](NORA-PRODUCT-REFACTOR-PLAN-2026-09-20.md) | **产品改造方案**（信息架构/业务场景/契约/验收矩阵） |
-| [NORA-REFACTOR-IMPLEMENTATION-LOG.md](NORA-REFACTOR-IMPLEMENTATION-LOG.md) | **改造实施记录**（M0–M5 完成项与验证证据、已知限制） |
-| [PROJECT-ANALYSIS-2026-09-19.md](PROJECT-ANALYSIS-2026-09-19.md) | 全面分析（问题清单与推进顺序，P1/P2 已落地） |
-| [PROGRESS-REVIEW-2026-09-06.md](PROGRESS-REVIEW-2026-09-06.md) | 历史进度评估（口径过时，保留作参考） |
-| [nora-web/README.md](nora-web/README.md) | 前端技术栈、项目结构、业务流 |
-| [nora-web/AGENTS.md](nora-web/AGENTS.md) | 前端开发规约 |
-| [nora-api/README.md](nora-api/README.md) | 后端服务清单、端点、启动方式 |
-| [nora-api/docs/architecture-v2.md](nora-api/docs/architecture-v2.md) | 微服务架构设计与 Phase 0–4 路线图（实施基准） |
-| [nora-api/docs/agent-implementation-spec.md](nora-api/docs/agent-implementation-spec.md) | Agent 实施规格（ReAct 协议 + 高风险审批协议） |
-| [phone-album-mcp/README.md](phone-album-mcp/README.md) | 手机相册 MCP（Android App + 中继部署） |
+|---|---|
+| [docs/demo/](docs/demo/) | 功能演示视频(分场景短片) |
+| [nora-api/docs/architecture-v2.md](nora-api/docs/architecture-v2.md) | **微服务架构设计**(服务划分 / 数据流 / 路线图) |
+| [nora-api/docs/agent-implementation-spec.md](nora-api/docs/agent-implementation-spec.md) | **Agent 实施规格**(ReAct 协议 / 工具契约 / 审批协议) |
+| [nora-api/docs/agent-permission-and-tools-design.md](nora-api/docs/agent-permission-and-tools-design.md) | 权限与风险分级权威参考 |
+| [nora-web/README.md](nora-web/README.md) | 前端技术栈与项目结构 |
+| [nora-api/README.md](nora-api/README.md) | 后端服务清单与端点 |
+| [phone-album-mcp/README.md](phone-album-mcp/README.md) | 手机相册 MCP(Android App + 中继部署) |
+
+## 开源许可
+
+个人项目,暂未附许可协议;欢迎参考,转载请注明出处。
