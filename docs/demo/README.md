@@ -2,6 +2,14 @@
 
 真实浏览器录制的功能演示(Playwright 驱动真实对话,未经剪辑的完整操作流)。
 
+**总览视频**(README 首页内嵌播放):
+
+| 视频 | 内容 | 时长 |
+|---|---|---|
+| [nora-demo.mp4](nora-demo.mp4) | **完整演示**:① 对话交付文件闭环 → ② 知识库问答 → ③ 数据源查询 → ④ 文件中心(含章节标题卡) | ~96s |
+
+分场景短片(同一批录制的分段版):
+
 | 视频 | 内容 | 时长 |
 |---|---|---|
 | [demo-1-chat-file-delivery.mp4](demo-1-chat-file-delivery.mp4) | **对话交付文件闭环**:对话让 Nora 写笔记 → 工具调用链展示 → 「已编辑 1 个文件 +23 -0」编辑卡片 → 文件查看器自动打开 | ~27s |
@@ -9,9 +17,13 @@
 | [demo-3-sql-query.mp4](demo-3-sql-query.mp4) | **数据源真实查询**:execute_sql 两次查询,按 schema 统计表数量,工具调用链完整可见 | ~21s |
 | [demo-4-files.mp4](demo-4-files.mp4) | **文件中心**:Agent 工作区浏览 → 文件查看器(预览/源码切换、标签页) | ~20s |
 
+> README 首页的内嵌播放器走 GitHub 附件(user-attachments),源文件即本目录的 `nora-demo.mp4`;分场景短片以仓库内文件形式提供,点击进文件页可播放。
+
 ## 录制方式
 
-Playwright(系统 Chrome)驱动 1280×800 视口,`recordVideo` 录制;真实后端(8 服务 + PG/Redis/Nacos/Kafka)+ 真实 LLM 对话,无 mock、无剪辑拼接(仅裁掉开头的页面加载白屏)。
+Playwright(系统浏览器)驱动 1280×800 视口,`recordVideo` 录制;真实后端(8 服务 + PG/Redis/Nacos/Kafka)+ 真实 LLM 对话,无 mock、无剪辑拼接(仅裁掉开头的页面加载白屏)。
+
+总视频由分场景短片 + 标题卡用 ffmpeg concat 合成;README 内嵌用的附件通过 GitHub 网页编辑器上传(唯一能让 README 渲染原生播放器的通道——`<video>` 标签会被 GitHub 过滤,见 [GitHub 文档](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files))。
 
 录制脚本模板(在仓库外任意目录):
 
