@@ -62,25 +62,25 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
           </div>
           <div>
             <div className="text-xs text-muted-foreground">当前默认模型</div>
-            <div className="text-sm font-bold text-foreground">
+            <div className="text-sm font-semibold text-foreground">
               {defaultModel}
               {activeProvider && <span className="text-xs font-normal text-muted-foreground ml-1.5">· {activeProvider.name}</span>}
             </div>
           </div>
         </div>
-        <span className="text-[10px] text-muted-foreground">对话页与自动任务未单独指定时使用</span>
+        <span className="text-[11px] text-muted-foreground">对话页与自动任务未单独指定时使用</span>
       </div>
 
       {enabledProviders.map((p) => (
-        <div key={p.id} className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+        <div key={p.id} className="surface overflow-hidden">
           <div className="px-4 py-2.5 border-b border-border/60 bg-muted/30">
-            <span className="text-xs font-bold text-foreground">{p.name}</span>
-            <span className="text-[10px] text-muted-foreground ml-2">{p.models.length} 个模型</span>
+            <span className="text-xs font-medium text-foreground">{p.name}</span>
+            <span className="text-[11px] text-muted-foreground ml-2">{p.models.length} 个模型</span>
           </div>
           {/* 表头 */}
-          <div className="grid grid-cols-[1fr_110px_90px_220px] gap-3 px-4 py-2 border-b border-border/40 text-[10px] text-muted-foreground">
+          <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_110px_90px_220px] gap-3 px-4 py-2 border-b border-border/40 text-[11px] text-muted-foreground">
             <span>实际请求模型</span>
-            <span>上下文窗口</span>
+            <span title="填入渠道的实际窗口；留空使用 128K 整理预算，不代表模型容量">上下文窗口</span>
             <span title="开启后工具返回的图片会作为图像附件发给模型；自适应 = 先尝试，不支持时自动跳过">识图</span>
             <span>思考等级</span>
           </div>
@@ -91,44 +91,41 @@ export function ModelsTab({ onAdd }: { onAdd: () => void }) {
               const defaultLevel = settings.defaultReasoningLevel ?? null;
               const setPatch = (patch: Partial<PerModelSettings>) => saveSettings(p.id, m, patch);
               return (
-                <div key={m} className="grid grid-cols-[1fr_110px_90px_220px] gap-3 px-4 py-2 items-center hover:bg-muted/20 transition-colors">
-                  <div className="min-w-0">
+                <div key={m} className="grid grid-cols-2 xl:grid-cols-[minmax(0,1fr)_110px_90px_220px] gap-3 px-4 py-3 items-center hover:bg-muted/20 transition-colors">
+                  <div className="min-w-0 col-span-2 xl:col-span-1">
                     <span className="text-xs font-mono font-medium text-foreground truncate block" title={m}>{m}</span>
-                    {m === defaultModel && activeProvider?.id === p.id && <span className="text-[10px] text-primary">默认</span>}
+                    {m === defaultModel && activeProvider?.id === p.id && <span className="text-[11px] text-primary">默认</span>}
                   </div>
-                  <input
-                    type="number"
-                    key={revision}
-                    defaultValue={settings.contextWindow ?? ""}
-                    placeholder="自动"
-                    min={1}
-                    onBlur={(e) => {
-                      const raw = e.target.value;
-                      const value = raw === "" ? null : Number(raw);
-                      if (value !== null && (!Number.isSafeInteger(value) || value < 1)) {
-                        e.target.value = String(settings.contextWindow ?? "");
-                        toast.error("上下文窗口必须是正整数");
-                      } else if (value !== (settings.contextWindow ?? null)) {
-                        void setPatch({ contextWindow: value });
-                      }
-                    }}
-                    className="h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500 transition-colors"
-                  />
+                  <label className="min-w-0 text-[11px] text-muted-foreground">
+                    <span className="block xl:hidden mb-1">上下文窗口</span>
+                    <input type="number" key={revision} aria-label={`${p.name} ${m} 上下文窗口`}
+                      defaultValue={settings.contextWindow ?? ""} placeholder="预算 128K" min={1}
+                      title="填入渠道的实际窗口；留空使用 128K 整理预算，不代表模型容量"
+                      onBlur={(e) => {
+                        const value = e.target.value === "" ? null : Number(e.target.value);
+                        if (value !== null && (!Number.isSafeInteger(value) || value < 1)) {
+                          e.target.value = String(settings.contextWindow ?? "");
+                          toast.error("上下文窗口必须是正整数");
+                        } else if (value !== (settings.contextWindow ?? null)) void setPatch({ contextWindow: value });
+                      }}
+                      className="h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500 transition-colors" />
+                  </label>
                   <div className="flex items-center gap-2">
                     <Switch
                       checked={settings.vision === true}
+                      aria-label={`${m} 识图`}
                       onCheckedChange={(checked) => setPatch({ vision: checked })}
                     />
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-[11px] text-muted-foreground">
                       {settings.vision === true ? "开" : settings.vision === false ? "关" : "自适应"}
                     </span>
                   </div>
-                  <ReasoningLevelPicker
+                  <div className="col-span-2 xl:col-span-1"><ReasoningLevelPicker
                     levels={levels}
                     defaultLevel={defaultLevel}
                     onLevelsChange={(next) => setPatch({ reasoningLevels: next })}
                     onDefaultChange={(next) => setPatch({ defaultReasoningLevel: next })}
-                  />
+                  /></div>
                 </div>
               );
             })}

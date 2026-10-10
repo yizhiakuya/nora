@@ -1,4 +1,5 @@
 import { beforeEach, it, vi } from "vitest";
+import { useSideWorkspace } from "./useSideWorkspace";
 import { useFileViewer } from "./useFileViewer";
 import type { ViewerFile } from "@/types";
 
@@ -13,10 +14,12 @@ vi.mock("@/lib/services/viewerApi", () => ({ viewerApi: {
   save: async () => {},
 } }));
 
-beforeEach(() => useFileViewer.setState({
-  active: null, tabs: [], preview: null, isOpen: false, editing: false, saving: false,
-  pendingAction: null, pendingReference: null, run: null, newFiles: 0, wide: true, missing: new Set<string>(),
-}));
+beforeEach(() => {
+  useSideWorkspace.setState({ isOpen: false, panel: "file", browserOpened: false, tasksOpened: false, wide: true });
+  useFileViewer.setState({
+  active: null, tabs: [], preview: null, editing: false, saving: false,
+  pendingAction: null, pendingReference: null, run: null, newFiles: 0, missing: new Set<string>(),
+}); });
 
 // 单测仅执行冒烟路径；行为验收走 scripts/viewer-e2e.ps1 和真实浏览器。
 it("打开、编辑、未保存保护、引用和当前轮次文件事件", async () => {
@@ -39,5 +42,14 @@ it("打开、编辑、未保存保护、引用和当前轮次文件事件", asyn
   viewer().close();
   viewer().discardAndContinue();
   viewer().openText("历史报告", "# history");
+  const snapshot = viewer().active!.target;
+  viewer().openBrowser();
+  await viewer().openTargets([snapshot]);
+  viewer().openBrowser();
+  viewer().closeTab(snapshot);
+  viewer().openText("历史报告", "# history");
+  viewer().beginEdit();
+  viewer().openBrowser();
+  viewer().closeTab(viewer().active!.target);
   viewer().close();
 });

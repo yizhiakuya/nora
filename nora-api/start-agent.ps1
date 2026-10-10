@@ -25,21 +25,22 @@ foreach ($p in $existing) {
 
 # 无窗口启动（javaw + 输出重定向）
 Start-Process -FilePath $javaw `
+    -WindowStyle Hidden `
     -ArgumentList "-jar", $jar `
-    -WorkingDirectory $api `
+    -WorkingDirectory $root `
     -RedirectStandardOutput (Join-Path $root "agent-service.stdout.log") `
     -RedirectStandardError  (Join-Path $root "agent-service.stderr.log")
 
 # 等待端口就绪
 $deadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $deadline) {
-    $listen = netstat -ano | Select-String ":8083" | Select-String "LISTENING"
+    $listen = Get-NetTCPConnection -LocalPort 18083 -State Listen -ErrorAction SilentlyContinue
     if ($listen) {
-        Write-Host "agent-service 已就绪（8083 LISTENING）"
+        Write-Host "agent-service 已就绪（18083 LISTENING）"
         Write-Host $listen
         exit 0
     }
     Start-Sleep -Seconds 2
 }
-Write-Host "启动超时：60 秒内未监听 8083，请检查 agent-service.stdout.log"
+Write-Host "启动超时：60 秒内未监听 18083，请检查 agent-service.stdout.log"
 exit 1

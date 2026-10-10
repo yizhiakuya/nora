@@ -120,6 +120,7 @@ function toExecutionStatus(status: string): ExecutionRecord["status"] {
     case "partial":
     case "cancelled":
     case "unknown":
+    case "queued":
     case "running":
     case "missed_schedule":
       return status;

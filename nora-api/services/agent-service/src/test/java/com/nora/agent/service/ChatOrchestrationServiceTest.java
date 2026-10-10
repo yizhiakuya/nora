@@ -19,6 +19,12 @@ import com.nora.agent.dto.CitationDto;
 @ExtendWith(MockitoExtension.class)
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行代码路径,不校验结果。
 class ChatOrchestrationServiceTest {
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path riskDirectory;
+
+    private RiskClassifier.Risk classify(String name, String args) {
+        return RiskClassifier.classify(name, args, new AgentWorkspaceService(riskDirectory.toString()));
+    }
+
 
     @Mock
     private RagRetrievalClient ragRetrievalClient;
@@ -73,19 +79,19 @@ class ChatOrchestrationServiceTest {
     @Test
     void riskClassifierTiersNewManageTools() {
         // 数据源:list 低风险;create/test HIGH;remove CRITICAL(不可逆,任何档位问)
-        RiskClassifier.classify("manage_datasource", "{\"action\": \"list\"}");
-        RiskClassifier.classify("manage_datasource", "{\"action\": \"create\", \"engine\": \"postgresql\"}");
-        RiskClassifier.classify("manage_datasource", "{\"action\": \"remove\", \"target\": \"old-db\"}");
+        classify("manage_datasource", "{\"action\": \"list\"}");
+        classify("manage_datasource", "{\"action\": \"create\", \"engine\": \"postgresql\"}");
+        classify("manage_datasource", "{\"action\": \"remove\", \"target\": \"old-db\"}");
         // 纳管源:register/remove CRITICAL(PROC 注册=宿主机命令纳入守护);enable/disable HIGH
-        RiskClassifier.classify("manage_service", "{\"action\": \"register\", \"kind\": \"PROC\", \"command\": \"x\"}");
-        RiskClassifier.classify("manage_service", "{\"action\": \"remove\", \"target\": \"3\"}");
-        RiskClassifier.classify("manage_service", "{\"action\": \"disable\", \"target\": \"backup\"}");
-        RiskClassifier.classify("manage_service", "{\"action\": \"list\"}");
+        classify("manage_service", "{\"action\": \"register\", \"kind\": \"PROC\", \"command\": \"x\"}");
+        classify("manage_service", "{\"action\": \"remove\", \"target\": \"3\"}");
+        classify("manage_service", "{\"action\": \"disable\", \"target\": \"backup\"}");
+        classify("manage_service", "{\"action\": \"list\"}");
         // action 缺失按未知处理:不低于 HIGH
-        RiskClassifier.classify("manage_datasource", "{}");
+        classify("manage_datasource", "{}");
         // 原有工具的档位不变
-        RiskClassifier.classify("execute_write_sql", "{}");
-        RiskClassifier.classify("execute_sql", "{}");
+        classify("execute_write_sql", "{}");
+        classify("execute_sql", "{}");
     }
 
     @Test
@@ -93,19 +99,19 @@ class ChatOrchestrationServiceTest {
         // MCP 管理跟随全局权限档:list 只读 LOW;其余动作(register/remove/
         // refresh/enable/disable)统一 HIGH——ASK 全问 / ASSIST 询问 / FULL 自动,
         // 不做单独强制审批
-        RiskClassifier.classify("manage_mcp", "{\"action\": \"list\"}");
-        RiskClassifier.classify("manage_mcp", "{\"action\": \"refresh\", \"target\": \"weather\"}");
-        RiskClassifier.classify("manage_mcp", "{\"action\": \"disable\", \"target\": \"weather\"}");
-        RiskClassifier.classify("manage_mcp",
+        classify("manage_mcp", "{\"action\": \"list\"}");
+        classify("manage_mcp", "{\"action\": \"refresh\", \"target\": \"weather\"}");
+        classify("manage_mcp", "{\"action\": \"disable\", \"target\": \"weather\"}");
+        classify("manage_mcp",
                         "{\"action\": \"register\", \"name\": \"weather\", \"url\": \"https://mcp.example.com/mcp\"}");
-        RiskClassifier.classify("manage_mcp", "{\"action\": \"remove\", \"target\": \"weather\"}");
+        classify("manage_mcp", "{\"action\": \"remove\", \"target\": \"weather\"}");
         // action 缺失按未知处理:HIGH
-        RiskClassifier.classify("manage_mcp", "{}");
+        classify("manage_mcp", "{}");
         // 别名归一化(模型受 manage_datasource 词汇影响写 create/delete):
         // 分类器与执行层必须同一判定——create/delete 与 register/remove 同档(HIGH)
-        RiskClassifier.classify("manage_mcp",
+        classify("manage_mcp",
                         "{\"action\": \"create\", \"name\": \"weather\", \"url\": \"https://x\"}");
-        RiskClassifier.classify("manage_mcp", "{\"action\": \"delete\", \"target\": \"weather\"}");
+        classify("manage_mcp", "{\"action\": \"delete\", \"target\": \"weather\"}");
         RiskClassifier.normalizeMcpAction("create");
         RiskClassifier.normalizeMcpAction("DELETE");
         RiskClassifier.normalizeMcpAction("refresh");
@@ -114,9 +120,9 @@ class ChatOrchestrationServiceTest {
     @Test
     void riskClassifierTiersRunCommand() {
         // 本机终端:一律 HIGH(跟随全局档位)——不做命令白名单(假安全)
-        RiskClassifier.classify("run_command", "{\"command\": \"npm test\"}");
-        RiskClassifier.classify("run_command", "{\"command\": \"rm -rf /\"}");
-        RiskClassifier.classify("run_command", "{}");
+        classify(TerminalService.toolName(), "{\"command\": \"npm test\"}");
+        classify(TerminalService.toolName(), "{\"command\": \"rm -rf /\"}");
+        classify(TerminalService.toolName(), "{}");
     }
 
     @Test
@@ -143,20 +149,20 @@ class ChatOrchestrationServiceTest {
     void scrubArgsForLogMasksCredentialValues() throws Exception {
         // 2026-09-17 拆分后 scrubArgsForLog 在 ToolStepEmitter(包可见)
         ToolStepEmitter emitter = stepEmitterOf(service);
-        var method = ToolStepEmitter.class.getDeclaredMethod("scrubArgsForLog", String.class);
+        var method = ToolStepEmitter.class.getDeclaredMethod("scrubArgsForLog", String.class, String.class);
         method.setAccessible(true);
         // headers 值(headers 的键保留、值替换);name/url 等非凭据字段原样
         String scrubbed = (String) method.invoke(emitter,
                 "{\"action\":\"register\",\"name\":\"weather\",\"url\":\"https://x\","
-                        + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}");
+                        + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}", "manage_mcp");
         scrubbed.contains("secret123");
         scrubbed.contains("\"name\":\"weather\"");
         scrubbed.contains("***");
         // password/token 类字段同样脱敏(manage_datasource create 的既有泄漏点)
-        String scrubbed2 = (String) method.invoke(emitter, "{\"action\":\"create\",\"password\":\"hunter2\"}");
+        String scrubbed2 = (String) method.invoke(emitter, "{\"action\":\"create\",\"password\":\"hunter2\"}", "manage_datasource");
         scrubbed2.contains("hunter2");
         // 非法 JSON 原样返回,不炸日志行
-        method.invoke(emitter, "not json");
+        method.invoke(emitter, "not json", null);
     }
 
     @Test
@@ -268,18 +274,11 @@ class ChatOrchestrationServiceTest {
         json.stream();
     }
 
-    /** buildMessages 反射调用(2026-09-17 拆分后位于 ChatContextAssembler):返回 wire 消息列表。 */
+    /** 返回实际装配的 wire 消息列表。 */
     private List<?> invokeBuildMessages(ChatOrchestrationService svc, String userMessage,
                                         List<ChatStoreService.StoredMessage> history) throws Exception {
-        ChatContextAssembler assembler = contextAssemblerOf(svc);
-        Class<?> promptResultClass = Class.forName(
-                "com.nora.agent.service.ChatContextAssembler$SystemPromptResult");
-        Object promptOut = java.lang.reflect.Array.newInstance(promptResultClass, 1);
-        var method = ChatContextAssembler.class.getDeclaredMethod("buildMessages",
-                String.class, List.class, List.class, List.class, ContextBudget.class, promptOut.getClass());
-        method.setAccessible(true);
-        return (List<?>) method.invoke(assembler, userMessage, history, List.of(), List.of(),
-                new ContextBudget(null), promptOut);
+        return contextAssemblerOf(svc).buildMessages(userMessage, history, List.of(), List.of(),
+                new ChatContextAssembler.SystemPromptResult[1]);
     }
 
     /** 从 facade 取私有 contextAssembler 字段(2026-09-17 拆分 Step 4)。 */
@@ -550,9 +549,9 @@ class ChatOrchestrationServiceTest {
 
     private ChatToolExecutor.ToolOutcome invokeBounded(String input) throws Exception {
         ChatToolExecutor executor = toolExecutorOf(service);
-        var method = ChatToolExecutor.class.getDeclaredMethod("bounded", String.class, String.class);
+        var method = ChatToolExecutor.class.getDeclaredMethod("boundOutcome", ChatToolExecutor.ToolOutcome.class);
         method.setAccessible(true);
-        return (ChatToolExecutor.ToolOutcome) method.invoke(executor, input, null);
+        return (ChatToolExecutor.ToolOutcome) method.invoke(executor, ChatToolExecutor.textOutcome(input, null));
     }
 
     @Test
@@ -828,16 +827,7 @@ class ChatOrchestrationServiceTest {
                     new ChatStoreService.StoredMessage("user", "第一问", null, null),
                     new ChatStoreService.StoredMessage("assistant", "第一答", persisted, null));
 
-            // buildMessages 在 ChatContextAssembler(2026-09-17 拆分 Step 4):反射直调,拿真实请求消息数组
-            ChatContextAssembler assembler = contextAssemblerOf(svc);
-            Class<?> promptResultClass = Class.forName(
-                    "com.nora.agent.service.ChatContextAssembler$SystemPromptResult");
-            Object promptOut = java.lang.reflect.Array.newInstance(promptResultClass, 1);
-            var method = ChatContextAssembler.class.getDeclaredMethod("buildMessages",
-                    String.class, List.class, List.class, List.class, ContextBudget.class, promptOut.getClass());
-            method.setAccessible(true);
-            List<?> messages = (List<?>) method.invoke(assembler, "第二问", history, List.of(), List.of(),
-                    new ContextBudget(null), promptOut);
+            List<?> messages = invokeBuildMessages(svc, "第二问", history);
 
             List<String> json = new java.util.ArrayList<>();
             for (Object m : messages) {

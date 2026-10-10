@@ -52,7 +52,7 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
   };
 
   return (
-    <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+    <div className="surface overflow-hidden">
       {/* 头部：名称 + 状态 + 启用开关 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -60,26 +60,26 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
             <Server className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-bold text-foreground truncate">{p.name}</div>
+            <div className="text-sm font-semibold text-foreground truncate">{p.name}</div>
             <div className="flex items-center gap-1.5 mt-0.5">
               {p.status === "ok" && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400">
+                <span className="inline-flex items-center gap-1 text-[11px] text-green-600 dark:text-green-400">
                   <CheckCircle2 className="w-3 h-3" /> 已连通
                 </span>
               )}
               {p.status === "fail" && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-red-600 dark:text-red-400">
+                <span className="inline-flex items-center gap-1 text-[11px] text-red-600 dark:text-red-400">
                   <XCircle className="w-3 h-3" /> 连接失败
                 </span>
               )}
               {p.status === "untested" && (
-                <span className="text-[10px] text-muted-foreground">未测试</span>
+                <span className="text-[11px] text-muted-foreground">未测试</span>
               )}
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+              <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
                 {PROTOCOL_META[p.protocol]?.label ?? p.protocol}
               </span>
               {!p.enabled && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">已停用</span>
+                <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">已停用</span>
               )}
             </div>
           </div>
@@ -91,13 +91,13 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
       <div className="px-4 py-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[10px] text-muted-foreground mb-0.5">端点 URL</div>
+            <div className="text-[11px] text-muted-foreground mb-0.5">端点 URL</div>
             <div className="text-xs font-mono text-foreground truncate">{p.url}</div>
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[10px] text-muted-foreground mb-0.5">API 密钥</div>
+            <div className="text-[11px] text-muted-foreground mb-0.5">API 密钥</div>
             <div className="text-xs font-mono text-foreground truncate">{p.masked}</div>
           </div>
           <Button
@@ -131,8 +131,8 @@ function ProviderCard({ p, onEdit }: { p: ModelProvider; onEdit: (p: ModelProvid
           >
             <Pencil className="w-3 h-3 mr-1" /> 编辑
           </Button>
-          <span className="text-[10px] text-muted-foreground ml-auto hidden sm:inline">
-            思考等级与上下文窗口在「模型列表」页按模型配置
+          <span className="text-[11px] text-muted-foreground ml-auto hidden sm:inline">
+            上下文窗口与思考等级在「模型列表」页按模型配置
           </span>
           {confirmRemove ? (
             <>

@@ -14,6 +14,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
+import com.nora.agent.service.AppSettingStore;
+import com.nora.agent.service.ApprovalService;
+import com.nora.agent.service.TurnStreamRegistry;
 
 /**
  * 纯单元测试:直接实例化控制器,无 Spring 上下文、无 Nacos。
@@ -28,11 +31,15 @@ class AgentControllerTest {
     @Mock
     private ChatStoreService chatStoreService;
 
+    @Mock private AppSettingStore appSettingStore;
+    @Mock private ApprovalService approvalService;
+
     private AgentController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new AgentController(orchestrationService, chatStoreService, new ObjectMapper());
+        controller = new AgentController(orchestrationService, chatStoreService, appSettingStore,
+                approvalService, new ObjectMapper(), new TurnStreamRegistry(), null, null);
     }
 
     @Test

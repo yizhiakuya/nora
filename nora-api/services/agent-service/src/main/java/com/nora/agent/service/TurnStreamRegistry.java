@@ -53,6 +53,8 @@ public class TurnStreamRegistry {
     public record Snapshot(List<TurnEvent> events, boolean gap, long oldestSeq) {
     }
 
+    public record UserInput(String id, String content) {}
+
     /** 一个运行中轮次的实时状态。方法线程安全(以 this 为监视器)。 */
     public static final class LiveTurn {
         public final String sessionId;
@@ -60,16 +62,62 @@ public class TurnStreamRegistry {
         public final long startedAtMs;
         /** 每个 LiveTurn 实例唯一;让 SSE 客户端把 Last-Event-ID 游标限定在
          *  本轮(上一轮的陈旧游标不得吞掉新事件)。 */
-        public final String turnId = java.util.UUID.randomUUID().toString().substring(0, 8);
+        public final String turnId;
+        public final String operation;
         private final List<TurnEvent> buffer = new ArrayList<>();
+        private TurnEvent contextUsage;
         private final List<Consumer<TurnEvent>> subscribers = new ArrayList<>();
         private long seqCounter = 0;
         private volatile boolean finished = false;
+        private final List<UserInput> inputs = new ArrayList<>();
+        private boolean acceptingInputs;
+        private boolean inputsClosed;
+        private Consumer<UserInput> inputAccepted;
 
         LiveTurn(String sessionId, String content) {
+            this(sessionId, content, java.util.UUID.randomUUID().toString().substring(0, 8), "chat");
+        }
+
+        LiveTurn(String sessionId, String content, String turnId, String operation) {
             this.sessionId = sessionId;
             this.content = content;
+            this.turnId = turnId;
+            this.operation = operation;
             this.startedAtMs = System.currentTimeMillis();
+        }
+
+        public synchronized void openInputs(Consumer<UserInput> inputAccepted) {
+            this.inputAccepted = inputAccepted;
+            if (!finished && !inputsClosed) acceptingInputs = true;
+        }
+
+        /** 与最终回答的关闭操作共用锁：成功受理的输入必定被消费或明确标为未处理。 */
+        public synchronized boolean enqueueInput(UserInput input, Runnable persist) {
+            if (!acceptingInputs || finished) return false;
+            for (var existing : inputs) {
+                if (existing.id().equals(input.id())) {
+                    if (!existing.content().equals(input.content()))
+                        throw new IllegalArgumentException("messageId already has different content");
+                    return true;
+                }
+            }
+            if (inputs.size() >= 32) throw new IllegalArgumentException("Too many pending inputs (32)");
+            persist.run();
+            inputs.add(input);
+            inputAccepted.accept(input);
+            return true;
+        }
+
+        public synchronized List<UserInput> takeInputs(boolean finishing) {
+            if (inputs.isEmpty() && finishing) closeInputs();
+            List<UserInput> pending = List.copyOf(inputs);
+            inputs.clear();
+            return pending;
+        }
+
+        public synchronized void closeInputs() {
+            acceptingInputs = false;
+            inputsClosed = true;
         }
 
         public synchronized void append(String event, String json) {
@@ -77,6 +125,7 @@ public class TurnStreamRegistry {
                 return;
             }
             TurnEvent e = new TurnEvent(++seqCounter, event, json);
+            if ("context_usage".equals(event)) contextUsage = e;
             // 滚动窗口:满员淘汰最旧、继续记录新事件——旧行为「停记」会让
             // 掉线期间的全部新内容无法回放(2026-09-20 修复)。缺口由
             // snapshotAfter 的 gap 标志显式上报,前端据此从权威消息状态恢复。
@@ -96,10 +145,12 @@ public class TurnStreamRegistry {
 
         /** 严格在 {@code afterSeq} 之后的事件(0 = 全量回放),按序号排序。 */
         public synchronized List<TurnEvent> snapshotAfter(long afterSeq) {
-            if (afterSeq <= 0) {
-                return List.copyOf(buffer);
-            }
-            return buffer.stream().filter(e -> e.seq() > afterSeq).toList();
+            var events = new ArrayList<TurnEvent>();
+            // 长思考可能淘汰请求开始事件，保留最新计量以便首次接续恢复。
+            if (contextUsage != null && contextUsage.seq() > afterSeq
+                    && (buffer.isEmpty() || contextUsage.seq() < buffer.getFirst().seq())) events.add(contextUsage);
+            events.addAll(buffer.stream().filter(e -> e.seq() > afterSeq).toList());
+            return List.copyOf(events);
         }
 
         /**
@@ -170,12 +221,13 @@ public class TurnStreamRegistry {
         public synchronized GatedSnapshot subscribeGated(long afterSeq, Consumer<TurnEvent> consumer) {
             Snapshot snapshot = snapshotWithGap(afterSeq);
             ReplayGate gate = new ReplayGate(consumer);
-            subscribers.add(gate::onEvent);
-            return new GatedSnapshot(snapshot, gate);
+            Consumer<TurnEvent> subscriber = gate::onEvent;
+            subscribers.add(subscriber);
+            return new GatedSnapshot(snapshot, gate, subscriber);
         }
 
         /** 门闩订阅结果:积压快照 + 对应门闩。 */
-        public record GatedSnapshot(Snapshot snapshot, ReplayGate gate) {
+        public record GatedSnapshot(Snapshot snapshot, ReplayGate gate, Consumer<TurnEvent> subscriber) {
         }
 
         /** 回放门闩:见 {@link #subscribeGated}。方法线程安全(以 this 为监视器)。 */
@@ -204,14 +256,17 @@ public class TurnStreamRegistry {
              * 返回补发条数(供调用方记录)。
              */
             public int open() {
-                synchronized (this) {
-                    int n = queued.size();
-                    for (TurnEvent e : queued) {
-                        consumer.accept(e);
+                int delivered = 0;
+                while (true) {
+                    List<TurnEvent> batch;
+                    synchronized (this) {
+                        if (queued.isEmpty()) { open = true; return delivered; }
+                        batch = List.copyOf(queued);
+                        queued.clear();
                     }
-                    queued.clear();
-                    open = true;
-                    return n;
+                    // 发送与取消订阅均在锁外，避免回调获取轮次锁时反向等待。
+                    for (TurnEvent event : batch) consumer.accept(event);
+                    delivered += batch.size();
                 }
             }
         }
@@ -221,6 +276,7 @@ public class TurnStreamRegistry {
         }
 
         public synchronized void finish() {
+            closeInputs();
             finished = true;
             subscribers.clear();
         }
@@ -234,16 +290,18 @@ public class TurnStreamRegistry {
 
     /** 注册开始的轮次,顶替该会话的任何陈旧条目。 */
     public LiveTurn start(String sessionId, String content) {
-        LiveTurn turn = new LiveTurn(sessionId, content);
+        return start(sessionId, content, java.util.UUID.randomUUID().toString().substring(0, 8), "chat");
+    }
+
+    public LiveTurn start(String sessionId, String content, String turnId, String operation) {
+        LiveTurn turn = new LiveTurn(sessionId, content, turnId, operation);
         live.put(sessionId, turn);
         return turn;
     }
 
-    /** 标记轮次完成,并在回放窗口后从实时 map 移除。 */
+    /** 完成事件发布、历史保存后移除实时轮次。 */
     public void finish(String sessionId, LiveTurn turn) {
         turn.finish();
-        // 完成事件入缓冲后再移除;短暂保留让「刚完成」的轮次还能被 /live 观测为
-        // finished(前端避免把已完成轮误判为无轮次),下次同会话开始新轮自然覆盖
         live.remove(sessionId, turn);
     }
 

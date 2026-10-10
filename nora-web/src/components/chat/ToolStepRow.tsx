@@ -3,9 +3,15 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatStep, ChatStepProgress } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
 import { parseArtifactsFence, parseLegacyGalleryFence } from "@/lib/artifacts";
+import { useCommandExecutions } from "@/hooks/useCommandExecutions";
+import { useSideWorkspace } from "@/hooks/useSideWorkspace";
+import { CommandOutput } from "./CommandOutput";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { mediaCacheUrl, thumbVariant, originalVariant } from "@/lib/mediaCache";
+
+// run_command 保留旧会话展示;新调用只有当前平台注册的 powershell 或 sh。
+const COMMAND_TOOLS = new Set(["powershell", "sh", "run_command"]);
 
 /**
  * 工具步骤行(2026-09-17 从 AgentThoughtBlock 拆出):单行 chip(名称 +
@@ -87,7 +93,7 @@ function ProgressPanel({ progress }: { progress: ChatStepProgress }) {
           {done}/{total || "?"}
         </span>
         {total > 0 && (
-          <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
+          <span className="text-[11px] tabular-nums text-muted-foreground shrink-0">
             {pct != null && `${pct}% · `}还剩 {remaining} 个
           </span>
         )}
@@ -127,13 +133,14 @@ function argsPreview(step: ChatStep): string {
     const sql = step.input.sql.replace(/\s+/g, " ").trim();
     return sql.length > 56 ? `${sql.slice(0, 56)}…` : sql;
   }
-  if (step.toolName === "run_command" && step.input?.target) {
+  if (COMMAND_TOOLS.has(step.toolName ?? "") && step.input?.target) {
     // 命令原文(后端把 command 放进 target);折叠行只给一瞥,审批卡/展开可见全文
     const cmd = step.input.target.replace(/\s+/g, " ").trim();
     return cmd.length > 64 ? `${cmd.slice(0, 64)}…` : cmd;
   }
   if (step.toolName === "manage_datasource" || step.toolName === "manage_service" || step.toolName === "manage_mcp"
-      || step.toolName === "manage_knowledge" || step.toolName === "manage_automation" || step.toolName === "search_knowledge") {
+      || step.toolName === "manage_knowledge" || step.toolName === "manage_automation" || step.toolName === "search_knowledge"
+      || step.toolName === "manage_browser" || step.toolName === "manage_workspace") {
     // 无 action 上下文时(历史持久化缺 action)退回 target
     return [step.input?.target].filter(Boolean).join(" ") || "";
   }
@@ -170,18 +177,21 @@ function extractResultImages(content: string | null | undefined): { alt: string;
  */
 
 /** 工具步骤：单行 chip,可展开参数与结果详情。 */
-export function ToolRow({ step }: { step: ChatStep }) {
-  // 初始:running 的步骤展开(实时输出可见);历史/已完成步骤收起(紧凑,点击回看)。
-  // 展开状态是组件本地 state,状态流转(running→completed)不会重置它——
-  // 执行中展开的输出在完成后**保持可见**(2026-10-02 修复:此前完成即自动
-  // 折叠,用户看到输出"消失";对齐 Codex/Claude Code 过程常驻)。
-  const [open, setOpen] = useState(step.status === "running");
+export function ToolRow({ step: originalStep, defaultOpen = false }: { step: ChatStep; defaultOpen?: boolean }) {
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const sessionId = useChatSessions(state => state.activeId) ?? undefined;
-  const effectiveOpen = open;
+  const execution = useCommandExecutions(state => state.items.find(item => item.sessionId === sessionId &&
+    (item.executionId === originalStep.result?.execution?.executionId || item.stepId === originalStep.id))) ?? originalStep.result?.execution;
+  const step: ChatStep = execution ? { ...originalStep,
+    status: execution.status === "running" ? "running" : execution.status === "unknown" ? "unknown"
+      : execution.status === "failed" || execution.status === "timed_out" ? "failed" : "completed",
+    result: { ...originalStep.result, execution }, duration: `${(execution.elapsedMs / 1000).toFixed(1)}s`,
+  } : originalStep;
+  const effectiveOpen = userOpen ?? defaultOpen;
   const expandable = Boolean(step.input || step.result || step.detail);
   const lines = outputLineCount(step);
   const preview = argsPreview(step);
-  const running = step.status === "running";
+  const running = step.status === "running" || step.status === "pending";
   // MCP 工具结果里的图片（相册照片/拼图等）：直接展示给用户，
   // 不用展开详情——"模型看到了什么"用户同屏可见
   const resultImages = !running && step.toolName?.startsWith("mcp__")
@@ -195,16 +205,16 @@ export function ToolRow({ step }: { step: ChatStep }) {
     : null;
 
   return (
-    <div className="animate-in fade-in slide-in-from-top-1">
+    <div className="min-w-0 [container-type:inline-size] animate-in fade-in slide-in-from-top-1">
       <button
         type="button"
         aria-expanded={effectiveOpen}
         onClick={() => {
           if (expandable) {
-            setOpen((v) => !v);
+            setUserOpen(!effectiveOpen);
           }
         }}
-        className={`w-full flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-left border transition-colors max-w-2xl ${
+        className={`w-full min-w-0 flex items-center gap-2 py-2 px-3 rounded-lg text-left border transition-colors max-w-2xl ${
           expandable ? "hover:bg-muted/70 cursor-pointer" : "cursor-default"
         } ${
           step.status === "failed"
@@ -215,7 +225,7 @@ export function ToolRow({ step }: { step: ChatStep }) {
                 ? "border-yellow-200 dark:border-yellow-900/60 bg-yellow-50/50 dark:bg-yellow-950/20"
                 : step.status === "declined"
                   ? "border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20"
-                  : "border-border bg-card"
+                  : "border-border/70 bg-card"
         }`}
       >
         <span className="shrink-0">
@@ -234,34 +244,37 @@ export function ToolRow({ step }: { step: ChatStep }) {
           )}
         </span>
         <span
-          className="text-xs font-medium text-foreground shrink-0 flex items-center gap-1"
+          className="text-xs font-medium text-foreground min-w-0 max-w-[60%] flex items-center gap-1 [@container(max-width:480px)]:max-w-none [@container(max-width:480px)]:flex-1"
           title={step.toolName ? `工具: ${step.toolName}` : undefined}
         >
           {!running && step.status === "completed" && <Wrench className="w-3 h-3 text-muted-foreground/60" />}
-          {step.title || step.toolName}
+          <span className="truncate">{step.title || step.toolName}</span>
         </span>
         {preview && (
-          <span className="text-[11px] text-muted-foreground font-mono truncate flex-1">{preview}</span>
+          <span className="text-[11px] text-muted-foreground font-mono truncate min-w-0 flex-1 [@container(max-width:480px)]:hidden">{preview}</span>
         )}
         {step.status === "completed" && lines != null && (
-          <span className="text-[10px] text-muted-foreground/70 shrink-0 tabular-nums">{lines} 行</span>
+          <span className="text-[11px] text-muted-foreground/70 shrink-0 tabular-nums [@container(max-width:480px)]:hidden">{lines} 行</span>
         )}
         {/* running 中的批量任务:chip 行内联进度(不展开也能看到 n/N) */}
         {running && step.progress && step.progress.phase !== "listing" && step.progress.total != null && (
-          <span className="text-[10px] text-blue-600 dark:text-blue-400 shrink-0 tabular-nums">
+          <span className="text-[11px] text-blue-600 dark:text-blue-400 shrink-0 tabular-nums">
             {step.progress.done ?? 0}/{step.progress.total}
           </span>
         )}
         {running && step.progress?.phase === "listing" && (
-          <span className="text-[10px] text-muted-foreground shrink-0">获取清单…</span>
+          <span className="text-[11px] text-muted-foreground shrink-0">获取清单…</span>
         )}
-        {step.status === "failed" && <span className="text-[10px] text-red-600 dark:text-red-400 shrink-0">失败</span>}
-        {step.status === "unknown" && <span className="text-[10px] text-orange-600 dark:text-orange-400 shrink-0">结果未知</span>}
-        {step.status === "partial" && <span className="text-[10px] text-yellow-600 dark:text-yellow-400 shrink-0">部分成功</span>}
-        {step.status === "declined" && <span className="text-[10px] text-amber-600 dark:text-amber-400 shrink-0">已拦截</span>}
-        {step.duration && <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{step.duration}</span>}
+        {step.status === "failed" && <span className="text-[11px] text-red-600 dark:text-red-400 shrink-0">失败</span>}
+        {step.status === "unknown" && <span className="text-[11px] text-orange-600 dark:text-orange-400 shrink-0">结果未知</span>}
+        {step.status === "partial" && <span className="text-[11px] text-yellow-600 dark:text-yellow-400 shrink-0">部分成功</span>}
+        {step.status === "declined" && <span className="text-[11px] text-amber-600 dark:text-amber-400 shrink-0">未执行</span>}
+        {step.duration && <span className="text-[11px] text-muted-foreground/60 tabular-nums shrink-0">{step.duration}</span>}
         {expandable && <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform shrink-0 ${effectiveOpen ? "" : "-rotate-90"}`} />}
       </button>
+      {execution && <button type="button" className="ml-6 mt-1 text-[11px] text-primary hover:underline" onClick={() => useFileViewer.getState().requestAction(() => {
+        useSideWorkspace.setState({ focusedCommand: execution.executionId }); useSideWorkspace.getState().show("tasks");
+      })}>{execution.status === "running" ? "后台运行 · 查看任务" : "查看命令任务"}</button>}
       {/* 批量任务进度卡片:running 期间始终可见(不折叠)——「下载到哪了」的主反馈 */}
       {running && step.progress && <ProgressPanel progress={step.progress} />}
       {artifacts && artifacts.length > 0 && (
@@ -290,7 +303,7 @@ export function ToolRow({ step }: { step: ChatStep }) {
             </button>
           ))}
           {resultImages.length > 6 && (
-            <span className="self-end text-[10px] text-muted-foreground">+{resultImages.length - 6} 张</span>
+            <span className="self-end text-[11px] text-muted-foreground">+{resultImages.length - 6} 张</span>
           )}
         </div>
       )}
@@ -303,9 +316,14 @@ export function ToolRow({ step }: { step: ChatStep }) {
 
 function ToolDetail({ step }: { step: ChatStep }) {
   const result = step.result;
-  const isCommand = step.toolName === "run_command";
+  const isCommand = COMMAND_TOOLS.has(step.toolName ?? "");
 
-  // run_command:命令以纯文本展示(不套 JSON);执行中显示实时输出流
+  if (result?.execution) return <div className="ml-6 my-2 max-w-2xl space-y-2">
+    <Section title="命令" content={result.execution.command} />
+    <CommandOutput execution={result.execution} />
+  </div>;
+
+  // 原生命令与旧会话:命令以纯文本展示,执行中显示实时输出流。
   if (isCommand) {
     const cmd = step.input?.target ?? "";
     return (
@@ -350,7 +368,7 @@ function ToolDetail({ step }: { step: ChatStep }) {
     <div className="ml-6 my-1 space-y-1.5 max-w-2xl">
       {inputJson && <Section title="工具参数" content={inputJson} />}
       {result?.error ? (
-        <Section title={step.status === "unknown" ? "结果未知(需核对)" : "失败原因"} content={result.error} tone="error" />
+        <Section title={step.status === "unknown" ? "结果未知(需核对)" : step.status === "declined" ? "未执行原因" : "失败原因"} content={result.error} tone="error" />
       ) : result?.content != null ? (
         <Section
           title="执行结果"
@@ -370,17 +388,19 @@ function ToolDetail({ step }: { step: ChatStep }) {
 /** 实时输出(命令执行期间):终端习惯——等宽、深色、自动滚到底部。 */
 function LiveOutput({ content }: { content: string }) {
   const ref = useRef<HTMLPreElement>(null);
+  const follow = useRef(true);
   useEffect(() => {
     const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && follow.current) el.scrollTop = el.scrollHeight;
   }, [content]);
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wide mb-0.5 flex items-center gap-1 text-muted-foreground">
+      <div className="text-[11px] uppercase tracking-wide mb-0.5 flex items-center gap-1 text-muted-foreground">
         <Loader2 className="w-3 h-3 animate-spin" /> 实时输出
       </div>
       <pre
         ref={ref}
+        onScroll={() => { const el = ref.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32; }}
         className="whitespace-pre-wrap break-words rounded-md px-2 py-1.5 text-[11px] font-mono max-h-48 overflow-auto bg-[#1e1e1e] text-gray-300 custom-scroll"
       >
         {content}
@@ -402,7 +422,7 @@ function Section({
 }) {
   return (
     <div>
-      <div className={`text-[10px] uppercase tracking-wide mb-0.5 flex items-center gap-1 ${tone === "error" ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
+      <div className={`text-[11px] uppercase tracking-wide mb-0.5 flex items-center gap-1 ${tone === "error" ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
         {tone === "error" && <AlertTriangle className="w-3 h-3" />}
         {title}
         {meta}

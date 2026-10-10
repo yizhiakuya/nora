@@ -194,6 +194,7 @@ services:
 
   agent-service:
     <<: *service-defaults
+    init: true
     image: ghcr.io/yizhiakuya/nora/agent-service:${NORA_TAG:-latest}
     container_name: nora-agent
     mem_limit: 768m

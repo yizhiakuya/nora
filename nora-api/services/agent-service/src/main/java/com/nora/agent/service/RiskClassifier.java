@@ -48,13 +48,22 @@ final class RiskClassifier {
      * @param toolName 工具名
      * @param argsJson 模型填的参数 JSON
      */
-    static Risk classify(String toolName, String argsJson) {
+    static Risk classify(String toolName, String argsJson, AgentWorkspaceService workspace) {
         if ("open_file".equals(toolName)) return Risk.LOW;
+        if ("command_execution".equals(toolName)) return "wait".equals(actionOf(argsJson)) ? Risk.LOW : Risk.HIGH;
+        if ("manage_browser".equals(toolName)) {
+            String action = actionOf(argsJson);
+            return Set.of("state", "open", "snapshot", "inspect", "extract", "plan", "export", "verify", "learn", "rows",
+                    "scroll", "back", "forward", "reload", "select_tab", "close_tab", "close").contains(action == null ? "" : action)
+                    ? Risk.LOW : Risk.HIGH;
+        }
+        // 固定工作区内相册生成/反馈，与 manage_workspace 区内写入同级。
+        if ("manage_photo_album".equals(toolName)) return Risk.LOW;
         if ("manage_workspace".equals(toolName)) {
             // 工作区语义(对齐 OpenClaw):默认 cwd 而非硬沙箱。
             // 区内:读 LOW、写/追加 LOW(记忆维护需自动)——这与「记住…」必须即时落盘矛盾最小;
             // 区外:读仍 LOW(只读无破坏),写/追加 HIGH,删除 CRITICAL(不可逆)
-            return classifyWorkspace(argsJson);
+            return classifyWorkspace(argsJson, workspace);
         }
         if ("manage_file".equals(toolName) || "read_file".equals(toolName)) {
             // 文件中心(用户上传文件;2026-09-20 更名 manage_file,read_file 为兼容别名):
@@ -103,7 +112,7 @@ final class RiskClassifier {
         }
         if ("manage_mcp".equals(toolName)) {
             // MCP 服务器管理:list/tools 只读 LOW(视图已脱敏;tools 读缓存快照不触发远端);
-            // call 是「按名调用 lazy 服务器工具」——与 mcp__* 挂载工具同语义,一律 HIGH;
+            // call 按实际工具与参数分类，与独立挂载的 MCP 工具共用规则。
             // 其余动作(register/remove/refresh/enable/disable)改变 Agent 的工具挂载面,
             // 统一 HIGH——跟随全局权限档位(ASK 全问 / ASSIST 询问 / FULL 自动),
             // 不做单独的强制审批;别名归一化与执行层共用,保证判定一致
@@ -111,9 +120,22 @@ final class RiskClassifier {
             if ("list".equals(action) || "tools".equals(action)) {
                 return Risk.LOW;
             }
+            if ("call".equals(action)) {
+                JsonNode args = parseObject(argsJson);
+                if (args == null) return Risk.HIGH;
+                String tool = args.path("tool").asText(args.path("toolName").asText("")).trim();
+                try {
+                    return classify("mcp__" + tool, McpManagementTools.mcpArguments(MAPPER, args.path("arguments")).toString(), workspace);
+                } catch (IllegalArgumentException e) {
+                    return Risk.HIGH;
+                }
+            }
             return Risk.HIGH;
         }
-        if ("run_command".equals(toolName)) {
+        if ("manage_env_vars".equals(toolName)) {
+            return "list".equalsIgnoreCase(actionOf(argsJson).trim()) ? Risk.LOW : Risk.HIGH;
+        }
+        if (TerminalService.isCommandTool(toolName)) {
             // 本机终端:一律 HIGH(跟随全局档位——ASK 全问 / ASSIST 询问 / FULL 自动)。
             // 不做命令解析白名单:那是假安全(管道/子 shell/编码绕过随手可得),
             // 真正的防线是审批卡完整展示命令 + 用户档位选择。
@@ -160,7 +182,9 @@ final class RiskClassifier {
             // folder 字段走与 workspace 相同的区外判定。
             JsonNode a = parseObject(argsJson);
             String folder = a == null ? null : a.path("folder").asText(null);
-            return isOutsideWorkspace(folder) ? Risk.HIGH : Risk.LOW;
+            if (folder == null || folder.isBlank()) return Risk.LOW;
+            try { return isOutsideWorkspace(folder, workspace) ? Risk.HIGH : Risk.LOW; }
+            catch (IllegalArgumentException e) { return Risk.HIGH; }
         }
         if (toolName != null && toolName.startsWith("mcp__")) {
             // 手机相册整理(2026-09-20 photos_manage):写操作分级——
@@ -199,7 +223,7 @@ final class RiskClassifier {
      * (download/save/fetch→import)与执行层 {@code execManageWorkspace}
      * 共用同一归一化——审批检查的目标必须与真正执行的目标一致。
      */
-    private static Risk classifyWorkspace(String argsJson) {
+    private static Risk classifyWorkspace(String argsJson, AgentWorkspaceService workspace) {
         JsonNode a = parseObject(argsJson);
         if (a == null) {
             return Risk.HIGH;
@@ -218,7 +242,7 @@ final class RiskClassifier {
             }
             // 写/追加/删除:判定目标是否区外(路径字段别名与执行层一致)
             String target = workspacePathOf(a);
-            boolean outside = isOutsideWorkspace(target);
+            boolean outside = isOutsideWorkspace(target, workspace);
             if ("delete".equals(action)) {
                 return outside ? Risk.CRITICAL : Risk.HIGH;
             }
@@ -226,7 +250,7 @@ final class RiskClassifier {
             // 区内=LOW(整理工作区自己的文件,与 write 同级)。
             // copy:读操作+区内写,源永远只读;区外目标=HIGH,其余 LOW。
             if ("move".equals(action) || "copy".equals(action)) {
-                boolean toOutside = isOutsideWorkspace(a.path("to").asText(null));
+                boolean toOutside = isOutsideWorkspace(a.path("to").asText(null), workspace);
                 return outside || toOutside ? Risk.HIGH : Risk.LOW;
             }
             // import:从远程 URL 下载并落盘(有出站请求 + 写文件)。
@@ -288,13 +312,8 @@ final class RiskClassifier {
         }
     }
 
-    /** 简单判定:绝对路径或含 ../ 上跳 = 工作区外。 */
-    static boolean isOutsideWorkspace(String path) {
-        if (path == null || path.isBlank()) {
-            return false;
-        }
-        String cleaned = path.trim().replace(java.io.File.separatorChar, '/');
-        return cleaned.startsWith("/") || cleaned.matches("^[A-Za-z]:.*") || cleaned.contains("../");
+    static boolean isOutsideWorkspace(String path, AgentWorkspaceService workspace) {
+        return !workspace.resolveAny(path).insideWorkspace();
     }
 
     /**

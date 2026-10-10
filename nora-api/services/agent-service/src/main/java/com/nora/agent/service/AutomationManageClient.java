@@ -167,6 +167,9 @@ public class AutomationManageClient {
                         .append(" | ").append(n.path("enabled").asBoolean() ? "enabled" : "paused")
                         .append(" | ").append(n.path("status").asText("?"))
                         .append(" | lastRun=").append(n.path("lastRunAt").isNull() ? "never" : n.path("lastRunAt").asText())
+                        .append(" | nextRun=").append(n.path("nextRunAt").asText("-"))
+                        .append("\n动作指令: ").append(n.path("actionJson").asText("(未配置)"))
+                        .append("\n日程: ").append(n.path("schedule").asText("(手动触发)"))
                         .append('\n');
             }
             return sb.toString().stripTrailing();

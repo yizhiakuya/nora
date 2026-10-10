@@ -192,12 +192,17 @@ public class MediaFetchService {
      * @param items url + filename 列表
      */
     public FetchReport downloadItems(List<UrlItem> items, String folder, String quality,
-                                     ProgressCallback progress) {
+                                      ProgressCallback progress) {
+        return downloadItems(items, folder, quality, progress, null);
+    }
+
+    public FetchReport downloadItems(List<UrlItem> items, String folder, String quality,
+                                     ProgressCallback progress, java.util.function.BooleanSupplier cancelled) {
         List<MediaEntry> entries = new ArrayList<>();
         for (UrlItem it : items) {
             entries.add(new MediaEntry(it.url(), it.filename(), it.sizeBytes()));
         }
-        return downloadAll(entries, folder, quality, progress, null);
+        return downloadAll(entries, folder, quality, progress, cancelled);
     }
 
     /** 下载条目:URL + 目标文件名(大小未知=0)。 */

@@ -50,6 +50,20 @@ class AgentWorkspaceServiceTest {
     }
 
     @Test
+    void readsSingleLineEvidenceByCharactersAndKeepsLinePagination() {
+        service.write("single.json", "{\"snapshot\":\"" + "中文😀".repeat(4000) + "\"}");
+        service.readRangeAny("single.json", 4000, 6000, "chars");
+        service.readRangeAny("single.json", 10000, 6000, "chars");
+        service.write("lines.txt", "第一行\n第二行\n第三行\n");
+        service.readRangeAny("lines.txt", 2, 1, "lines");
+        service.write("empty.txt", "");
+        service.readRangeAny("empty.txt", 1, 6000, "chars");
+        var record = service.archiveContext("tool", "中文😀".repeat(4000));
+        service.readRangeAny(record.path(), 6001, 6000, "chars");
+        record.readHint();
+    }
+
+    @Test
     void editReplacesUniqueSnippet() {
         // edit(精确替换,2026-09-18):唯一片段可替换;不唯一/不存在被拒(冒烟走异常路径)
         service.write("MEMORY.md", "第一行\n要改的段落\n第三行");
@@ -58,6 +72,21 @@ class AgentWorkspaceServiceTest {
         service.write("dup.md", "abc\nabc");
         try { service.editAny("dup.md", "abc", "x"); } catch (Exception ignored) { }
         try { service.editAny("missing-file.md", "a", "b"); } catch (Exception ignored) { }
+    }
+
+    @Test
+    void editAcceptsLfAndCrlfWithoutChangingSurroundingLines() {
+        service.write("crlf.md", "\uFEFF第一行\r\n[原文]\\E\r\n第二行\r\n结尾\r\n");
+        service.editAny("crlf.md", "[原文]\\E\n第二行", "替换\n新行");
+        service.read("crlf.md");
+        service.write("lf.md", "前言\n原文\n第二行\n结尾\n");
+        service.editAny("lf.md", "原文\r\n第二行", "替换\r\n新行");
+        service.read("lf.md");
+        service.write("mixed.md", "前言\r\n原文\n第二行\r\n结尾\n");
+        service.editAny("mixed.md", "原文\r\n第二行\r\n", "替换\n");
+        service.read("mixed.md");
+        service.write("overlap.md", "aaa");
+        try { service.editAny("overlap.md", "aa", "x"); } catch (IllegalArgumentException ignored) { }
     }
 
     @Test

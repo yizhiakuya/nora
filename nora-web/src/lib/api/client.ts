@@ -188,9 +188,8 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
 
   // 只缓存 GET：非 GET 是写操作，必须落库后可见（并在成功后失效对应资源）
   if (method === "GET") {
-    // 调用方显式传 signal（如「可取消」场景）时不走缓存：这类调用通常
-    // 需要真实的连接生命周期，复用共享 Promise 会让取消语义变模糊
-    if (init?.signal) return doRequestJson<T>(path, init);
+    // 可取消请求和实时读取都跳过共享缓存，遵循调用方的连接/缓存语义。
+    if (init?.signal || init?.cache === "no-store") return doRequestJson<T>(path, init);
     return cached<T>(path, ttlFor(path), false, () => doRequestJson<T>(path, init));
   }
 

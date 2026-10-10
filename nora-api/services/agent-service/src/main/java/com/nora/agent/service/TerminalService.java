@@ -1,8 +1,8 @@
 package com.nora.agent.service;
 
-import java.io.ByteArrayOutputStream;
+import java.io.InputStreamReader;
+import java.io.Writer;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,44 +19,49 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import com.nora.agent.dto.CommandExecutionDto;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
-/**
- * 本机终端执行(agent 的 run_command 工具):非交互式命令,进程树超时清理。
- *
- * <p>设计对齐 Claude Code / Codex 的终端工具:
- * <ul>
- *   <li>非交互:命令无 TTY,交互式程序(vim/需要输入)会挂起到超时——文档明确</li>
- *   <li>默认 cwd = 工作区(与 manage_workspace 同语义);相对 cwd 相对工作区解析,
- *       绝对 cwd = 整机任意目录(不硬拦——命令本身就能 cd,拦 cwd 是假安全)</li>
- *   <li>Windows 默认 PowerShell(-EncodedCommand 传脚本,规避一切引号/换行转义问题),
- *       强制 UTF-8 输出(中文 Windows 默认 GBK 会乱码);bash 可选(git bash)</li>
- *   <li>超时/取消杀进程树(Windows taskkill /T + 后代句柄兜底),不留孤儿</li>
- *   <li>输出有界(200K 原始上限,展示层 bounded() 再截到 30K);exit code 如实报告</li>
- * </ul>
- *
- * <p>风险由审批把门(RiskClassifier: run_command 一律 HIGH——不做命令白名单,
- * 那是假安全):ASK 全问 / ASSIST 询问 / FULL 自动。
- */
+/** 平台原生命令执行：一个进程、独立 watchdog、持续日志，以及可查询的后台生命周期。 */
 @Service
 public class TerminalService {
 
     private static final Logger log = LoggerFactory.getLogger(TerminalService.class);
 
-    /** 默认/最大超时(秒)。 */
-    static final int DEFAULT_TIMEOUT_SEC = 60;
-    static final int MAX_TIMEOUT_SEC = 300;
-    /** 原始输出字节上限(展示层 bounded() 会再截到 30K 字符)。 */
-    static final int MAX_RAW_OUTPUT_BYTES = 200_000;
-    /** 命令长度上限(字符)。 */
+    public static final int DEFAULT_TIMEOUT_SEC = 1800;
     static final int MAX_COMMAND_CHARS = 8_000;
-    /** 支持的 shell 白名单。 */
-    static final List<String> SHELLS = List.of("powershell", "bash");
-    /** 实时输出回调的节流间隔(ms):执行期间最多每 1.2s 回调一次快照。 */
-    static final long PROGRESS_MIN_INTERVAL_MS = 1_200;
-    /** 实时输出的缓冲轮询间隔(ms)。 */
-    private static final long PROGRESS_POLL_MS = 300;
-    /** 实时快照保留的尾部字符数(终端习惯看最新输出)。 */
     static final int PROGRESS_PREVIEW_CHARS = 4_000;
+    private static final long MAX_LOG_BYTES = 64L * 1024 * 1024;
+    private final Semaphore slots = new Semaphore(4);
+    private final ConcurrentHashMap<String, Execution> executions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<CommandExecutionDto>> completions = new ConcurrentHashMap<>();
+    private CommandExecutionStore executionStore;
+    private TurnStreamRegistry turnStreams;
+
+    @Autowired
+    void configureExecutions(CommandExecutionStore store, TurnStreamRegistry streams) {
+        this.executionStore = store;
+        this.turnStreams = streams;
+    }
+
+    @PostConstruct
+    void recoverExecutions() { if (executionStore != null) executionStore.recover(); }
+
+    @PreDestroy
+    public void shutdown() {
+        executions.values().forEach(execution -> execution.stop("cancelled", "服务正在关闭，命令已停止。"));
+        for (Execution execution : executions.values()) {
+            try { execution.done.get(5, TimeUnit.SECONDS); }
+            catch (Exception e) { log.warn("command shutdown: {}", e.getMessage()); }
+        }
+    }
 
     /** 内置 PowerShell 版本(随仓库 tools/pwsh 经 git-lfs 分发,首次使用解压到缓存目录)。 */
     static final String BUNDLED_PWSH_VERSION = "7.6.6";
@@ -73,199 +78,372 @@ public class TerminalService {
      * 执行命令时注入子进程(2026-09-19 设置页「环境变量」真实落地)。
      */
     private final AppSettingStore appSettingStore;
+    private final EnvVarsService envVarsService;
 
     @Autowired
     public TerminalService(
             @Value("${nora.agent.workspace:" + AgentWorkspaceService.DEFAULT_ROOT + "}") String workspacePath,
             @Value("${nora.agent.powershell:}") String pwshOverride,
             @Value("${nora.agent.pwsh-bundle:" + DEFAULT_PWSH_BUNDLE + "}") String pwshBundle,
-            @org.springframework.beans.factory.annotation.Autowired(required = false) AppSettingStore appSettingStore) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) AppSettingStore appSettingStore,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) EnvVarsService envVarsService) {
         this.workspaceRoot = Path.of(workspacePath).toAbsolutePath().normalize();
         this.pwshOverride = pwshOverride;
         this.pwshBundle = (pwshBundle == null || pwshBundle.isBlank()) ? null : Path.of(pwshBundle).toAbsolutePath().normalize();
         this.appSettingStore = appSettingStore;
+        this.envVarsService = envVarsService;
     }
 
     /** 便捷构造:无 appSettingStore(测试/旧调用方)。 */
     public TerminalService(String workspacePath, String pwshOverride, String pwshBundle) {
-        this(workspacePath, pwshOverride, pwshBundle, null);
+        this(workspacePath, pwshOverride, pwshBundle, null, null);
     }
 
     /** 便捷构造器(测试用):工作区 + 默认内置 pwsh,无显式覆盖。 */
     public TerminalService(String workspacePath) {
-        this(workspacePath, "", DEFAULT_PWSH_BUNDLE, null);
+        this(workspacePath, "", DEFAULT_PWSH_BUNDLE, null, null);
     }
 
-    /** 一次命令执行的结果。 */
+    /** 同步便捷入口也使用同一个进程生命周期，仅用于直接调用/冒烟。 */
     public record RunResult(String output, int exitCode, boolean timedOut, boolean cancelled,
                             long durationMs, String cwdUsed, int timeoutSec) {
-
-        /** 渲染为喂给模型的文本:输出 + 一行脚注(exit code/耗时/cwd 或超时/取消标记)。 */
         public String render() {
-            StringBuilder sb = new StringBuilder();
-            sb.append(output == null || output.isEmpty() ? "(无输出)" : output);
-            sb.append("\n---\n");
-            if (cancelled) {
-                sb.append("(命令已取消,进程已终止)");
-            } else if (timedOut) {
-                sb.append("(命令超时 ").append(timeoutSec).append("s,进程树已终止;")
-                        .append("如确需更长运行请显式传更大的 timeout,上限 ").append(MAX_TIMEOUT_SEC).append("s)");
-            } else {
-                sb.append("(exit code: ").append(exitCode)
-                        .append(", ").append(durationMs).append("ms, cwd: ").append(cwdUsed).append(")");
-            }
-            return sb.toString();
+            return (output == null || output.isEmpty() ? "(无输出)" : output) + "\n---\n"
+                    + (cancelled ? "(命令已取消,进程已终止)" : timedOut ? "(命令超时 " + timeoutSec + "s,进程树已终止)"
+                    : "(exit code: " + exitCode + ", " + durationMs + "ms, cwd: " + cwdUsed + ")");
         }
     }
 
-    /**
-     * 运行一条命令。
-     *
-     * @param command    要执行的命令(必填)
-     * @param cwdArg     工作目录;null=工作区根;相对路径相对工作区解析,绝对路径=整机
-     * @param timeoutSec 超时(秒);null=默认 60,上限 300
-     * @param shell      powershell / bash;null=平台默认(Windows→powershell,其他→bash)
-     */
-    public RunResult run(String command, String cwdArg, Integer timeoutSec, String shell) {
-        return run(command, cwdArg, timeoutSec, shell, null);
+    public RunResult run(String command, String cwd, Integer timeout) { return run(command, cwd, timeout, null); }
+
+    public RunResult run(String command, String cwd, Integer timeout, Consumer<String> progress) {
+        var execution = start("smoke-" + java.util.UUID.randomUUID(), null, command, cwd, timeout, command);
+        try {
+            while (execution.running()) execution = await(execution.sessionId(), execution.executionId(), 1000, progress, () -> false);
+        } catch (RuntimeException e) {
+            stop(execution.sessionId(), execution.executionId());
+            throw e;
+        }
+        var result = get(execution.sessionId(), execution.executionId());
+        return new RunResult(result.output(), result.exitCode() == null ? -1 : result.exitCode(),
+                "timed_out".equals(result.status()), "cancelled".equals(result.status()),
+                result.elapsedMs(), result.cwd(), result.timeoutSeconds());
     }
 
-    /**
-     * 运行一条命令(带实时输出回调)。
-     *
-     * @param progress 执行期间的输出快照回调(节流 ≤1.2s 一次,尾部 4k 字符,已清
-     *                 ANSI/CLIXML);在调用线程上回调——编排层可安全地据此发 SSE
-     *                 step 更新(同 id 原地替换)。null=不要实时回调
-     */
-    public RunResult run(String command, String cwdArg, Integer timeoutSec, String shell,
-                         java.util.function.Consumer<String> progress) {
-        if (command == null || command.isBlank()) {
-            throw new IllegalArgumentException("拒绝执行：缺少 command 参数(要运行的命令)");
-        }
-        if (command.length() > MAX_COMMAND_CHARS) {
-            throw new IllegalArgumentException("拒绝执行：命令超过 " + MAX_COMMAND_CHARS + " 字符上限(当前 " + command.length() + ")");
-        }
-        int timeout = timeoutSec == null ? DEFAULT_TIMEOUT_SEC : Math.min(Math.max(timeoutSec, 1), MAX_TIMEOUT_SEC);
-        String shellName = normalizeShell(shell);
+    public int defaultTimeout() {
+        var settings = appSettingStore == null ? null : appSettingStore.raw("agent");
+        Object value = settings == null ? null : settings.get("commandTimeoutSeconds");
+        return value instanceof Number number && number.intValue() > 0 ? number.intValue() : DEFAULT_TIMEOUT_SEC;
+    }
+
+    public CommandExecutionDto start(String sessionId, String stepId, String command, String cwdArg,
+                                     Integer timeoutSec, String title) {
+        if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("缺少 sessionId");
+        if (command == null || command.isBlank()) throw new IllegalArgumentException("缺少 command 参数");
+        if (command.length() > MAX_COMMAND_CHARS) throw new IllegalArgumentException("命令超过 " + MAX_COMMAND_CHARS + " 字符上限");
+        int timeout = timeoutSec == null ? defaultTimeout() : timeoutSec;
+        if (timeout < 1) throw new IllegalArgumentException("timeout 必须是正整数秒数");
         Path cwd = resolveCwd(cwdArg);
-        if (cwd == null || !Files.isDirectory(cwd)) {
-            throw new IllegalArgumentException("拒绝执行：工作目录不存在: " + (cwdArg == null ? workspaceRoot : cwdArg)
-                    + "(相对路径相对工作区解析;绝对路径=整机)");
-        }
-
-        List<String> argv = buildArgv(shellName, command);
-        long start = System.currentTimeMillis();
-        Process process;
+        if (!Files.isDirectory(cwd)) throw new IllegalArgumentException("工作目录不存在: " + cwd);
+        if (!slots.tryAcquire()) throw new IllegalStateException("已有 4 个命令在运行；请等待或停止已有任务后再启动。");
+        Execution execution = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder(argv)
-                    .directory(cwd.toFile())
-                    .redirectErrorStream(true);
-            // 用户自定义环境变量注入(2026-09-19 设置页「环境变量」真实落地):
-            // 设置页存的凭据(GH_TOKEN 等)在命令执行时可用;读取失败静默
-            // (命令执行本身不因设置存储故障而失败)
-            if (appSettingStore != null) {
-                try {
-                    com.nora.agent.controller.EnvVarsController.resolveForExecution(appSettingStore)
-                            .forEach(pb.environment()::put);
-                } catch (Exception ignored) {
-                    // 设置读取失败:不注入,继续执行
-                }
+            String id = java.util.UUID.randomUUID().toString();
+            Path logPath = workspaceRoot.resolve("command-logs").resolve(id + ".log");
+            Files.createDirectories(logPath.getParent());
+            var turn = turnStreams == null ? null : turnStreams.get(sessionId);
+            execution = new Execution(id, sessionId, turn == null ? null : turn.turnId, stepId,
+                    title, command, cwd, timeout, logPath);
+            if (executionStore != null) executionStore.save(execution.snapshot());
+            List<String> argv = new ArrayList<>(buildArgv(command));
+            // Linux 会话组拥有整棵子进程树，即便父 shell 先退出也可清理。
+            if (System.getProperty("os.name", "").startsWith("Linux")) {
+                Path setsid = Path.of("/usr/bin/setsid");
+                if (!Files.isExecutable(setsid)) setsid = Path.of("/bin/setsid");
+                if (!Files.isExecutable(setsid)) throw new IllegalStateException("缺少 setsid，请安装 util-linux");
+                argv.addFirst(setsid.toString());
+                execution.processGroup = true;
             }
-            process = pb.start();
+            ProcessBuilder builder = new ProcessBuilder(argv).directory(cwd.toFile()).redirectErrorStream(true);
+            if (envVarsService != null) envVarsService.resolveForExecution()
+                    .forEach(builder.environment()::put);
+            execution.process = builder.start();
+            if (isWindows()) execution.windowsJob = new WindowsCommandJob(execution.process.pid());
+            execution.process.getOutputStream().close();
+            executions.put(id, execution);
+            Execution owned = execution;
+            Thread.ofVirtual().name("command-" + id).start(owned::run);
+            return execution.snapshot();
         } catch (Exception e) {
-            throw new IllegalArgumentException("命令启动失败(" + shellName + "): " + e.getMessage()
-                    + "——请确认命令存在;" + (isWindows() ? "PowerShell 默认可用,bash 需安装 git bash" : "bash 默认可用"));
-        }
-        // stdin 立即关闭:无 TTY 语义——读 stdin 的命令(cat/read/需要确认的交互)
-        // 得到 EOF 立刻返回,而不是挂起到超时(实测坑:不关 stdin 会阻塞整条命令)
-        try {
-            process.getOutputStream().close();
-        } catch (Exception ignored) {
-            // 关不掉不影响主流程
-        }
-
-        // 输出读取:独立线程边读边收集(有上限),避免管道写满阻塞子进程
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        Thread reader = Thread.ofVirtual().start(() -> {
-            try (InputStream in = process.getInputStream()) {
-                byte[] chunk = new byte[8192];
-                int n;
-                while ((n = in.read(chunk)) != -1) {
-                    synchronized (buffer) {
-                        int room = MAX_RAW_OUTPUT_BYTES - buffer.size();
-                        if (room > 0) {
-                            buffer.write(chunk, 0, Math.min(n, room));
-                        }
-                    }
-                    // 超出上限后继续排空但丢弃,防止子进程因管道满而卡死
-                }
-            } catch (Exception ignored) {
-                // 进程被杀时读端正常中断
+            slots.release();
+            if (execution != null) {
+                execution.stop("failed", "命令启动失败: " + e.getMessage());
+                execution.finishedAt = System.currentTimeMillis();
+                if (executionStore != null) executionStore.save(execution.snapshot());
             }
-        });
-
-        boolean timedOut = false;
-        boolean cancelled = false;
-        int exit;
-        long deadline = start + timeout * 1000L;
-        long lastProgressAt = 0;
-        int lastReportedSize = 0;
-        try {
-            // 轮询等待(而非一次 waitFor(timeout)):期间按节流回调实时输出;
-            // 回调在调用线程执行,编排层可安全发 SSE(无跨线程竞争)
-            while (true) {
-                if (process.waitFor(PROGRESS_POLL_MS, TimeUnit.MILLISECONDS)) {
-                    break;
-                }
-                long now = System.currentTimeMillis();
-                if (now >= deadline) {
-                    timedOut = true;
-                    killProcessTree(process);
-                    break;
-                }
-                if (progress != null && now - lastProgressAt >= PROGRESS_MIN_INTERVAL_MS) {
-                    int size = bufferSize(buffer);
-                    if (size > lastReportedSize) {
-                        lastProgressAt = now;
-                        lastReportedSize = size;
-                        progress.accept(snapshot(buffer));
-                    }
-                }
-            }
-        } catch (InterruptedException e) {
-            // 用户「停止生成」:编排线程被中断——终止命令,恢复中断标志让上层短路
-            cancelled = true;
-            killProcessTree(process);
-            Thread.currentThread().interrupt();
-        }
-        try {
-            reader.join(2000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        exit = process.isAlive() ? -1 : process.exitValue();
-        long durationMs = System.currentTimeMillis() - start;
-        String output = stripAnsi(stripClixml(buffer.toString(StandardCharsets.UTF_8).stripTrailing()));
-        log.info("terminal: shell={} cwd={} exit={} timedOut={} cancelled={} chars={} durationMs={}",
-                shellName, cwd, exit, timedOut, cancelled, output.length(), durationMs);
-        return new RunResult(output, exit, timedOut, cancelled, durationMs, cwd.toString(), timeout);
-    }
-
-    // ---------- 实时快照 ----------
-
-    private static int bufferSize(ByteArrayOutputStream buffer) {
-        synchronized (buffer) {
-            return buffer.size();
+            throw new IllegalStateException("命令启动失败: " + e.getMessage(), e);
         }
     }
 
-    /** 实时预览:全量解码 → 清 ANSI/CLIXML → 取尾部 4k(终端习惯看最新输出)。 */
-    private static String snapshot(ByteArrayOutputStream buffer) {
-        String full;
-        synchronized (buffer) {
-            full = buffer.toString(StandardCharsets.UTF_8);
+    public CommandExecutionDto await(String sessionId, String id, int yieldMs, Consumer<String> progress,
+                                     BooleanSupplier cancelled) {
+        if (yieldMs < 0 || yieldMs > 30_000) throw new IllegalArgumentException("yieldMs 必须在 0–30000 之间");
+        Execution execution = executions.get(id);
+        if (execution == null) return get(sessionId, id);
+        if (!execution.sessionId.equals(sessionId)) throw new IllegalArgumentException("命令任务不存在: " + id);
+        long end = System.nanoTime() + yieldMs * 1_000_000L;
+        long sequence = -1;
+        try {
+            do {
+                if (cancelled != null && cancelled.getAsBoolean()) execution.stop("cancelled", "用户已停止当前轮次。");
+                var snapshot = execution.snapshot();
+                if (progress != null && snapshot.outputChars() != sequence && !snapshot.output().isEmpty()) {
+                    sequence = snapshot.outputChars();
+                    progress.accept(snapshot.output());
+                }
+                if (execution.done.isDone() || yieldMs == 0) return snapshot;
+                long remaining = end - System.nanoTime();
+                if (remaining <= 0) return snapshot;
+                try { return execution.done.get(Math.min(250, Math.max(1, remaining / 1_000_000)), TimeUnit.MILLISECONDS); }
+                catch (TimeoutException ignored) { /* 下一次快照，进程 watchdog 独立于调用者。 */ }
+            } while (true);
+        } catch (InterruptedException e) {
+            execution.stop("cancelled", "用户已停止当前轮次。");
+            Thread.currentThread().interrupt();
+            throw new java.util.concurrent.CancellationException("command wait interrupted");
+        } catch (java.util.concurrent.ExecutionException e) { throw new IllegalStateException(e.getCause()); }
+    }
+
+    public CommandExecutionDto get(String sessionId, String id) {
+        var execution = executions.get(id);
+        if (execution != null && execution.sessionId.equals(sessionId)) return execution.snapshot();
+        if (executionStore != null) return executionStore.find(sessionId, id);
+        throw new IllegalArgumentException("命令任务不存在: " + id);
+    }
+
+    public java.util.Map<String, CommandExecutionDto> snapshots(String sessionId, java.util.Set<String> ids) {
+        var result = new java.util.HashMap<String, CommandExecutionDto>();
+        if (executionStore != null) executionStore.findAll(sessionId, ids).forEach(item -> result.put(item.executionId(), item));
+        executions.values().stream().filter(item -> item.sessionId.equals(sessionId) && ids.contains(item.id))
+                .forEach(item -> result.put(item.id, item.snapshot()));
+        return result;
+    }
+
+    public List<CommandExecutionDto> list(String sessionId) {
+        var result = new java.util.LinkedHashMap<String, CommandExecutionDto>();
+        if (executionStore != null) executionStore.list(sessionId).forEach(item -> result.put(item.executionId(), item));
+        executions.values().stream().filter(item -> item.sessionId.equals(sessionId))
+                .forEach(item -> result.put(item.id, item.snapshot()));
+        return result.values().stream().sorted(java.util.Comparator.comparingLong(CommandExecutionDto::startedAt).reversed())
+                .map(CommandExecutionDto::withoutOutput).toList();
+    }
+
+    public CommandExecutionDto stop(String sessionId, String id) {
+        get(sessionId, id); // 验证会话归属，禁止操作另一会话的进程。
+        var execution = executions.get(id);
+        if (execution != null) execution.stop("cancelled", "用户已停止命令。");
+        return get(sessionId, id);
+    }
+
+    public void stopTurn(String sessionId, String turnId) {
+        executions.values().stream().filter(item -> item.sessionId.equals(sessionId) && java.util.Objects.equals(item.turnId, turnId))
+                .forEach(item -> item.stop("cancelled", "用户已停止当前轮次。"));
+    }
+
+    public void clearFinished(String sessionId) {
+        if (executionStore != null) executionStore.clearFinished(sessionId);
+        executions.entrySet().removeIf(entry -> entry.getValue().sessionId.equals(sessionId) && entry.getValue().done.isDone());
+    }
+
+    public List<CommandExecutionDto> takeCompletions(String sessionId) {
+        var queue = sessionId == null ? null : completions.get(sessionId);
+        List<CommandExecutionDto> result = new ArrayList<>();
+        if (queue != null) { CommandExecutionDto item; while ((item = queue.poll()) != null) result.add(item); }
+        return result;
+    }
+
+    private final class Execution {
+        final List<String> secrets = envVarsService == null ? List.of() : envVarsService.secrets();
+        final String id, sessionId, turnId, stepId, title, command, cwd;
+        final Path logPath;
+        final int timeout;
+        final long startedAt = System.currentTimeMillis(), startedNanos = System.nanoTime();
+        final CompletableFuture<CommandExecutionDto> done = new CompletableFuture<>();
+        final java.util.Set<ProcessHandle> children = ConcurrentHashMap.newKeySet();
+        final StringBuilder output = new StringBuilder();
+        volatile Process process;
+        WindowsCommandJob windowsJob;
+        volatile boolean processGroup;
+        volatile String status = "running", error;
+        volatile Long finishedAt;
+        volatile Integer exitCode;
+        volatile long lastOutputAt = startedAt, outputChars;
+
+        Execution(String id, String sessionId, String turnId, String stepId, String title, String command, Path cwd, int timeout, Path logPath) {
+            this.id = id; this.sessionId = sessionId; this.turnId = turnId; this.stepId = stepId;
+            this.title = Texts.abbreviate(EnvVarsService.redact(title == null ? command : title, secrets), 160);
+            this.command = EnvVarsService.redact(command, secrets); this.cwd = cwd.toString(); this.timeout = timeout; this.logPath = logPath;
         }
-        return tail(stripAnsi(stripClixml(full)), PROGRESS_PREVIEW_CHARS);
+
+        CommandExecutionDto snapshot() {
+            String preview;
+            synchronized (output) { preview = livePreview == null ? output.toString() : livePreview; }
+            return new CommandExecutionDto(id, sessionId, turnId, stepId, title, command, cwd, toolName(), status,
+                    startedAt, finishedAt, (finishedAt == null ? System.currentTimeMillis() : finishedAt) - startedAt,
+                    timeout, lastOutputAt, outputChars, preview, "workspace:command-logs/" + id + ".log", exitCode, error);
+        }
+
+        void run() {
+            Thread reader = Thread.ofVirtual().name("command-output-" + id).start(this::readOutput);
+            try {
+                while (process.isAlive()) {
+                    children.addAll(process.descendants().toList());
+                    if ((System.nanoTime() - startedNanos) / 1_000_000 >= timeout * 1000L) stop("timed_out", "命令超时 " + timeout + " 秒，进程树已终止。");
+                    process.waitFor(50, TimeUnit.MILLISECONDS);
+                }
+                exitCode = process.exitValue();
+            } catch (InterruptedException e) { stop("cancelled", "命令执行被中断。"); Thread.currentThread().interrupt(); }
+            finally {
+                killTree();
+                try { reader.join(2000); if (reader.isAlive()) { process.getInputStream().close(); reader.join(1000); } }
+                catch (IOException | InterruptedException e) { log.warn("command output cleanup: {}", e.getMessage()); }
+                synchronized (this) { if ("running".equals(status)) status = exitCode == 0 ? "completed" : "failed"; }
+                finishedAt = System.currentTimeMillis();
+                var snapshot = snapshot();
+                try {
+                    if (executionStore != null) executionStore.save(snapshot);
+                    var queue = completions.computeIfAbsent(sessionId, key -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+                    queue.add(snapshot);
+                    // ponytail: 每会话保留最近 100 条待消费通知；完整记录仍在持久化历史。
+                    while (queue.size() > 100) queue.poll();
+                    if (executionStore != null) executions.remove(id, this);
+                } catch (RuntimeException e) { log.error("Cannot save command terminal state {}", id, e); }
+                finally { done.complete(snapshot); slots.release(); }
+            }
+        }
+
+        synchronized void stop(String reason, String message) {
+            if (!"running".equals(status)) return;
+            status = reason; error = message;
+            killTree();
+        }
+
+        void killTree() {
+            if (process == null) return;
+            if (windowsJob != null) windowsJob.close();
+            if (processGroup) {
+                try {
+                    Process killer = new ProcessBuilder("/bin/kill", "-KILL", "--", "-" + process.pid()).start();
+                    if (!killer.waitFor(2, TimeUnit.SECONDS)) killer.destroyForcibly();
+                } catch (IOException | InterruptedException e) { log.warn("command process group cleanup: {}", e.getMessage()); }
+            }
+            children.forEach(child -> { if (child.isAlive()) child.destroyForcibly(); });
+            if (process.isAlive()) killProcessTree(process);
+        }
+
+        void readOutput() {
+            StreamRedactor redactor = new StreamRedactor(secrets);
+            long bytes = 0;
+            try (var reader = new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8);
+                 Writer writer = Files.newBufferedWriter(logPath, StandardCharsets.UTF_8)) {
+                char[] chunk = new char[4096];
+                int count;
+                while ((count = reader.read(chunk)) != -1) {
+                    String text = new String(chunk, 0, count);
+                    bytes += text.getBytes(StandardCharsets.UTF_8).length;
+                    if (bytes > MAX_LOG_BYTES) { stop("failed", "命令输出超过 64 MiB 日志上限，进程已停止。"); break; }
+                    String safe = redactor.accept(text, false);
+                    writer.write(safe); writer.flush();
+                    synchronized (output) {
+                        String full = output.toString() + safe;
+                        String preview = stripAnsi(stripClixml(full + redactor.preview()));
+                        output.setLength(0); output.append(tail(full, PROGRESS_PREVIEW_CHARS));
+                        // 未结束的脱敏缓冲仅用于预览，不重复写入日志。
+                        livePreview = tail(preview, PROGRESS_PREVIEW_CHARS);
+                    }
+                    outputChars += count; lastOutputAt = System.currentTimeMillis();
+                }
+                String last = redactor.accept("", true);
+                writer.write(last);
+                synchronized (output) {
+                    output.append(last); livePreview = tail(stripAnsi(stripClixml(output.toString())), PROGRESS_PREVIEW_CHARS);
+                    output.setLength(0); output.append(livePreview);
+                }
+            } catch (IOException e) { if ("running".equals(status)) stop("failed", "命令输出读取失败: " + e.getMessage()); }
+        }
+        volatile String livePreview;
+    }
+
+    /** 使用现有脱敏规则；保留参数名碎片，并持续吞掉跨块的敏感值。 */
+    static final class StreamRedactor {
+        final List<String> secrets;
+        final int retain;
+        String pending = "";
+        boolean redacting;
+        char quote;
+        boolean escaped;
+        boolean authorization;
+
+        StreamRedactor(List<String> secrets) {
+            this.secrets = secrets;
+            this.retain = Math.max(128, secrets.stream().mapToInt(String::length).max().orElse(0));
+        }
+
+        String accept(String text, boolean finish) {
+            if (redacting) {
+                int end = 0;
+                while (end < text.length()) {
+                    char next = text.charAt(end);
+                    if (quote != 0 && escaped) { escaped = false; end++; continue; }
+                    if (quote != 0 && next == '\\') { escaped = true; end++; continue; }
+                    if (delimiter(next)) break;
+                    end++;
+                }
+                if (end == text.length() && !finish) return "";
+                redacting = false;
+                if (quote != 0 && end < text.length()) end++;
+                text = text.substring(end);
+            }
+            pending += text;
+            var matcher = ChatToolExecutor.TOOL_CREDENTIAL.matcher(pending);
+            while (matcher.find()) {
+                String value = matcher.group(2);
+                char first = value.charAt(0);
+                boolean quoted = first == '\"' || first == '\'';
+                String unescaped = quoted ? value.replaceAll("\\\\.", "") : value;
+                if (matcher.end() == pending.length() && !finish
+                        && !(quoted && unescaped.length() > 1 && unescaped.charAt(unescaped.length() - 1) == first)) {
+                    redacting = true;
+                    quote = quoted ? first : 0;
+                    escaped = quoted && unescaped.endsWith("\\");
+                    authorization = matcher.group(1).toLowerCase(java.util.Locale.ROOT).contains("authorization");
+                }
+            }
+            pending = EnvVarsService.redact(pending, secrets);
+            int emit = finish ? pending.length() : Math.max(0, pending.length() - retain);
+            String result = pending.substring(0, emit);
+            pending = pending.substring(emit);
+            return result;
+        }
+
+        private boolean delimiter(char value) {
+            if (quote != 0) return value == quote;
+            return value == ',' || value == ';' || value == '}' || value == ']' || value == '\"' || value == '\''
+                    || (authorization ? value == '\n' || value == '\r' : Character.isWhitespace(value));
+        }
+
+        String preview() {
+            int safe = pending.length();
+            for (String secret : secrets) {
+                for (int n = Math.min(secret.length() - 1, pending.length()); n > 0; n--) {
+                    if (pending.regionMatches(pending.length() - n, secret, 0, n)) {
+                        safe = Math.min(safe, pending.length() - n);
+                        break;
+                    }
+                }
+            }
+            return EnvVarsService.redact(pending.substring(0, safe), secrets);
+        }
     }
 
     private static String tail(String text, int max) {
@@ -324,15 +502,30 @@ public class TerminalService {
 
     // ---------- 内部实现 ----------
 
-    private String normalizeShell(String shell) {
-        if (shell == null || shell.isBlank()) {
-            return isWindows() ? "powershell" : "bash";
+    static String toolName() {
+        return isWindows() ? "powershell" : "sh";
+    }
+
+    static boolean isCommandTool(String name) {
+        return "powershell".equals(name) || "sh".equals(name);
+    }
+
+    String runtimeContext() {
+        List<String> found = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        for (String command : List.of("node", "npm", "npx", "python", "python3", "uv", "uvx", "git", "rg", "curl", "docker")) {
+            (McpCommandResolver.resolveCommand(command) == null ? missing : found).add(command);
         }
-        String s = shell.trim().toLowerCase();
-        if (!SHELLS.contains(s)) {
-            throw new IllegalArgumentException("拒绝执行：shell 只支持 powershell / bash(当前:" + shell + ")");
-        }
-        return s;
+        return "当前命令运行环境（以本轮信息为准，历史路径和命令不是当前环境快照）：\n"
+                + "- 操作系统: " + System.getProperty("os.name") + "；架构: " + System.getProperty("os.arch") + "\n"
+                + "- 命令工具: " + toolName() + "；系统已选定执行器，无需也不能传 shell 参数。\n"
+                + "- 执行账户: " + System.getProperty("user.name") + "\n"
+                + "- 默认工作目录: " + workspaceRoot + "\n"
+                + "- Agent 进程 PATH 可定位: " + (found.isEmpty() ? "无" : String.join(", ", found)) + "\n"
+                + "- Agent 进程 PATH 未找到: " + (missing.isEmpty() ? "无" : String.join(", ", missing)) + "\n"
+                + "- 未找到的运行时可安装后使用;定位到 docker 仅表示客户端存在,不代表守护进程可用。\n"
+                + "- 命令在 Agent 所在环境执行；容器内结果不能代表宿主机状态。"
+                + "查询工作台服务/容器状态用 environment_status，不要用旧会话结论代替当前查询。";
     }
 
     /** 解析 cwd:null=工作区;相对=工作区内;绝对=整机。返回 null 表示明显不存在。 */
@@ -354,20 +547,22 @@ public class TerminalService {
      *   -EncodedCommand 传 Base64(UTF-16LE)脚本——命令里的引号/换行/美元符
      *   全部免转义;脚本前置 UTF-8 输出编码 + ProgressPreference=SilentlyContinue
      *   (中文 Windows 默认 GBK 乱码;进度流被重定向时会序列化成 CLIXML 噪音)
-     * - bash:-lc 单参数直接传(调用方已把整条命令作为一个 argv)
+     * - sh:使用系统 /bin/sh -c,命令作为单个 argv,不依赖登录脚本。
      */
-    private List<String> buildArgv(String shellName, String command) {
-        if ("bash".equals(shellName)) {
-            return List.of(bashExecutable(), "-lc", command);
+    private List<String> buildArgv(String command) {
+        if (!isWindows()) {
+            return List.of("/bin/sh", "-c", command);
         }
         String script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
                 + "$OutputEncoding=[System.Text.Encoding]::UTF8; "
                 + "$ProgressPreference='SilentlyContinue'; "
-                + "$ErrorActionPreference='Continue'; "
-                + command;
+                + "$ErrorActionPreference='Stop'; "
+                + "$PSNativeCommandUseErrorActionPreference=$true; "
+                // stdin EOF 是内部启动闸：先纳入 Job Object，才允许脚本执行用户命令。
+                + "$null=[Console]::ReadLine(); " + command;
         String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_16LE));
         return List.of(powershellExecutable(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                "-EncodedCommand", encoded);
+                "-OutputFormat", "Text", "-EncodedCommand", encoded);
     }
 
     /**
@@ -395,7 +590,7 @@ public class TerminalService {
 
     /** 内置 pwsh 可执行文件路径;未配置/归档缺失/解压失败/非 Windows→null(回退 PATH)。 */
     private Path bundledPwsh() {
-        // 内置包是 win-x64:非 Windows 平台直接跳过(用系统 bash/pwsh)
+        // 内置包是 win-x64:仅 Windows 的 PowerShell 执行器使用。
         if (!isWindows() || pwshBundle == null || !Files.isRegularFile(pwshBundle)) {
             return null;
         }
@@ -503,24 +698,6 @@ public class TerminalService {
         return found;
     }
 
-    private static String bashExecutable() {
-        if (!isWindows()) {
-            return "bash";
-        }
-        // Windows 上裸 "bash" 常被 CreateProcess 解析到 C:\Windows\System32\bash.exe
-        // (WSL 转发器,无发行版时报 "execvpe(/bin/bash) failed")——优先 git bash 的
-        // 固定安装位置,找不到才退回裸命令(用户自装 git bash 在 PATH 的兜底)
-        for (String candidate : List.of(
-                "C:/Program Files/Git/bin/bash.exe",
-                "C:/Program Files/Git/usr/bin/bash.exe",
-                "C:/Program Files (x86)/Git/bin/bash.exe")) {
-            if (Files.isRegularFile(Path.of(candidate))) {
-                return candidate;
-            }
-        }
-        return "bash";
-    }
-
     /** 杀进程树:先快照后代句柄,Windows 上 taskkill /T,再逐句柄兜底强杀。 */
     private void killProcessTree(Process process) {
         if (process == null) {
@@ -546,6 +723,6 @@ public class TerminalService {
     }
 
     private static boolean isWindows() {
-        return System.getProperty("os.name", "").toLowerCase().contains("win");
+        return System.getProperty("os.name", "").startsWith("Windows");
     }
 }

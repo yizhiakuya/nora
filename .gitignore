@@ -1,5 +1,7 @@
 # dependencies (fallback, normally each subproject has its own)
 node_modules/
+__pycache__/
+*.pyc
 
 # Claude Code 个人文件(团队/公开共享的是 agents/skills/hooks/workflows/settings.json,
 # 个人权限与临时文件不入库)

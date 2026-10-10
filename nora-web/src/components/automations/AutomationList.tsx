@@ -46,47 +46,47 @@ export function AutomationList() {
       {rules.map((rule) => {
         const s = STATUS_MAP[rule.status];
         return (
-          <div key={rule.id} className="bg-card border border-border rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Zap className={`w-4 h-4 ${rule.enabled ? "text-yellow-500" : "text-muted-foreground/60"}`} />
-                <span className={`text-sm font-bold ${rule.enabled ? "text-foreground" : "text-muted-foreground"}`}>
+          <div key={rule.id} className="surface p-4">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="min-w-0 flex flex-wrap items-center gap-2">
+                <Zap className={`w-4 h-4 ${rule.enabled ? "text-primary" : "text-muted-foreground/60"}`} />
+                <span className={`text-sm font-semibold ${rule.enabled ? "text-foreground" : "text-muted-foreground"}`}>
                   {rule.name}
                 </span>
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
                 {/* M4-05:存量规则缺真实日程/连接 → 显示「需配置」而非正常启用 */}
                 {rule.needsConfig && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" title="缺少真实日程/连接配置:请编辑补充后再启用">
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" title="缺少真实日程/连接配置:请编辑补充后再启用">
                     需配置
                   </span>
                 )}
               </div>
-              <Switch checked={rule.enabled} onCheckedChange={() => toggle(rule.id)} />
+              <Switch aria-label={`启用任务：${rule.name}`} checked={rule.enabled} onCheckedChange={() => toggle(rule.id)} />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs mb-3">
-              <div className="flex items-start gap-1.5 p-2 bg-muted rounded-lg">
-                <Repeat className="w-3 h-3 text-blue-500 mt-0.5 shrink-0" />
+              <div className="min-w-0 flex items-start gap-2 p-3 bg-muted/60 rounded-lg break-words">
+                <Repeat className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                 <div>
-                  <div className="text-[9px] text-muted-foreground uppercase tracking-wide">触发条件</div>
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">触发条件</div>
                   <div className="text-foreground">{rule.trigger}</div>
                 </div>
               </div>
-              <div className="flex items-start gap-1.5 p-2 bg-muted rounded-lg">
-                <Play className="w-3 h-3 text-purple-500 mt-0.5 shrink-0" />
+              <div className="min-w-0 flex items-start gap-2 p-3 bg-muted/60 rounded-lg break-words">
+                <Play className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                 <div>
-                  <div className="text-[9px] text-muted-foreground uppercase tracking-wide">执行动作</div>
-                  <div className="text-foreground font-mono">{rule.action}</div>
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">执行动作</div>
+                  <div className="text-foreground leading-relaxed break-words">{rule.action}</div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 上次: {rule.lastRun}</span>
                 {rule.nextRun && <span>下次: {rule.nextRun}</span>}
               </div>
-              <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => runNow(rule)}>
+              <Button variant="outline" size="sm" className="h-8 text-xs px-3" onClick={() => runNow(rule)}>
                 <Play className="w-2.5 h-2.5 mr-0.5" /> 立即运行
               </Button>
             </div>

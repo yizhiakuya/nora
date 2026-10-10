@@ -37,8 +37,73 @@ class ChatToolExecutor {
     private final EnvironmentStatusClient environmentStatusClient;
     private final FileWorkspaceTools fileTools;
     private final McpManagementTools mcpTools;
+    private PhotoAlbumService photoAlbumService;
+    private BrowserService browserService;
+    private EnvVarsService envVarsService;
 
     void setViewerService(ViewerService viewerService) { fileTools.setViewerService(viewerService); }
+    void setPhotoAlbumService(PhotoAlbumService photoAlbumService) { this.photoAlbumService = photoAlbumService; }
+    void setBrowserService(BrowserService browserService) { this.browserService = browserService; }
+    void setEnvVarsService(EnvVarsService envVarsService) { this.envVarsService = envVarsService; }
+
+    RiskClassifier.Risk classifyRisk(String name, String args) {
+        return RiskClassifier.classify(name, args, agentWorkspaceService);
+    }
+
+    boolean isOutsideWorkspace(String path) {
+        if (path == null || path.isBlank()) return true;
+        return RiskClassifier.isOutsideWorkspace(path, agentWorkspaceService);
+    }
+
+    String redact(String text) {
+        return envVarsService == null ? redactToolContent(text) : envVarsService.redact(text);
+    }
+
+    <T> T redactValue(T value, Class<T> type) {
+        JsonNode tree = objectMapper.valueToTree(value);
+        scrubCredentials(tree);
+        return objectMapper.convertValue(tree, type);
+    }
+
+    void scrubCredentials(JsonNode node) {
+        if (node instanceof com.fasterxml.jackson.databind.node.ObjectNode obj) {
+            obj.fieldNames().forEachRemaining(key -> {
+                String normalized = key.replace("_", "").replace("-", "").toLowerCase(java.util.Locale.ROOT);
+                JsonNode value = obj.get(key);
+                if (value == null || value.isNull()) return;
+                switch (normalized) {
+                    case "secret" -> { if (!value.isBoolean()) obj.put(key, "***"); }
+                    case "password", "token", "apikey", "authorization", "accesstoken", "refreshtoken" -> obj.put(key, "***");
+                    case "headers", "env" -> {
+                        if (value instanceof com.fasterxml.jackson.databind.node.ObjectNode fields) {
+                            fields.fieldNames().forEachRemaining(field -> fields.put(field, "***"));
+                        } else obj.put(key, "***");
+                    }
+                    case "arguments" -> {
+                        if (value.isTextual()) {
+                            try {
+                                JsonNode args = objectMapper.readTree(value.asText());
+                                if (args == null || !args.isContainerNode()) obj.put(key, "{}");
+                                else { scrubCredentials(args); obj.put(key, args.toString()); }
+                            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                                obj.put(key, "{}");
+                            }
+                        } else scrubCredentials(value);
+                    }
+                    default -> {
+                        if (value.isTextual()) obj.put(key, redact(value.asText()));
+                        else scrubCredentials(value);
+                    }
+                }
+            });
+        } else if (node instanceof com.fasterxml.jackson.databind.node.ArrayNode array) {
+            for (int i = 0; i < array.size(); i++) {
+                JsonNode value = array.get(i);
+                if (value.isTextual()) array.set(i, com.fasterxml.jackson.databind.node.TextNode.valueOf(redact(value.asText())));
+                else scrubCredentials(value);
+            }
+        }
+    }
 
     ChatToolExecutor(ObjectMapper objectMapper,
                      SqlToolClient sqlToolClient,
@@ -143,10 +208,7 @@ class ChatToolExecutor {
         return sb.toString();
     }
 
-    /**
-     * 工具输出预算遵循 harness 调研:成功保留大的内联预算,失败给头+尾摘录
-     * (失败只看两端即可诊断,不需要持久化指针)。
-     */
+    /** 内联预算与证据原文分开；统一出口先保存原文再截断。 */
     static final int MAX_SUCCESS_CHARS = 30_000;
     static final int MAX_FAILURE_CHARS = 10_000;
     /** 失败摘录保留的头/尾字符数。 */
@@ -193,7 +255,35 @@ class ChatToolExecutor {
 
     ToolOutcome executeTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
                             LiveOutput liveOutput, String sessionId, String stepId) {
+        return boundOutcome(executeRawTool(name, args, parsed, liveOutput, sessionId, stepId));
+    }
+
+    private ToolOutcome executeRawTool(String name, String args, ToolStepEmitter.ParsedArgs parsed,
+                            LiveOutput liveOutput, String sessionId, String stepId) {
+        if ("command_execution".equals(name)) return execCommandExecution(args, liveOutput, sessionId);
         if ("open_file".equals(name)) return fileTools.execOpenFile(args, sessionId, stepId);
+        if ("manage_browser".equals(name)) {
+            if (browserService == null) return textOutcome("ERROR: 浏览器服务不可用", null);
+            try {
+                JsonNode result = browserService.execute(sessionId, stepId, objectMapper.readTree(args));
+                String output = objectMapper.writeValueAsString(result);
+                if (result.has("verified") && !result.path("verified").asBoolean()) output = "ERROR: 验收失败 " + output;
+                return textOutcome(output, null);
+            } catch (java.io.IOException | RuntimeException e) {
+                ToolOutcome outcome = textOutcome("ERROR: " + e.getMessage(), null);
+                boolean unknown = e.getMessage() != null && e.getMessage().contains("结果未知")
+                        || e instanceof com.microsoft.playwright.TimeoutError && classifyRisk(name, args) == RiskClassifier.Risk.HIGH;
+                return new ToolOutcome(outcome.content(), outcome.summary(), outcome.rowCount(), outcome.truncated(), null, unknown);
+            }
+        }
+        if ("manage_photo_album".equals(name)) {
+            if (photoAlbumService == null) return textOutcome("ERROR: 相册服务不可用", null);
+            try {
+                return textOutcome(objectMapper.writeValueAsString(photoAlbumService.execute(objectMapper.readTree(args))), null);
+            } catch (java.io.IOException | IllegalArgumentException e) {
+                return textOutcome("ERROR: " + e.getMessage(), null);
+            }
+        }
         if ("execute_sql".equals(name)) {
             return execExecuteSql(name, args, parsed, liveOutput);
         }
@@ -225,8 +315,34 @@ class ChatToolExecutor {
         if ("manage_mcp".equals(name)) {
             return mcpTools.execManageMcp(name, args, parsed, liveOutput);
         }
-        if ("run_command".equals(name)) {
-            return execRunCommand(name, args, parsed, liveOutput);
+        if ("manage_env_vars".equals(name)) {
+            if (envVarsService == null) return textOutcome("ERROR: 环境变量服务不可用", null);
+            try {
+                JsonNode a = objectMapper.readTree(args);
+                if (a == null || !a.isObject() || a.has("secret") && !a.get("secret").isBoolean()
+                        || a.has("value") && !a.get("value").isTextual()
+                        || a.has("key") && !a.get("key").isTextual()
+                        || a.has("note") && !a.get("note").isTextual()) {
+                    return textOutcome("ERROR: 参数必须是对象，key/value/note 是字符串，secret 是布尔值", null);
+                }
+                Object result = switch (a.path("action").asText("").trim().toLowerCase(java.util.Locale.ROOT)) {
+                    case "list" -> envVarsService.list();
+                    case "set" -> envVarsService.set(a.path("key").asText(null), a.path("value").asText(null),
+                            a.has("secret") ? a.get("secret").asBoolean() : null, a.path("note").asText(null));
+                    case "delete" -> envVarsService.delete(a.path("key").asText(null));
+                    default -> throw new IllegalArgumentException("action 只支持 list / set / delete");
+                };
+                return textOutcome(objectMapper.writeValueAsString(result), null);
+            } catch (com.nora.common.exception.BusinessException | IllegalArgumentException e) {
+                return textOutcome("ERROR: " + e.getMessage(), null);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return textOutcome("ERROR: 环境变量参数不是合法 JSON", null);
+            } catch (org.springframework.dao.DataAccessException e) {
+                return textOutcome("ERROR: 环境变量存储暂不可用，未保存修改", null);
+            }
+        }
+        if (TerminalService.toolName().equals(name)) {
+            return execRunCommand(name, args, parsed, liveOutput, sessionId, stepId);
         }
         if ("fetch_media".equals(name)) {
             return execFetchMedia(name, args, parsed, liveOutput);
@@ -266,7 +382,7 @@ class ChatToolExecutor {
             if (galleryPrefetcher != null && !mcpResult.isError()) {
                 galleryPrefetcher.prefetchFromToolResult(mcpResult.text());
             }
-            ToolOutcome mcpOutcome = bounded(mcpResult.text(), "MCP " + server.name() + " 执行完成");
+            ToolOutcome mcpOutcome = textOutcome(mcpResult.text(), "MCP " + server.name() + " 执行完成");
             // 结果未知(调用已发出但中断,远端可能已生效;设计 §5.2):单独状态,
             // 不混入普通 failed——前端橙色警示、运行终态记 partial
             if (mcpResult.unknown()) {
@@ -291,8 +407,9 @@ class ChatToolExecutor {
                 + "manage_automation（自动任务 list/create/toggle/remove/run/executions）、"
                 + "manage_skill（技能 list/read/create/update/remove）、"
                 + "manage_mcp（MCP 服务器 list/refresh/enable/disable/register/update/remove,风险跟随权限档位）、"
+                + "manage_env_vars（环境变量 list/set/delete，密钥脱敏）、"
                 + "ask_user（向用户提问并等待回答——指代不明/缺关键信息时用,而不是猜测）、"
-                + "run_command（本机终端非交互命令,风险跟随权限档位）"
+                + TerminalService.toolName() + "（当前平台终端命令,风险跟随权限档位）"
                 + (name.startsWith("mcp__") ? " 或已挂载的 MCP 工具(mcp__<server>__<tool>)" : ""), null, null, false);
     }
 
@@ -322,7 +439,7 @@ class ChatToolExecutor {
         if (guard != null) {
             return new ToolOutcome("ERROR: " + guard, null, null, false);
         }
-        return bounded(serviceLogClient.readLogs(service, limit), null);
+        return textOutcome(serviceLogClient.readLogs(service, limit), null);
     }
 
     /** execute_write_sql handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
@@ -376,11 +493,11 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: " + guard, null, null, false);
         }
         if ("list".equals(action)) {
-            return bounded(dataSourceManageClient.list(), null);
+            return textOutcome(dataSourceManageClient.list(), null);
         }
         if ("schema".equals(action)) {
             // schema 不在工具 spec 里宣传,但模型从 list 结果推断时放行(只读)
-            return bounded(dataSourceManageClient.schema(parsed.input().target()), null);
+            return textOutcome(dataSourceManageClient.schema(parsed.input().target()), null);
         }
         if ("create".equals(action)) {
             // 连接参数从原始 args 取(密码只 here 使用,不进 ParsedArgs/步骤记录)
@@ -435,7 +552,7 @@ class ChatToolExecutor {
             return new ToolOutcome("ERROR: " + guard, null, null, false);
         }
         if ("list".equals(action)) {
-            return bounded(serviceManageClient.list(), null);
+            return textOutcome(serviceManageClient.list(), null);
         }
         if ("register".equals(action)) {
             JsonNode a;
@@ -568,43 +685,56 @@ class ChatToolExecutor {
         }
     }
 
-    /** run_command handler(2026-09-17 从 executeTool 拆出,原分支逐行平移)。 */
+    /** 启动和等待分开；返回 running 只意味着工具已交还控制权。 */
     ToolOutcome execRunCommand(String name, String args, ToolStepEmitter.ParsedArgs parsed,
-                            LiveOutput liveOutput) {
-        if (terminalService == null) {
-            return new ToolOutcome("ERROR: 终端能力未启用(服务未配置)", null, null, false);
-        }
+                              LiveOutput liveOutput, String sessionId, String stepId) {
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
-            String cmd = a.path("command").asText(null);
-            String cwdArg = a.path("cwd").asText(null);
-            Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
-            String shell = a.path("shell").asText(null);
-            TerminalService.RunResult r = terminalService.run(cmd, cwdArg, timeout, shell,
-                    liveOutput == null ? null : liveOutput::text);
-            // 非零退出码按失败处理(红色步骤 + ERROR 前缀回填模型):
-            // 与 Claude Code 同语义——"命令跑了但失败了"不是成功结果;
-            // 仍走 bounded():失败预算 10K、成功 30K,且做脱敏
-            boolean failure = r.exitCode() != 0 || r.timedOut() || r.cancelled();
-            String rendered = r.render();
-            return bounded(failure ? "ERROR: " + rendered : rendered, summarizeCommand(r));
-        } catch (IllegalArgumentException e) {
-            // 参数/启动错误:可自纠错误回给模型
-            return new ToolOutcome("ERROR: " + Texts.abbreviate(e.getMessage(), 300), null, null, false);
-        } catch (Exception e) {
-            return new ToolOutcome("ERROR: 命令执行失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
-        }
+            if (a.has("shell")) throw new IllegalArgumentException("shell 由系统按运行平台确定，工具不接受 shell 参数");
+            Integer timeout = integer(a, "timeout", null);
+            int yieldMs = a.path("background").asBoolean(false) ? 0 : integer(a, "yieldMs", 3000);
+            if (yieldMs < 0 || yieldMs > 30000) throw new IllegalArgumentException("yieldMs 必须在 0–30000 之间");
+            var execution = terminalService.start(sessionId, stepId, a.path("command").asText(null),
+                    a.path("cwd").asText(null), timeout, a.path("description").asText(null));
+            execution = terminalService.await(sessionId, execution.executionId(), yieldMs,
+                    null, liveOutput == null ? null : liveOutput::cancelled);
+            return commandOutcome(execution);
+        } catch (IllegalArgumentException | IllegalStateException | java.io.IOException e) { return textOutcome("ERROR: " + e.getMessage(), null); }
     }
 
-    /** 命令结果的一行摘要:exit code + 耗时(供折叠行展示)。 */
-    private static String summarizeCommand(TerminalService.RunResult r) {
-        if (r.cancelled()) {
-            return "命令已取消";
-        }
-        if (r.timedOut()) {
-            return "命令超时 " + r.timeoutSec() + "s(已终止)";
-        }
-        return "exit " + r.exitCode() + ", " + r.durationMs() + "ms";
+    private ToolOutcome execCommandExecution(String args, LiveOutput liveOutput, String sessionId) {
+        try {
+            JsonNode a = objectMapper.readTree(args);
+            String id = a.path("executionId").asText("");
+            var execution = switch (a.path("action").asText("")) {
+                case "wait" -> terminalService.await(sessionId, id, integer(a, "yieldMs", 3000),
+                        null, liveOutput == null ? null : liveOutput::cancelled);
+                case "stop" -> terminalService.stop(sessionId, id);
+                default -> throw new IllegalArgumentException("action 必须是 wait 或 stop");
+            };
+            return commandOutcome(execution);
+        } catch (IllegalArgumentException | IllegalStateException | java.io.IOException e) { return textOutcome("ERROR: " + e.getMessage(), null); }
+    }
+
+    private static Integer integer(JsonNode args, String name, Integer fallback) {
+        if (!args.has(name)) return fallback;
+        if (!args.path(name).isIntegralNumber() || !args.path(name).canConvertToInt()) throw new IllegalArgumentException(name + " 必须是整数");
+        return args.path(name).intValue();
+    }
+
+    static String commandContent(com.nora.agent.dto.CommandExecutionDto execution) {
+        try {
+            String content = COMMAND_MAPPER.writeValueAsString(execution);
+            boolean failed = !execution.running() && !"completed".equals(execution.status()) && !"cancelled".equals(execution.status());
+            return (failed ? "ERROR: " : "") + content;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalStateException(e); }
+    }
+    private static final ObjectMapper COMMAND_MAPPER = new ObjectMapper();
+
+    private ToolOutcome commandOutcome(com.nora.agent.dto.CommandExecutionDto execution) {
+        String summary = execution.running() ? "后台运行" : execution.status() + (execution.exitCode() == null ? "" : " · exit " + execution.exitCode());
+        return new ToolOutcome(commandContent(execution), summary, null, false, null, false, false,
+                null, null, null, null, execution);
     }
 
     /**
@@ -629,6 +759,27 @@ class ChatToolExecutor {
             String type = a.path("type").asText(null);
             String folder = a.path("folder").asText(null);
             String quality = a.path("quality").asText(null);
+            boolean all = a.path("all").asBoolean(false);
+            boolean scoped = (album != null && !album.isBlank()) || (from != null && !from.isBlank())
+                    || (to != null && !to.isBlank());
+            var items = new java.util.ArrayList<MediaFetchService.UrlItem>();
+            if (a.has("items")) {
+                JsonNode selected = a.path("items");
+                if (!selected.isArray() || selected.isEmpty() || selected.size() > 200 || scoped || all) {
+                    return new ToolOutcome("ERROR: items 必须是 1–200 个已选媒体条目，不能同时传 album/from/to/all", null, null, false);
+                }
+                for (JsonNode item : selected) {
+                    String url = item.path("url").asText("");
+                    String filename = item.path("filename").asText("");
+                    if (url.isBlank() || filename.isBlank()) {
+                        return new ToolOutcome("ERROR: 每个 items 条目都需要检索返回的真实 url 和 filename", null, null, false);
+                    }
+                    items.add(new MediaFetchService.UrlItem(url, filename));
+                }
+            } else if (!scoped && !all) {
+                return new ToolOutcome("ERROR: 未指定下载范围，未开始下载。选片请传 items=[{url:真实URL,filename:原文件名}]；"
+                        + "范围下载传 album/from/to；只有用户明确要求整库备份时才传 all=true。folder/type 不能限定选片。", null, null, false);
+            }
             long start = System.currentTimeMillis();
             // 进度回调只发结构化 progress 通道(同 id step 原地刷新:完成数/字节/
             // 速率/ETA → 前端进度卡片)。**不要再调 text()**:那会发第二条同 id 事件
@@ -636,9 +787,10 @@ class ChatToolExecutor {
             // detail 的文本行由 ToolStepEmitter 的 progress 分支统一渲染。
             MediaFetchService.ProgressCallback progress = liveOutput == null ? null
                     : fp -> liveOutput.progress(toStepProgress(fp));
-            MediaFetchService.FetchReport report = mediaFetchService.fetchFromPhone(
-                    serverName, from, to, album, type, folder, quality, progress,
-                    liveOutput == null ? null : liveOutput::cancelled);
+            java.util.function.BooleanSupplier cancelled = liveOutput == null ? null : liveOutput::cancelled;
+            MediaFetchService.FetchReport report = items.isEmpty()
+                    ? mediaFetchService.fetchFromPhone(serverName, from, to, album, type, folder, quality, progress, cancelled)
+                    : mediaFetchService.downloadItems(items, folder, quality, progress, cancelled);
             long elapsed = System.currentTimeMillis() - start;
             if (report.cancelled()) {
                 // 用户「停止生成」:下载器已停,如实回报(模型下一轮会被编排层的
@@ -734,7 +886,7 @@ class ChatToolExecutor {
                 sb.append("\n(部分成功:").append(report.failed())
                         .append(" 个文件失败——可只重试失败项,已成功的会跳过)");
             }
-            ToolOutcome fetchOutcome = bounded(sb.toString(), "下载 " + report.downloaded() + "/" + report.total()
+            ToolOutcome fetchOutcome = textOutcome(sb.toString(), "下载 " + report.downloaded() + "/" + report.total()
                     + (report.failed() > 0 ? ",失败 " + report.failed() : ""));
             return someFailed
                     ? new ToolOutcome(fetchOutcome.content(), fetchOutcome.summary(), fetchOutcome.rowCount(),
@@ -773,7 +925,7 @@ class ChatToolExecutor {
                     }
                 }
             }
-            return bounded(knowledgeManageClient.search(query, topK, baseId, docIds), null);
+            return textOutcome(knowledgeManageClient.search(query, topK, baseId, docIds), null);
         } catch (Exception e) {
             return new ToolOutcome("ERROR: 知识库检索失败: " + Texts.abbreviate(e.getMessage(), 200), null, null, false);
         }
@@ -794,16 +946,16 @@ class ChatToolExecutor {
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
             return switch (action) {
-                case "list" -> bounded(knowledgeManageClient.list(a.path("filter").asText(null)), null);
-                case "bases" -> bounded(knowledgeManageClient.listBases(), null);
-                case "stats" -> bounded(knowledgeManageClient.stats(), null);
+                case "list" -> textOutcome(knowledgeManageClient.list(a.path("filter").asText(null)), null);
+                case "bases" -> textOutcome(knowledgeManageClient.listBases(), null);
+                case "stats" -> textOutcome(knowledgeManageClient.stats(), null);
                 case "index" -> {
                     String fileIdRaw = a.path("fileId").asText(null);
                     if (fileIdRaw == null || !fileIdRaw.matches("\\d+")) {
                         yield new ToolOutcome("ERROR: index 需要 fileId 参数(文件中心文件的数字 id;先 manage_file action=list 查看)。"
                                 + "示例:{\"action\": \"index\", \"fileId\": \"12\"}", null, null, false);
                     }
-                    yield bounded(knowledgeManageClient.indexFile(Long.parseLong(fileIdRaw),
+                    yield textOutcome(knowledgeManageClient.indexFile(Long.parseLong(fileIdRaw),
                             a.path("name").asText(null)), null);
                 }
                 default -> {
@@ -813,7 +965,7 @@ class ChatToolExecutor {
                                 null, null, false);
                     }
                     long docId = Long.parseLong(target);
-                    yield bounded(switch (action) {
+                    yield textOutcome(switch (action) {
                         case "remove" -> knowledgeManageClient.remove(docId);
                         case "disable" -> knowledgeManageClient.setEnabled(docId, false);
                         case "enable" -> knowledgeManageClient.setEnabled(docId, true);
@@ -840,10 +992,10 @@ class ChatToolExecutor {
         try {
             JsonNode a = objectMapper.readTree(args == null || args.isBlank() ? "{}" : args);
             return switch (action) {
-                case "list" -> bounded(automationManageClient.list(), null);
+                case "list" -> textOutcome(automationManageClient.list(), null);
                 case "executions" -> {
                     int limit = a.path("limit").isInt() ? a.path("limit").asInt() : 20;
-                    yield bounded(automationManageClient.executions(limit), null);
+                    yield textOutcome(automationManageClient.executions(limit), null);
                 }
                 case "create" -> {
                     String rName = a.path("name").asText(null);
@@ -893,7 +1045,7 @@ class ChatToolExecutor {
                             yield new ToolOutcome("ERROR: 日程参数序列化失败: " + e.getMessage(), null, null, false);
                         }
                     }
-                    yield bounded(automationManageClient.create(rName, trigger, prompt, scheduleJson), null);
+                    yield textOutcome(automationManageClient.create(rName, trigger, prompt, scheduleJson), null);
                 }
                 default -> {
                     String target = a.path("target").asText(null);
@@ -902,7 +1054,7 @@ class ChatToolExecutor {
                                 null, null, false);
                     }
                     long ruleId = Long.parseLong(target);
-                    yield bounded(switch (action) {
+                    yield textOutcome(switch (action) {
                         case "toggle" -> automationManageClient.toggle(ruleId);
                         case "remove" -> automationManageClient.remove(ruleId);
                         default -> automationManageClient.run(ruleId);
@@ -920,7 +1072,7 @@ class ChatToolExecutor {
         if (environmentStatusClient == null) {
             return new ToolOutcome("ERROR: 环境状态能力未启用(服务未配置)", null, null, false);
         }
-        return bounded(environmentStatusClient.statusSummary(), null);
+        return textOutcome(environmentStatusClient.statusSummary(), null);
     }
 
     /** MediaFetch 进度 → 步骤事件的结构化 progress(前端进度卡片直接消费)。 */
@@ -1047,29 +1199,54 @@ class ChatToolExecutor {
         return null;
     }
 
-    /**
-     * 把原始工具结果限制到内联预算。成功最多保留
-     * {@value MAX_SUCCESS_CHARS} 字符,超出以截断标记收尾;
-     * 失败(ERROR:)则给头+尾摘录。
-     */
-    static ToolOutcome bounded(String result, String summary) {
-        if (result == null) {
-            return new ToolOutcome("(empty)", summary, null, false);
-        }
-        String redacted = result.replaceAll("(?i)(api[_-]?key|password|token|secret)(\\s*[:=]\\s*)[^\\s,;]+", "$1$2[REDACTED]");
+    static ToolOutcome textOutcome(String result, String summary) {
+        String content = result == null ? "(empty)" : result;
+        return new ToolOutcome(content, summary != null ? summary : summarizeRows(content), null, false);
+    }
+
+    static final java.util.regex.Pattern TOOL_CREDENTIAL = java.util.regex.Pattern.compile(
+            "(?i)([\"']?(?:[\\w.-]*?(?:api[_-]?key|password|token|secret)|(?:proxy-)?authorization)[\"']?\\s*[:=]\\s*)"
+                    + "(\"(?:\\\\.|[^\"\\\\])*(?:\"|\\\\?$)|'(?:\\\\.|[^'\\\\])*(?:'|\\\\?$)|(?:(?:Bearer|Basic)\\s+)?[^\\s,;\"'}\\]]+)");
+
+    static String redactToolContent(String result) {
+        if (result == null) return null;
+        return TOOL_CREDENTIAL.matcher(result).replaceAll(match -> {
+            String prefix = match.group(1);
+            String value = match.group(2);
+            boolean jsonField = prefix.startsWith("\"");
+            if (jsonField && ("null".equals(value) || prefix.toLowerCase(java.util.Locale.ROOT).startsWith("\"secret\"")
+                    && ("true".equals(value) || "false".equals(value)))) {
+                return java.util.regex.Matcher.quoteReplacement(match.group());
+            }
+            char quote = value.charAt(0);
+            String masked = quote == '\"' || quote == '\'' ? quote + "[REDACTED]" + quote
+                    : jsonField ? "\"[REDACTED]\"" : "[REDACTED]";
+            return java.util.regex.Matcher.quoteReplacement(prefix + masked);
+        });
+    }
+
+    private ToolOutcome boundOutcome(ToolOutcome outcome) {
+        String redacted = redact(outcome.content() == null ? "(empty)" : outcome.content());
         boolean failure = redacted.startsWith("ERROR:");
         int budget = failure ? MAX_FAILURE_CHARS : MAX_SUCCESS_CHARS;
-        if (redacted.length() <= budget) {
-            if (failure) {
-                return new ToolOutcome(redacted, summary, null, false);
+        boolean truncated = redacted.length() > budget;
+        String content = redacted;
+        if (truncated) {
+            String reference;
+            try {
+                if (agentWorkspaceService == null) throw new IllegalStateException("工作区未启用");
+                reference = agentWorkspaceService.archiveContext("tool", redacted).readHint();
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                reference = "完整工具记录未保存: " + e.getMessage() + "；结果不完整，不要重放已执行的写操作。";
             }
-            return new ToolOutcome(redacted, summary != null ? summary : summarizeRows(redacted), null, false);
+            content = (failure ? "ERROR: " : "") + reference + "\n"
+                    + redacted.substring(0, failure ? FAILURE_HEAD_CHARS : budget - 600)
+                    + "\n…(中间省略，原文 " + redacted.length() + " 字符)…\n"
+                    + redacted.substring(redacted.length() - (failure ? FAILURE_TAIL_CHARS : 200));
         }
-        String cut = failure
-                ? redacted.substring(0, FAILURE_HEAD_CHARS) + "\n…(中间省略)…\n"
-                        + redacted.substring(redacted.length() - FAILURE_TAIL_CHARS)
-                : redacted.substring(0, budget) + "\n…(结果已截断,请缩小查询范围,如加 LIMIT 或 WHERE)";
-        return new ToolOutcome(cut, summary, null, true);
+        return new ToolOutcome(content, redact(outcome.summary()), outcome.rowCount(),
+                truncated || Boolean.TRUE.equals(outcome.truncated()), outcome.images(), outcome.unknown(),
+                outcome.partial(), outcome.files(), outcome.focusTarget(), outcome.fileErrors(), outcome.fileChanges(), outcome.execution());
     }
 
     /** 从 TSV 渲染推导一行行数摘要("(3 rows, 12ms)" 页脚)。 */
@@ -1129,7 +1306,14 @@ class ChatToolExecutor {
                         java.util.List<ViewerService.FileError> fileErrors,
                         /** 文本写操作的变更记录(对话「已编辑 N 个文件」卡片,2026-09-30):
                          *  仅工作区普通内容文件;内部状态文件/区外文件不记录。空 = 非写操作。 */
-                        java.util.List<ChatStepDto.FileChange> fileChanges) {
+                        java.util.List<ChatStepDto.FileChange> fileChanges, com.nora.agent.dto.CommandExecutionDto execution) {
+
+        ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,
+                    java.util.List<McpServerService.McpToolResult.ImageBlock> images, boolean unknown, boolean partial,
+                    java.util.List<com.nora.agent.dto.ViewerFile> files, String focusTarget,
+                    java.util.List<ViewerService.FileError> fileErrors, java.util.List<ChatStepDto.FileChange> fileChanges) {
+            this(content, summary, rowCount, truncated, images, unknown, partial, files, focusTarget, fileErrors, fileChanges, null);
+        }
 
         /** 带文件清单的结果(兼容构造:无 fileChanges)。 */
         ToolOutcome(String content, String summary, Integer rowCount, Boolean truncated,

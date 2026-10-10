@@ -28,6 +28,7 @@ export const EXECUTION_STATUS_META: Record<ExecutionRecord["status"], ExecutionS
   cancelled:       { icon: CircleSlash,   cls: "text-gray-500 dark:text-gray-400",     label: "已取消",     actionHint: "已发生的操作保留在会话记录中" },
   unknown:         { icon: HelpCircle,    cls: "text-orange-600 dark:text-orange-400", label: "结果未知",   actionHint: "连接中断——该轮可能仍在后台运行,打开来源会话核对" },
   running:         { icon: Loader2,       cls: "text-blue-600 dark:text-blue-400",     label: "执行中",     actionHint: null },
+  queued:          { icon: Loader2,       cls: "text-muted-foreground",                 label: "排队中",     actionHint: "已领取，等待执行线程开始" },
   missed_schedule: { icon: CalendarX,     cls: "text-amber-600 dark:text-amber-400",   label: "错过计划点", actionHint: "超过宽限未自动补跑,可在任务页手动运行" },
 };
 

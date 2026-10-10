@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 import { ChatMessage } from "@/lib/api/chatApi";
 import { AgentAPI, fetchSessions, fetchSessionMessages } from "@/lib/api/agentApi";
 import { subscribeSessionTitle } from "@/lib/api/sessionTitleEvents";
+import type { QueuedChatMessage } from "@/types";
+import type { ChatRef } from "@/lib/chatRefs";
 
 export interface ChatSession {
   id: string;
@@ -28,6 +30,9 @@ export interface ChatSession {
   draft?: boolean;
   /** 本地缓存的消息(仅离线兜底/即时渲染用;真相在后端) */
   messages: ChatMessage[];
+  queuedMessages?: QueuedChatMessage[];
+  queuePaused?: boolean;
+  composerDraft?: { input: string; refs: ChatRef[]; limitToRefs: boolean };
 }
 
 interface ChatSessionsState {
@@ -35,13 +40,15 @@ interface ChatSessionsState {
   activeId: string;
   /** 后端同步中 */
   syncing: boolean;
-  createSession: () => string;
+  createSession: (activate?: boolean) => string;
   deleteSession: (id: string) => void;
   /** 撤销删除:后端无法恢复已删会话,这里只恢复本地状态并提示用户 */
   undoDeleteSession: (session: ChatSession, index: number) => void;
   setActive: (id: string) => void;
   /** 发送过程中本地缓存消息(流式渲染用) */
   saveMessages: (id: string, messages: ChatMessage[]) => void;
+  saveComposerDraft: (id: string, draft: ChatSession["composerDraft"]) => void;
+  updateQueuedMessages: (id: string, update: (messages: QueuedChatMessage[]) => QueuedChatMessage[], paused?: boolean) => void;
   /** 从后端拉会话列表(启动/聚焦时调用);失败静默保留本地缓存 */
   syncFromBackend: () => Promise<void>;
   /** 切换会话时从后端拉完整历史,替换本地缓存 */
@@ -92,7 +99,7 @@ export const useChatSessions = create<ChatSessionsState>()(
       sessions: [],
       activeId: "",
       syncing: false,
-      createSession: () => {
+      createSession: (activate = true) => {
         // 复用已有草稿会话(2026-09-20 用户反馈:连点「新建对话」/首页反复
         // 发需求会堆积一串空会话)。草稿 = 本地创建、从未发送过消息的会话
         // (draft 标记,不依赖 messages.length——后端会话未加载历史时也是空数组,
@@ -102,7 +109,7 @@ export const useChatSessions = create<ChatSessionsState>()(
         const { sessions } = get();
         const draft = sessions.find((s) => s.draft);
         if (draft) {
-          set({ activeId: draft.id });
+          if (activate) set({ activeId: draft.id });
           return draft.id;
         }
         const id = `sess-${Date.now()}`;
@@ -111,7 +118,7 @@ export const useChatSessions = create<ChatSessionsState>()(
         };
         set((state) => {
           const withoutSame = state.sessions.filter((s) => s.id !== id);
-          return { sessions: [session, ...withoutSame], activeId: id };
+          return { sessions: [session, ...withoutSame], activeId: activate ? id : state.activeId };
         });
         return id;
       },
@@ -165,6 +172,16 @@ export const useChatSessions = create<ChatSessionsState>()(
               : s
           ),
         }));
+      },
+      updateQueuedMessages: (id, update, paused) => {
+        set((state) => ({
+          sessions: state.sessions.map((session) => session.id === id
+            ? { ...session, queuedMessages: update(session.queuedMessages ?? []), queuePaused: paused ?? session.queuePaused }
+            : session),
+        }));
+      },
+      saveComposerDraft: (id, composerDraft) => {
+        set(state => ({ sessions: state.sessions.map(session => session.id === id ? { ...session, composerDraft } : session) }));
       },
       applyTitle: (id, title) => {
         if (!id || !title) return;
@@ -224,6 +241,9 @@ export const useChatSessions = create<ChatSessionsState>()(
               origin: r.origin === "automation" ? "automation" as const : undefined,
               // 保留本地消息缓存直到 loadHistory 拉到后端历史
               messages: local?.messages ?? [],
+              queuedMessages: local?.queuedMessages,
+              queuePaused: local?.queuePaused,
+              composerDraft: local?.composerDraft,
             };
           });
           const activeStillThere = remoteSessions.some((s) => s.id === get().activeId);

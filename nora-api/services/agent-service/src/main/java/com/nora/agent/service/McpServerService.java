@@ -61,10 +61,11 @@ public class McpServerService {
     /**
      * 自定义环境变量(设置页「环境变量」;可空=测试构造)。
      * 连接建立时对 url/headers/env/command/args 做 {@code ${VAR}} 替换
-     * (2026-09-29):密钥不进对话记录/数据库明文——用户把 key 存设置页,
+     * 密钥在变量存储中保存，MCP 配置只保存引用。
      * MCP 注册用占位符引用,是「复用本机已有密钥」的干净通道。
      */
-    private final AppSettingStore appSettingStore;
+    private final EnvVarsService envVarsService;
+    private static final java.util.regex.Pattern ENV_REF = java.util.regex.Pattern.compile("\\$\\{([A-Z][A-Z0-9_]*)\\}");
     /**
      * 本地是否信任远端 readOnlyHint 声明(2026-09-20 验收 F2,设计 §6):
      * 默认 false——远端注解只是参考,仅当本地配置显式信任时,声明只读的
@@ -89,12 +90,12 @@ public class McpServerService {
                             @org.springframework.beans.factory.annotation.Value(
                                     "${nora.agent.mcp.trust-readonly-hints:false}") boolean trustReadOnlyHints,
                             @org.springframework.beans.factory.annotation.Autowired(required = false)
-                            AppSettingStore appSettingStore) {
+                            EnvVarsService envVarsService) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.clientPool = new McpClientPool(objectMapper, relayRouter);
         this.trustReadOnlyHints = trustReadOnlyHints;
-        this.appSettingStore = appSettingStore;
+        this.envVarsService = envVarsService;
     }
 
     /**
@@ -102,31 +103,50 @@ public class McpServerService {
      * 未定义的变量保持原样(连接会以字面量失败,可据此提示用户去设置)。
      * 仅作用于连接用原始行——脱敏视图与 DB 里存的仍是占位符(密钥不落库)。
      */
-    private String substituteEnv(String value) {
-        if (value == null || value.isEmpty() || appSettingStore == null || !value.contains("${")) {
+    private String substituteEnv(String value, Map<String, String> vars, boolean json) {
+        if (value == null || !value.contains("${")) {
             return value;
         }
-        Map<String, String> vars = com.nora.agent.controller.EnvVarsController.resolveForExecution(appSettingStore);
-        if (vars.isEmpty()) {
-            return value;
-        }
-        String out = value;
-        for (Map.Entry<String, String> e : vars.entrySet()) {
-            out = out.replace("${" + e.getKey() + "}", e.getValue());
-        }
-        return out;
+        return ENV_REF.matcher(value).replaceAll(match -> {
+            String replacement = vars.get(match.group(1));
+            if (replacement == null) return java.util.regex.Matcher.quoteReplacement(match.group());
+            if (json) {
+                String quoted = objectMapper.valueToTree(replacement).toString();
+                replacement = quoted.substring(1, quoted.length() - 1);
+            }
+            return java.util.regex.Matcher.quoteReplacement(replacement);
+        });
     }
 
     /** 对原始行的连接相关字段做 ${VAR} 替换(不改 DB;仅连接/调用路径)。 */
     private RawServer withResolvedEnv(RawServer raw) {
-        if (raw == null || appSettingStore == null) {
+        if (raw == null || envVarsService == null) {
             return raw;
         }
-        return new RawServer(raw.id(), raw.name(),
-                substituteEnv(raw.url()), raw.transport(),
-                substituteEnv(raw.headers()), substituteEnv(raw.command()),
-                substituteEnv(raw.args()), substituteEnv(raw.env()),
+        Map<String, String> vars = envVarsService.resolveForExecution();
+        RawServer resolved = new RawServer(raw.id(), raw.name(),
+                substituteEnv(raw.url(), vars, false), raw.transport(),
+                substituteEnv(raw.headers(), vars, true), substituteEnv(raw.command(), vars, false),
+                substituteEnv(raw.args(), vars, true), substituteEnv(raw.env(), vars, true),
                 raw.enabled(), raw.toolPolicy());
+        if (resolved.headers() != null && !resolved.headers().isBlank()) {
+            try {
+                var headers = objectMapper.readTree(resolved.headers());
+                if (headers != null && headers.isObject()) {
+                    var credentials = new java.util.ArrayList<String>();
+                    headers.elements().forEachRemaining(value -> {
+                        if (value.isTextual()) {
+                            credentials.add(value.asText());
+                            credentials.add(value.asText().replaceFirst("(?i)^(Bearer|Basic)\\s+", ""));
+                        }
+                    });
+                    envVarsService.rememberSecrets(credentials);
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalArgumentException("MCP headers 不是合法 JSON", e);
+            }
+        }
+        return resolved;
     }
 
     // ---------- 注册表 CRUD ----------
@@ -178,8 +198,8 @@ public class McpServerService {
                     args == null || args.isEmpty() ? null : writeJsonList(args),
                     env == null || env.isEmpty() ? null : writeJson(env));
         } else {
-            if (url == null || !url.startsWith("http")) {
-                throw new IllegalArgumentException("url 必须是 http(s) 地址");
+            if (url == null || !url.startsWith("http") && !ENV_REF.matcher(url.trim()).matches()) {
+                throw new IllegalArgumentException("url 必须是 http(s) 地址或 ${VAR} 环境变量引用");
             }
             jdbcTemplate.update(
                     "INSERT INTO mcp_server (name, url, transport, headers) VALUES (?, ?, ?, ?)",

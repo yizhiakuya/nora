@@ -16,7 +16,7 @@ import com.nora.common.notification.NotificationPublisher;
  * 每次运行(手动或计划)都落 {@code execution_record}。
  */
 @Service
-public class AutomationService {
+public class AutomationService implements org.springframework.boot.ApplicationRunner {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AutomationService.class);
 
@@ -27,22 +27,32 @@ public class AutomationService {
     private final NotificationPublisher notificationPublisher;
     /** 正在执行中的规则 ID:agent 动作可跑数分钟,防止调度/手动重复触发同一规则 */
     private final Set<Long> runningRules = ConcurrentHashMap.newKeySet();
-
-    public AutomationService(JdbcTemplate jdbcTemplate, ActionExecutor actionExecutor,
-                             ObjectMapper objectMapper) {
-        this(jdbcTemplate, actionExecutor, objectMapper, null);
-    }
+    private final java.util.concurrent.ExecutorService scheduledExecutor = java.util.concurrent.Executors.newFixedThreadPool(4,
+            Thread.ofVirtual().factory());
+    private final org.springframework.transaction.support.TransactionTemplate transactions;
 
     @org.springframework.beans.factory.annotation.Autowired
     public AutomationService(JdbcTemplate jdbcTemplate, ActionExecutor actionExecutor,
-                             ObjectMapper objectMapper,
+                              ObjectMapper objectMapper,
+                              org.springframework.transaction.PlatformTransactionManager transactionManager,
                              @org.springframework.beans.factory.annotation.Autowired(required = false)
                              NotificationPublisher notificationPublisher) {
         this.jdbcTemplate = jdbcTemplate;
         this.actionExecutor = actionExecutor;
         this.objectMapper = objectMapper;
         this.notificationPublisher = notificationPublisher;
+        this.transactions = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     }
+
+    @Override
+    public void run(org.springframework.boot.ApplicationArguments args) {
+        // shortcut: 单实例恢复；多实例部署时需按执行实例筛选遗留记录。
+        jdbcTemplate.update("UPDATE execution_record SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'unknown' END, "
+                + "detail = '服务重启中断；未开始的任务已取消，已开始的结果需核实，不自动重放。' WHERE status IN ('queued', 'running')");
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void shutdown() { scheduledExecutor.shutdownNow(); }
 
     /** 列出规则,最新在前(前端 AutomationRule[])。 */
     public List<RuleView> list() {
@@ -238,19 +248,34 @@ public class AutomationService {
             return latestExecution(rule.id());
         }
         try {
+            Long executionId = transactions.execute(status -> startExecution(rule.id(), "queued", "等待开始"));
+            return executeClaimed(rule, executionId);
+        } catch (RuntimeException e) {
+            runningRules.remove(rule.id());
+            throw e;
+        }
+    }
+
+    private Long startExecution(long ruleId, String status, String detail) {
+        return jdbcTemplate.queryForObject("INSERT INTO execution_record (rule_id, status, detail) VALUES (?, ?, ?) RETURNING id",
+                Long.class, ruleId, status, detail);
+    }
+
+    private ExecutionView executeClaimed(RuleView rule, long executionId) {
+        try {
             long start = System.currentTimeMillis();
             // 定时任务=往会话发消息:agent 动作落进规则专属会话(标题「定时任务:规则名」),
             // 消息 sender=automation、AI 回答与步骤持久化;SQL 动作忽略会话参数。
             String sessionId = sessionIdFor(rule.id());
             String sessionTitle = "定时任务:" + rule.name();
             // 规则表记录会话 id(可观测;会话被删后由 agent 侧复活)
-            try {
+            transactions.executeWithoutResult(status -> {
+                jdbcTemplate.update("UPDATE execution_record SET status = 'running', started_at = now(), detail = ? WHERE id = ?",
+                        "正在执行", executionId);
                 jdbcTemplate.update(
-                        "UPDATE automation_rule SET session_id = ? WHERE id = ? AND deleted_at IS NULL",
+                        "UPDATE automation_rule SET session_id = ?, last_run_at = now(), status = 'running' WHERE id = ? AND deleted_at IS NULL",
                         sessionId, rule.id());
-            } catch (Exception e) {
-                log.debug("session id persist failed for rule {}: {}", rule.id(), e.getMessage());
-            }
+            });
             ActionExecutor.ActionResult actionResult = actionExecutor.execute(rule.actionJson(), sessionId, sessionTitle);
             String detail = actionResult.detail();
             long duration = System.currentTimeMillis() - start;
@@ -265,12 +290,12 @@ public class AutomationService {
                 default -> "failed";
             };
             boolean ok = "success".equals(status);
-            jdbcTemplate.update(
-                    "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, ?, ?, ?)",
-                    rule.id(), duration, status, detail);
-            jdbcTemplate.update(
-                    "UPDATE automation_rule SET last_run_at = now(), status = ? WHERE id = ? AND deleted_at IS NULL",
-                    ok ? "active" : "error", rule.id());
+            transactions.executeWithoutResult(tx -> {
+                jdbcTemplate.update("UPDATE execution_record SET duration_ms = ?, status = ?, detail = ? WHERE id = ?",
+                        duration, status, detail, executionId);
+                jdbcTemplate.update("UPDATE automation_rule SET status = CASE WHEN NOT enabled THEN 'paused' ELSE ? END "
+                        + "WHERE id = ? AND deleted_at IS NULL", ok ? "active" : "error", rule.id());
+            });
             // 通知事件(Kafka,2026-09-19):自动任务执行完成/失败——用户在任何页面
             // 都能从通知中心看到(此前只有页面级轮询,切页就丢)。发布失败静默,
             // 不影响执行记录落库。partial/cancelled/unknown 不发「成功」通知。
@@ -346,29 +371,38 @@ public class AutomationService {
             if (now.isBefore(scheduledAt)) {
                 continue; // 未到点
             }
-            // 领取计划点(原子):条件更新 nextRunAt(仅当仍等于本次读取值)——
-            // 两个实例/重复扫描只有一个能领到(方案 §7.3 的 (ruleId, scheduledAt) 去重等效实现)
+            if (!runningRules.add(rule.id())) continue;
             java.time.LocalDateTime next = ScheduleCalculator.nextAfter(parsed, now);
-            int claimed = jdbcTemplate.update(
-                    "UPDATE automation_rule SET next_run_at = ? WHERE id = ? AND next_run_at = ? AND deleted_at IS NULL",
-                    next == null ? null : java.sql.Timestamp.valueOf(next),
-                    rule.id(), java.sql.Timestamp.valueOf(scheduledAt));
-            if (claimed == 0) {
-                continue; // 另一实例已领取该计划点
-            }
-            if (ScheduleCalculator.withinGrace(scheduledAt, now)) {
-                execute(rule);
-                ran++;
-            } else {
-                // 超过宽限:记录 missed_schedule,不冒充 cancelled/completed(方案 §7.2)
-                try {
-                    jdbcTemplate.update(
-                            "INSERT INTO execution_record (rule_id, duration_ms, status, detail) VALUES (?, 0, 'missed_schedule', ?)",
-                            rule.id(), "计划点 " + scheduledAt + " 已错过(超过 " + ScheduleCalculator.GRACE_MINUTES
-                                    + " 分钟宽限),未自动补跑;可在任务页手动运行。");
-                } catch (Exception e) {
-                    log.warn("failed to record missed schedule for rule {}: {}", rule.id(), e.getMessage());
+            boolean due = ScheduleCalculator.withinGrace(scheduledAt, now);
+            boolean dispatched = false;
+            try {
+                Long executionId = transactions.execute(tx -> {
+                    int claimed = jdbcTemplate.update("UPDATE automation_rule SET next_run_at = ? WHERE id = ? "
+                                    + "AND next_run_at = ? AND enabled AND deleted_at IS NULL",
+                            next == null ? null : java.sql.Timestamp.valueOf(next),
+                            rule.id(), java.sql.Timestamp.valueOf(scheduledAt));
+                    if (claimed == 0) return null;
+                    return startExecution(rule.id(), due ? "queued" : "missed_schedule", due ? "等待开始"
+                            : "计划点 " + scheduledAt + " 已错过(超过 " + ScheduleCalculator.GRACE_MINUTES + " 分钟宽限),未自动补跑;可在任务页手动运行。");
+                });
+                if (executionId != null && due) {
+                    try {
+                        scheduledExecutor.execute(() -> {
+                            try { executeClaimed(rule, executionId); }
+                            catch (Exception e) { log.warn("scheduled rule {} interrupted: {}", rule.id(), e.getMessage()); }
+                        });
+                        dispatched = true;
+                        ran++;
+                    } catch (java.util.concurrent.RejectedExecutionException e) {
+                        jdbcTemplate.update("UPDATE execution_record SET status = 'cancelled', detail = ? WHERE id = ?",
+                                e.getMessage(), executionId);
+                        throw e;
+                    }
                 }
+            } catch (Exception e) {
+                log.warn("scheduled rule {} could not start: {}", rule.id(), e.getMessage());
+            } finally {
+                if (!dispatched) runningRules.remove(rule.id());
             }
         }
         return ran;

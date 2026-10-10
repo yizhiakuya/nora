@@ -3,6 +3,7 @@ package com.nora.agent.service;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +11,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -74,29 +76,42 @@ public class AppSettingStore implements ApplicationRunner {
                     """, key, json);
             apply(key, json);
         } catch (Exception e) {
-            throw new com.nora.common.exception.BusinessException(500, "保存设置失败: " + e.getMessage());
+            throw new com.nora.common.exception.BusinessException(500, "保存设置失败");
         }
+    }
+
+    /** 锁住同一设置行后修改，避免并发单项更新覆盖彼此。 */
+    @Transactional
+    public Map<String, Object> update(String key, UnaryOperator<Map<String, Object>> mutation) {
+        jdbcTemplate.update("""
+                INSERT INTO app_setting (key, value, updated_at) VALUES (?, '{}'::jsonb, now())
+                ON CONFLICT (key) DO NOTHING
+                """, key);
+        Map<String, Object> current = jdbcTemplate.queryForObject(
+                "SELECT value FROM app_setting WHERE key = ? FOR UPDATE",
+                (rs, i) -> decodePayload(rs.getString("value")), key);
+        Map<String, Object> next = mutation.apply(current);
+        save(key, next);
+        return next;
     }
 
     /**
      * 直接从表读取某设置的载荷(无缓存)。
      * 键无行时返回 null;默认值由调用方决定。
      */
-    @SuppressWarnings("unchecked")
     public Map<String, Object> raw(String key) {
+        return jdbcTemplate.query(
+                "SELECT value FROM app_setting WHERE key = ?",
+                (rs, i) -> decodePayload(rs.getString("value")),
+                key).stream().findFirst().orElse(null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> decodePayload(String json) {
         try {
-            return jdbcTemplate.query(
-                    "SELECT value FROM app_setting WHERE key = ?",
-                    (rs, i) -> {
-                        try {
-                            return (Map<String, Object>) objectMapper.readValue(rs.getString("value"), Map.class);
-                        } catch (Exception e) {
-                            return null;
-                        }
-                    },
-                    key).stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
-        } catch (Exception e) {
-            return null;
+            return objectMapper.readValue(json, Map.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new com.nora.common.exception.BusinessException(500, "设置存储格式错误");
         }
     }
 

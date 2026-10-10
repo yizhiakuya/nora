@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { ListCheck, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AutomationList } from "@/components/automations/AutomationList";
 import { ExecutionHistory } from "@/components/automations/ExecutionHistory";
 import { NewAutomationModal } from "@/components/automations/NewAutomationModal";
@@ -52,38 +53,29 @@ export default function TasksPage() {
       <Header
         breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "任务", isCurrent: true }]}
         actions={
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建定期任务
+          <Button size="sm"  onClick={() => setModalOpen(true)}>
+            <Plus className="w-4 h-4" /> 新建定期任务
           </Button>
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
-        <div className="max-w-6xl mx-auto space-y-6 pb-20">
-          <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
-            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              <ListCheck className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /> 任务
+      <div className="page-content custom-scroll">
+        <div className="page-container">
+          <div className="animate-in fade-in duration-200">
+            <h1 className="page-heading flex items-center gap-2.5">
+              <ListCheck className="w-5 h-5 text-muted-foreground" /> 任务
             </h1>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="page-description">
               让 AI 定期处理重复性工作,并查看每次执行的完整结果。
             </p>
-            <div role="tablist" aria-label="任务视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
-              {VIEWS.map((v) => (
-                <button
-                  key={v.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={view === v.key}
-                  onClick={() => setView(v.key)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${view === v.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  {v.label}
-                </button>
-              ))}
-            </div>
           </div>
-
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <Tabs value={view} onValueChange={value => setView(value as TaskView)}>
+            <TabsList aria-label="任务视图">
+              {VIEWS.map((v) => (
+                <TabsTrigger key={v.key} value={v.key}>{v.label}</TabsTrigger>
+              ))}
+            </TabsList>
+          <TabsContent value={view} className="mt-6">
             {view === "running" && <RunningTasks />}
             {view === "schedules" && <AutomationList />}
             {view === "history" && (
@@ -95,7 +87,8 @@ export default function TasksPage() {
                 }}
               />
             )}
-          </div>
+          </TabsContent>
+          </Tabs>
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 'use client';
 
 import * as Dialog from "@radix-ui/react-dialog";
+import { useRef } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -14,20 +15,10 @@ interface ModalProps {
   closeOnOutsideClick?: boolean;
   closeOnEscape?: boolean;
   hideCloseButton?: boolean;
+  onOpenAutoFocus?: React.ComponentProps<typeof Dialog.Content>["onOpenAutoFocus"];
 }
 
-/**
- * 通用弹窗(2026-09-21 迁移到 Radix Dialog)。
- *
- * 此前自研实现缺无障碍基础设施:无 role="dialog"/aria-modal、无焦点陷阱
- * (Tab 会跑到弹窗后面)、关闭后焦点不还原。Radix Dialog 补齐这三项。
- * 外部 API 保持不变(19 个使用点零改动);视觉结构逐类名对齐旧实现:
- * 居中定位改用 inset-0 + m-auto(不再需要 transform,避免与 zoom-in
- * 动画的 transform 冲突)。
- *
- * closeOnOutsideClick=false 时同时拦截 pointer/focus outside 两类
- * (模态语义下 Tab 到外部会先触发 focus outside)。
- */
+/** Controlled Radix dialog; callers open it without a Dialog.Trigger. */
 export function Modal({
   isOpen,
   onClose,
@@ -38,27 +29,39 @@ export function Modal({
   closeOnOutsideClick = true,
   closeOnEscape = true,
   hideCloseButton = false,
+  onOpenAutoFocus,
 }: ModalProps) {
+  const opener = useRef<HTMLElement | null>(null);
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-[2px] animate-in fade-in duration-150" />
         <Dialog.Content
           // 注意:不要再加 relative——它与 fixed 同为 position 工具类,生成
           // 顺序上 relative 在后会覆盖 fixed,对话框会掉进文档流被推到页尾
           // (2026-09-21 实测踩坑:只剩遮罩、弹窗在视口外)。fixed 本身就是
           // 绝对定位子元素的包含块,关闭按钮的 absolute 定位不受影响。
-          className={`fixed inset-0 m-auto z-50 h-fit max-h-[90vh] ${width} bg-card rounded-xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col`}
+          className={`fixed inset-0 m-auto z-50 h-fit max-h-[90dvh] max-w-[calc(100vw-24px)] ${width} bg-card border border-border rounded-2xl shadow-float overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col`}
           onPointerDownOutside={closeOnOutsideClick ? undefined : (e) => e.preventDefault()}
           onFocusOutside={closeOnOutsideClick ? undefined : (e) => e.preventDefault()}
           onEscapeKeyDown={closeOnEscape ? undefined : (e) => e.preventDefault()}
+          onOpenAutoFocus={(event) => {
+            opener.current = document.activeElement as HTMLElement | null;
+            onOpenAutoFocus?.(event);
+          }}
+          onCloseAutoFocus={(e) => {
+            if (opener.current?.isConnected) {
+              e.preventDefault();
+              opener.current.focus({ preventScroll: true });
+            }
+          }}
           aria-describedby={undefined}
         >
           {title ? (
-            <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
-              <Dialog.Title className="text-sm font-bold text-foreground">{title}</Dialog.Title>
+            <div className="flex items-center justify-between gap-3 px-5 py-4 sm:px-6 border-b border-border shrink-0">
+              <Dialog.Title className="min-w-0 text-base font-semibold text-foreground">{title}</Dialog.Title>
               {!hideCloseButton && (
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-full transition-colors" onClick={onClose}>
+                <Button variant="ghost" size="icon" aria-label="关闭对话框" className="h-8 w-8 shrink-0 text-muted-foreground" onClick={onClose}>
                   <X className="w-4 h-4" />
                 </Button>
               )}
@@ -68,19 +71,19 @@ export function Modal({
               {/* 无标题弹窗:隐藏 Title 满足 Radix 无障碍要求(读屏播报) */}
               <Dialog.Title className="sr-only">对话框</Dialog.Title>
               {!hideCloseButton && (
-                <Button variant="ghost" size="icon" className="absolute top-3 right-3 h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-full transition-colors z-10" onClick={onClose}>
+                <Button variant="ghost" size="icon" aria-label="关闭对话框" className="absolute top-3 right-3 h-8 w-8 text-muted-foreground z-10" onClick={onClose}>
                   <X className="w-4 h-4" />
                 </Button>
               )}
             </>
           )}
 
-          <div className="p-6 overflow-y-auto custom-scroll">
+          <div className="min-h-0 p-5 sm:p-6 overflow-y-auto custom-scroll">
             {children}
           </div>
 
           {footer && (
-            <div className="p-4 border-t border-border bg-muted flex justify-end gap-2 shrink-0">
+            <div className="px-5 py-4 sm:px-6 border-t border-border bg-muted/40 flex flex-wrap justify-end gap-2 shrink-0">
               {footer}
             </div>
           )}

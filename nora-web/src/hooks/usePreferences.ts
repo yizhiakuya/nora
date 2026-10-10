@@ -19,13 +19,20 @@ export interface KnowledgeAIPrefs {
   autoIndex: boolean;
 }
 
+export type ReasoningSummary = "concise" | "detailed";
+export type LinkOpenMode = "internal" | "external";
+
 interface PreferencesState {
   account: AccountPrefs;
   notifications: NotificationPrefs;
   knowledgeAI: KnowledgeAIPrefs;
+  reasoningSummary: ReasoningSummary;
+  linkOpenMode: LinkOpenMode;
   setAccount: (patch: Partial<AccountPrefs>) => void;
   setNotifications: (patch: Partial<NotificationPrefs>) => void;
   setKnowledgeAI: (patch: Partial<KnowledgeAIPrefs>) => void;
+  setReasoningSummary: (value: ReasoningSummary) => void;
+  setLinkOpenMode: (value: LinkOpenMode) => void;
 }
 
 const DEFAULT_ACCOUNT: AccountPrefs = {
@@ -60,11 +67,15 @@ export const usePreferences = create<PreferencesState>()(
       account: DEFAULT_ACCOUNT,
       notifications: DEFAULT_NOTIFICATIONS,
       knowledgeAI: DEFAULT_KNOWLEDGE_AI,
+      reasoningSummary: "concise",
+      linkOpenMode: "internal",
       setAccount: (patch) => set((s) => ({ account: { ...s.account, ...patch } })),
       setNotifications: (patch) =>
         set((s) => ({ notifications: { ...s.notifications, ...patch } })),
       setKnowledgeAI: (patch) =>
         set((s) => ({ knowledgeAI: { ...s.knowledgeAI, ...patch } })),
+      setReasoningSummary: (reasoningSummary) => set({ reasoningSummary }),
+      setLinkOpenMode: (linkOpenMode) => set({ linkOpenMode }),
     }),
     {
       name: "user-preferences",

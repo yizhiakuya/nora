@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Server, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ServiceCards } from "@/components/environments/ServiceCards";
 import { LogStream } from "@/components/environments/LogStream";
 import { AddSourceModal } from "@/components/environments/AddSourceModal";
@@ -41,38 +42,27 @@ export default function EnvironmentsPage() {
       <Header
         breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "环境控制台", isCurrent: true }]}
         actions={
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setAddOpen(true)}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 添加纳管服务
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="w-4 h-4" /> 添加纳管服务
           </Button>
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
-        <div className="max-w-6xl mx-auto space-y-6 pb-20">
+      <div className="page-content custom-scroll">
+        <Tabs value={tab} onValueChange={(value) => setTab(value as (typeof TABS)[number])} className="page-container">
           <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
-            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              <Server className="w-5 h-5 text-green-600 dark:text-green-400" /> 环境控制台
+            <h1 className="page-heading flex items-center gap-2.5">
+              <Server className="w-5 h-5 text-muted-foreground" /> 环境控制台
             </h1>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="page-description">
               管理本地/测试环境服务，查看日志流，AI 自动诊断错误并给出修复建议。
             </p>
-            <div role="tablist" aria-label="环境视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
-              {TABS.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === t}
-                  onClick={() => setTab(t)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${tab === t ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <TabsList aria-label="环境视图">
+              {TABS.map((view) => <TabsTrigger key={view} value={view}>{view}</TabsTrigger>)}
+            </TabsList>
           </div>
 
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <TabsContent value={tab} className="space-y-6">
             {tab === "服务" && (
               !loaded ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -94,9 +84,9 @@ export default function EnvironmentsPage() {
               )
             )}
             {tab === "日志" && <LogStream />}
-          </div>
+          </TabsContent>
           <AddSourceModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
-        </div>
+        </Tabs>
       </div>
     </>
   );

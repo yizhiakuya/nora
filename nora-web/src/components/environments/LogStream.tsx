@@ -132,16 +132,16 @@ export function LogStream() {
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden">
+    <div className="surface overflow-hidden">
       {/* 头部:当前选中服务 + 状态摘要(替代原下拉框) */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
           <Terminal className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="text-xs font-bold text-foreground shrink-0">日志流</span>
+          <span className="text-xs font-semibold text-foreground shrink-0">日志流</span>
           {activeSource && (
             <span className="flex items-center gap-1.5 min-w-0 text-[11px] text-muted-foreground">
               <span className="font-mono font-bold text-foreground truncate">{activeSource.name}</span>
-              <span className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${
+              <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-bold border ${
                 activeSource.health === "healthy"
                   ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800"
                   : activeSource.health === "degraded"
@@ -161,7 +161,7 @@ export function LogStream() {
           {activeSource?.sourceId && connState !== "open" && (
             <span
               title={connState === "reconnecting" ? "日志连接断开,重连中…" : connState === "connecting" ? "日志连接中…" : "日志连接已断开,请刷新重试"}
-              className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800"
+              className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold border bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800"
             >
               {connState === "closed" ? <WifiOff className="w-2.5 h-2.5" /> : <Wifi className="w-2.5 h-2.5 animate-pulse" />}
               {connState === "reconnecting" ? "重连中" : connState === "connecting" ? "连接中" : "已断开"}
@@ -173,7 +173,7 @@ export function LogStream() {
             type="button"
             title={follow ? "跟随新日志(已开启)" : "开启跟随:新日志自动滚动"}
             onClick={() => setFollow((v) => !v)}
-            className={`px-1.5 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors inline-flex items-center gap-1 ${follow ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            className={`px-1.5 py-0.5 rounded text-[11px] font-medium cursor-pointer transition-colors inline-flex items-center gap-1 ${follow ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
           >
             <ArrowDownToLine className="w-2.5 h-2.5" /> 跟随
           </button>
@@ -182,7 +182,7 @@ export function LogStream() {
               key={lv}
               type="button"
               onClick={() => setFilter(lv)}
-              className={`px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors ${filter === lv ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+              className={`px-2 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${filter === lv ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
             >
               {lv === "all" ? "全部" : lv.toUpperCase()}
             </button>
@@ -201,7 +201,7 @@ export function LogStream() {
             <span className="text-muted-foreground/70 shrink-0 tabular-nums">{log.time}</span>
             <span className={`shrink-0 uppercase w-10 font-bold px-1 rounded text-center h-fit ${LEVEL_BADGE_CLS[log.level]}`}>{log.level}</span>
             <span className={`shrink-0 font-bold ${LEVEL_CLS[log.level]}`}>{log.service}</span>
-            <span className="text-foreground/80 break-all min-w-0">{log.message}</span>
+            <span className="text-foreground/80 break-words min-w-0 w-full sm:w-auto sm:flex-1">{log.message}</span>
           </div>
         ))}
         {filtered.length === 0 && (
@@ -211,12 +211,12 @@ export function LogStream() {
         )}
       </div>
 
-      <div className="border-t border-border px-4 py-2 flex items-center justify-between">
-        <span className="text-[10px] text-muted-foreground">点击服务卡片切换日志源;点击日志行获取诊断;AI 分析只读,不执行修改</span>
+      <div className="border-t border-border px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <span className="text-[11px] text-muted-foreground">点击服务卡片切换日志源;点击日志行获取诊断;AI 分析只读,不执行修改</span>
         <Button
           variant="outline"
           size="sm"
-          className="h-6 text-[10px] px-2"
+          className="h-8 text-xs px-3"
           disabled={!activeSource?.sourceId || analyzing}
           onClick={runAnalysis}
         >
@@ -227,11 +227,11 @@ export function LogStream() {
 
       {/* AI 即时分析结果(内联展示,只读结论) */}
       {(analyzing || analysis) && (
-        <div className="border-t border-border p-3 bg-violet-50/50 dark:bg-violet-950/20 animate-in fade-in">
+        <div className="border-t border-border p-3 bg-muted/40 animate-in fade-in">
           <div className="flex items-start gap-2">
-            <Activity className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
+            <Activity className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <div className="text-xs font-bold text-foreground mb-1">
+              <div className="text-xs font-semibold text-foreground mb-1">
                 AI 分析 · {activeSource?.name} · 只读
               </div>
               {analyzing ? (
@@ -250,11 +250,11 @@ export function LogStream() {
       )}
 
       {selected && (
-        <div className="border-t border-border p-3 bg-blue-50/50 dark:bg-blue-950/20 animate-in fade-in">
+        <div className="border-t border-border p-3 bg-muted/40 animate-in fade-in">
           <div className="flex items-start gap-2">
             <Stethoscope className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <div className="text-xs font-bold text-foreground mb-1">AI 诊断</div>
+              <div className="text-xs font-semibold text-foreground mb-1">AI 诊断</div>
               <p className="text-xs text-muted-foreground leading-relaxed break-all">
                 已选中 <code className="font-mono text-red-600 dark:text-red-400">{selected.service}</code> 的 {selected.level.toUpperCase()} 日志:
                 {selected.message.slice(0, 120)}{selected.message.length > 120 ? "…" : ""}

@@ -1,10 +1,12 @@
 import { create } from "zustand";
+import { useSideWorkspace } from "./useSideWorkspace";
 import { useRecentFiles } from "./useRecentFiles";
 import { ApiError } from "@/lib/api/client";
 import { toast } from "sonner";
 import type { FileItem, FilePreview, ViewerFile } from "@/types";
 import { viewerApi } from "@/lib/services/viewerApi";
 import type { ChatRef } from "@/lib/chatRefs";
+import { contentHashSuffix } from "@/lib/saveState";
 
 export type FileViewerStatus = "idle" | "loading" | "ready" | "error";
 type Origin = { sessionId?: string; collection?: string[]; index?: number };
@@ -15,10 +17,6 @@ interface ViewerState {
   status: FileViewerStatus;
   error: string | null;
   retry: () => Promise<void>;
-  isOpen: boolean;
-  expanded: boolean;
-  wide: boolean;
-  width: number;
   origin: Origin;
   mode: "preview" | "source";
   editing: boolean;
@@ -34,13 +32,12 @@ interface ViewerState {
   open: (file: FileItem, list?: FileItem[]) => Promise<void>;
   openTargets: (targets: string[], focus?: string, origin?: Origin, automatic?: boolean) => Promise<void>;
   openText: (name: string, text: string, origin?: Origin) => void;
+  openBrowser: (onOpen?: () => void) => void;
   close: () => void;
   closeTab: (target: string) => void;
   select: (target: string) => void;
   navigate: (delta: number) => void;
-  setWidth: (width: number) => void;
   setMode: (mode: "preview" | "source") => void;
-  setExpanded: (value: boolean) => void;
   beginEdit: () => void;
   setDraft: (draft: string) => void;
   save: (overwrite?: boolean) => Promise<boolean>;
@@ -82,14 +79,9 @@ function mergeTabs(tabs: ViewerFile[], incoming: ViewerFile[], focus?: string): 
   }
   return next;
 }
-function savedWidth(): number {
-  const value = Number(localStorage.getItem("nora-viewer-width"));
-  return value >= 45 && value <= 70 ? value : 55;
-}
-
 export const useFileViewer = create<ViewerState>((set, get) => ({
-  active: null, tabs: [], preview: null, status: "idle", error: null, isOpen: false,
-  retry: async () => {}, expanded: false, wide: false, width: savedWidth(), origin: {}, mode: "preview",
+  active: null, tabs: [], preview: null, status: "idle", error: null,
+  retry: async () => {}, origin: {}, mode: "preview",
   editing: false, draft: "", saving: false, externalChange: false, pendingAction: null,
   pendingReference: null, newFiles: 0, missing: new Set<string>(), run: null,
   suppressAutoOpen: () => {
@@ -116,11 +108,14 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     get().requestAction(() => { loading = (async () => {
       const seq = ++requestSeq;
       const index = origin.collection?.indexOf(focus ?? targets[0]);
-      set({ isOpen: true, status: "loading", error: null, retry: () => get().openTargets(targets, focus, origin), origin: { ...origin, index: index != null && index >= 0 ? index : origin.index }, newFiles: 0, mode: "preview", externalChange: false });
+      useSideWorkspace.getState().show("file");
+      set({ status: "loading", error: null, retry: () => get().openTargets(targets, focus, origin), origin: { ...origin, index: index != null && index >= 0 ? index : origin.index }, newFiles: 0, mode: "preview", externalChange: false });
       try {
-        const resolved = await viewerApi.resolve(targets);
+        const snapshots = get().tabs.filter(file => targets.includes(file.target) && file.target.startsWith("history:"));
+        const remote = targets.filter(target => !target.startsWith("history:"));
+        const resolved = remote.length ? await viewerApi.resolve(remote) : { files: [], errors: [] };
         if (seq !== requestSeq) return;
-        const incoming = resolved.files.map(file => {
+        const incoming = [...resolved.files, ...snapshots].map(file => {
           const previous = get().tabs.find(tab => tab.target === file.target);
           return { ...file, delivery: file.delivery ?? previous?.delivery ?? null, originalUrl: file.originalUrl ?? previous?.originalUrl };
         });
@@ -135,11 +130,11 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
           set({ missing: next });
         }
         set({ active: file, tabs, preview: null });
-        const preview = cachedPreview(file) ?? await viewerApi.preview(file);
+        const preview = file.snapshot ?? cachedPreview(file) ?? await viewerApi.preview(file);
         cachePreview(file, preview);
         if (seq === requestSeq) {
           set({ preview, status: "ready" });
-          useRecentFiles.getState().addRecent(file.name, file.mimeType, file.target);
+          if (!file.target.startsWith("history:")) useRecentFiles.getState().addRecent(file.name, file.mimeType, file.target);
         }
       } catch (error) {
         if (seq === requestSeq) set({ active: null, preview: null, status: "error", error: error instanceof Error ? error.message : "读取失败" });
@@ -149,14 +144,22 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
   },
   openText: (name, text, origin = {}) => get().requestAction(() => {
     requestSeq++;
-    const file: ViewerFile = { target: "history:temporary", name, mimeType: "text/markdown", size: new TextEncoder().encode(text).length,
-      modifiedAt: null, version: "temporary", previewKind: "markdown", capabilities: { preview: true, source: true, download: false, edit: false, attach: false } };
-    set({ active: file, preview: { kind: "markdown", text }, isOpen: true, status: "ready", error: null, origin, mode: "preview" });
+    const version = contentHashSuffix(`${name}\n${text}`);
+    const file: ViewerFile = { target: `history:${version}`, name, mimeType: "text/markdown", size: new TextEncoder().encode(text).length,
+      modifiedAt: null, version, previewKind: "markdown", capabilities: { preview: true, source: true, download: false, edit: false, attach: false } };
+    const preview: FilePreview = { kind: "markdown", text };
+    file.snapshot = preview;
+    useSideWorkspace.getState().show("file");
+    set({ active: file, tabs: mergeTabs(get().tabs, [file], file.target), preview, status: "ready", error: null, origin, mode: "preview" });
     get().suppressAutoOpen();
   }),
+  openBrowser: onOpen => {
+    get().suppressAutoOpen();
+    get().requestAction(() => { useSideWorkspace.getState().show("browser"); onOpen?.(); });
+  },
   close: () => {
     get().suppressAutoOpen();
-    get().requestAction(() => { requestSeq++; set({ isOpen: false, expanded: false, pendingAction: null }); });
+    get().requestAction(() => { requestSeq++; set({ pendingAction: null }); useSideWorkspace.getState().hide(); });
   },
   closeTab: target => get().requestAction(() => {
     get().suppressAutoOpen();
@@ -169,12 +172,17 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     // active 为 null,旧逻辑的 active?.target === target 判定会漏掉,面板
     // 停在「无法打开文件」错误态关不掉(2026-09-30 实测:关已删文件标签后残留)
     if (!next.length) {
-      get().close();
+      set({ active: null, preview: null, status: "idle" });
+      if (useSideWorkspace.getState().panel !== "file") return;
+      if (useSideWorkspace.getState().tasksOpened) useSideWorkspace.getState().show("tasks");
+      else if (useSideWorkspace.getState().browserOpened) useSideWorkspace.getState().show("browser");
+      else get().close();
       return;
     }
     // active 为 null(上一个文件解析失败)时也选中剩余标签,给出恢复路径
     if (get().active?.target === target || !get().active) {
-      get().select(next[next.length - 1].target);
+      if (useSideWorkspace.getState().panel === "file") get().select(next[next.length - 1].target);
+      else set({ active: null, preview: null, status: "idle" });
     }
   }),
   select: target => {
@@ -188,9 +196,7 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     const index = state.origin.index ?? list.indexOf(state.active?.target ?? "");
     if (index >= 0 && list[index + delta]) state.select(list[index + delta]);
   },
-  setWidth: width => { get().suppressAutoOpen(); const value = Math.max(45, Math.min(70, width)); localStorage.setItem("nora-viewer-width", String(value)); set({ width: value }); },
   setMode: mode => { get().suppressAutoOpen(); set({ mode }); },
-  setExpanded: expanded => { get().suppressAutoOpen(); set({ expanded }); },
   beginEdit: () => {
     if (!get().active?.capabilities.edit || get().preview?.truncated) return;
     get().suppressAutoOpen();
@@ -216,7 +222,7 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
   cancelEdit: () => get().requestAction(() => set({ editing: false })),
   refresh: async (checkOnly = false) => {
     const state = get();
-    if (!state.active || state.active.target.startsWith("history:") || !state.isOpen) return;
+    if (!state.active || state.active.target.startsWith("history:") || !useSideWorkspace.getState().isOpen) return;
     try {
       const { files, errors } = await viewerApi.resolve([state.active.target]);
       const resolved = files[0];
@@ -281,15 +287,16 @@ export const useFileViewer = create<ViewerState>((set, get) => ({
     if (!file?.capabilities.attach) return;
     const ref: ChatRef = file.target.startsWith("file:") ? { kind: "file", id: Number(file.target.slice(5)), name: file.name }
       : { kind: "viewer", id: file.target, name: file.name };
-    set({ pendingReference: { sessionId, ref }, expanded: false });
-    if (!get().wide) get().close();
+    set({ pendingReference: { sessionId, ref } });
+    useSideWorkspace.getState().setExpanded(false);
+    if (!useSideWorkspace.getState().wide) get().close();
   },
   beginRun: (id, sessionId) => set({ run: { id, sessionId, suppressed: get().editing, focused: false, seen: new Set() } }),
   receiveFiles: (runId, stepId, files, focus) => {
     const state = get(), run = state.run;
     if (!run || run.id !== runId || run.seen.has(stepId) || !files.length) return;
     const seen = new Set(run.seen).add(stepId);
-    const shouldOpen = state.wide && !run.focused && !run.suppressed;
+    const shouldOpen = useSideWorkspace.getState().wide && !run.focused && !run.suppressed;
     // 重新交付的文件视为有效:清除此前的失效标记(可能刚被重建/恢复)
     const missing = new Set(state.missing);
     let missingChanged = false;

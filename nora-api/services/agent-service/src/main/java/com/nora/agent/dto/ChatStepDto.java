@@ -130,8 +130,15 @@ public record ChatStepDto(
             java.util.List<ViewerFile> files,
             String focusTarget,
             java.util.List<com.nora.agent.service.ViewerService.FileError> fileErrors,
-            java.util.List<FileChange> fileChanges
+            java.util.List<FileChange> fileChanges,
+            CommandExecutionDto execution
     ) {
+        public StepResult(String content, String summary, Integer rowCount, Integer lineCount,
+                          Boolean truncated, String error, java.util.List<ViewerFile> files, String focusTarget,
+                          java.util.List<com.nora.agent.service.ViewerService.FileError> fileErrors, java.util.List<FileChange> fileChanges) {
+            this(content, summary, rowCount, lineCount, truncated, error, files, focusTarget, fileErrors, fileChanges, null);
+        }
+
         public StepResult(String content, String summary, Integer rowCount, Integer lineCount,
                           Boolean truncated, String error) {
             this(content, summary, rowCount, lineCount, truncated, error, null, null, null, null);

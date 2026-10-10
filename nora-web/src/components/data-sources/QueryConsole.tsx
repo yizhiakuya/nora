@@ -162,12 +162,12 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
   return (
     <div className="space-y-4">
       {/* SQL Editor */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50">
-          <span className="text-sm font-bold text-foreground font-mono">{database} › {isRedis ? "Redis 命令" : "SQL"}</span>
+      <div className="surface overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/40">
+          <span className="text-sm font-semibold text-foreground font-mono">{database} › {isRedis ? "Redis 命令" : "SQL"}</span>
           <Button
             size="sm"
-            className="h-8 text-[13px] bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600"
+            className="h-8 text-[13px]"
             onClick={handleRun}
             disabled={isRunning || !sql.trim()}
           >
@@ -177,8 +177,9 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
         </div>
         <div className="relative">
           <textarea
+            aria-label={isRedis ? "Redis 命令" : "SQL 查询"}
             rows={4}
-            className="w-full bg-[#1e1e1e] text-gray-300 font-mono text-[13px] leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
+            className="w-full bg-muted/30 text-foreground font-mono text-base sm:text-[13px] leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
             placeholder={isRedis
               ? "只读命令（GET / HGETALL / KEYS / SCAN / TYPE / TTL / LRANGE / SMEMBERS / ZRANGE / INFO …）"
               : "-- 只读查询（SELECT / SHOW / EXPLAIN），或点击下方 AI 生成"}
@@ -187,11 +188,11 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleRun(); }}
           />
         </div>
-        <div className="px-4 py-2 border-t border-border flex items-center gap-2">
+        <div className="px-4 py-3 border-t border-border flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={askAi}
-            className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
+            className="text-xs text-primary hover:underline cursor-pointer flex items-center gap-1"
           >
             <SquarePen className="w-2.5 h-2.5" /> {isRedis ? "让 AI 写命令（跳转对话）" : "让 AI 写 SQL（跳转对话，可读表结构）"}
           </button>
@@ -209,15 +210,15 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
 
       {!isRunning && hasRun && runError && (
         <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl px-4 py-3">
-          <div className="text-xs font-bold text-red-600 dark:text-red-400 mb-1">查询失败</div>
+          <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">查询失败</div>
           <div className="text-xs font-mono text-red-600/80 dark:text-red-400/80 break-all">{runError}</div>
         </div>
       )}
 
       {!isRunning && hasRun && !runError && result && (
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center justify-between">
-            <span className="text-[13px] font-bold text-foreground">结果</span>
+        <div className="surface overflow-hidden">
+          <div className="px-4 py-2 border-b border-border bg-muted/40 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-[13px] font-semibold text-foreground">结果</span>
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-green-600 dark:text-green-400">
                 ✓ {result.rowCount} rows · {result.durationMs}ms
@@ -238,7 +239,7 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
               </button>
             </div>
           </div>
-          <div className="max-h-80 overflow-y-auto custom-scroll">
+          <div className="max-h-80 overflow-auto custom-scroll">
             <table className="w-full text-[13px]">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-muted border-b border-border text-muted-foreground">
@@ -264,13 +265,13 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
       )}
 
       {/* History */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-2 border-b border-border bg-gray-50/50 dark:bg-gray-950/50 flex items-center gap-1.5">
+      <div className="surface overflow-hidden">
+        <div className="px-4 py-2 border-b border-border bg-muted/40 flex items-center gap-1.5">
           <History className="w-4 h-4 text-muted-foreground" />
-          <span className="text-[13px] font-bold text-foreground">查询历史</span>
+          <span className="text-[13px] font-semibold text-foreground">查询历史</span>
           <span className="text-[11px] text-muted-foreground ml-auto">{history.length} 条</span>
         </div>
-        <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-48 overflow-y-auto custom-scroll">
+        <div className="divide-y divide-border max-h-48 overflow-y-auto custom-scroll">
           {history.length === 0 ? (
             <div className="py-8 flex flex-col items-center text-muted-foreground gap-1.5">
               <History className="w-6 h-6 opacity-20" />

@@ -25,7 +25,7 @@ export function FileListing({ library }: { library: FileLibraryState }) {
               )}
 
               <div className="flex items-center justify-between mb-4 animate-in fade-in gap-3 flex-wrap">
-                <h2 className="text-sm font-bold text-foreground">{currentFolder ? currentFolder.name : "所有文件"}</h2>
+                <h2 className="text-sm font-semibold text-foreground">{currentFolder ? currentFolder.name : "所有文件"}</h2>
                 <div className="flex items-center gap-3">
                   {/* 视图切换:列表 / 网格(窄屏自动网格,切换按钮隐藏) */}
                   <div className="hidden md:flex items-center rounded-lg border border-border overflow-hidden">

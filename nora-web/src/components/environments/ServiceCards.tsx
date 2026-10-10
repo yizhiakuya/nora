@@ -62,7 +62,7 @@ export function ServiceCards() {
 
   return (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {services.map((svc) => {
           const h = HEALTH_MAP[svc.health];
           const isFile = svc.kind === "FILE";
@@ -74,36 +74,36 @@ export function ServiceCards() {
               tabIndex={0}
               title="点击查看该服务日志"
               onClick={() => setActiveService(svc.id)}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setActiveService(svc.id); }}
-              className={`bg-card border rounded-xl p-4 flex flex-col justify-between group relative hover:shadow-sm transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${activeServiceId === svc.id ? "border-blue-500 dark:border-blue-400 ring-1 ring-blue-500/30 shadow-sm" : "border-border hover:border-border/80"}`}
+              onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setActiveService(svc.id); } }}
+              className={`surface p-4 flex flex-col justify-between group relative transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring/30 ${activeServiceId === svc.id ? "border-primary/50 ring-1 ring-primary/15" : "hover:border-primary/30"}`}
             >
               <button
                 type="button"
                 title={`移除纳管源 ${svc.name}`}
                 onClick={(e) => { e.stopPropagation(); setPendingRemove({ id: svc.id, name: svc.name }); }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500"
+                className="absolute top-1.5 right-1.5 rounded-md p-1.5 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="w-3.5 h-3.5" />
               </button>
               <div className="space-y-3">
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start justify-between gap-2 pr-5 md:pr-0">
                   <div className="flex items-center gap-2 min-w-0">
                     {isFile
-                      ? <FileText className="w-4 h-4 text-violet-600 dark:text-violet-400 shrink-0" />
+                      ? <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                       : isProc
-                        ? <Cog className="w-4 h-4 text-orange-600 dark:text-orange-400 shrink-0" />
-                        : <Container className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />}
-                    <span className="text-sm font-bold text-foreground font-mono truncate" title={svc.name}>{svc.name}</span>
+                        ? <Cog className="w-4 h-4 text-muted-foreground shrink-0" />
+                        : <Container className="w-4 h-4 text-muted-foreground shrink-0" />}
+                    <span className="text-sm font-semibold text-foreground font-mono truncate" title={svc.name}>{svc.name}</span>
                   </div>
-                  <span className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${h.cls}`}>
+                  <span className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold border ${h.cls}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${h.dot}`} /> {h.label}
                   </span>
                 </div>
 
-                <div className="space-y-1.5 text-[11px] pb-2">
+                <div className="space-y-1.5 text-xs pb-2">
                   <div className="flex justify-between items-center gap-2">
                     <span className="text-muted-foreground shrink-0">类型</span>
-                    <span className="text-foreground tabular-nums truncate">{isFile ? "📄 进程日志" : isProc ? "⚙️ 托管程序" : "🐳 容器"}</span>
+                    <span className="text-foreground tabular-nums truncate">{isFile ? "进程日志" : isProc ? "托管程序" : "容器"}</span>
                   </div>
                   {isFile ? (
                     <div className="flex justify-between items-center gap-2">
@@ -139,15 +139,15 @@ export function ServiceCards() {
                 <div className="grid grid-cols-2 gap-1.5 pt-2 mt-auto border-t border-border/50">
                   {svc.status === "running" ? (
                     <>
-                      <Button variant="outline" size="sm" className="h-7 text-[10px] px-0 w-full" onClick={(e) => { e.stopPropagation(); void toggle(svc.id); }}>
+                      <Button variant="outline" size="sm" className="h-8 text-xs px-0 w-full" onClick={(e) => { e.stopPropagation(); void toggle(svc.id); }}>
                         <Square className="w-3 h-3 mr-1" /> 停止
                       </Button>
-                      <Button variant="outline" size="sm" className="h-7 text-[10px] px-0 w-full" onClick={(e) => { e.stopPropagation(); void restart(svc.id); }}>
+                      <Button variant="outline" size="sm" className="h-8 text-xs px-0 w-full" onClick={(e) => { e.stopPropagation(); void restart(svc.id); }}>
                         <RotateCw className="w-3 h-3 mr-1" /> 重启
                       </Button>
                     </>
                   ) : (
-                    <Button variant="outline" size="sm" className="col-span-2 h-7 text-[10px] px-0 w-full text-green-700 dark:text-green-300" onClick={(e) => { e.stopPropagation(); void toggle(svc.id); }}>
+                    <Button variant="outline" size="sm" className="col-span-2 h-8 text-xs px-0 w-full text-green-700 dark:text-green-300" onClick={(e) => { e.stopPropagation(); void toggle(svc.id); }}>
                       <Play className="w-3 h-3 mr-1" /> 启动
                     </Button>
                   )}

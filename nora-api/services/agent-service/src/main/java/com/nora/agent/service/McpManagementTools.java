@@ -1,6 +1,6 @@
 package com.nora.agent.service;
 
-import static com.nora.agent.service.ChatToolExecutor.bounded;
+import static com.nora.agent.service.ChatToolExecutor.textOutcome;
 
 import java.util.List;
 import java.util.Map;
@@ -120,7 +120,7 @@ class McpManagementTools {
                     sb.append("参数 schema(按此构造 arguments;required 中的字段必填):\n");
                     sb.append(t.inputSchema() == null ? "(该工具未声明参数 schema——按描述调用,不确定时传空对象 {})"
                             : t.inputSchema().toPrettyString());
-                    return bounded(sb.toString(), "工具说明 " + t.name());
+                    return textOutcome(sb.toString(), "工具说明 " + t.name());
                 }
             }
             return new ToolOutcome("ERROR: 服务器「" + server.name() + "」没有名为 \"" + toolName
@@ -137,7 +137,7 @@ class McpManagementTools {
             }
             sb.append('\n');
         }
-        return bounded(sb.toString(), "工具清单 " + entries.size() + " 个");
+        return textOutcome(sb.toString(), "工具清单 " + entries.size() + " 个");
     }
 
     /**
@@ -172,7 +172,7 @@ class McpManagementTools {
         if (galleryPrefetcher != null && !mcpResult.isError()) {
             galleryPrefetcher.prefetchFromToolResult(mcpResult.text());
         }
-        ToolOutcome outcome = bounded(mcpResult.text(), "MCP " + server.name() + "." + tool.trim() + " 执行完成");
+        ToolOutcome outcome = textOutcome(mcpResult.text(), "MCP " + server.name() + "." + tool.trim() + " 执行完成");
         // 结果未知(调用已发出但中断):与挂载工具同语义透传(设计 §5.2)
         return mcpResult.images().isEmpty()
                 ? (mcpResult.unknown()

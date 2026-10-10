@@ -68,6 +68,8 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
       consecutiveFailures = 0;
       // 网关可达时探测 agent(独立,不阻塞网关状态)
       void probeAgent().then((agentOk) => set({ agentOnline: agentOk }));
+      const { useAgentSettings } = await import("@/hooks/useAgentSettings");
+      void useAgentSettings.getState().syncFromBackend();
       // 首次探测成功(online 从 null 转 true)或离线恢复:重新拉数据
       // (动态 import 避免环)。首次也要拉——agent 设置等 store 的本地
       // 缓存可能是空的,不拉的话设置永远到不了 UI
@@ -86,8 +88,6 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
         void useAutomations.getState().syncFromBackend();
         const { useKnowledgeDocs } = await import("@/hooks/useKnowledgeDocs");
         void useKnowledgeDocs.getState().syncFromBackend();
-        const { useAgentSettings } = await import("@/hooks/useChat");
-        void useAgentSettings.getState().syncFromBackend();
       }
     } else {
       consecutiveFailures++;
@@ -111,6 +111,11 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
     // 页面重新可见时立即探测(笔记本唤醒/切网)
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") void get().check();
+    });
+    window.addEventListener("storage", event => {
+      if (event.key === "chat-agent-settings") {
+        void import("@/hooks/useAgentSettings").then(({ useAgentSettings }) => useAgentSettings.getState().syncFromBackend());
+      }
     });
   },
 }));

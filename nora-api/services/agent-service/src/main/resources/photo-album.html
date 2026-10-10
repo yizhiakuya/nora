@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{title}}</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f7f3ed;color:#342e29;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    .album{min-height:100vh}.album.night{background:#171d26;color:#edf0f5}main{max-width:1120px;margin:auto;padding:56px 28px}header{max-width:780px;margin-bottom:44px}
+    .eyebrow{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#92785e}.night .eyebrow{color:#cbb79b}
+    h1{font-size:clamp(28px,5vw,52px);line-height:1.15;font-weight:650;margin:18px 0 20px;overflow-wrap:anywhere}
+    .summary{font-size:15px;line-height:1.9;opacity:.78;white-space:pre-wrap}.meta{font-size:12px;opacity:.6;margin-top:22px}
+    section{display:grid;gap:28px}figure{margin:0;border-radius:18px;overflow:hidden;background:#fff;box-shadow:0 8px 26px #342e2909}
+    .night figure{background:#232d3a;box-shadow:none}img{display:block;width:100%;max-height:620px;object-fit:contain;background:#e9e3da}
+    .night img{background:#11161e}figcaption{padding:22px 26px}time{font-size:12px;font-weight:650;color:#92785e}.night time{color:#cbb79b}
+    figcaption p{font-size:14px;line-height:1.8;margin:12px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+    .timeline section{max-width:780px}.grid section{grid-template-columns:repeat(2,minmax(0,1fr))}.grid img{height:320px;object-fit:cover}
+    footer{font-size:11px;opacity:.5;margin-top:44px;line-height:1.8}@media(max-width:640px){main{padding:32px 18px}.grid section{grid-template-columns:1fr}.grid img{height:auto}}
+    @media print{body,.album.night{background:#fff;color:#222}figure{break-inside:avoid;box-shadow:none}.night figure{background:#fff}main{padding:12px}img{max-height:420px}}
+  </style>
+</head>
+<body>
+  <div class="album {{theme}} {{layout}}">
+  <main>
+    <header><div class="eyebrow">Nora · Photo stories</div><h1>{{title}}</h1><p class="summary">{{summary}}</p><p class="meta">{{count}} 张代表照片 · 第 {{revision}} 版</p></header>
+    <section aria-label="照片时间线">{{figures}}</section>
+    <footer>由 Nora 整理 · 照片预览已内嵌，可离线打开。文案由 AI 辅助整理，未记录的拍摄日期不会推测补全。</footer>
+  </main>
+  </div>
+</body>
+</html>

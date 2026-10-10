@@ -12,22 +12,26 @@ class ContextBudgetTest {
         ContextBudget b = new ContextBudget(null);
         b.window();
         b.triggerTokens();
-        b.outputReserve(); // min(16k, 10%)
+        b.windowConfigured();
+        b.targetTokens(false);
     }
 
     @Test
     void configuredWindowDrivesLayers() {
         ContextBudget b = new ContextBudget(200_000L);
         b.window();
-        b.outputReserve(); // capped at 16k
-        // 历史预算 = 触发线 - 输出预留 - 固定开销
-        b.historyBudgetTokens(5_000);
+        b.targetTokens(false);
+        b.targetTokens(true);
     }
 
     @Test
-    void historyBudgetNeverBelowFloor() {
-        ContextBudget b = new ContextBudget(8_000L); // 极小窗口
-        b.historyBudgetTokens(999_999); // 保底 2k
+    void actualInputCalibratesThisRunOnly() {
+        ContextBudget b = new ContextBudget(8_000L);
+        b.calibrate(5_000, 8_000);
+        b.tokens(7_000);
+        b.rawTokens(6_000);
+        b.calibrate(0, null);
+        new ContextBudget(null).tokens(7_000);
     }
 
     @Test
@@ -54,6 +58,7 @@ class ContextBudgetTest {
     void overflowDetectorMatchesRelayWording() {
         ChatContextAssembler.isContextOverflow("上游 400: This model's maximum context length is 8192 tokens");
         ChatContextAssembler.isContextOverflow("context_length_exceeded");
+        ChatContextAssembler.isContextOverflow("invalid_request_error: prompt is too long: 150000 tokens > 128000 maximum");
         ChatContextAssembler.isContextOverflow("请求超过上下文长度限制");
         ChatContextAssembler.isContextOverflow("connection reset");
         ChatContextAssembler.isContextOverflow(null);

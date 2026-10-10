@@ -3,11 +3,13 @@
 import { Fragment } from "react";
 import { ArrowDown, MessageSquare as MessageSquareOpen } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
-import { useAgentSettings } from "@/hooks/useChat";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { ChatInputArea } from "./ChatInputArea";
 import { ChatMessage } from "@/lib/api/chatApi";
+import { BrowserTaskCard } from "@/components/browser/BrowserTaskCard";
+import type { useBrowser } from "@/hooks/useBrowser";
+import { useChatCommands } from "@/hooks/useChatCommands";
 
 interface ChatConversationProps {
   sessionId: string;
@@ -18,59 +20,7 @@ interface ChatConversationProps {
   initialRefs?: import("@/lib/chatRefs").ChatRef[];
   /** 挂载后自动发送初始输入(首页「开始新需求」;仅一次,发送后 URL 参数即清) */
   autoSendInitial?: boolean;
-}
-
-/**
- * CJK 感知 token 估算(与后端 ContextBudget.estimateTokens 同口径):
- * 中文≈1 token/字、ASCII≈4 字符/token、其余≈1/2。此前一律 ÷4,中文输入
- * 被低估约 4 倍(2026-09-19 用户反馈「上下文不准」的一环)。
- */
-function estimateTokensCjk(text: string): number {
-  if (!text) return 0;
-  let cjk = 0, ascii = 0, other = 0;
-  for (const ch of text) {
-    const c = ch.codePointAt(0) ?? 0;
-    if (
-      (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3400 && c <= 0x4dbf) ||
-      (c >= 0x3040 && c <= 0x30ff) || (c >= 0xac00 && c <= 0xd7af) ||
-      (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef)
-    ) cjk++;
-    else if (c < 0x80) ascii++;
-    else other++;
-  }
-  return cjk + Math.floor(other / 2) + Math.floor(ascii / 4) + 4;
-}
-
-/**
- * 上下文用量:三级来源——① 最后一条 assistant 轮的服务端 prompt 估算
- * (done.contextWindow/promptTokens,与后端裁剪同一套 CJK 感知口径;落库字段
- * 让刷新后仍可读)加本轮输入;② 逐轮累计服务端真实 usage(全部轮都有时);
- * ③ CJK 感知字符估算兜底(旧数据)。不混计:前一级可用就完全不用后一级。
- */
-function estimateContextTokens(messages: ChatMessage[], input: string): number {
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  if (lastAssistant?.turnMetrics?.promptTokens != null) {
-    return lastAssistant.turnMetrics.promptTokens + estimateTokensCjk(input);
-  }
-  const allMeasured = messages
-    .filter((m) => m.role === "assistant")
-    .every((m) => m.turnMetrics?.usage?.totalTokens != null);
-  if (allMeasured && messages.some((m) => m.role === "assistant")) {
-    const assistantTokens = messages
-      .filter((m) => m.role === "assistant")
-      .reduce((sum, m) => sum + (m.turnMetrics?.usage?.totalTokens ?? 0), 0);
-    const userChars = messages
-      .filter((m) => m.role === "user")
-      .reduce((sum, m) => sum + m.content.length, 0);
-    return assistantTokens + Math.ceil(userChars / 4) + estimateTokensCjk(input);
-  }
-  return messages.reduce((sum, m) => sum + estimateTokensCjk(m.content), 0) + estimateTokensCjk(input);
-}
-
-/** 上下文窗口:服务端 done 下发的生效窗口 > 默认 128k */
-function resolveContextLimit(messages: ChatMessage[]): number {
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  return lastAssistant?.turnMetrics?.contextWindow ?? 128000;
+  browser?: ReturnType<typeof useBrowser>;
 }
 
 /**
@@ -102,14 +52,15 @@ function shouldShowTimeDivider(prev: ChatMessage | undefined, cur: ChatMessage):
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  * 智能滚动:用户上翻阅读历史时不强制拉底,显示「回到底部」按钮。
  */
-export function ChatConversation({ sessionId, initialMessages, initialInput, initialRefs, autoSendInitial }: ChatConversationProps) {
-  const { messages, input, setInput, isSending, sendMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend, refs, addRef, removeRef, limitToRefs, setLimitToRefs } = useChat({
+export function ChatConversation({ sessionId, initialMessages, initialInput, initialRefs, autoSendInitial, browser }: ChatConversationProps) {
+  const { messages, input, setInput, isSending, isStopping, isCompacting, contextMeter, queuedMessages, processingQueuedId, insertQueuedMessage, removeQueuedMessage, restoreQueuedMessage, sendMessage, sendTaskMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend, refs, addRef, removeRef, limitToRefs, setLimitToRefs } = useChat({
     initialMessages,
     initialInput,
     initialRefs,
     autoSendInitial,
     sessionId,
   });
+  const commands = useChatCommands(input, setInput, sendMessage);
   // 跟随消息内容与流式状态变化;切会话时组件重挂载自动贴底
   const { scrollRef, showJumpButton, scrollToBottom } = useAutoScroll([
     messages,
@@ -118,14 +69,15 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
 
   return (
     <>
+      {browser?.state?.task && <BrowserTaskCard sessionId={sessionId} browser={browser} isSending={isSending} onMessage={sendTaskMessage} onStop={stopGenerating} />}
       {/* Chat History */}
       <div className="relative flex-1 min-h-0">
-        <div ref={scrollRef} className="h-full overflow-y-auto p-4 custom-scroll">
-          <div className="max-w-3xl mx-auto space-y-8">
+        <div ref={scrollRef} className="h-full overflow-y-auto px-4 py-6 custom-scroll [@container(min-width:640px)]:px-6">
+          <div className="max-w-[820px] mx-auto space-y-7">
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 pt-20">
-                <MessageSquareOpen className="w-8 h-8 opacity-20" />
-                <span className="text-xs">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
+                <MessageSquareOpen className="w-7 h-7 text-muted-foreground/60" />
+                <span className="text-sm text-center leading-relaxed max-w-sm">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
               </div>
             ) : (
               messages.map((msg, i) => (
@@ -140,7 +92,7 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
                   <ChatMessageItem
                     msg={msg}
                     sessionId={sessionId}
-                    onRetry={retryMessage}
+                    onRetry={msg.turnMetrics?.status === "interrupted" && i !== messages.length - 1 ? undefined : retryMessage}
                     canRetry={!isSending}
                     onEdit={editAndResend}
                     canEdit={!isSending}
@@ -156,7 +108,7 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
           <button
             type="button"
             onClick={() => scrollToBottom(true)}
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-card border border-border shadow-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer animate-in fade-in slide-in-from-bottom-2"
+            className="absolute bottom-3 right-4 z-10 w-8 h-8 rounded-full bg-card border border-border shadow-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer animate-in fade-in slide-in-from-bottom-2"
             title="回到底部"
           >
             <ArrowDown className="w-4 h-4" />
@@ -164,13 +116,16 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
         )}
       </div>
 
-      <ChatInputArea input={input} setInput={setInput} isSending={isSending} onSend={sendMessage} onStop={stopGenerating}
-        reasoningLevel={reasoningLevel} onReasoningLevelChange={(l) => { setReasoningLevel(l); useAgentSettings.getState().setReasoningLevelOverride(l); }}
+      <ChatInputArea input={input} setInput={setInput} isSending={isSending} isStopping={isStopping} isCompacting={isCompacting} onSend={commands.send} onStop={stopGenerating}
+        sessionId={sessionId} commandPanel={commands.panel} onCloseCommandPanel={commands.closePanel}
+        settingsMenu={commands.settingsMenu} onSettingsMenuChange={commands.setSettingsMenu}
+        queuedMessages={queuedMessages} processingQueuedId={processingQueuedId}
+        onInsertQueued={insertQueuedMessage} onRemoveQueued={removeQueuedMessage} onRestoreQueued={restoreQueuedMessage}
+        reasoningLevel={reasoningLevel} onReasoningLevelChange={setReasoningLevel}
         permissionMode={permissionMode} onPermissionModeChange={setPermissionMode}
         refs={refs} onAddRef={addRef} onRemoveRef={removeRef}
         limitToRefs={limitToRefs} onLimitToRefsChange={setLimitToRefs}
-        contextTokens={estimateContextTokens(messages, input)}
-        contextLimit={resolveContextLimit(messages)} />
+        contextMeter={contextMeter} />
     </>
   );
 }

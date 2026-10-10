@@ -2,42 +2,24 @@
 
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const TABS = ["全部", "内置", "数据", "计算", "环境", "通知", "自定义"];
+const CATEGORIES = ["全部", "内置", "数据", "计算", "环境", "通知", "自定义"];
 
 interface SkillTabsProps {
-  activeTab: string;
-  onTabChange: (tab: string) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
 }
 
-export function SkillTabs({ activeTab, onTabChange, searchQuery, onSearchChange }: SkillTabsProps) {
+export function SkillTabs({ searchQuery, onSearchChange }: SkillTabsProps) {
   return (
-    <div className="flex items-center justify-between gap-3 flex-wrap">
-      <div role="tablist" aria-label="技能分类" className="flex gap-1 p-1 bg-muted/50 rounded-lg overflow-x-auto no-scrollbar">
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab}
-            onClick={() => onTabChange(tab)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all whitespace-nowrap ${activeTab === tab ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-gray-200/50 dark:hover:bg-gray-700/50"}`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      <div className="relative shrink-0">
-        <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3 h-3" />
-        <Input
-          placeholder="搜索技能名称或描述..."
-          className="pl-7 pr-3 py-1.5 h-8 bg-card border-border text-xs shadow-sm w-64 focus-visible:ring-1 focus-visible:ring-blue-500"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-        />
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <TabsList aria-label="技能分类" className="h-auto flex-wrap">
+        {CATEGORIES.map((category) => <TabsTrigger key={category} value={category}>{category}</TabsTrigger>)}
+      </TabsList>
+      <div className="relative w-full sm:w-56">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
+        <Input aria-label="查找技能" placeholder="搜索名称或描述…" className="pl-9" value={searchQuery} onChange={(e) => onSearchChange(e.target.value)} />
       </div>
     </div>
   );

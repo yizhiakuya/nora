@@ -10,8 +10,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.POJONode;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
+import dev.langchain4j.data.message.AiMessage;
 
 /**
  * 上下文装配器(2026-09-17 从 ChatOrchestrationService 拆出,复杂度审计 Step 4):
@@ -33,12 +35,17 @@ class ChatContextAssembler {
     private final ServiceLogClient serviceLogClient;
     /** 用户偏好读取(M2-05;可为 null = 测试场景,不注入)。 */
     private final AppSettingStore appSettingStore;
+    private EnvVarsService envVarsService;
 
-    /** 最近一次 compactForRound 回收的旧图张数(可视化 step 用)。 */
-    private int lastRecycledImages;
+    void setEnvVarsService(EnvVarsService envVarsService) { this.envVarsService = envVarsService; }
 
-    /** 最近一次 compactForRound 释放的 token 估算(可视化 step 用)。 */
-    private long estimateTokensFreed;
+    String redact(String text) {
+        return envVarsService == null ? ChatToolExecutor.redactToolContent(text) : envVarsService.redact(text);
+    }
+
+    record Compaction(int toolResults, int rounds, int images, long freedTokens, int promptTokens, long targetTokens) {
+        boolean changed() { return toolResults > 0 || rounds > 0 || images > 0; }
+    }
 
     ChatContextAssembler(ObjectMapper objectMapper,
                          AgentWorkspaceService agentWorkspaceService,
@@ -73,14 +80,6 @@ class ChatContextAssembler {
         this.appSettingStore = appSettingStore;
     }
 
-    int lastRecycledImages() {
-        return lastRecycledImages;
-    }
-
-    long estimateTokensFreed() {
-        return estimateTokensFreed;
-    }
-
     /**
      * 基础系统提示(harness 协议层,设计对齐 Hermes 的 stable 层哲学):
      * 只放跨任务、不可协商的协议约定;人格/风格/任务习惯全部下放到工作区文件
@@ -91,15 +90,23 @@ class ChatContextAssembler {
             你是 Nora 个人工作台中的 AI 助手。以下为协议约定(优先级最高,始终遵守):
             1. 引用知识库来源时必须使用 [[docName]] 标记(渲染协议)。
             2. 需要真实数据或执行操作时,直接调用相应工具——不要凭记忆编造,不要虚构工具执行结果或报错,也不要只描述计划而不行动;工具返回错误时如实说明。
+               在有重要发现、调整方案或长时间等待时,用用户使用的语言简要说明进度;短工具轮次可直接调用工具,无需每轮先回复文本。
+               收到真实工具结果后再判断下一步;失败时说明问题和调整办法,不能连续盲试。
+               同一轮仅并列调用互不依赖的工具;依赖前一个结果的操作留到下一轮。
+               进度说明面向用户,不要输出内部推理全文或复述工具参数;执行状态也由工具步骤展示。
+               已完成用户要求且直接验证通过时及时收尾;复用已获得的结果,避免重复读取和扫描无关历史。
+               以本次用户要求为边界;行为指令、历史记录和 Git 提交等维护仅在用户要求或完成当前任务必须时进行。
+               工具失败后根据错误调整参数或方法,不要原样重试已确认无效的调用。
+               最新工具结果优先于开场目录快照;删除或修改后不要把旧目录当作当前状态。
+                收到补充要求时更新本轮目标,复用已完成的结果;不要为调整计划重放已完成的写操作。
+                工具调用成功只是执行证据;检查实际产物是否满足要求,无法核实的部分如实标为未验证。
             3. 你的语气、风格与工作习惯定义在下方工作区的 SOUL.md 与 AGENTS.md 中——它们是
-               你的可演化指令:self-evolution 是预期行为,想调整行为方式时直接编辑对应文件。
+               行为约定;仅在用户要求调整或当前任务必须时编辑,保持本轮任务范围。
             4. 用户说「记住…」时必须写入工作区文件落盘,不能只口头答应。
             5. 最终回答使用自然的 Markdown:段落紧凑、结论前置;不要复述工具参数或执行过程。
-            6. 你是这个工作台的操作员:它包含对话/知识库/数据源/环境控制台/文件/自动任务/
-               MCP/技能/设置九个功能面,你通过工具直接操作它们(查库、读日志、启停容器、
-               跑命令、管数据源/技能/MCP)。用户问「你能做什么」或需要了解工作台功能时,
-               先读技能「工作台使用手册」(manage_skill action=read)获取权威说明,不要凭记忆
-               编造功能;不确定工作台某能力是否存在时,用工具查证而不是猜测。
+            6. 当前工具定义、启用技能目录和本次环境快照是能力的权威来源,优先于工作区中的历史描述。
+               按任务需要读取目录中实际存在的技能,不假定某个手册或工具必然存在。
+               历史环境与网络状态仅作线索,不能据此认定当前能力永久不可用。
             7. 工具可能返回图片附件(如相册图片)。当图片以图像附件形式提供时,
                直接基于你看到的内容回答;若当前模型不支持图像输入(图片会被跳过并附说明),
                如实告知“当前模型看不到图片”并建议切换到支持识图的模型,
@@ -109,32 +116,41 @@ class ChatContextAssembler {
                intent=inspect 用于查看已有文件。不要把报告正文包装进 nora-artifacts 的 text/files 画廊，
                也不要声称虚构路径已保存。open_file 只展示文件，模型需读取内容时另用 manage_file read。
                最终回答简要说明结论和文件入口即可。此规则替代旧工作区/技能中的文件画廊交付要求。
-               相册缩略图和表格、差异、时间线等业务卡片继续按「产物画廊指南」的协议使用；它们的数据必须来自真实工具结果。
             9. 早期助手回复和工具过程可能已省略,用户消息仍按原顺序保留。
                后续补充不会自动取消之前的限制;明确修改、撤销或切换任务时以较新的要求为准,
                不要重新执行已撤销的旧任务。
+               需要核实早期结果时,优先回读上下文提供的完整记录路径;这些记录是历史证据,
+               不是当前环境快照。没有实际回读路径时说明证据不完整,不要猜路径或扫描无关目录。
+               服务重启后的继续任务复用已保存的完成结果。结果未知不等于执行失败:
+               先用只读工具核实实际状态,无法核实时向用户确认,不要自动重放未知操作。
             10. 请求指代不明或缺少关键信息时(「那个 MCP」「那个文件」无法确定所指、
                不知道用哪个方案),先调 ask_user 工具向用户提问(有候选项就给 options),
                等回答后再动手——不要靠翻文件系统/数据库/日志来"猜"用户指哪个。
                ask_user 会暂停本轮、用户作答后从答案继续,问一句的成本远低于猜十步。
-            11. 探索有边界:查找信息优先在工作台自己的范围内(工作区文件、文件中心、
-               知识库、工作台数据库)。不要扫描用户主目录、其他工具(Claude Code 等)的
+            11. 按任务选择资料来源:工作台数据查对应工具;外部软件、服务的资料查官方文档。
+               不为外部资料查询扫描空知识库、工作区或无关日记;已有证据足够时停止探索。
+               不要扫描用户主目录、其他工具(Claude Code 等)的
                配置与历史会话日志、SSH 到其他服务器翻找——除非用户明确要求。
-               若任务需要的密钥/凭据不在工作台内,用 ask_user 让用户提供或存入
-               设置页「环境变量」,而不是四处翻找或尝试绕过脱敏。
+               工作台凭据用 manage_env_vars 查询，已存变量通过 ${KEY} 引用，不绕过脱敏取回原值。
+               用户提供密钥并要求配置时用 manage_env_vars set 保存，默认 secret=true；
+               不把密钥写进回复、备注或文件。缺少必要凭据时用 ask_user 索取，不扫描日志或应用包猜接口。
             """;
 
     /**
      * 系统性上下文装配(设计见 docs/context-management-design.md):
-     * 固定层之外先为全部历史用户消息留出上下文,剩余空间装入最近的助手/
-     * 工具过程(最多 40 条历史)。不以最后一条消息或摘录替代累计用户要求。
+     * 装入检查点摘要、后续完整历史与当前要求；预算整理在请求前统一执行。
      */
     List<WireMessage> buildMessages(String userMessage,
                                             List<ChatStoreService.StoredMessage> history,
                                             List<CitationDto> citations,
                                             List<String> reflections,
-                                            ContextBudget budget,
                                             SystemPromptResult[] promptOut) {
+        return buildMessages(userMessage, history, citations, reflections, promptOut, null);
+    }
+
+    List<WireMessage> buildMessages(String userMessage, List<ChatStoreService.StoredMessage> history,
+                                   List<CitationDto> citations, List<String> reflections,
+                                   SystemPromptResult[] promptOut, com.nora.agent.dto.ContextCheckpointDto checkpoint) {
         List<WireMessage> messages = new ArrayList<>();
         SystemPromptResult prompt = systemPromptWith(citations);
         promptOut[0] = prompt;
@@ -146,11 +162,7 @@ class ChatContextAssembler {
             messages.add(WireMessage.system(objectMapper, reflectionBlock));
         }
 
-        int fixedCost = ContextBudget.estimateTokens(systemPrompt)
-                + (reflectionBlock == null ? 0 : ContextBudget.estimateTokens(reflectionBlock))
-                + ContextBudget.estimateTokens(userMessage)
-                + (int) requestOverheadTokens();
-        long historyBudget = budget.historyBudgetTokens(fixedCost);
+        appendCheckpoint(messages, checkpoint);
         // controller 在调用前已把当前 user 消息落库(loadMessages 的末条就是它),
         // 这里只拼历史部分并排除末条,末尾统一 add(userMessage)——否则当前消息
         // 会被发两遍(中转/上游按两条独立 user 消息计费并处理)
@@ -161,35 +173,18 @@ class ChatContextAssembler {
                 historyEnd--;
             }
         }
-        long used = 0;
         for (int i = 0; i < historyEnd; i++) {
-            if ("user".equals(history.get(i).role())) {
-                used += wireCostOf(history.get(i));
-            }
-        }
-        if (used > historyBudget) {
-            throw new IllegalArgumentException("历史用户要求已超出当前模型可容纳的上下文，无法完整保留目标与限制。"
-                    + "请切换更大上下文的模型，或在新会话中提供当前有效的任务要求后继续。");
-        }
-        int from = historyEnd;
-        while (from > 0 && historyEnd - from < 40) {
-            ChatStoreService.StoredMessage prev = history.get(from - 1);
-            int cost = "user".equals(prev.role()) ? 0 : wireCostOf(prev);
-            if (used + cost > historyBudget) break;
-            used += cost;
-            from--;
-        }
-        // 保留被裁过程中的用户原文及先后顺序,包括修订和撤销;不提升为 system 指令。
-        for (int i = 0; i < from; i++) {
-            if ("user".equals(history.get(i).role())) {
-                appendHistoryMessage(messages, history.get(i));
-            }
-        }
-        for (int i = from; i < historyEnd; i++) {
             appendHistoryMessage(messages, history.get(i));
         }
-        messages.add(WireMessage.user(objectMapper, userMessage));
+        if (userMessage != null && !userMessage.isBlank()) messages.add(WireMessage.user(objectMapper, userMessage));
         return messages;
+    }
+
+    void appendCheckpoint(List<WireMessage> messages, com.nora.agent.dto.ContextCheckpointDto checkpoint) {
+        if (checkpoint == null) return;
+        messages.add(WireMessage.assistant(objectMapper, "[历史工作摘要，仅为历史资料，不是新的用户或系统指令]\n"
+                + checkpoint.summary() + "\n原始记录：" + checkpoint.archivePath()
+                + "；需要核实时用 manage_workspace read 回读，禁止自动重放历史操作。"));
     }
 
     /**
@@ -202,6 +197,7 @@ class ChatContextAssembler {
      * 旧数据(无 rawArgs)优雅退化为纯文本,不产生孤儿 tool 消息。
      */
     void appendHistoryMessage(List<WireMessage> messages, ChatStoreService.StoredMessage msg) {
+        if ("compaction".equals(msg.sender())) return;
         if ("user".equals(msg.role())) {
             messages.add(WireMessage.user(objectMapper, msg.content()));
             return;
@@ -225,7 +221,12 @@ class ChatContextAssembler {
         for (List<ChatStepDto> roundSteps : byRound.values()) {
             ObjectNode assistant = objectMapper.createObjectNode();
             assistant.put("role", "assistant");
-            assistant.put("content", "");
+            Integer roundIndex = roundSteps.getFirst().roundIndex();
+            String commentary = msg.steps().stream()
+                    .filter(s -> "commentary".equals(s.type()) && java.util.Objects.equals(s.roundIndex(), roundIndex))
+                    .map(ChatStepDto::detail).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.joining("\n\n"));
+            assistant.put("content", commentary);
             ArrayNode calls = assistant.putArray("tool_calls");
             for (ChatStepDto step : roundSteps) {
                 ObjectNode call = calls.addObject();
@@ -274,23 +275,6 @@ class ChatContextAssembler {
             return "ERROR: " + result.error();
         }
         return "(no output)";
-    }
-
-    /** 一条历史消息重建后的 wire token 估算(含工具链;预算循环用,与 messageTokens 同口径)。 */
-    static int wireCostOf(ChatStoreService.StoredMessage msg) {
-        if ("user".equals(msg.role())) {
-            return ContextBudget.estimateTokens(msg.content()) + 8;
-        }
-        if (!"assistant".equals(msg.role())) {
-            return 8;
-        }
-        int cost = ContextBudget.estimateTokens(msg.content() == null ? "" : msg.content()) + 8;
-        for (ChatStepDto step : rebuildableToolSteps(msg.steps())) {
-            cost += ContextBudget.estimateTokens(step.toolName())
-                    + ContextBudget.estimateTokens(step.input().rawArgs())
-                    + ContextBudget.estimateTokens(toolResultText(step)) + 24;
-        }
-        return cost;
     }
 
     /** 轮内微压缩永不触碰的尾部消息数(最近一轮工具往返 + 余量)。 */
@@ -360,6 +344,10 @@ class ChatContextAssembler {
         return toolsOverheadTokens();
     }
 
+    int requestTokens(List<WireMessage> messages) {
+        return messages.stream().mapToInt(ChatContextAssembler::messageTokens).sum() + (int) requestOverheadTokens();
+    }
+
     /**
      * 轮内微压缩(microcompact,语义对齐 Claude Code):预估 prompt 超过
      * 触发线时,把最旧的工具结果就地改写为头尾摘录。只改 content,role/
@@ -367,25 +355,22 @@ class ChatContextAssembler {
      * {@link #COMPACTION_TAIL_KEEP} 条消息完整保留;历史轮的失败也只留要点。
      * force=true(上游已报超限)时压缩目标降为恢复线(窗口 60%)。
      */
-    int compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force,
-                                long overheadTokens) {
+    Compaction compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) {
+        int before = budget.tokens(requestTokens(messages));
         // 旧图回收:与 token 预算无关的带宽护栏——每轮都执行(见 recycleOldImages)
         int recycledImages = recycleOldImages(messages, force);
-        lastRecycledImages = recycledImages;
         long total = 0;
         for (WireMessage m : messages) {
             total += messageTokens(m);
         }
-        total += overheadTokens; // tools spec + 协议封装,占请求大头
-        long limit = force
-                ? (long) (budget.window() * ContextBudget.RECOVERY_RATIO)
-                : budget.triggerTokens() - budget.outputReserve();
-        if (total <= limit) {
-            estimateTokensFreed = 0;
-            return 0;
+        total += requestOverheadTokens(); // tools spec + 协议封装,占请求大头
+        if (!force && budget.tokens(total) <= budget.triggerTokens()) {
+            int after = budget.tokens(total);
+            return new Compaction(0, 0, recycledImages, before - after, after, budget.triggerTokens());
         }
+        long target = budget.targetTokens(force);
+        long limit = budget.rawTokens(target);
         int compactedCount = 0;
-        long freed = 0;
         int lastCompactable = messages.size() - COMPACTION_TAIL_KEEP;
         for (int i = 1; i < lastCompactable && total > limit; i++) { // i=0 system 不动
             WireMessage m = messages.get(i);
@@ -396,9 +381,8 @@ class ChatContextAssembler {
                 for (JsonNode part : contentNode) {
                     if (!"text".equals(part.path("type").asText())) continue;
                     String t = part.path("text").asText("");
-                    String compacted = compactToolContent(t);
+                    String compacted = compactArchivedToolContent(t);
                     if (compacted.equals(t)) continue;
-                    freed += ContextBudget.estimateTokens(t) - ContextBudget.estimateTokens(compacted);
                     total -= ContextBudget.estimateTokens(t) - ContextBudget.estimateTokens(compacted);
                     compactedCount++;
                     ((ObjectNode) part).put("text", compacted);
@@ -406,15 +390,71 @@ class ChatContextAssembler {
                 continue;
             }
             String content = contentNode.asText("");
-            String compacted = compactToolContent(content);
+            String compacted = compactArchivedToolContent(content);
             if (compacted.equals(content)) continue; // 太短不值得
-            freed += ContextBudget.estimateTokens(content) - ContextBudget.estimateTokens(compacted);
             total -= ContextBudget.estimateTokens(content) - ContextBudget.estimateTokens(compacted);
             compactedCount++;
             ((ObjectNode) m.node()).put("content", compacted);
         }
-        estimateTokensFreed = freed;
-        return compactedCount;
+        int archivedRounds = archiveOldRounds(messages, total, limit);
+        int after = budget.tokens(requestTokens(messages));
+        return new Compaction(compactedCount, archivedRounds, recycledImages, before - after, after, target);
+    }
+
+    /** 微压缩不足时只替换完整的早期助手/工具往返，避免孤立调用或丢失用户要求。 */
+    private int archiveOldRounds(List<WireMessage> messages, long total, long limit) {
+        if (total <= limit || agentWorkspaceService == null) return 0;
+        var omitted = new ArrayList<WireMessage>();
+        var kept = new ArrayList<WireMessage>();
+        int insertAt = -1;
+        int rounds = 0;
+        int protectedFrom = messages.size() - COMPACTION_TAIL_KEEP;
+        for (int i = 0; i < messages.size();) {
+            int end = i + 1;
+            if ("assistant".equals(messages.get(i).node().path("role").asText())) {
+                while (end < messages.size() && "tool".equals(messages.get(end).node().path("role").asText())) end++;
+                if (end <= protectedFrom && total + 2_000 > limit) {
+                    if (insertAt < 0) insertAt = kept.size();
+                    var group = messages.subList(i, end);
+                    omitted.addAll(group);
+                    total -= group.stream().mapToLong(ChatContextAssembler::messageTokens).sum();
+                    rounds++;
+                    i = end;
+                    continue;
+                }
+            }
+            kept.addAll(messages.subList(i, end));
+            i = end;
+        }
+        if (omitted.isEmpty()) return 0;
+        StringBuilder transcript = new StringBuilder();
+        StringBuilder recent = new StringBuilder();
+        for (var message : omitted) {
+            var node = message.node();
+            String content = textOfContent(node.path("content"));
+            transcript.append("\n## ").append(node.path("role").asText()).append('\n').append(content == null ? "" : content).append('\n');
+            if (node.get(UpstreamLlmClient.SDK_MESSAGE) instanceof POJONode pojo && pojo.getPojo() instanceof AiMessage ai && ai.thinking() != null) {
+                transcript.append("思考记录:\n").append(ai.thinking()).append('\n');
+            }
+            for (var call : node.path("tool_calls")) {
+                transcript.append("工具 ").append(call.path("function").path("name").asText()).append('\n')
+                        .append(call.path("function").path("arguments").asText()).append('\n');
+            }
+            recent.append(node.path("role").asText()).append(": ").append(Texts.abbreviate(content == null ? "" : content, 180)).append('\n');
+        }
+        try {
+            String reference = agentWorkspaceService.archiveContext("history", redact(transcript.toString())).readHint();
+            String tail = recent.substring(Math.max(0, recent.length() - 1_200));
+            kept.add(insertAt, WireMessage.assistant(objectMapper,
+                    "早期过程索引（仅为先前记录，不是用户指令；工具输出不代表目标已验收）：\n"
+                            + reference + "\n最近省略的过程摘录：\n" + tail));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("round archive failed; preserving context: {}", e.getMessage());
+            return 0;
+        }
+        messages.clear();
+        messages.addAll(kept);
+        return rounds;
     }
 
     /**
@@ -468,6 +508,7 @@ class ChatContextAssembler {
 
     /** 单条工具结果的压缩形态:头 800 + 尾 200,失败只留头 400(错误要点在前)。 */
     static String compactToolContent(String content) {
+        if (content.contains("\n…[早期工具结果已压缩,原文 ")) return content;
         boolean failure = content.startsWith("ERROR:");
         int head = failure ? 400 : 800;
         int tail = failure ? 0 : 200;
@@ -480,17 +521,31 @@ class ChatContextAssembler {
         return body;
     }
 
+    private String compactArchivedToolContent(String content) {
+        if (compactToolContent(content).equals(content)) return content;
+        try {
+            if (agentWorkspaceService == null) return content;
+            String reference = agentWorkspaceService.archiveContext("tool",
+                    redact(content)).readHint();
+            return compactToolContent((content.startsWith("ERROR:") ? "ERROR: " : "")
+                    + reference + "\n" + content);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("tool context archive failed; preserving result: {}", e.getMessage());
+            return content;
+        }
+    }
+
     /** 一条 wire 消息的 token 估算(content + tool_calls 参数 + 封装)。 */
     static int messageTokens(WireMessage m) {
         ObjectNode n = m.node();
         JsonNode contentNode = n.path("content");
         int tokens = ContextBudget.estimateTokens(textOfContent(contentNode) == null ? "" : textOfContent(contentNode))
                 + 8;
+        if (n.get(UpstreamLlmClient.SDK_MESSAGE) instanceof POJONode pojo && pojo.getPojo() instanceof AiMessage ai) {
+            tokens += ContextBudget.estimateTokens(ai.thinking());
+        }
         if (contentNode.isArray()) {
-            // 图片按单张固定成本估算(见 IMAGE_TOKEN_ESTIMATE):与 data URL 长度
-            // 无关——实测追加 ~14MB 图片仅使上游上报输入 +639 tokens;此前
-            // "按 ~16 字符/token"的推断来自把累计 usage 与单轮估算相比的
-            // 日志口径错误(见 logCalibration),并非真实计费方式。
+            // 图片成本取决于模型/分辨率，不按 base64 长度计数；完整 usage 校准此估算。
             for (JsonNode part : contentNode) {
                 if ("image_url".equals(part.path("type").asText())) {
                     tokens += IMAGE_TOKEN_ESTIMATE;
@@ -507,51 +562,16 @@ class ChatContextAssembler {
         return tokens;
     }
 
-    /**
-     * 估算校准日志:把**当前轮**的服务端 prompt 估算与该轮上游真实 inputTokens
-     * 对齐输出(真实值含 tools spec/协议封装 overhead,估算只含消息体)。
-     * 比值持续偏离预期时调整估算系数——观测驱动的闭环。
-     *
-     * <p>必须传**当轮** usage:曾误传累计 usage 与单轮估算相除,产生
-     * ratio=10.73 的虚高告警,并误导出"图片按 data URL 长度计费"的错误结论
-     * (实测:追加 14MB 图片仅使上游上报输入 +639 tokens)。
-     */
-    void logCalibration(int promptEstimate, ChatOrchestrationService.TokenUsage usage, ContextBudget budget) {
-        if (usage == null || usage.inputTokens() == null || promptEstimate <= 0) return;
-        int real = usage.inputTokens();
-        double ratio = (double) real / promptEstimate;
-        // 只在明显偏离时告警(±35% 外),正常波动打 debug
-        String r = String.format("%.2f", ratio);
-        if (ratio < 0.65 || ratio > 1.35) {
-            log.warn("context estimate calibration: promptEstimate={} realInput={} ratio={} window={} trigger={}",
-                    promptEstimate, real, r, budget.window(), budget.triggerTokens());
-        } else {
-            log.debug("context estimate ok: promptEstimate={} realInput={} ratio={}",
-                    promptEstimate, real, r);
-        }
-    }
-
     /** 上游上下文超限错误识别(各家中转措辞不一,宽松匹配)。 */
     static boolean isContextOverflow(String errorMessage) {
         if (errorMessage == null) return false;
         String s = errorMessage.toLowerCase();
         return s.contains("context length") || s.contains("maximum context")
                 || s.contains("context_length") || s.contains("too many tokens")
-                || s.contains("token limit") || s.contains("上下文长度");
+                || s.contains("token limit") || s.contains("prompt is too long") || s.contains("上下文长度");
     }
 
-    /**
-     * 单张图片的 token 估算。
-     *
-     * <p>实测(2026-09-13,同一会话逐轮对比):从 0 图到 1 图 in 增加 ~1.0K
-     * (其中含少量工具结果文本);1 图到 3 图再增加 ~2.3K,即单张 ≈1K。
-     * 与 data URL 长度无关(视觉分辨率口径)——74KB 的 tools 段计 ~11K tokens,
-     * 而单张 2-3MB 的图片只计 ~1K。取 1K 与实测对齐;图片字节的膨胀
-     * 由 recycleOldImages 单独兜底(那才是带宽问题,不是 token 问题)。
-     *
-     * <p>历史注:旧值 1_200 → 一度按 data URL 长度/16 估算(误读校准日志口径,
-     * 见 logCalibration 注释)→ 3_000(过估,实测 ratio 0.61)。现取 1_000。
-     */
+    /** shortcut: 图片以 1K 初估；渠道未提供 usage 时不能视为实际视觉 token 数。 */
     private static final int IMAGE_TOKEN_ESTIMATE = 1_000;
 
     /**
@@ -566,6 +586,7 @@ class ChatContextAssembler {
         // 当前时间:必须注入——模型训练知识过期,不注入就只能 run_command Get-Date
         // 现挖(实测:每轮"看昨天拍的视频"都要先跑一条 PowerShell 查日期)
         sb.append("\n当前时间:").append(currentTimeLine()).append("。\n");
+        sb.append('\n').append(toolsSpecBuilder.terminalRuntimeContext()).append('\n');
         AgentWorkspaceService.BootstrapResult workspaceBootstrap = null;
         AgentSkillService.CatalogBundle skillCatalog = null;
         // 全局记忆:跨会话事实/偏好,约束每轮回答

@@ -6,20 +6,14 @@ import { Plus, Trash2, Copy, Check, KeyRound, Braces } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { requestJson } from "@/lib/api/client";
+import { envVarsApi } from "@/lib/services/envVarsApi";
+import type { EnvVar } from "@/types";
 /**
  * 自定义环境变量(2026-09-19 真实落地):存 agent-service app_setting 表
- * (跨浏览器一致),run_command 执行时注入子进程环境——「设置后 AI 能用到」
- * 从空头承诺变为真实行为。secret 值读取时打码(服务端只回前 3+后 3)。
+ * (跨浏览器一致),原生终端执行时注入子进程环境——「设置后 AI 能用到」
+ * 与 Agent 工具共用存储；secret 值读取时隐藏原文。
  *
  */
-interface EnvVar {
-  key: string;
-  value: string;
-  secret: boolean;
-  note?: string;
-}
-
 export function EnvVarsSettings() {
   const [vars, setVars] = useState<EnvVar[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,10 +26,10 @@ export function EnvVarsSettings() {
 
   const load = useCallback(async () => {
     try {
-      const rows = await requestJson<EnvVar[]>("/chat/settings/env-vars");
+      const rows = await envVarsApi.list();
       setVars(rows);
-    } catch {
-      toast.error("读取环境变量失败(后端不可用?)");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
@@ -44,24 +38,6 @@ export function EnvVarsSettings() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  /** 全量保存到服务端(前端是唯一编辑器,全量语义最直白)。 */
-  const persist = useCallback(async (next: EnvVar[]) => {
-    const prev = vars;
-    setVars(next);
-    try {
-      const rows = await requestJson<EnvVar[]>("/chat/settings/env-vars", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vars: next }),
-      });
-      setVars(rows); // 服务端回读(secret 已打码)
-    } catch (e) {
-      setVars(prev); // 失败回滚
-      toast.error(`保存失败:${e instanceof Error ? e.message : String(e)}`);
-      throw e;
-    }
-  }, [vars]);
 
   const handleAdd = async () => {
     const key = newKey.trim().toUpperCase();
@@ -78,20 +54,22 @@ export function EnvVarsSettings() {
       return;
     }
     try {
-      await persist([...vars, { key, value: newValue.trim(), secret: newSecret, note: newNote.trim() || undefined }]);
+      await envVarsApi.set(key, { value: newValue, secret: newSecret, note: newNote.trim() });
+      await load();
       setNewKey(""); setNewValue(""); setNewNote(""); setNewSecret(true);
       toast.success(`变量「${key}」已保存,AI 执行命令时可用`);
-    } catch {
-      /* persist 已 toast */
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
     }
   };
 
   const remove = async (key: string) => {
     try {
-      await persist(vars.filter((v) => v.key !== key));
+      await envVarsApi.delete(key);
+      await load();
       toast.success(`变量「${key}」已删除`);
-    } catch {
-      /* persist 已 toast */
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -108,17 +86,17 @@ export function EnvVarsSettings() {
   };
 
   return (
-    <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-      <div className="p-6 space-y-6">
+    <div className="surface overflow-hidden">
+      <div className="p-5 sm:p-6 space-y-6">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <KeyRound className="w-4 h-4 text-primary" />
-            <label className="text-sm font-bold text-foreground">自定义凭据与环境变量</label>
+            <label className="text-sm font-semibold text-foreground">自定义凭据与环境变量</label>
           </div>
           <p className="text-xs text-muted-foreground">
             存放你自己的令牌与密钥（GitHub Token、模型 Key、Webhook 等）。保存到服务端(跨浏览器一致),
-            <span className="text-foreground font-medium">AI 通过 run_command 执行命令时自动注入为环境变量</span>
-            ——例如存了 <code className="font-mono">GH_TOKEN</code>,命令里可直接用 <code className="font-mono">$env:GH_TOKEN</code> 引用。
+            <span className="text-foreground font-medium">Agent 执行命令时会自动注入环境变量</span>。
+            终端由运行环境决定：Windows 使用 PowerShell，Linux 使用 sh。
           </p>
         </div>
 
@@ -127,7 +105,7 @@ export function EnvVarsSettings() {
           <div className="text-sm font-medium text-foreground">添加新变量</div>
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             <div className="md:col-span-4">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">变量名</label>
+              <label className="text-[11px] font-bold text-muted-foreground uppercase mb-1.5 block">变量名</label>
               <Input
                 placeholder="例如：GH_TOKEN"
                 className="h-9 text-sm font-mono uppercase bg-background"
@@ -136,8 +114,9 @@ export function EnvVarsSettings() {
               />
             </div>
             <div className="md:col-span-8">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase mb-1.5 block">值</label>
+              <label className="text-[11px] font-bold text-muted-foreground uppercase mb-1.5 block">值</label>
               <Input
+                type={newSecret ? "password" : "text"}
                 placeholder="Token / 密钥 / URL"
                 className="h-9 text-sm font-mono bg-background"
                 value={newValue}
@@ -175,7 +154,7 @@ export function EnvVarsSettings() {
                   <div key={v.key} className="flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 bg-background/30 hover:bg-muted/30 transition-colors">
                     <div className="w-48 shrink-0 min-w-0">
                       <div className="text-xs font-mono font-bold text-foreground truncate">{v.key}</div>
-                      {v.note && <div className="text-[10px] text-muted-foreground truncate mt-0.5">{v.note}</div>}
+                      {v.note && <div className="text-[11px] text-muted-foreground truncate mt-0.5">{v.note}</div>}
                     </div>
                     <div className="flex-1 min-w-0 flex items-center gap-2">
                       <div className="flex-1 px-3 py-1.5 rounded-md bg-muted/50 border border-border text-xs font-mono text-muted-foreground truncate">
@@ -201,10 +180,9 @@ export function EnvVarsSettings() {
       <div className="bg-muted/30 px-6 py-3 border-t border-border flex items-start gap-2">
         <Braces className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          变量存于服务端(app_setting 表),AI 执行 <code className="font-mono text-foreground">run_command</code> 时
-          自动注入为子进程环境变量(PowerShell 用 <code className="font-mono text-foreground">$env:KEY</code>、
-          bash 用 <code className="font-mono text-foreground">$KEY</code> 引用);
-          标记为密钥的变量读取时打码,不会出现在对话上下文中。
+          变量保存到服务端，执行命令时自动注入子进程。PowerShell 用 <code className="font-mono text-foreground">$env:KEY</code>、
+          sh 用 <code className="font-mono text-foreground">$KEY</code> 引用；
+          MCP 配置用 <code className="font-mono text-foreground">{'${KEY}'}</code> 引用；密钥回读只显示脱敏值。
         </p>
       </div>
     </div>

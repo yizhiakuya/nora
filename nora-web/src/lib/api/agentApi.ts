@@ -1,11 +1,13 @@
-import type { ChatMessage, ChatResponder, ChatStep, ChatStepResult, ApprovalRequest, QuestionRequest } from "./chatApi";
+import type { ChatMessage, ChatResponder, ChatStep, ChatStepResult, ChatContextUsage, ApprovalRequest, QuestionRequest, TaskContextPayload } from "./chatApi";
+import { applyChatStreamEvent, type ChatStreamEvent } from "./chatApi";
 import { emitSessionTitle } from "./sessionTitleEvents";
-import { API_BASE, ApiError, defaultTimeoutSignal } from "./client";
+import { API_BASE, ApiError, defaultTimeoutSignal, requestJson } from "./client";
 import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";
-import type { Citation } from "@/types";
+import type { AgentSettings, Citation } from "@/types";
 import { parseSSEStream } from "./sse";
 import { cached, invalidateForPath } from "./requestCache";
 import { hmFromLocalIso } from "@/lib/format";
+import { estimateTextTokens } from "@/lib/tokenEstimate";
 
 /** 结构化工具结果(后端 ChatStepDto.StepResult) */
 type StepResultPayload = ChatStepResult;
@@ -31,7 +33,7 @@ interface StepContextPayload {
 
 interface StepPayload {
   id?: string;
-  type?: "think" | "tool" | "context";
+  type?: ChatStep["type"];
   title?: string;
   detail?: string;
   duration?: string | number;
@@ -52,12 +54,15 @@ interface ReasoningDeltaPayload {
 
 interface DeltaPayload {
   content?: string;
+  roundIndex?: number | null;
 }
 
 interface DoneUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
 }
 
 interface DonePayload {
@@ -72,6 +77,8 @@ interface DonePayload {
   stopped?: boolean;
   /** 统一业务终态(F3,2026-09-26):completed/partial/failed/cancelled;旧后端无该字段 */
   status?: string;
+  stopReason?: string;
+  hadToolErrors?: boolean;
 }
 
 /** SSE `title` 事件载荷：AI 异步起好的会话标题（见后端 AgentController.TitlePayload）。 */
@@ -106,6 +113,7 @@ export function normalizeStep(step: StepPayload, index: number): ChatStep {
     status: step.status ?? "running",
     toolName: step.toolName,
     input: step.input ? displayInput : undefined,
+    inputTokens: step.input?.rawArgs != null ? estimateTextTokens(step.input.rawArgs) : undefined,
     result: step.result,
     context: step.context,
     progress: step.progress,
@@ -181,27 +189,25 @@ export async function answerQuestion(
   return true;
 }
 
-export const AgentAPI: { sendMessage: ChatResponder } = {
-  async sendMessage(message, onUpdate, sessionId, model, reasoningLevel, permissionMode, signal, providerId, context) {
+function createResponder(compactRequestId?: string): ChatResponder {
+  return async (message, onUpdate, sessionId, model, _reasoningLevel, _permissionMode, signal, providerId, context) => {
     if (!sessionId) {
       throw new Error("Agent API requires a sessionId");
     }
 
     let response: Response;
     try {
-      response = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      response = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/${compactRequestId ? "compact" : "messages"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({
+        body: JSON.stringify(compactRequestId ? { requestId: compactRequestId, focus: message, model, providerId: providerId ?? null } : {
           content: message,
           model,
-          reasoningLevel: reasoningLevel || null,
-          permissionMode: permissionMode ?? "assist",
           providerId: providerId ?? null,
           // M2-01:结构化上下文(可空);后端优先解析它,旧行格式作兼容回退
           context: context ?? null,
         }),
-        // 请求阶段可被「停止」按钮中断;流阶段由 reader.cancel 兜底
+        // 切页时可断开连接；停止执行使用后端取消接口，并继续接收终态。
         signal,
       });
     } catch (error) {
@@ -224,32 +230,13 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
     // 放在请求成功之后（失败/中止不该清缓存——那会让「停止生成」白丢历史缓存）。
     invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
 
-    const steps: ChatStep[] = [];
-    let content = "";
-    let donePayload: DonePayload | undefined;
-    /** 当前挂起审批:SSE approval_required 下发;同 stepId 的工具步骤到达即已决策,卡片应清除 */
-    let pendingApproval: ApprovalRequest | undefined;
-    /** 当前挂起提问:SSE question_required 下发;同 stepId 的工具步骤到达即已作答,卡片应清除 */
-    let pendingQuestion: QuestionRequest | undefined;
-
-    // 流结束兜底:仍在 running 的步骤(中断/异常残留)就地收尾,避免永久「执行中」。
-    // 用户主动停止:推理步骤记 completed(已流出的部分思考保留、折叠回看,配合
-    // 消息级「已停止」标记);真实失败路径(流错误/网络断)仍记 failed(红色错误行)。
-    const flushPendingSteps = () => {
-      const aborted = !!signal?.aborted;
-      let touched = false;
-      for (let i = 0; i < steps.length; i++) {
-        if (steps[i].status === "running") {
-          const keepPartial = aborted && steps[i].type === "think";
-          steps[i] = {
-            ...steps[i],
-            status: keepPartial ? "completed" : "failed",
-            detail: steps[i].detail ?? (keepPartial ? "" : "流中断,未收到该步骤结果"),
-          };
-          touched = true;
-        }
-      }
-      if (touched) onUpdate({ steps: [...steps] });
+    let stream: Partial<ChatMessage> = { content: "", sender: compactRequestId ? "compaction" : undefined, steps: [] };
+    let receivedDone = false;
+    let streamError: ApiError | undefined;
+    const publish = (event: ChatStreamEvent) => {
+      const partial = applyChatStreamEvent(stream, event);
+      stream = { ...stream, ...partial };
+      onUpdate(partial);
     };
 
     await parseSSEStream(response.body.getReader(), ({ event, data }) => {
@@ -258,87 +245,32 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
       if (event === "approval_required") {
         const approval = parseData<ApprovalRequest>(data);
         if (approval?.approvalToken) {
-          pendingApproval = approval;
-          onUpdate({ approval });
+          publish({ type: "approval_required", approval });
         }
       } else if (event === "question_required") {
         const question = parseData<QuestionRequest>(data);
         if (question?.questionToken) {
-          pendingQuestion = question;
-          onUpdate({ question });
+          publish({ type: "question_required", question });
         }
       } else if (event === "step") {
         const payload = parseData<StepPayload>(data);
         if (!payload) return;
-        const normalized = normalizeStep(payload, steps.length);
-        // 工具步骤(重新)出现 = 该调用已越过审批门(批准执行/拒绝跳过),
-        // 挂起的审批卡同步撤下,避免 120s 超时后还挂着死卡让用户白点
-        if (pendingApproval && normalized.id === pendingApproval.stepId) {
-          pendingApproval = undefined;
-          onUpdate({ approval: undefined });
-        }
-        // 提问同理:同 stepId 的步骤进入终态(completed/declined/failed)
-        // = 已作答/超时,卡片撤下(提问发出时步骤本就在 running,不按 running 撤)
-        if (pendingQuestion && normalized.id === pendingQuestion.stepId
-            && normalized.status !== "running") {
-          pendingQuestion = undefined;
-          onUpdate({ question: undefined });
-        }
-        // 其它推理步骤仍在 running = 那一轮 LLM 已结束却没收到结算事件
-        // (部分模型轮无文字 delta,推理步骤会一直挂着)。工具/新步骤到来即
-        // 视为该轮推理完成,防止「思考中…」跨工具轮永久展开。
-        // 若同一步骤随后又有 reasoning_delta,会自然置回 running。
-        for (let i = 0; i < steps.length; i++) {
-          if (steps[i].status === "running" && steps[i].type === "think"
-              && steps[i].id !== normalized.id) {
-            steps[i] = { ...steps[i], status: "completed" };
-          }
-        }
-        const existingIndex = steps.findIndex((step) => step.id === normalized.id);
-        if (existingIndex >= 0) steps[existingIndex] = normalized;
-        else steps.push(normalized);
-        onUpdate({ steps: [...steps] });
+        publish({ type: "step", step: normalizeStep(payload, stream.steps?.length ?? 0) });
     } else if (event === "delta") {
         const payload = parseData<DeltaPayload>(data);
         if (!payload?.content) return;
-        if (!content) {
-          let reasoningCompleted = false;
-          for (let i = 0; i < steps.length; i++) {
-            if (steps[i].id.startsWith("s-reasoning-") && steps[i].status === "running") {
-              steps[i] = { ...steps[i], status: "completed" };
-              reasoningCompleted = true;
-            }
-          }
-          if (reasoningCompleted) onUpdate({ steps: [...steps] });
-        }
-        content += payload.content;
-        onUpdate({ content });
+        publish({ type: "delta", content: payload.content, roundIndex: payload.roundIndex });
       } else if (event === "reasoning_delta") {
         const payload = parseData<ReasoningDeltaPayload>(data);
         if (!payload?.content) return;
-        const id = `s-reasoning-${payload.roundIndex ?? "final"}`;
-        const index = steps.findIndex((step) => step.id === id);
-        if (index >= 0) {
-          steps[index] = {
-            ...steps[index],
-            detail: `${steps[index].detail ?? ""}${payload.content}`,
-            status: "running",
-          };
-        } else {
-          steps.push(normalizeStep({
-            id,
-            type: "think",
-            title: "推理过程",
-            detail: payload.content,
-            status: "running",
-            roundIndex: payload.roundIndex,
-          }, steps.length));
-        }
-        onUpdate({ steps: [...steps] });
+        publish({ type: "reasoning_delta", content: payload.content, roundIndex: payload.roundIndex });
       } else if (event === "sources") {
         const payload = parseData<Citation[]>(data);
         const sources = normalizeSources(payload);
-        if (sources) onUpdate({ sources });
+        if (sources) publish({ type: "sources", sources });
+      } else if (event === "context_usage") {
+        const payload = parseData<ChatContextUsage>(data);
+        if (payload) publish({ type: "context_usage", contextUsage: payload });
       } else if (event === "title") {
         // AI 异步起好的标题：广播给会话 store 刷新侧栏（不占用消息流）
         const payload = parseData<TitlePayload>(data);
@@ -346,17 +278,11 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
           emitSessionTitle(payload.sessionId, payload.title);
         }
       } else if (event === "done") {
-        donePayload = parseData<DonePayload>(data);
-        for (let i = 0; i < steps.length; i++) {
-          if (steps[i].id.startsWith("s-reasoning-") && steps[i].status === "running") {
-            steps[i] = { ...steps[i], status: "completed" };
-          }
-        }
-        onUpdate({
-          isTyping: false,
-          approval: undefined,
-          question: undefined,
-          steps: [...steps],
+        const donePayload = parseData<DonePayload>(data);
+        if (!donePayload) throw new Error("Invalid Agent completion event");
+        receivedDone = true;
+        publish({
+          type: "finish", stopped: donePayload?.stopped, failed: !!streamError || donePayload?.status === "failed",
           turnMetrics: donePayload?.durationMs != null
             ? {
                 durationMs: donePayload.durationMs,
@@ -364,17 +290,18 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
                 contextWindow: donePayload.contextWindow ?? null,
                 promptTokens: donePayload.promptTokens ?? null,
                 ttftMs: donePayload.ttftMs ?? null,
+                status: donePayload.status,
+                stopReason: donePayload.stopReason,
+                hadToolErrors: donePayload.hadToolErrors,
               }
             : undefined,
         });
       } else if (event === "error") {
         const payload = parseData<ErrorPayload>(data);
-        flushPendingSteps();
-        onUpdate({ error: payload?.message || "Agent 执行失败", isTyping: false, approval: undefined, question: undefined });
-        // 异常处理系统:结构化错误(带分类)原样抛出——humanizeError 按 category
-        // 直接映射文案,不再字符串猜测;traceId 供报障定位
-        throw new ApiError({
-          message: payload?.message || "Agent 执行失败",
+        publish({ type: "finish", failed: true });
+        // 保留原始错误，同时接收紧随其后的 done 终态与计量。
+        streamError = new ApiError({
+          message: payload?.message || data || "Agent 执行失败",
           code: 0,
           category: payload?.category,
           errorCode: payload?.errorCode,
@@ -385,29 +312,21 @@ export const AgentAPI: { sendMessage: ChatResponder } = {
       }
     }, signal);
 
-    flushPendingSteps();
-
-    // 用户停止:保留已流出的部分内容,正常结束(stopped 标记由 useChat 层加)
-    if (signal?.aborted) {
-      onUpdate({ isTyping: false });
-      return;
-    }
-
-    if (!content && steps.length === 0) {
+    if (signal?.aborted) return;
+    if (streamError) throw streamError;
+    if (!receivedDone) throw new Error("Agent stream ended before completion");
+    if (!stream.content && !stream.steps?.length) {
       throw new Error("Agent API returned an empty stream");
     }
 
-    onUpdate({ isTyping: false });
-  },
-};
+  };
+}
+
+export const AgentAPI = { sendMessage: createResponder(), compact: createResponder };
 
 /** POST /chat/sessions/{id}/cancel → 中断进行中的轮次(上游 LLM 调用一并中止) */
-export async function cancelTurnOnBackend(sessionId: string): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", headers: authHeaders() });
-  } catch {
-    /* 网络失败时前端 abort 已断流,后端轮次自然结束即可 */
-  }
+export async function cancelTurnOnBackend(sessionId: string): Promise<boolean> {
+  return requestJson<boolean>(`/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
 }
 
 /**
@@ -449,6 +368,13 @@ async function fetchSessionsUncached(): Promise<
  * 走统一缓存：实测单次响应 123KB、被重复调用 27 次（切会话/重连各拉一遍），
  * 是本地最大的重复负载来源。历史只在发消息/截断时变化，那些写操作会失效缓存。
  */
+export async function steerTurnOnBackend(sessionId: string, turnId: string, messageId: string, content: string): Promise<void> {
+  await requestJson<boolean>(`/chat/sessions/${encodeURIComponent(sessionId)}/steer`, {
+    method: "POST", body: JSON.stringify({ turnId, messageId, content }),
+  });
+  invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+}
+
 export async function fetchSessionMessages(sessionId: string, force = false): Promise<ChatMessage[]> {
   return cached(
     `/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
@@ -462,6 +388,7 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
   const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
   if (!res.ok) throw new Error(`fetchSessionMessages failed: ${res.status}`);
   const stored = (await res.json()) as Array<{
+    id?: string;
     role: "user" | "assistant";
     content: string;
     steps?: StepPayload[];
@@ -472,26 +399,37 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     promptTokens?: number | null;
     /** 当轮生效上下文窗口(落库);旧数据为 null */
     contextWindow?: number | null;
+    runStatus?: string | null;
+    taskContext?: TaskContextPayload | null;
+    contextUsage?: ChatContextUsage | null;
     createdAt?: string;
     /** 发送者(2026-09-20):automation=定时任务发送;旧数据 null 按 user */
     sender?: string | null;
   }>;
   return (stored ?? []).map((m, i) => ({
-    id: `${sessionId}-${i}`,
+    id: m.id ?? `${sessionId}-${i}`,
     role: m.role,
     content: m.content ?? "",
+    // 错误原文来自服务端步骤，部分回答和刷新历史也保持同一展示。
+    error: m.role === "assistant"
+      ? m.steps?.find(step => step.id === "s-error" && step.status === "failed")?.detail
+      : undefined,
     timestamp: hmFromLocalIso(m.createdAt),
-    sender: m.sender === "automation" ? "automation" as const : undefined,
+    sender: m.sender === "automation" || m.sender === "steering" || m.sender === "compaction" ? m.sender : undefined,
     steps: (m.steps ?? []).map((s, j) => normalizeStep(s, j)),
     sources: normalizeSources(m.sources),
+    taskContext: m.taskContext ?? undefined,
+    contextUsage: m.contextUsage ?? undefined,
+    stopped: m.runStatus === "cancelled",
     // 整轮耗时来自落库字段(与 done 事件同源)。此前只在流式期间有,刷新/切会话
     // 后从历史重建消息就丢了——「查看工作过程 · N 次工具调用 · Xs」的总计时消失。
     // promptTokens/contextWindow 同理(2026-09-19):上下文指示器刷新后显示真实值,
     // 否则回退字符估算严重低估(用户反馈「上下文不准」)。
     // 旧数据无这些字段(undefined/null)→ 保持 undefined,折叠行不显示秒数。
-    turnMetrics: m.durationMs != null
+    turnMetrics: m.role === "assistant" && (m.durationMs != null || m.runStatus != null)
       ? {
-          durationMs: m.durationMs,
+          durationMs: m.durationMs ?? undefined,
+          status: m.runStatus ?? undefined,
           usage: null,
           contextWindow: m.contextWindow ?? null,
           promptTokens: m.promptTokens ?? null,
@@ -531,6 +469,7 @@ export async function fetchLiveTurn(sessionId: string): Promise<LiveTurnInfo> {
 
 export interface LiveTurnInfo {
   running: boolean;
+  operation?: "chat" | "compact" | null;
   /** 本轮用户消息(用于校验与本地消息流对齐) */
   content?: string | null;
   startedAtMs?: number | null;
@@ -577,13 +516,14 @@ export function attachLiveTurnStream(
   sessionId: string,
   handlers: {
     onStep?: (s: StepPayload) => void;
-    onDelta?: (c: string) => void;
+    onDelta?: (c: string, roundIndex?: number | null) => void;
     onReasoningDelta?: (roundIndex: number | null, c: string) => void;
     onSources?: (c: Citation[]) => void;
+    onContextUsage?: (usage: ChatContextUsage) => void;
     onApproval?: (a: ApprovalRequest) => void;
     /** ask_user 澄清提问(2026-09-29);作答经 answerQuestion 提交 */
     onQuestion?: (q: QuestionRequest) => void;
-    onDone?: (p?: unknown) => void;
+    onDone?: (p?: DonePayload) => void;
     onError?: (msg: string) => void;
     onIdle?: () => void;
     /**
@@ -606,8 +546,8 @@ export function attachLiveTurnStream(
     if (p) handlers.onStep?.(p);
   });
   es.addEventListener("delta", (e) => {
-    const p = safeParse<{ content?: string }>((e as MessageEvent).data);
-    if (p?.content) handlers.onDelta?.(p.content);
+    const p = safeParse<DeltaPayload>((e as MessageEvent).data);
+    if (p?.content) handlers.onDelta?.(p.content, p.roundIndex);
   });
   es.addEventListener("reasoning_delta", (e) => {
     const p = safeParse<{ roundIndex: number | null; content: string }>((e as MessageEvent).data);
@@ -616,6 +556,10 @@ export function attachLiveTurnStream(
   es.addEventListener("sources", (e) => {
     const p = safeParse<Citation[]>((e as MessageEvent).data);
     if (p) handlers.onSources?.(p);
+  });
+  es.addEventListener("context_usage", (e) => {
+    const p = safeParse<ChatContextUsage>((e as MessageEvent).data);
+    if (p) handlers.onContextUsage?.(p);
   });
   es.addEventListener("approval_required", (e) => {
     const p = safeParse<ApprovalRequest>((e as MessageEvent).data);
@@ -626,6 +570,8 @@ export function attachLiveTurnStream(
     if (p) handlers.onQuestion?.(p);
   });
   es.addEventListener("done", (e) => {
+    // 接续轮已写入历史，先失效运行中的缓存，避免回填时短暂移除当前回答。
+    invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
     handlers.onDone?.(safeParse((e as MessageEvent).data));
     es.close();
   });
@@ -635,11 +581,13 @@ export function attachLiveTurnStream(
     const data = (e as MessageEvent).data;
     if (data) {
       const p = safeParse<{ message?: string }>(data);
+      invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
       handlers.onError?.(p?.message ?? "未知错误");
       es.close();
     }
   });
   es.addEventListener("idle", () => {
+    invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
     handlers.onIdle?.();
     es.close();
   });
@@ -661,31 +609,13 @@ function safeParse<T>(data: string | undefined): T | undefined {
   }
 }
 
-/** GET /chat/settings → agent 全局设置(权限模式/默认模型/思考等级覆写) */
-export async function fetchAgentSettings(): Promise<{
-  permissionMode?: "ask" | "assist" | "full";
-  model?: string | null;
-  reasoningLevel?: string | null;
-}> {
-  const res = await fetch(`${API_BASE}/chat/settings`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`fetchAgentSettings failed: ${res.status}`);
-  const body = await res.json();
-  return (body?.data ?? body) ?? {};
+export function fetchAgentSettings(): Promise<AgentSettings> {
+  return requestJson<AgentSettings>("/chat/settings", { cache: "no-store" });
 }
 
 /** PUT /chat/settings → 部分更新 agent 全局设置(merge 语义) */
-export async function saveAgentSettings(patch: {
-  permissionMode?: "ask" | "assist" | "full";
-  model?: string | null;
-  reasoningLevel?: string | null;
-}): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/settings`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(patch),
-    signal: defaultTimeoutSignal(),
+export function saveAgentSettings(patch: AgentSettings): Promise<AgentSettings> {
+  return requestJson<AgentSettings>("/chat/settings", {
+    method: "PUT", body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error(`saveAgentSettings failed: ${res.status}`);
-  // 写后失效：设置改了，缓存里的旧设置必须清（否则界面显示的还是改前的值）
-  invalidateForPath("/chat/settings");
 }

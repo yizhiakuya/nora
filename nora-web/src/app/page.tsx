@@ -6,7 +6,6 @@ import { Header } from "@/components/layout/Header";
 import { usePreferences } from "@/hooks/usePreferences";
 import { Search, ArrowUp, Loader2, Paperclip, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { QuickActions } from "@/components/home/QuickActions";
 import { RunningTasks } from "@/components/automations/RunningTasks";
@@ -60,14 +59,12 @@ export default function Home() {
 
   const headerActions = (
     <>
-      <div className="relative w-full max-w-[12rem] md:w-64 hidden sm:block" onClick={openCmdK}>
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-        <Input readOnly placeholder="搜索..." className="pl-9 pr-4 py-1.5 h-8 bg-muted border-border text-xs focus-visible:ring-1 focus-visible:ring-blue-500 cursor-pointer w-full" />
-        <div className="absolute right-2 top-1/2 transform -translate-y-1/2 hidden md:flex items-center gap-1 cursor-pointer">
-          <kbd className="border border-border rounded px-1 text-[9px] text-muted-foreground bg-card">⌘K</kbd>
-        </div>
-      </div>
-      <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={openCmdK}>
+      <Button variant="outline" aria-label="打开快速查找" className="hidden sm:flex h-8 w-48 justify-start bg-muted/50 text-muted-foreground" onClick={openCmdK}>
+        <Search className="w-4 h-4" />
+        <span className="flex-1 text-left">搜索…</span>
+        <kbd className="hidden md:inline rounded border border-border bg-card px-1 text-[11px]">⌘K</kbd>
+      </Button>
+      <Button variant="ghost" size="icon" aria-label="打开快速查找" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={openCmdK}>
         <Search className="w-4 h-4" />
       </Button>
     </>
@@ -80,24 +77,28 @@ export default function Home() {
         actions={headerActions}
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 relative">
-        <div className="max-w-4xl mx-auto space-y-6 pb-20">
+      <div className="page-content custom-scroll">
+        <div className="max-w-4xl mx-auto space-y-7 pb-10">
           {/* 首要焦点:输入需求 */}
-          <div className="pt-6 sm:pt-10 animate-in fade-in slide-in-from-bottom-2">
-            <h1 className="text-xl sm:text-2xl font-bold text-foreground mb-4">{greetLine}，今天想让我帮你做什么？</h1>
-            <div className="bg-card border border-border rounded-2xl shadow-sm focus-within:border-blue-400 dark:focus-within:border-blue-600 transition-colors p-3">
+          <div className="pt-2 sm:pt-5 animate-in fade-in duration-200">
+            <p className="mb-2 text-sm text-muted-foreground">{greetLine}</p>
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">今天想完成什么？</h1>
+            <p className="page-description mb-6">告诉 Nora 你的目标，或带上资料一起开始。</p>
+            <div className="bg-card border border-input rounded-2xl shadow-surface focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/10 transition-colors p-4">
               <textarea
-                rows={2}
+                rows={3}
+                aria-label="告诉 Nora 你想完成的事"
                 value={demand}
                 onChange={(e) => setDemand(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return;
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     startDemand();
                   }
                 }}
-                placeholder="例如：比较这几份资料的差异，给我一份报告；或把本周的演出照片整理到一个文件夹"
-                className="w-full bg-transparent border-none outline-none resize-none text-sm text-foreground placeholder:text-muted-foreground/60 px-1 py-1"
+                placeholder="描述你的目标，或添加资料后开始…"
+                className="w-full bg-transparent border-none outline-none resize-none text-base sm:text-sm leading-relaxed text-foreground placeholder:text-muted-foreground px-1 py-1"
               />
               {/* B3:发送前选中的资料 chips(可删;随跳转带进新会话) */}
               {refs.length > 0 && (
@@ -108,30 +109,31 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <div className="flex items-center justify-between mt-1">
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+              <div className="flex items-center justify-between gap-3 mt-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   {/* B3:发送前可加资料——📎 文件 / 📄 知识库 */}
                   <button
                     type="button"
                     onClick={() => setPicker("file")}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    className="inline-flex h-8 items-center gap-1.5 px-2 rounded-lg hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                     title="添加文件(随需求一起交给 AI)"
                   >
-                    <Paperclip className="w-3 h-3" /> 文件
+                    <Paperclip className="w-4 h-4" /> 文件
                   </button>
                   <button
                     type="button"
                     onClick={() => setPicker("doc")}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    className="inline-flex h-8 items-center gap-1.5 px-2 rounded-lg hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                     title="添加知识库文档(随需求一起交给 AI)"
                   >
-                    <BookOpen className="w-3 h-3" /> 知识库
+                    <BookOpen className="w-4 h-4" /> 知识库
                   </button>
-                  <span className="hidden sm:inline">Enter 发送，Shift+Enter 换行</span>
+                  <span className="hidden md:inline text-[11px]">Enter 发送 · Shift+Enter 换行</span>
                 </div>
                 <Button
-                  size="sm"
-                  className="h-7 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600"
+                  size="icon"
+                  aria-label="发送需求"
+                  className="h-9 w-9 shrink-0"
                   onClick={startDemand}
                   disabled={!demand.trim() || starting}
                 >
@@ -141,24 +143,26 @@ export default function Home() {
             </div>
           </div>
 
+          {/* 常用操作 */}
+          <section className="animate-in fade-in duration-200">
+            <h2 className="section-heading mb-3">常用操作</h2>
+            <QuickActions />
+          </section>
+
           {/* 继续处理:后台运行中的轮次(真实探测,无则不显示空卡片) */}
-          <section className="animate-in fade-in slide-in-from-bottom-3 duration-500">
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">继续处理</h2>
+          <section className="animate-in fade-in duration-200">
+            <h2 className="section-heading mb-3">继续处理</h2>
             <RunningTasks compact />
           </section>
 
           {/* 最近任务结果(B1 命名修正 2026-09-27:内容是执行记录,含失败/取消,
               不叫「成果」;真正的已保存文件在「资料 → 工作区/长期知识」) */}
-          <section className="animate-in fade-in slide-in-from-bottom-3 duration-500">
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">最近任务结果</h2>
+          <section className="animate-in fade-in duration-200">
+            <h2 className="section-heading mb-3">最近任务结果</h2>
             <RecentResults />
           </section>
 
-          {/* 常用操作 */}
-          <section className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">常用操作</h2>
-            <QuickActions />
-          </section>
+
         </div>
       </div>
 

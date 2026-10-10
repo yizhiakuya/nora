@@ -9,8 +9,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -56,6 +59,7 @@ public class AgentWorkspaceService {
     static final int BOOTSTRAP_TOTAL_CHARS = 16_000;
     /** 单个文件读写上限(字符)。 */
     static final int MAX_FILE_CHARS = 200_000;
+    static final int READ_PAGE_CHARS = 6_000;
     /** 目录列举上限(条目)。 */
     static final int MAX_LIST_ENTRIES = 200;
     /**
@@ -77,6 +81,22 @@ public class AgentWorkspaceService {
 
     public Path root() {
         return root;
+    }
+
+    /** 内部证据按内容去重；复用工作区文件读写，不登记为交付成果。 */
+    ContextRecord archiveContext(String kind, String content) {
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        String path = "context/" + kind + "-" + contentHash(bytes) + ".txt";
+        if (!Files.isRegularFile(resolveSafe(path))) writeBinaryAny(path, bytes);
+        return new ContextRecord(path, content.codePointCount(0, content.length()));
+    }
+
+    record ContextRecord(String path, int characters) {
+        String readHint() {
+            return "完整记录: " + path + "（" + characters + " 字符）；manage_workspace read 使用 path=\""
+                    + path + "\", unit=chars, offset=1, limit=" + READ_PAGE_CHARS
+                    + " 回读；offset 为从 1 开始的字符序号,按返回的下一页 offset 继续。";
+        }
     }
 
     // ---------- 初始化 ----------
@@ -124,17 +144,13 @@ public class AgentWorkspaceService {
                     # 使用约定(可自行演化:积累到更优做法时直接更新本文件)
 
                     ## 工作台操作(我是这个工作台的操作员)
-                    - 用户问工作台功能/怎么用/你能做什么:先读技能「工作台使用手册」(manage_skill read),按手册回答,不凭记忆编造。
+                    - 工作台操作按当前工具定义执行;任务需要时读取已启用的相关技能。
                     - 需要真实数据先查证:数据库统计用 execute_sql;服务异常先 read_service_logs;不猜测。
                     - 操作前想清楚影响面:只读查询直接做;有副作用的动作(写 SQL/容器/数据源/纳管源/命令)按权限档位走审批。
-                    - 工作台功能有九个面(对话/知识库/数据源/环境控制台/文件/自动任务/MCP/技能/设置),细节见手册技能。
 
                     ## 澄清与边界(2026-09-29,经验教训)
                     - 请求指代不明(「那个 MCP」「那个文件」)或缺关键信息:先 `ask_user` 提问,
                       有候选项就给 options;不要靠全盘搜索猜用户指哪个。问一句 << 猜十步。
-                    - 探索限定在工作台范围内(工作区/文件中心/知识库/工作台数据库)。不扫用户主目录、
-                      不翻其他工具(Claude Code 等)的配置与历史日志、不 SSH 去别的服务器找线索——
-                      除非用户明确要求。
                     - 缺密钥/凭据:用 ask_user 让用户提供,或指引用户存入 设置页「环境变量」后
                       用 ${VAR} 引用(MCP 的 url/headers 支持);绝不尝试绕过平台的密钥脱敏。
 
@@ -144,12 +160,6 @@ public class AgentWorkspaceService {
                     - 从手机相册导出前先想:这批素材是否已在工作区存在(如 full-album)?
                       已有则不必重下——fetch_media 对已存在的文件会跳过(可安全重跑续传),但仍会白跑一遍清单。
                     - 时间范围语义:`to` 传纯日期(如 2026-09-16)= 含当天一整天;`from` 传纯日期 = 当天 0 点起。
-
-                    ## 记忆维护(工作区就是我的记忆)
-                    - 学到**稳定偏好/画像事实**:更新 `USER.md`(祈使句、简明)。
-                    - 学到**耐久事实/决定**(项目约定、重要结论):更新 `MEMORY.md`,保持精简(每轮注入)。
-                    - 日常观察、进度、临时上下文:追加到 `memory/YYYY-MM-DD.md`(按需读,不注入)。
-                    - 写入前先 read 相关文件避免覆盖;优先追加/最小编辑;删除记忆前向用户确认。
 
                     ## 文件交付与业务画廊
                     - 报告、代码、表格先保存为真实文件，再用 open_file 展示；工作区成果用 intent=deliver 登记。
@@ -201,6 +211,15 @@ public class AgentWorkspaceService {
             resolved = root.resolve(cleaned).normalize();
         }
         boolean inside = resolved.startsWith(root);
+        if (inside) {
+            try {
+                Path existing = resolved;
+                while (!Files.exists(existing) && existing.getParent() != null) existing = existing.getParent();
+                inside = existing.toRealPath().startsWith(root.toRealPath());
+            } catch (IOException e) {
+                throw new IllegalArgumentException("路径解析失败: " + e.getMessage(), e);
+            }
+        }
         return new ResolvedTarget(resolved, inside);
     }
 
@@ -218,24 +237,11 @@ public class AgentWorkspaceService {
         if (cleaned.startsWith("/") || cleaned.matches("^[A-Za-z]:.*")) {
             throw new IllegalArgumentException("拒绝绝对路径: " + relative + "(工作区内请用相对路径)");
         }
-        Path resolved = root.resolve(cleaned).normalize();
-        if (!resolved.startsWith(root)) {
+        ResolvedTarget target = resolveAny(cleaned);
+        if (!target.insideWorkspace()) {
             throw new IllegalArgumentException("拒绝越界路径: " + relative);
         }
-        // 已存在时做真实路径校验(防符号链接打出根目录)
-        try {
-            Path existing = resolved;
-            while (!Files.exists(existing) && existing.getParent() != null) existing = existing.getParent();
-            if (Files.exists(existing)) {
-                Path real = existing.toRealPath();
-                if (!real.startsWith(root.toRealPath())) {
-                    throw new IllegalArgumentException("拒绝符号链接逃逸: " + relative);
-                }
-            }
-        } catch (IOException e) {
-            throw new IllegalArgumentException("路径解析失败: " + e.getMessage());
-        }
-        return resolved;
+        return target.path();
     }
 
     /** 系统目录防呆:写/删一律拒绝(读允许,避免 agent 误改操作系统文件)。 */
@@ -356,32 +362,45 @@ public class AgentWorkspaceService {
     /**
      * 分段读取(设计 §5.3 大结果回读):按行区间读取文件——截断不变成证据
      * 永久丢失,模型可继续取后续内容。offset 从 1 开始(与「第 N 行」一致);
-     * limit 默认 500 行、上限 2000。
+     * lines 上限 2000 行;chars 上限 READ_PAGE_CHARS 个 Unicode 码点。
      *
      * @return 文本 + 一行「还有后续」的续读指引(到文件尾时不给)
      */
-    public String readRangeAny(String path, int offsetLines, int limitLines) {
+    public String readRangeAny(String path, int offsetValue, int limitValue, String unit) {
+        if (!"lines".equals(unit) && !"chars".equals(unit)) {
+            throw new IllegalArgumentException("unit 仅支持 lines 或 chars");
+        }
         Path file = resolveAny(path).path();
         if (!Files.isRegularFile(file)) {
             throw new IllegalArgumentException("文件不存在: " + file);
         }
-        int offset = Math.max(1, offsetLines);
-        int limit = Math.min(Math.max(1, limitLines), 2000);
+        int offset = Math.max(1, offsetValue);
         try {
             // 超大文件防护:分段读仍会整读进内存——50MB 以上拒绝(日志类文件
             // 一般远小于此;真需要时先切分/过滤)
             long size = Files.size(file);
             if (size > 50L * 1024 * 1024) {
                 throw new IllegalArgumentException("文件过大(" + (size / 1024 / 1024)
-                        + "MB),分段读需要先缩小范围——可用 run_command 过滤(如 Select-String)或先切分文件");
+                        + "MB),分段读需要先缩小范围——可用命令工具过滤或先切分文件");
             }
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            // 二进制防呆:任一行含 NUL 即拒绝(与 readPath 同口径)
-            for (String line : lines) {
-                if (line.indexOf('\u0000') >= 0) {
-                    throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            if (content.indexOf('\u0000') >= 0) {
+                throw new IllegalArgumentException("拒绝读取二进制文件: " + file);
+            }
+            if ("chars".equals(unit)) {
+                int total = content.codePointCount(0, content.length());
+                if (total == 0 && offset == 1) return "(空文件)";
+                if (offset > total) {
+                    throw new IllegalArgumentException("起始字符 " + offset + " 超过文件总字符数(" + total + ")");
                 }
+                int from = offset - 1;
+                int to = Math.min(total, from + Math.min(Math.max(1, limitValue), READ_PAGE_CHARS));
+                return content.substring(content.offsetByCodePoints(0, from), content.offsetByCodePoints(0, to))
+                        + "\n(第 " + offset + "-" + to + " 字符,共 " + total + " 字符)"
+                        + (to < total ? "\n…还有后续:继续读取用 unit=chars, offset=" + (to + 1) : "");
             }
+            List<String> lines = content.lines().toList();
+            int limit = Math.min(Math.max(1, limitValue), 2000);
             if (offset > lines.size()) {
                 throw new IllegalArgumentException("起始行 " + offset + " 超过文件总行数("
                         + lines.size() + " 行)——用更小的 offset 重试");
@@ -590,7 +609,7 @@ public class AgentWorkspaceService {
      * 按直觉尝试 action="edit" 被拒。edit 让「改一小段」变成一等操作。
      *
      * @param path    目标文件(相对=工作区内,绝对=整机)
-     * @param oldText 要被替换的原文(必须与文件内容精确一致,含缩进)
+     * @param oldText 要被替换的原文(文字与缩进精确一致,兼容 LF/CRLF)
      * @param newText 替换后的新文本(空字符串=删除该段)
      * @return 人类可读结果(替换位置提示)
      */
@@ -609,18 +628,25 @@ public class AgentWorkspaceService {
         } catch (IOException e) {
             throw new IllegalArgumentException("读取失败: " + e.getMessage());
         }
-        int first = content.indexOf(oldText);
-        if (first < 0) {
-            throw new IllegalArgumentException("old_string 在文件中不存在——请先 read 确认原文(注意空格/缩进/换行必须完全一致)。"
+        String pattern = Arrays.stream(oldText.replace("\r\n", "\n").split("\n", -1))
+                .map(Pattern::quote).collect(Collectors.joining("\\r?\\n"));
+        var match = Pattern.compile(pattern).matcher(content);
+        if (!match.find()) {
+            throw new IllegalArgumentException("old_string 在文件中不存在——请先 read 确认原文(空格和缩进必须完全一致)。"
                     + "整文件重写请改用 write");
         }
-        int second = content.indexOf(oldText, first + oldText.length());
-        if (second >= 0) {
+        int first = match.start();
+        int end = match.end();
+        if (match.find(first + 1)) {
             throw new IllegalArgumentException("old_string 在文件中出现多次(不唯一),拒绝替换——"
                     + "请带足上下文(前后各几行)使其唯一,或改用 write 全量重写");
         }
-        String updated = content.substring(0, first) + (newText == null ? "" : newText)
-                + content.substring(first + oldText.length());
+        String replacement = newText == null ? "" : newText.replace("\r\n", "\n");
+        int newline = content.indexOf('\n');
+        if (newline > 0 && content.charAt(newline - 1) == '\r') {
+            replacement = replacement.replace("\n", "\r\n");
+        }
+        String updated = content.substring(0, first) + replacement + content.substring(end);
         if (updated.length() > MAX_FILE_CHARS) {
             throw new IllegalArgumentException("替换后超过 " + MAX_FILE_CHARS + " 字符上限");
         }
@@ -636,8 +662,8 @@ public class AgentWorkspaceService {
                 line++;
             }
         }
-        return "已编辑 " + path + "(第 " + line + " 行附近替换 " + oldText.length()
-                + " 字符 → " + (newText == null ? 0 : newText.length()) + " 字符)";
+        return "已编辑 " + path + "(第 " + line + " 行附近替换 " + (end - first)
+                + " 字符 → " + replacement.length() + " 字符)";
     }
 
     private synchronized int writePath(Path file, String content) {
@@ -1132,7 +1158,7 @@ public class AgentWorkspaceService {
      * <p>结构对齐 Hermes 三层提示词装配:身份(SOUL.md,agent 可自行演化) →
      * 使用约定(AGENTS.md) → 记忆快照(USER.md/MEMORY.md);每层逐文件+总量双预算
      * 截断、缺失占位;memory/ 日记只列清单不注入正文(按需 read)。
-     * 文件修改只影响后续会话(会话内快照不变,对齐 Hermes 的缓存语义)。
+     * 文件修改在下次用户请求装配上下文时生效,不修改正在执行的请求快照。
      *
      * @return 注入结果;工作区不可用时返回 null(静默降级)
      */
@@ -1144,12 +1170,12 @@ public class AgentWorkspaceService {
                     .append("工作区根: ").append(root).append("(文件系统上的记忆载体,用 manage_workspace 读写)")
                     .append("\n")
                     .append("相对路径=工作区内;绝对路径(如 D:/projects/...)可访问整机——"
-                            + "帮用户查看/整理项目文件时直接用,写/删区外文件时会请求用户确认。")
+                            + "帮用户查看/整理项目文件时直接用;审批由当前权限模式和工具返回的审批请求决定。")
                     .append("\n");
 
             List<BootstrapFileInfo> files = new ArrayList<>();
             int[] budget = {BOOTSTRAP_TOTAL_CHARS};
-            sb.append("\n").append("### 身份(SOUL.md——你的可演化人格:想调整自己的语气/边界,直接编辑它)").append("\n");
+            sb.append("\n").append("### 身份(SOUL.md)").append("\n");
             appendBootstrapSection(sb, IDENTITY_FILES, budget, files);
             sb.append("\n").append("### 使用约定(AGENTS.md)").append("\n");
             appendBootstrapSection(sb, CONTEXT_FILES, budget, files);
@@ -1159,7 +1185,8 @@ public class AgentWorkspaceService {
             List<String> dailyNotes = appendDailyListing(sb);
             sb.append("\n")
                     .append("记忆维护:稳定偏好→USER.md;耐久事实/决定→MEMORY.md;日常观察/进度→memory/今日.md"
-                            + "(按需读取,不注入)。用户说「记住…」时必须落盘,不能只口头答应。")
+                            + "(按需读取,不注入)。运行时缺失、安装状态、网络可达性是临时状态,只记带日期的日记,"
+                            + "不能写成长期能力限制;复用前以当前快照或工具结果核实。写入前读相关文件,优先 edit/append 保留已有内容。")
                     .append("\n");
             return new BootstrapResult(sb.toString(), files, dailyNotes);
         } catch (Exception e) {

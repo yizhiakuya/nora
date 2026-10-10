@@ -38,13 +38,13 @@ export function ModelSettings() {
   return (
     <div className="space-y-4">
       {/* 状态概览卡片 */}
-      <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5">
-        <div className="flex items-center justify-between">
+      <div className="surface p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-bold text-foreground">模型接入</h2>
+            <h2 className="text-sm font-semibold text-foreground">模型接入</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {connectedCount > 0
-                ? `${connectedCount} 个服务商已连通 · ${enabledModels.length} 个可用模型 · 默认 ${defaultModel}${activeProvider ? `（${activeProvider.name}）` : ""}`
+              {providers.length > 0
+                ? `${providers.length} 个服务商 · ${connectedCount} 个已验证连通 · ${enabledModels.length} 个可用模型 · 默认 ${defaultModel}${activeProvider ? `（${activeProvider.name}）` : ""}`
                 : "尚未接入任何服务商，请先添加并测试连通性"}
             </p>
           </div>

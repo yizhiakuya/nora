@@ -128,14 +128,14 @@ export function NetworkSettings() {
   return (
     <div className="space-y-4">
       {/* 出站代理:页面直接配置,保存即生效 */}
-      <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5">
+      <div className="surface p-5">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <Network className="w-4 h-4 text-blue-500" />
-            <h2 className="text-sm font-bold text-foreground">出站代理</h2>
+            <h2 className="text-sm font-semibold text-foreground">出站代理</h2>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">{enabled ? "已启用" : "未启用"}</span>
+            <span className="text-[11px] text-muted-foreground">{enabled ? "已启用" : "未启用"}</span>
             <Switch
               checked={enabled}
               disabled={saving}
@@ -150,7 +150,7 @@ export function NetworkSettings() {
         </p>
         <div className="flex items-end gap-2 max-w-md">
           <div className="flex-1">
-            <label className="text-[10px] text-muted-foreground mb-1 block">主机地址</label>
+            <label className="text-[11px] text-muted-foreground mb-1 block">主机地址</label>
             <Input
               className="h-8 text-xs font-mono"
               placeholder="127.0.0.1"
@@ -160,7 +160,7 @@ export function NetworkSettings() {
             />
           </div>
           <div className="w-24">
-            <label className="text-[10px] text-muted-foreground mb-1 block">端口</label>
+            <label className="text-[11px] text-muted-foreground mb-1 block">端口</label>
             <Input
               className="h-8 text-xs font-mono"
               placeholder="7897"
@@ -176,7 +176,7 @@ export function NetworkSettings() {
           </Button>
         </div>
         {proxy && (
-          <p className="text-[10px] text-muted-foreground mt-2">
+          <p className="text-[11px] text-muted-foreground mt-2">
             {proxy.enabled
               ? <>当前生效:<span className="font-mono text-foreground">{proxy.url}</span></>
               : "当前直连外网。"}
@@ -185,10 +185,10 @@ export function NetworkSettings() {
       </div>
 
       {/* 连通性测试 */}
-      <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm p-5">
+      <div className="surface p-5">
         <div className="flex items-center gap-2 mb-3">
           <Globe className="w-4 h-4 text-violet-500" />
-          <h2 className="text-sm font-bold text-foreground">连通性测试</h2>
+          <h2 className="text-sm font-semibold text-foreground">连通性测试</h2>
         </div>
         <div className="flex gap-2 mb-3">
           <Input
@@ -207,7 +207,7 @@ export function NetworkSettings() {
           <div className="space-y-1.5 rounded-lg border border-border p-3">
             <StatusLine label="直连" status={result.directStatus} ms={result.directMs} />
             <StatusLine label="走代理" status={result.proxyStatus} ms={result.proxyMs} />
-            <p className="text-[10px] text-muted-foreground pt-1">
+            <p className="text-[11px] text-muted-foreground pt-1">
               {result.proxyStatus == null
                 ? "代理未启用,仅测试直连"
                 : result.directStatus !== 0 && result.proxyStatus === 0
@@ -218,7 +218,7 @@ export function NetworkSettings() {
             </p>
           </div>
         ) : (
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-[11px] text-muted-foreground">
             输入外网地址测试直连与代理两条通路的可达性（如模型上游、https://api.jina.ai）。
           </p>
         )}

@@ -65,12 +65,17 @@ needApproval = mode == ASK
 | `manage_service` | enable/disable | HIGH | |
 | `manage_service` | register/remove | **CRITICAL** | PROC 注册=宿主机命令纳入守护；删除不可逆 |
 | `manage_mcp` | list / **tools** | LOW | 视图已脱敏；tools 读缓存快照不触发远端（2026-09-18 P2-9） |
+| `manage_env_vars` | list | LOW | 查询环境变量名称、备注和脱敏值 |
+| `manage_env_vars` | set/delete | HIGH | 单项设置或删除，保留其他变量，与设置页共用 `EnvVarsService` 和事务存储；跟随全局档位 |
 | `manage_mcp` | refresh/enable/disable/register/remove/setPolicy/**call** | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH）。**call**=按名调用 lazy 服务器工具（与 mcp__* 挂载同语义）；**setPolicy** 改变挂载面（eager/lazy） |
 | `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守通道放行 |
 | `mcp__*__photos_manage` | trash_list | LOW | 手机相册回收站查看（只读；2026-09-20） |
 | `mcp__*__photos_manage` | move/copy/rename/delete/trash_restore/album_create | HIGH | 手机相册整理写操作；delete=移入 App 回收站（Pictures/Nora回收站）可恢复，不是销毁 |
 | `mcp__*__photos_manage` | **trash_purge** | **CRITICAL** | 彻底删除手机照片（不可恢复；仅回收站内文件可被 purge）；无人值守通道直接拒绝 |
 | `manage_skill` | list/read/create/update/remove | LOW | 纯数据操作（技能库），无系统副作用 |
+| `manage_photo_album` | list/read/create/update/feedback | LOW | 固定工作区内生成相册，与区内写同级；增量内容去重，修改需最新 revision；feedback 可改文案/样式，remember 仅在用户明确要求今后沿用时使用；不改源照片 |
+| `manage_browser` | state/open/snapshot/inspect/extract/plan/export/verify/learn/rows、scroll/back/forward/reload/select_tab/close_tab/close | LOW | 对话独立真实 Chromium；ARIA 快照与 DOM 采集；验收计划和采集记录由服务端保存；导出 CSV 重读并核对文件哈希，修改后旧验收失效；样本确认仅由用户提交，选行仍引用真实采集记录且不降低标准；保存方法必须验收通过 |
+| `manage_browser` | click/fill/key | HIGH | 点击、填表或按键可能提交网站数据；沿用三档审批；用户接管时拒绝后续 Agent 网页操作，超时/中断不自动重放 |
 | `search_knowledge` | — | LOW | 知识库主动检索（只读；2026-09-18 新增） |
 | `manage_knowledge` | list/stats | LOW | 只读视图 |
 | `manage_knowledge` | index/reindex | HIGH | 写知识库索引（可逆：可 remove 重来） |
@@ -78,13 +83,15 @@ needApproval = mode == ASK
 | `manage_automation` | list/executions | LOW | 只读视图 |
 | `manage_automation` | create/toggle/run | HIGH | 改变未来自动执行面（create 的 prompt 将进无人值守通道） |
 | `manage_automation` | **remove** | **CRITICAL** | 删除规则（历史保留，但需重建） |
-| `run_command` | — | HIGH | 本机终端非交互命令（构建/测试/git/包管理）；不做命令白名单（假安全），防线=审批卡完整展示命令+档位选择 |
+| `powershell/sh（仅当前平台注册的工具）` | — | HIGH | 本机终端非交互命令（构建/测试/git/包管理）；不做命令白名单（假安全），防线=审批卡完整展示命令+档位选择 |
 
 **MCP 管理特例说明**（2026-09-11 定）：
 - `manage_mcp` 的 register/remove 曾定 CRITICAL，导致 FULL 档下注册仍弹审批——与全局档位语义脱节，用户要求改为跟随全局
 - action 别名归一化 `create→register`、`delete→remove`（`RiskClassifier.normalizeMcpAction`）：**分类器、执行层、审批明细三处必须共用**，否则会出现「一处按未知 HIGH、另一处按 CRITICAL 真执行」的判定漂移
 
 ## 4. 敏感数据边界（三层脱敏）
+
+环境变量通过 `manage_env_vars` 管理，set 省略 secret 时默认 true。工具日志与步骤原始参数隐藏 value；审批只展示动作和变量名，标题由服务端生成；密钥读取完整遮蔽。命令启动时注入明文，MCP 建立连接时解析 `${KEY}`，配置与视图保留引用。secret 控制显示脱敏，沿用既有持久化方式，不承诺存储加密；用户原消息保留。
 
 | 层 | 机制 | 位置 |
 |---|---|---|
@@ -105,9 +112,12 @@ needApproval = mode == ASK
 | `datasource_manage` | manage_datasource | create 显示连接信息（密码隐藏）；remove 显示级联后果 |
 | `service_manage` | manage_service | register 按 kind 显示对应字段；remove 提示不再监控 |
 | `mcp_manage` | manage_mcp | register：**STDIO 显示完整命令行**（装的什么包一眼可见）/ 远程显示 url+header 键名；remove 提示工具立即不可用 |
+| `env_vars_manage` | manage_env_vars | 动作、变量名，value 始终隐藏；提示后续命令和 MCP 连接受影响 |
 | `workspace_file` | manage_workspace | 路径 + 内容预览（截断 200 字；edit 另显示 old→new 替换预览）+ 区外警告 |
+| `workspace_file` | manage_photo_album | 相册标识、动作和完整参数；生成新版，旧版仍可查看 |
+| `browser` | manage_browser | 网页 URL/定位信息、动作与完整参数；提示点击或输入可能提交表单 |
 | `file_manage` | manage_file 管理动作 | rename 显示新名称；move 显示目标文件夹；delete 提示回收站可恢复；mkdir 显示文件夹名（2026-09-18 新增） |
-| `terminal_command` | run_command | **命令原文完整展示** + cwd + shell + 超时（用户审的就是将执行的） |
+| `terminal_command` | powershell/sh（仅当前平台注册的工具） | **命令原文完整展示** + cwd + shell + 超时（用户审的就是将执行的） |
 | `knowledge_manage` | manage_knowledge | index 显示 fileId+展示名；remove 显示分块一并删除的后果（2026-09-18 新增） |
 | `automation_manage` | manage_automation | create **完整展示无人值守指令 prompt** + 触发方式 + 「没有审批门」提示；remove/run 显示后果（2026-09-18 新增） |
 | `mcp_tool` | mcp__* | 服务器名 + 参数（截断 400 字） |
@@ -153,7 +163,7 @@ needApproval = mode == ASK
 - **登录完成语义**：创建或**更新已有 github 服务器**（evict 连接池 → 更新 url/headers → 启用 → refresh）；连接测试失败不丢凭据（warning 提示，可稍后测试连接重试）
 - **npm 包已弃用**：`@modelcontextprotocol/server-github` 官方标记 deprecated——GitHub MCP 统一用远程端点；本地 stdio 版仅遗留场景保留
 
-## 8. 本机终端 run_command（2026-09-11）
+## 8. 本机终端 powershell/sh（仅当前平台注册的工具）（2026-09-11）
 
 **能力**：agent 在本机执行非交互命令（构建/测试/git/npm/pip/查进程），对齐 Claude Code / Codex 的终端工具。
 

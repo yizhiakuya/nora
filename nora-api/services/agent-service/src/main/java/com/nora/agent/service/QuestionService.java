@@ -24,7 +24,7 @@ import com.nora.agent.dto.QuestionRequestDto;
  *
  * <p>为什么不镜像 Redis(与审批不同):提问等待有界(默认 300s、上限 600s),
  * 且轮次线程本身是进程内的——agent-service 重启会连带把在途轮次标记
- * interrupted(见 ChatStoreService.markStaleRunsInterrupted),票据跨进程
+ * interrupted(见 ChatStoreService.recoverStaleRuns),票据跨进程
  * 恢复没有意义。单节点部署下纯进程内行为即可。
  */
 @Service

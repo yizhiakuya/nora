@@ -1,14 +1,17 @@
-import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info, Loader2 } from "lucide-react";
+import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info, Loader2, MessageSquare } from "lucide-react";
 import { useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
 import { parseArtifactsFence, parseLegacyGalleryFence, type ArtifactGallery } from "@/lib/artifacts";
 import { ToolRow } from "./ToolStepRow";
 import { ContextRow } from "./ContextStepRow";
+import { Markdown } from "@/components/shared/Markdown";
+import { ReasoningTokens } from "./ReasoningTokens";
+import { usePreferences } from "@/hooks/usePreferences";
 
 /**
  * Agent 过程时间线（内联式，无外框）：
- * - 推理（type=think）：浅色小字内联流式展示，结束后自动折叠为一行「已深度思考」
+ * - 推理与工具详情按「推理摘要」偏好开合，手动选择优先
  * - 工具（type=tool）：单行紧凑 chip（名称 + 参数摘要 + 状态），可展开参数/结果
  * 整体作为消息骨架的一部分与回答平铺在同一时间线上。
  */
@@ -17,13 +20,11 @@ import { ContextRow } from "./ContextStepRow";
 
 
 
-/** 推理步骤：默认折叠为一行摘要(流式中也是),点击展开回看。 */
-function ReasoningRow({ step }: { step: ChatStep }) {
+/** 推理步骤：摘要始终可见，正文按偏好展开，手动选择优先。 */
+function ReasoningRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }) {
   const running = step.status === "running";
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  // 默认折叠;用户点击永远优先。流式中折叠不丢内容,delta 仍会累积进 detail,
-  // 展开即见全文
-  const open = userOpen ?? false;
+  const open = userOpen ?? defaultOpen;
   const seconds = step.duration
     ? step.duration.replace(/s$/, "")
     : null;
@@ -63,7 +64,7 @@ function ReasoningRow({ step }: { step: ChatStep }) {
           )}
         </button>
         {open && step.detail && (
-          <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground border-l-2 border-sky-200 dark:border-sky-900 pl-3 ml-[6px] mt-1 mb-2 max-h-64 overflow-auto">
+          <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground border-l-2 border-border pl-3 ml-[6px] mt-1 mb-2 max-h-64 overflow-auto">
             {step.detail}
           </pre>
         )}
@@ -77,26 +78,27 @@ function ReasoningRow({ step }: { step: ChatStep }) {
         type="button"
         aria-expanded={open}
         onClick={() => setUserOpen(!open)}
-        className="w-full flex items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors group"
+        className="w-full flex flex-wrap items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors group"
       >
         {running ? (
-          <Brain className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400 animate-pulse shrink-0" />
+          <Brain className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />
         ) : (
-          <Brain className="w-3.5 h-3.5 text-violet-400/70 dark:text-violet-500/70 shrink-0" />
+          <Brain className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         )}
         <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
           {running ? "思考中…" : "已深度思考"}
         </span>
         {!running && seconds && (
-          <span className="text-[10px] text-muted-foreground/70 tabular-nums">{seconds}s</span>
+          <span className="text-[11px] text-muted-foreground/70 tabular-nums">{seconds}s</span>
         )}
+        <ReasoningTokens text={step.detail ?? ""} active={running} />
         {step.status === "failed" && (
-          <span className="text-[10px] text-red-500">· 失败</span>
+          <span className="text-[11px] text-red-500">· 失败</span>
         )}
         <ChevronDown className={`w-3 h-3 text-muted-foreground/40 transition-transform ${open ? "" : "-rotate-90"}`} />
       </button>
       {open && step.detail && (
-        <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground border-l-2 border-violet-200 dark:border-violet-900 pl-3 ml-[6px] mt-1 mb-2 max-h-64 overflow-auto">
+        <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground border-l-2 border-border pl-3 ml-[6px] mt-1 mb-2 max-h-64 overflow-auto">
           {step.detail}
         </pre>
       )}
@@ -109,10 +111,22 @@ function ReasoningRow({ step }: { step: ChatStep }) {
 
 
 /** 单条步骤（think/tool/context 分发）。 */
-function StepRow({ step }: { step: ChatStep }) {
-  if (step.type === "think") return <ReasoningRow step={step} />;
+function StepRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }) {
+  if (step.type === "commentary" || step.type === "answer") {
+    if (!step.detail) return null;
+    return (
+      <div className="flex items-start gap-2 py-2 text-sm leading-relaxed animate-in fade-in">
+        <MessageSquare className="w-3.5 h-3.5 text-blue-500/70 shrink-0 mt-1" />
+        <div className="min-w-0 flex-1">
+          <Markdown className="chat-markdown">{step.detail}</Markdown>
+          {step.status === "running" && <span className="inline-block w-1 h-3 ml-1 align-middle bg-blue-500 animate-pulse" />}
+        </div>
+      </div>
+    );
+  }
+  if (step.type === "think") return <ReasoningRow step={step} defaultOpen={defaultOpen} />;
   if (step.type === "context") return <ContextRow step={step} />;
-  return <ToolRow step={step} />;
+  return <ToolRow step={step} defaultOpen={defaultOpen} />;
 }
 
 
@@ -124,36 +138,38 @@ function StepRow({ step }: { step: ChatStep }) {
  * 由 ChatMessageItem 放到回答下方的 TurnMeta 行。
  */
 export function AgentThoughtBlock({ steps }: { steps: ChatStep[] }) {
+  const defaultOpen = usePreferences((s) => s.reasoningSummary === "detailed");
   if (steps.length === 0) return null;
   return (
     <div className="space-y-1">
       {steps.map((step) => (
-        <StepRow key={step.id || `${step.type}-${step.title}`} step={step} />
+        <StepRow key={step.id || `${step.type}-${step.title}`} step={step} defaultOpen={defaultOpen} />
       ))}
     </div>
   );
 }
 
 /**
- * 工作过程块（对齐 Codex/Claude Code 的执行流心智）：
- * - 过程与输出**常驻可见**：执行中完整时间线实时展示，完成后保持展开——
- *   此前完成后整块自动折叠为一行，执行中可见的输出在轮次结束瞬间"消失"
- *   （2026-10-02 用户反馈："过程里面的输出消失了，不会像 codex/claude code 那样"）；
- * - 用户手动收起后尊重用户选择（可随时再展开回看）；
+ * 工作过程块：执行中展开，结束后只保留手动查看过的过程。
+ * - 用户手动展开或收起整体过程时，尊重用户选择；
+ * - 详情中的点击（含键盘触发）表示用户已查看，自动展开不算查看；
  * - 折叠态仍保留「结果类」内容（photos_showcase 的画廊卡片）——
  *   过程可收起，结果必须可见（散图/拼图属过程，随过程一起收起）。
  */
 export function AgentProcessBlock({
   steps,
   isTyping,
+  isRunning = isTyping,
   durationMs,
 }: {
   steps: ChatStep[];
   isTyping: boolean;
+  isRunning?: boolean;
   durationMs?: number;
 }) {
-  // 默认展开:过程常驻可见;用户点击收起后保持收起
-  const [collapsed, setCollapsed] = useState(false);
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const [inspected, setInspected] = useState(false);
+  const collapsed = !(userOpen ?? (isRunning || inspected));
   if (steps.length === 0) return null;
 
   const toolCount = steps.filter((s) => s.type === "tool").length;
@@ -169,8 +185,11 @@ export function AgentProcessBlock({
       <button
         type="button"
         aria-expanded={!collapsed}
-        onClick={() => setCollapsed((v) => !v)}
-        className="group flex items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors"
+        onClick={() => {
+          setUserOpen(collapsed);
+          setInspected(true);
+        }}
+        className="group flex flex-wrap items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors"
       >
         <ChevronRight
           className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform ${collapsed ? "" : "rotate-90"}`}
@@ -178,23 +197,27 @@ export function AgentProcessBlock({
         <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
           {collapsed ? "查看工作过程" : "工作过程"}
         </span>
-        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+        <span className="text-[11px] text-muted-foreground/70 tabular-nums">
           · {summary}
           {durationMs != null && ` · ${(durationMs / 1000).toFixed(1)}s`}
         </span>
         {isTyping && <Loader2 className="w-3 h-3 text-blue-500 animate-spin shrink-0" />}
       </button>
-      {collapsed ? (
-        galleries.length > 0 && (
+      {collapsed && galleries.length > 0 && (
           <div className="mt-1.5 space-y-1.5">
             {galleries.map((g, i) => (
               <ArtifactsBlock key={i} gallery={g} />
             ))}
           </div>
-        )
-      ) : (
-        <div className="mt-1">
+      )}
+      {(!collapsed || inspected) && (
+        <div hidden={collapsed} className="mt-1" onClickCapture={() => setInspected(true)}>
           <AgentThoughtBlock steps={steps} />
+          {isTyping && !steps.some(step => step.status === "running" || step.status === "pending") && (
+            <div role="status" className="flex items-center gap-1.5 py-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" />正在判断下一步…
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -234,6 +257,6 @@ export function TurnMeta({
   if (parts.length === 0) return null;
 
   return (
-    <div className="text-[10px] text-muted-foreground/70 tabular-nums pt-0.5">{parts.join(" · ")}</div>
+    <div className="text-[11px] text-muted-foreground/70 tabular-nums pt-0.5">{parts.join(" · ")}</div>
   );
 }

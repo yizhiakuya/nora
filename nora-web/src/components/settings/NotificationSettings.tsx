@@ -29,12 +29,12 @@ export function NotificationSettings() {
   };
 
   return (
-    <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-      <div className="p-6 space-y-6">
+    <div className="surface overflow-hidden">
+      <div className="p-5 sm:p-6 space-y-6">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Bell className="w-4 h-4 text-primary" />
-            <label className="text-sm font-bold text-foreground">通知事件</label>
+            <label className="text-sm font-semibold text-foreground">通知事件</label>
           </div>
           {EVENTS.map(({ key, icon: Icon, label, desc }) => (
             <div key={key} className="flex items-center justify-between">
@@ -60,7 +60,7 @@ export function NotificationSettings() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Monitor className="w-4 h-4 text-primary" />
-            <label className="text-sm font-bold text-foreground">通知通道</label>
+            <label className="text-sm font-semibold text-foreground">通知通道</label>
           </div>
           <div className="flex items-center justify-between">
             <div>

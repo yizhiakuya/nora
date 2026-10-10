@@ -13,6 +13,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nora.agent.dto.ChatStepDto;
+import com.nora.agent.dto.ContextUsageDto;
 import com.nora.agent.dto.CitationDto;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
@@ -88,18 +89,35 @@ class ChatTurnRunner {
                          PermissionMode permissionMode, Long providerId,
                          com.nora.agent.dto.TaskContext taskContext,
                          String sender, boolean unattended, String sessionTitle, SseEmitter emitter) {
+        runTurn(sessionId, content, model, reasoningLevel, permissionMode, providerId, taskContext, sender,
+                unattended, sessionTitle, emitter, null, null);
+    }
+
+    void runCompactTurn(String sessionId, String content, String model, String reasoningLevel, Long providerId,
+                        String runId, String focus, SseEmitter emitter) {
+        runTurn(sessionId, content, model, reasoningLevel, PermissionMode.ASK, providerId, null, "compaction",
+                false, null, emitter, runId, focus);
+    }
+
+    private void runTurn(String sessionId, String content, String model, String reasoningLevel,
+                         PermissionMode permissionMode, Long providerId, com.nora.agent.dto.TaskContext taskContext,
+                         String sender, boolean unattended, String sessionTitle, SseEmitter emitter,
+                         String compactRunId, String compactFocus) {
+        boolean compaction = compactRunId != null;
         // 每轮开始:清陈旧取消标志(上一轮遗留的信号作废,避免新轮被误杀)
         if (turnCancellation != null) {
             turnCancellation.begin(sessionId);
         }
         // 每轮注册 live turn:事件进有界缓冲,SSE 断开(刷新/切页)后可重连回放;
         // 编排线程不受断开影响,收尾照常落库
-        TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content);
+        TurnStreamRegistry.LiveTurn liveTurn = compaction ? turnStreams.start(sessionId, content, compactRunId, "compact")
+                : turnStreams.start(sessionId, content);
         // 运行生命周期持久化(M3-01,方案 §6.4):开始时落 running,结束更新同一行。
         // runId 用 liveTurn.turnId(与 SSE 游标/事件 id 同源,前端能对上)。
         String runId = liveTurn.turnId;
         // 数组包装:lambda(whenComplete)里要读取该标记,普通 boolean 不是 effectively final
         boolean[] runStarted = {false};
+        boolean[] completionAttempted = {false};
         // 最近一次已落库的运行状态(避免每次步骤都打 DB;M3-02 状态衔接用)
         String[] lastRunStatus = {"running"};
         try {
@@ -107,7 +125,9 @@ class ChatTurnRunner {
             // 再异步让 AI 生成短标题覆盖它。不再把整条原文塞进标题列——
             // 列宽 VARCHAR(255)，超长消息会让会话创建直接失败（实测）。
             boolean firstTurn;
-            if ("automation".equals(sender)) {
+            if (compaction) {
+                firstTurn = false;
+            } else if ("automation".equals(sender)) {
                 // 定时任务会话:确定性 id + 「定时任务:规则名」标题;被删可复活
                 chatStoreService.ensureAutomationSession(sessionId,
                         sessionTitle == null || sessionTitle.isBlank() ? "定时任务" : sessionTitle);
@@ -116,14 +136,9 @@ class ChatTurnRunner {
                 firstTurn = chatStoreService.ensureSession(
                         sessionId, ChatStoreService.placeholderTitle(content));
             }
-            try {
-                chatStoreService.startRun(runId, sessionId, content);
-                runStarted[0] = true;
-            } catch (Exception e) {
-                log.warn("failed to persist run start for {}: {}", sessionId, e.getMessage());
-            }
-            // 用户消息落库(带发送者标记:定时任务的指令消息 sender=automation)
-            chatStoreService.saveMessage(sessionId, "user", content, null, null, null, null, null, sender);
+            if (compaction) chatStoreService.startCompactRun(runId, sessionId, content);
+            else chatStoreService.startRun(runId, sessionId, content, sender, taskContext);
+            runStarted[0] = true;
             // 仅本会话首次命名：后续轮次改标题会覆盖上一轮已经起好的名字
             if (firstTurn) {
                 scheduleTitleGeneration(sessionId, content, model, providerId, liveTurn, emitter);
@@ -137,6 +152,7 @@ class ChatTurnRunner {
             java.util.Map<String, Integer> stepAt = new java.util.HashMap<>();
             List<CitationDto> citations = new java.util.ArrayList<>();
             java.util.Map<Integer, StringBuilder> reasoningBuffers = new java.util.LinkedHashMap<>();
+            java.util.Map<Integer, StringBuilder> contentBuffers = new java.util.LinkedHashMap<>();
             // 推理步骤的落位与计时:首次 reasoning_delta 就把步骤按真实时间顺序占位进
             // steps(收尾原位补正文),而不是收尾统一 append——否则落库顺序变成
             // 「工具全在前、推理全在后」,前端拉历史收敛终态后时间线错位(实测 2026-09-15:
@@ -149,98 +165,130 @@ class ChatTurnRunner {
             // 算成 8ms 这种假数字;从上一事件起算则两种投递形态都接近真实耗时
             // (突发≈整轮思考时长,流式≈真实思考窗口)。
             long[] lastEventMs = {System.currentTimeMillis()};
+            ContextUsageDto[] latestContext = {null};
             StringBuilder answer = new StringBuilder();
             int[] stepIndex = {0};
             long turnStart = System.currentTimeMillis();
 
-            var turnFuture = orchestrationService.chat(
-                    content,
-                    chatStoreService.loadMessages(sessionId),
-                    chatStoreService.loadRecentReflections(sessionId, "chat-turn", 3),
-                    model,
-                    reasoningLevel,
-                    permissionMode,
-                    sessionId,
-                    providerId,
-                    taskContext,
-                    unattended,
-                    new ChatOrchestrationService.ChatEventConsumer() {
+            var eventConsumer = new ChatOrchestrationService.ChatEventConsumer() {
                         @Override
                         public void step(ChatStepDto step) {
-                            lastEventMs[0] = System.currentTimeMillis();
-                            // 状态衔接(M3-02):等待确认后批准 → 工具重发 running 步骤,
-                            // 运行状态改回 running(仅在刚从 awaiting_approval 离开时打 DB)
-                            if (runStarted[0] && "awaiting_approval".equals(lastRunStatus[0])
-                                    && "running".equals(step.status())) {
-                                try {
-                                    chatStoreService.updateRunStatus(runId, "running");
-                                    lastRunStatus[0] = "running";
-                                } catch (Exception e) {
-                                    log.debug("run status back-to-running failed: {}", e.getMessage());
+                            synchronized (liveTurn) {
+                                lastEventMs[0] = System.currentTimeMillis();
+                                // 状态衔接(M3-02):等待确认后批准 → 工具重发 running 步骤,
+                                // 运行状态改回 running(仅在刚从 awaiting_approval 离开时打 DB)
+                                if (runStarted[0] && "awaiting_approval".equals(lastRunStatus[0])
+                                        && !"pending".equals(step.status()) && step.toolName() != null) {
+                                    try {
+                                        chatStoreService.updateRunStatus(runId, "running");
+                                        lastRunStatus[0] = "running";
+                                    } catch (Exception e) {
+                                        log.debug("run status back-to-running failed: {}", e.getMessage());
+                                    }
                                 }
-                            }
-                            // 同 id 增量更新(进度 tick/实时输出)原位替换:列表与
-                            // 落库 JSON 只保留该步骤最新快照,不随 tick 线性膨胀。
-                            // 首次出现与终态各落库一次(running 先行、终态覆盖的
-                            // 既有 load 合并语义不变)。
-                            Integer at = step.id() == null ? null : stepAt.get(step.id());
-                            boolean terminal = !"running".equals(step.status()) && !"pending".equals(step.status());
-                            boolean persist;
-                            if (at != null && at < steps.size()) {
-                                steps.set(at, step);
-                                persist = terminal;
-                            } else {
-                                steps.add(step);
-                                if (step.id() != null) {
-                                    stepAt.put(step.id(), steps.size() - 1);
+                                // 同 id 增量更新(进度 tick/实时输出)原位替换:列表与
+                                // 落库 JSON 只保留该步骤最新快照,不随 tick 线性膨胀。
+                                // 首次出现、状态推进与终态落库；同状态的实时 tick 不写库。
+                                Integer at = step.id() == null ? null : stepAt.get(step.id());
+                                boolean terminal = !"running".equals(step.status()) && !"pending".equals(step.status());
+                                boolean persist;
+                                if (at != null && at < steps.size()) {
+                                    persist = terminal || !step.status().equals(steps.get(at).status());
+                                    steps.set(at, step);
+                                } else {
+                                    steps.add(step);
+                                    if (step.id() != null) {
+                                        stepAt.put(step.id(), steps.size() - 1);
+                                    }
+                                    persist = true;
                                 }
-                                persist = true;
+                                if (persist) {
+                                    chatStoreService.saveStep(sessionId, runId, stepIndex[0]++, step);
+                                }
+                                send(emitter, "step", step);
+                                turnStreams.publish(liveTurn, "step", toJson(step));
                             }
-                            if (persist) {
-                                try { chatStoreService.saveStep(sessionId, stepIndex[0]++, step); }
-                                catch (Exception e) { log.warn("failed to persist agent step: {}", e.getMessage()); }
-                            }
-                            send(emitter, "step", step);
-                            turnStreams.publish(liveTurn, "step", toJson(step));
                         }
 
                         @Override
                         public void delta(String token) {
-                            lastEventMs[0] = System.currentTimeMillis();
-                            answer.append(token);
-                            send(emitter, "delta", new DeltaPayload(token));
-                            turnStreams.publish(liveTurn, "delta", toJson(new DeltaPayload(token)));
+                            delta(null, token);
+                        }
+
+                        @Override
+                        public void delta(Integer roundIndex, String token) {
+                            synchronized (liveTurn) {
+                                if (token == null || token.isEmpty()) return;
+                                if (roundIndex != null) {
+                                    var buffer = contentBuffers.computeIfAbsent(roundIndex, k -> new StringBuilder());
+                                    if (buffer.isEmpty()) {
+                                        // 首个正文 token 即占位；轮次结束后原位区分进度说明与最终回答。
+                                        step(new ChatStepDto("s-message-" + roundIndex, "commentary", "进度说明",
+                                                null, null, "running", null, null, null, roundIndex));
+                                    }
+                                    buffer.append(token);
+                                } else {
+                                    answer.append(token);
+                                }
+                                lastEventMs[0] = System.currentTimeMillis();
+                                var payload = new DeltaPayload(token, roundIndex);
+                                send(emitter, "delta", payload);
+                                turnStreams.publish(liveTurn, "delta", toJson(payload));
+                            }
                         }
 
                         @Override
                         public void reasoningDelta(Integer roundIndex, String token) {
-                            if (token == null || token.isEmpty()) return;
-                            int key = roundIndex == null ? Integer.MAX_VALUE : roundIndex;
-                            reasoningBuffers.computeIfAbsent(key, k -> new StringBuilder()).append(token);
-                            long now = System.currentTimeMillis();
-                            reasoningStartMs.putIfAbsent(key, lastEventMs[0]);
-                            reasoningEndMs.put(key, now);
-                            lastEventMs[0] = now;
-                            // 首 token 即占位:保持「思考→工具→思考→工具…」的真实顺序;
-                            // 正文收尾时一次性补上(逐 token 重建大字符串是 O(n²) 白工)
-                            if (!reasoningStepAt.containsKey(key)) {
-                                reasoningStepAt.put(key, steps.size());
-                                steps.add(new ChatStepDto(
-                                        "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
-                                        "think", "推理过程", null, null, "running",
-                                        null, null, null, roundIndex));
+                            synchronized (liveTurn) {
+                                if (token == null || token.isEmpty()) return;
+                                int key = roundIndex == null ? Integer.MAX_VALUE : roundIndex;
+                                reasoningBuffers.computeIfAbsent(key, k -> new StringBuilder()).append(token);
+                                long now = System.currentTimeMillis();
+                                reasoningStartMs.putIfAbsent(key, lastEventMs[0]);
+                                reasoningEndMs.put(key, now);
+                                lastEventMs[0] = now;
+                                // 首 token 即占位:保持「思考→工具→思考→工具…」的真实顺序;
+                                // 正文收尾时一次性补上(逐 token 重建大字符串是 O(n²) 白工)
+                                if (!reasoningStepAt.containsKey(key)) {
+                                    reasoningStepAt.put(key, steps.size());
+                                    steps.add(new ChatStepDto(
+                                            "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
+                                            "think", "推理过程", null, null, "running",
+                                            null, null, null, roundIndex));
+                                }
+                                send(emitter, "reasoning_delta", new ReasoningDeltaPayload(roundIndex, token));
+                                turnStreams.publish(liveTurn, "reasoning_delta",
+                                        toJson(new ReasoningDeltaPayload(roundIndex, token)));
                             }
-                            send(emitter, "reasoning_delta", new ReasoningDeltaPayload(roundIndex, token));
-                            turnStreams.publish(liveTurn, "reasoning_delta",
-                                    toJson(new ReasoningDeltaPayload(roundIndex, token)));
                         }
 
                         @Override
-                        public void upstreamRequestStarted() {
+                        public void upstreamRequestStarted(ContextUsageDto contextUsage) {
                             // 请求即将发出:把推理计时锚点推到此刻——首轮无前置 step 时
                             // 起点不再落到编排之前,会话加载/RAG 检索/提示词装配不计入
                             // 「已深度思考」时长(与"按轮真实思考时长"口径一致)。
                             lastEventMs[0] = System.currentTimeMillis();
+                            contextUsage(contextUsage);
+                        }
+
+                        @Override
+                        public void contextUsage(ContextUsageDto usage) {
+                            synchronized (liveTurn) {
+                                latestContext[0] = usage;
+                                chatStoreService.updateRunContext(runId, usage);
+                                send(emitter, "context_usage", usage);
+                                turnStreams.publish(liveTurn, "context_usage", toJson(usage));
+                            }
+                        }
+
+                        @Override
+                        public List<TurnStreamRegistry.UserInput> takeUserInputs(boolean finishing) {
+                            var pending = liveTurn.takeInputs(finishing);
+                            for (var input : pending) {
+                                step(new ChatStepDto("s-" + input.id(), "context", "应用补充要求", input.content(),
+                                        0L, "completed", null, null, null, null));
+                            }
+                            return pending;
                         }
 
                         @Override
@@ -283,22 +331,48 @@ class ChatTurnRunner {
                             send(emitter, "sources", found);
                             turnStreams.publish(liveTurn, "sources", toJson(found));
                         }
-                    });
+                    };
+            var history = chatStoreService.loadMessages(sessionId);
+            if (!compaction) liveTurn.openInputs(input -> eventConsumer.step(new ChatStepDto(input.id(), "context", "用户补充", input.content(),
+                    Math.max(0, System.currentTimeMillis() - turnStart), "completed", null, null, null, null,
+                    new ChatStepDto.ContextInfo("user-input", "user-input", null, null, null))));
+            var turnFuture = compaction ? orchestrationService.compact(sessionId, history, model, reasoningLevel,
+                    providerId, compactFocus, eventConsumer) : orchestrationService.chat(
+                    content,
+                    history,
+                    chatStoreService.loadRecentReflections(sessionId, "chat-turn", 3),
+                    model,
+                    reasoningLevel,
+                    permissionMode,
+                    sessionId,
+                    providerId,
+                    taskContext,
+                    unattended,
+                    eventConsumer);
             if (turnFuture == null) {
                 throw new IllegalStateException("agent orchestration returned no future");
             }
-            turnFuture.whenComplete((turn, error) -> {
+            turnFuture.handle((turn, error) -> {
+                        liveTurn.closeInputs();
+                        for (var input : liveTurn.takeInputs(false)) {
+                            eventConsumer.step(new ChatStepDto("s-" + input.id(), "context", "补充要求未处理", input.content(),
+                                    0L, "partial", null, null, null, null));
+                        }
                         // 用户主动取消(线程中断→上游读中止):静默收尾,不发 error 不记失败
                         boolean userCancelled = error instanceof java.util.concurrent.CancellationException
-                                || (error != null && Thread.currentThread().isInterrupted());
-                        // 持久化「流式全文」:answer 累积了全部 delta(含工具轮之间的
-                        // 中间叙述),即用户流式期间实际看到的内容。此前优先用
-                        // turn.answer()(仅最终轮文本),重载后中间叙述全部消失,
-                        // 与流式期间所见不一致(2026-10-02 用户反馈「过程输出消失」)。
-                        String answerText = answer.length() > 0 ? answer.toString()
-                                : (turn != null ? turn.answer() : "");
+                                || (error != null && Thread.currentThread().isInterrupted())
+                                || compaction && (Thread.currentThread().isInterrupted()
+                                        || turnCancellation != null && turnCancellation.isCancelled(sessionId));
+                        // 中间叙述按轮次保存在 steps；content 仅存最终回答，避免重载后再次拼到末尾。
+                        String answerText = turn != null ? turn.answer() : answer.toString();
                         long durationMs = System.currentTimeMillis() - turnStart;
                         var usage = turn != null ? turn.usage() : null;
+                        Integer promptTokens = turn == null ? null : turn.promptTokens();
+                        Long contextWindow = turn == null ? null : turn.contextWindow();
+                        if (latestContext[0] != null) {
+                            promptTokens = latestContext[0].promptTokens();
+                            contextWindow = latestContext[0].contextWindow();
+                        }
                         if (userCancelled) {
                             // 取消轮收尾:主日志显式记录(此前取消静默到只剩 DEBUG send-fail,
                             // 时间线上 cancel 之后像断了一样);半截内容照常落库
@@ -306,8 +380,10 @@ class ChatTurnRunner {
                                     answerText.length(), steps.size(), durationMs);
                         }
                         if (error != null && !userCancelled) {
+                            if (compaction) eventConsumer.step(new ChatStepDto("s-error", "context", "压缩失败",
+                                    ErrorPayload.from(error).message(), null, "failed", null, null, null, null));
                             try {
-                                chatStoreService.saveReflection(sessionId, "chat-turn",
+                                if (!compaction) chatStoreService.saveReflection(sessionId, "chat-turn",
                                         "本轮 Agent 执行失败：" + (error.getMessage() == null ? "unknown error" : error.getMessage()));
                             } catch (Exception reflectionError) {
                                 log.warn("failed to persist agent reflection for {}: {}", sessionId, reflectionError.getMessage());
@@ -322,95 +398,90 @@ class ChatTurnRunner {
                                 // 客户端已离开
                             }
                         }
-                        try {
-                            // 取消轮也落库:前端「停止生成」保留半截气泡(stopped),
-                            // 服务端行必须与前端消息序列一一对齐,否则「编辑重发」
-                            // 按下标截断时前后端错位、删错分支。取消轮持久化
-                            // answerText(半截内容)+ 已收集的步骤,语义即前端所见。
-                            for (var entry : reasoningBuffers.entrySet()) {
-                                if (entry.getValue().isEmpty()) continue;
-                                Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
-                                long started = reasoningStartMs.getOrDefault(entry.getKey(), turnStart);
-                                long ended = reasoningEndMs.getOrDefault(entry.getKey(), System.currentTimeMillis());
-                                ChatStepDto reasoningStep = new ChatStepDto(
-                                        "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
-                                        "think", "推理过程", entry.getValue().toString(),
-                                        Math.max(0, ended - started),
-                                        "completed", null, null, null, roundIndex);
-                                // 原位补终态(占位已按真实顺序放进 steps);每轮时长是该轮
-                                // 推理流的首末 token 间隔,不再给每条都盖整轮耗时
-                                Integer at = reasoningStepAt.get(entry.getKey());
-                                if (at != null && at < steps.size()) {
-                                    steps.set(at, reasoningStep);
-                                } else {
-                                    steps.add(reasoningStep);
-                                }
-                                try { chatStoreService.saveStep(sessionId, stepIndex[0]++, reasoningStep); }
-                                catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
+                        for (var entry : contentBuffers.entrySet()) {
+                            Integer at = stepAt.get("s-message-" + entry.getKey());
+                            if (at != null && "running".equals(steps.get(at).status())) {
+                                eventConsumer.step(new ChatStepDto("s-message-" + entry.getKey(), "commentary",
+                                        "进度说明", entry.getValue().toString(), null,
+                                        userCancelled ? "completed" : "partial", null, null, null, entry.getKey()));
                             }
-                            // durationMs 一并落库:done 事件下发的整轮耗时若只活在事件里,
-                            // 刷新/切会话后前端从历史重建消息就丢了,「查看工作过程 · Ns」
-                            // 的总计时会消失(实测用户反馈)。与 done 同源,不另算。
-                            // promptTokens/contextWindow 同理(2026-09-19):上下文指示器
-                            // 刷新后靠它们显示真实值,否则回退字符估算严重低估。
-                            chatStoreService.saveMessage(sessionId, "assistant", answerText, steps, citations,
-                                    durationMs,
-                                    turn != null ? turn.promptTokens() : null,
-                                    turn != null ? turn.contextWindow() : null,
-                                    "assistant");
-                        } catch (Exception e) {
-                            log.warn("failed to persist assistant message for session {}: {}",
-                                    sessionId, e.getMessage());
                         }
-                        // 唯一终态(F3,2026-09-26):SSE done、chat_run 落库、任务列表
-                        // 与自动任务通知共用这一结果,不再各自推断——
-                        //  - 用户取消 → cancelled;
-                        //  - 轮次异常(error 非空) → 有可用成果(回答文本或已完成工具调用)
-                        //    为 partial,否则 failed——此前无差别标 completed/partial,
-                        //    真失败(如编排器先发 s-error 再返回 failed future)被当成
-                        //    正常完成/部分成功;
-                        //  - 无异常 → 有失败/未知/部分成功步骤为 partial,否则 completed。
-                        // 「成果」必须是有 toolName 的真实工具调用或回答文本:检索/上下文
-                        // 注入步骤(type=tool 但 toolName=null)是预备动作,不算成果
-                        // (实测:坏模型轮 s-rag completed 会把零成果失败误标 partial)。
-                        boolean anyStepFailed = steps.stream()
-                                .anyMatch(s -> "failed".equals(s.status())
-                                        || "unknown".equals(s.status())
-                                        || "partial".equals(s.status()));
+                        // 取消轮也落库:前端「停止生成」保留半截气泡(stopped),
+                        // 服务端行必须与前端消息序列一一对齐,否则「编辑重发」
+                        // 按下标截断时前后端错位、删错分支。取消轮持久化
+                        // answerText(半截内容)+ 已收集的步骤,语义即前端所见。
+                        for (var entry : reasoningBuffers.entrySet()) {
+                            if (entry.getValue().isEmpty()) continue;
+                            Integer roundIndex = entry.getKey() == Integer.MAX_VALUE ? null : entry.getKey();
+                            long started = reasoningStartMs.getOrDefault(entry.getKey(), turnStart);
+                            long ended = reasoningEndMs.getOrDefault(entry.getKey(), System.currentTimeMillis());
+                            ChatStepDto reasoningStep = new ChatStepDto(
+                                    "s-reasoning-" + (roundIndex == null ? "final" : roundIndex),
+                                    "think", "推理过程", entry.getValue().toString(),
+                                    Math.max(0, ended - started),
+                                    "completed", null, null, null, roundIndex);
+                            // 原位补终态(占位已按真实顺序放进 steps);每轮时长是该轮
+                            // 推理流的首末 token 间隔,不再给每条都盖整轮耗时
+                            Integer at = reasoningStepAt.get(entry.getKey());
+                            if (at != null && at < steps.size()) {
+                                steps.set(at, reasoningStep);
+                            } else {
+                                steps.add(reasoningStep);
+                            }
+                            try { chatStoreService.saveStep(sessionId, runId, stepIndex[0]++, reasoningStep); }
+                            catch (Exception e) { log.warn("failed to persist reasoning step: {}", e.getMessage()); }
+                        }
+                        // 运行是否结束和历史工具错误分开；未确认的结果仍保持 partial。
+                        boolean hadToolErrors = steps.stream().anyMatch(s -> s.toolName() != null
+                                && ("failed".equals(s.status()) || "unknown".equals(s.status()) || "partial".equals(s.status())));
+                        boolean unresolved = steps.stream()
+                                .anyMatch(s -> "unknown".equals(s.status()) || "partial".equals(s.status()));
                         boolean hasUsableOutcome = !answerText.isBlank()
                                 || steps.stream().anyMatch(s -> "tool".equals(s.type())
                                         && "completed".equals(s.status()) && s.toolName() != null);
                         String terminal = userCancelled ? "cancelled"
                                 : (error != null ? (hasUsableOutcome ? "partial" : "failed")
-                                        : (anyStepFailed ? "partial" : "completed"));
+                                        : (unresolved ? "partial" : "completed"));
+                        ErrorPayload failure = error == null || userCancelled ? null : ErrorPayload.from(error);
+                        String stopReason = userCancelled ? "cancelled" : failure == null ? "completed"
+                                : failure.errorCode() == null ? "exception" : failure.errorCode();
+                        // 回答和终态一并提交；失败保留未完成记录供恢复，不能先承诺完成。
+                        ChatStepDto completedCompaction = !userCancelled && turn != null && turn.checkpoint() != null
+                                ? orchestrationService.completedCompaction(turn.checkpoint()) : null;
+                        if (completedCompaction != null) {
+                            steps.removeIf(step -> "s-compaction".equals(step.id()));
+                            steps.add(completedCompaction);
+                        }
+                        completionAttempted[0] = true;
+                        chatStoreService.completeRun(runId, sessionId, answerText, steps, citations, durationMs,
+                                promptTokens, contextWindow, taskContext, terminal, stopReason,
+                                failure == null ? null : failure.message(), hadToolErrors,
+                                userCancelled || turn == null ? null : turn.checkpoint(), compaction);
+                        if (!userCancelled && turn != null && turn.checkpoint() != null) {
+                            send(emitter, "step", completedCompaction);
+                            turnStreams.publish(liveTurn, "step", toJson(completedCompaction));
+                            eventConsumer.contextUsage(turn.checkpoint().contextUsage());
+                        }
                         // done 携带轮次指标(harness 模式:服务端打时间戳,客户端绝不重算);
                         // usage 是 provider 真实 token 统计,跨工具轮累加(中继省略时为 null);
                         // contextWindow/promptTokens 供前端上下文计量表。
                         // 取消轮也发终态(stopped=true):接续流(切页返回/断线重连的
                         // 客户端)必须收到终态才能收敛 UI——此前取消路径不发任何终态,
                         // 接续方永远卡在「正在思考」(实测 bug:取消后 UI 无法复位)。
-                        DonePayload done = new DonePayload(UUID.randomUUID().toString(),
+                        DonePayload done = new DonePayload(compaction ? runId : UUID.randomUUID().toString(),
                                 durationMs,
-                                usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens()) : null,
+                                usage != null ? new DonePayload.Usage(usage.inputTokens(), usage.outputTokens(), usage.totalTokens(),
+                                        usage.cacheReadInputTokens(), usage.cacheCreationInputTokens()) : null,
                                 answerText.length(),
-                                turn != null ? turn.contextWindow() : null,
-                                turn != null ? turn.promptTokens() : null,
+                                contextWindow, promptTokens,
                                 turn != null ? turn.ttftMs() : null,
                                 userCancelled,
-                                terminal);
+                                terminal, stopReason, hadToolErrors);
                         turnStreams.publish(liveTurn, "done", toJson(done));
                         send(emitter, "done", done);
                         emitter.complete();
-                        // 运行生命周期终态(M3-01):与 done.status 同源(F3)。
-                        // 更新同一行,不插重复行。
-                        if (runStarted[0]) {
-                            try {
-                                chatStoreService.finishRun(runId, terminal);
-                            } catch (Exception e) {
-                                log.warn("failed to persist run terminal state for {}: {}", sessionId, e.getMessage());
-                            }
-                        }
-                    });
+                        return null;
+                    }).join();
         } catch (Exception e) {
             log.error("chat turn failed for session {}: {}", sessionId, e.getMessage(), e);
             ErrorPayload payload = ErrorPayload.from(e);
@@ -418,9 +489,9 @@ class ChatTurnRunner {
             send(emitter, "error", payload);
             emitter.complete();
             // 运行生命周期终态(M3-01):编排/提交层异常 = failed
-            if (runStarted[0]) {
+            if (runStarted[0] && !completionAttempted[0]) {
                 try {
-                    chatStoreService.finishRun(runId, "failed");
+                    chatStoreService.finishRun(runId, "failed", payload.errorCode() == null ? "exception" : payload.errorCode(), payload.message(), false);
                 } catch (Exception persistError) {
                     log.warn("failed to persist run failed state for {}: {}", sessionId, persistError.getMessage());
                 }
@@ -509,7 +580,7 @@ class ChatTurnRunner {
     }
 
     /** SSE delta 载荷。 */
-    public record DeltaPayload(String content) {
+    public record DeltaPayload(String content, Integer roundIndex) {
     }
 
     /** SSE reasoning delta 载荷;最终回答轮 roundIndex 为 null。 */
@@ -525,25 +596,24 @@ class ChatTurnRunner {
                               /** 用户主动停止的取消轮:true;正常完成 null(缺省不序列化时前端视为 false)。
                                   接续流据此保留半截内容并标「已停止」,而非误当正常完成。 */
                               Boolean stopped,
-                              /** 统一业务终态(F3,2026-09-26):completed/partial/failed/cancelled。
+                              /** 统一运行终态:completed/partial/failed/cancelled。
                                   与 chat_run 落库同源;automation 等消费方据此判定,不再按文本前缀猜测。 */
-                              String status) {
+                              String status, String stopReason, Boolean hadToolErrors) {
 
         /** 兼容构造器:正常完成轮(stopped/status 缺省)。 */
         public DonePayload(String messageId, Long durationMs, Usage usage, Integer answerChars,
                            Long contextWindow, Integer promptTokens, Long ttftMs) {
-            this(messageId, durationMs, usage, answerChars, contextWindow, promptTokens, ttftMs, null, null);
+            this(messageId, durationMs, usage, answerChars, contextWindow, promptTokens, ttftMs, null, null, null, null);
         }
 
         /** provider 的 token 统计(harness:usage 是 done 的一等字段)。 */
-        public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {
+        public record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens,
+                            Integer cacheReadInputTokens, Integer cacheCreationInputTokens) {
         }
     }
 
     /**
-     * SSE error payload(异常处理系统 2026-09-12):除 message 外携带分类/错误码/
-     * 提示/可重试/traceId,前端 humanizeError 直接按结构映射文案与「重试」按钮,
-     * 不再字符串匹配。旧字段 message 保留(旧前端零改动)。
+     * SSE error payload：message 保留原始错误，分类/错误码/可重试/traceId 用于程序处理。
      */
     public record ErrorPayload(String message, String category, String errorCode,
                                String hint, Boolean retryable, String traceId) {

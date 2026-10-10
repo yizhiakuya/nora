@@ -47,10 +47,10 @@ export function KnowledgeAISettings() {
   };
 
   return (
-    <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-      <div className="p-6 space-y-6">
+    <div className="surface overflow-hidden">
+      <div className="p-5 sm:p-6 space-y-6">
         <div className="space-y-1.5">
-          <label className="text-sm font-bold text-foreground">嵌入模型</label>
+          <label className="text-sm font-semibold text-foreground">嵌入模型</label>
           <p className="text-xs text-muted-foreground mb-2">
             文档向量化所用模型,由服务端配置(rag-service <code className="font-mono">nora.embedding.*</code> / .env.local)。
           </p>
@@ -59,13 +59,13 @@ export function KnowledgeAISettings() {
               ? `${serverStats.model} (${serverStats.vectorDim} 维)`
               : "加载中…"}
           </div>
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
             <Info className="w-3 h-3" /> 切换模型需改服务端配置并重建索引,故不在此提供修改入口。
           </p>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-bold text-foreground">分块策略</label>
+          <label className="text-sm font-semibold text-foreground">分块策略</label>
           <p className="text-xs text-muted-foreground mb-2">
             文档切分由 rag-service 固定策略执行(约 2000 字符/块,重叠 200,按空白边界切分)。
           </p>
@@ -94,7 +94,7 @@ export function KnowledgeAISettings() {
 
         <div className="space-y-3">
           <div>
-            <label className="text-sm font-bold text-foreground">技能默认开关</label>
+            <label className="text-sm font-semibold text-foreground">技能默认开关</label>
             <p className="text-xs text-muted-foreground mt-0.5">与设置页「技能」共享同一状态，控制对话中 AI 可使用的技能。</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -102,7 +102,7 @@ export function KnowledgeAISettings() {
               <div key={skill.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 border border-border">
                 <div className="min-w-0">
                   <div className="text-xs font-medium text-foreground truncate">{skill.name}</div>
-                  <div className="text-[10px] text-muted-foreground truncate">{skill.desc}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{skill.desc}</div>
                 </div>
                 <Switch checked={skill.enabled} onCheckedChange={() => toggleSkill(skill.id)} />
               </div>

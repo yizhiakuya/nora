@@ -79,7 +79,7 @@ public class TurnStreamController {
     public ApiResponse<LiveTurnView> liveTurn(@PathVariable String sessionId) {
         var turn = turnStreams.get(sessionId);
         if (turn == null) {
-            return ApiResponse.ok(new LiveTurnView(false, null, null, 0, null, null, 0));
+            return ApiResponse.ok(new LiveTurnView(false, null, null, 0, null, null, 0, null));
         }
         var buffer = turn.snapshotAfter(0);
         return ApiResponse.ok(new LiveTurnView(
@@ -89,7 +89,7 @@ public class TurnStreamController {
                 buffer.size(),
                 buffer.isEmpty() ? null : buffer.get(buffer.size() - 1),
                 turn.turnId,
-                turn.lastSeq()));
+                turn.lastSeq(), turn.operation));
     }
 
     /**
@@ -145,6 +145,9 @@ public class TurnStreamController {
         // subscribeDraining + 锁外发积压,实时事件会超车(隔离复现 [3,1,2])。
         try {
             TurnStreamRegistry.LiveTurn.GatedSnapshot gated = turn.subscribeGated(afterSeq, forward);
+            emitter.onCompletion(() -> turn.unsubscribe(gated.subscriber()));
+            emitter.onTimeout(() -> turn.unsubscribe(gated.subscriber()));
+            emitter.onError(error -> turn.unsubscribe(gated.subscriber()));
             TurnStreamRegistry.Snapshot snapshot = gated.snapshot();
             if (snapshot.gap()) {
                 // 游标落在滚动窗口之外:中间事件已淘汰,无法不重不漏续传。
@@ -177,8 +180,6 @@ public class TurnStreamController {
         if (turn.isFinished()) {
             emitter.complete();
         }
-        emitter.onCompletion(() -> turn.unsubscribe(forward));
-        emitter.onTimeout(() -> turn.unsubscribe(forward));
         return emitter;
     }
 
@@ -211,6 +212,6 @@ public class TurnStreamController {
             int bufferedEvents,
             TurnStreamRegistry.TurnEvent lastEvent,
             String turnId,
-            long lastSeq) {
+            long lastSeq, String operation) {
     }
 }

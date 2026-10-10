@@ -1,4 +1,23 @@
 import { LucideIcon } from "lucide-react";
+import type { ChatRef } from "@/lib/chatRefs";
+
+/** GET /chat/settings：服务端保存的 Agent 默认行为。 */
+export interface AgentSettings {
+  permissionMode?: "ask" | "assist" | "full";
+  model?: string | null;
+  reasoningLevel?: string | null;
+  commandTimeoutSeconds?: number;
+}
+
+export interface QueuedChatMessage {
+  id: string;
+  kind?: "prompt" | "compact";
+  content: string;
+  refs: ChatRef[];
+  limitToRefs: boolean;
+  /** 插入请求响应丢失时，使用同一轮次和消息 ID 确认，不能当作未发送消息撤回。 */
+  insertTurnId?: string;
+}
 
 export interface Skill {
   id: number;
@@ -53,10 +72,21 @@ export interface ViewerFile {
   capabilities: { preview: boolean; source: boolean; download: boolean; edit: boolean; attach: boolean };
   /** 旧相册入口的原件地址，仅在浏览器内保留，不写入工具步骤。 */
   originalUrl?: string;
+  /** 仅前端历史内容的只读快照，随标签保留，不写入文件接口。 */
+  snapshot?: FilePreview;
   delivery?: { status: "registered" | "failed" | "not_requested"; artifactId?: number | null; error?: string | null } | null;
 }
 
 export interface ViewerFileError { target: string; code: string; message: string }
+
+export interface WorkspaceTab {
+  id: string;
+  kind: "file" | "browser" | "tasks";
+  title: string;
+  target: string;
+  missing?: boolean;
+  disabled?: boolean;
+}
 
 export interface FilePreview {
   kind: FilePreviewKind;
@@ -323,13 +353,14 @@ export interface ExecutionRecord {
    * success / partial(有成果但有未完成项)/ failed / cancelled / unknown(结果未知)
    * / running / missed_schedule(计划点错过未补跑)。
    */
-  status: "success" | "partial" | "failed" | "cancelled" | "unknown" | "running" | "missed_schedule";
+  status: "success" | "partial" | "failed" | "cancelled" | "unknown" | "queued" | "running" | "missed_schedule";
   /** 完整执行结果(不截断;列表 UI 自行用摘要展示,详情面板读全文) */
   detail: string;
   /** 列表用摘要(首行,≤120 字;detail 的派生视图,不额外存储) */
   detailSummary?: string;
 }
 
+/** GET /api/chat/settings/env-vars；命令自动注入，MCP 以 ${KEY} 引用。密钥回读只给脱敏值。 */
 export interface EnvVar {
   key: string;
   value: string;
@@ -338,5 +369,93 @@ export interface EnvVar {
   note?: string;
 }
 
-/** 用户自定义凭据与环境变量（设置 → 环境变量）：
- *  在自定义技能、自动任务配置中以 {{KEY}} 引用；secret 值对 AI 自动脱敏。 */
+// GET /api/workspace/browser/:sessionId
+export interface BrowserState {
+  active: boolean;
+  owner?: "human" | "agent";
+  activeTabId?: string;
+  width: number;
+  height: number;
+  tabs: { id: string; url: string; title: string }[];
+  downloads: { name: string; target: string }[];
+  exports: BrowserReceipt[];
+  task: BrowserTask | null;
+}
+
+export interface BrowserReceipt {
+  id: string;
+  csvTarget: string;
+  reportTarget: string;
+  rowCount: number;
+  verified: boolean;
+  verifiedAt: string;
+  checks: string[];
+  planId: string;
+  captureIds: string[];
+  rowIds?: string[];
+  parentReceiptId?: string;
+}
+
+export interface BrowserTask {
+  id: string;
+  task: string;
+  sourceUrl: string;
+  columns: string[];
+  minRows: number;
+  previewFirst: boolean;
+  uniqueRows: boolean;
+  phase: "planning" | "review" | "collecting" | "completed" | "needs_check" | "cancelled";
+  rowCount: number;
+  usableRows: number;
+  duplicateCount: number;
+  missingCount: number;
+  captureIds: string[];
+  review?: { approved: boolean; feedback: string };
+  latestReceipt: BrowserReceipt | null;
+}
+
+export interface BrowserTaskConfig {
+  task: string;
+  sourceUrl: string;
+  columns: string[];
+  minRows: number;
+  previewFirst: boolean;
+  uniqueRows: boolean;
+}
+
+export interface BrowserResultPage {
+  planId: string;
+  columns: string[];
+  minRows: number;
+  total: number;
+  offset: number;
+  preview: boolean;
+  selectedIds: string[];
+  duplicateIds: string[];
+  duplicateGroups: string[][];
+  missingIds: string[];
+  rows: { id: string; values: Record<string, string>; sourceUrl: string; capturedAt: string }[];
+}
+
+/** GET /chat/sessions/:sessionId/commands；状态由进程生命周期决定。 */
+export interface CommandExecution {
+  executionId: string;
+  sessionId: string;
+  turnId?: string | null;
+  stepId?: string | null;
+  title: string;
+  command: string;
+  cwd: string;
+  shell: string;
+  status: "running" | "completed" | "failed" | "timed_out" | "cancelled" | "unknown";
+  startedAt: number;
+  finishedAt?: number | null;
+  elapsedMs: number;
+  timeoutSeconds: number;
+  lastOutputAt: number;
+  outputChars: number;
+  output?: string | null;
+  logTarget: string;
+  exitCode?: number | null;
+  error?: string | null;
+}

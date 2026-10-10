@@ -29,6 +29,7 @@ import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
 import com.nora.agent.dto.CitationDto;
 import com.nora.agent.service.ApprovalService;
+import com.nora.agent.service.AppSettingStore;
 import com.nora.agent.service.ChatOrchestrationService;
 import com.nora.agent.service.ChatStoreService;
 import com.nora.agent.service.PermissionMode;
@@ -67,6 +68,7 @@ public class AgentController {
 
     private final ChatOrchestrationService orchestrationService;
     private final ChatStoreService chatStoreService;
+    private final AppSettingStore appSettingStore;
     private final ApprovalService approvalService;
     /** ask_user 澄清提问服务(可空:老测试构造器不接)。 */
     private final com.nora.agent.service.QuestionService questionService;
@@ -76,29 +78,18 @@ public class AgentController {
     private final TurnCancellation turnCancellation;
     /** 轮次执行引擎(从本类拆出,2026-09-17)。 */
     private final ChatTurnRunner turnRunner;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nora.agent.service.TerminalService terminalService;
     private final ExecutorService chatExecutor = Executors.newCachedThreadPool();
     /** 进行中的轮次,按会话注册;「停止生成」据此中断上游 HTTP 读(省 token) */
     private final java.util.concurrent.ConcurrentMap<String, java.util.concurrent.Future<?>> activeTurns =
             new java.util.concurrent.ConcurrentHashMap<>();
 
 
-    public AgentController(ChatOrchestrationService orchestrationService,
-                           ChatStoreService chatStoreService,
-                           ObjectMapper objectMapper) {
-        this(orchestrationService, chatStoreService, null, objectMapper, new TurnStreamRegistry(), null, null);
-    }
-
-    public AgentController(ChatOrchestrationService orchestrationService,
-                           ChatStoreService chatStoreService,
-                           ApprovalService approvalService,
-                           ObjectMapper objectMapper,
-                           TurnStreamRegistry turnStreams) {
-        this(orchestrationService, chatStoreService, approvalService, objectMapper, turnStreams, null, null);
-    }
-
     @org.springframework.beans.factory.annotation.Autowired
     public AgentController(ChatOrchestrationService orchestrationService,
                            ChatStoreService chatStoreService,
+                           AppSettingStore appSettingStore,
                            ApprovalService approvalService,
                            ObjectMapper objectMapper,
                            TurnStreamRegistry turnStreams,
@@ -108,6 +99,7 @@ public class AgentController {
                            com.nora.agent.service.QuestionService questionService) {
         this.orchestrationService = orchestrationService;
         this.chatStoreService = chatStoreService;
+        this.appSettingStore = appSettingStore;
         this.approvalService = approvalService;
         this.questionService = questionService;
         this.objectMapper = objectMapper;
@@ -138,17 +130,62 @@ public class AgentController {
         if (request.content() == null || request.content().isBlank()) {
             throw new IllegalArgumentException("content is required");
         }
+        return submitTurn(sessionId, request, null);
+    }
+
+    @GetMapping("/sessions/{sessionId}/context")
+    public ApiResponse<ChatStoreService.ContextView> context(@PathVariable String sessionId) {
+        return ApiResponse.ok(chatStoreService.contextView(sessionId));
+    }
+
+    @PostMapping(value = "/sessions/{sessionId}/compact", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter compact(@PathVariable String sessionId, @RequestBody CompactRequest request) {
+        if (request.requestId() == null) throw new IllegalArgumentException("requestId is required");
+        String id = "compact-" + java.util.UUID.fromString(request.requestId());
+        String focus = request.focus() == null ? "" : request.focus().trim();
+        if (focus.length() > 4000) throw new IllegalArgumentException("focus must not exceed 4000 characters");
+        String content = "/compact" + (focus.isEmpty() ? "" : " " + focus);
+        var saved = chatStoreService.findCompactRun(id);
+        if (saved != null) {
+            if (!saved.sessionId().equals(sessionId) || !saved.content().equals(content))
+                throw new IllegalArgumentException("requestId already belongs to another operation");
+            if (java.util.Set.of("queued", "running", "awaiting_approval", "cancelling").contains(saved.status())) throw turnInProgress();
+            SseEmitter emitter = new SseEmitter(CHAT_SSE_TIMEOUT_MS);
+            chatExecutor.execute(() -> {
+                try {
+                    boolean completed = "completed".equals(saved.status());
+                    emitter.send(SseEmitter.event().name("step").data(new ChatStepDto("s-compaction", "context",
+                            completed ? "压缩请求已完成" : "压缩请求已结束", saved.errorMessage(), 0L,
+                            completed ? "completed" : "failed", null, null, null, 0), MediaType.APPLICATION_JSON));
+                    if (!completed && saved.errorMessage() != null) emitter.send(SseEmitter.event().name("error")
+                            .data(java.util.Map.of("message", saved.errorMessage()), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("done").data(new ChatTurnRunner.DonePayload(id, 0L, null, 0,
+                            null, null, null, "cancelled".equals(saved.status()), saved.status(), saved.status(), false), MediaType.APPLICATION_JSON));
+                    emitter.complete();
+                } catch (IOException | IllegalStateException disconnected) { emitter.complete(); }
+            });
+            return emitter;
+        }
+        if (chatStoreService.loadMessages(sessionId).isEmpty()) throw new IllegalArgumentException("当前会话没有可压缩的历史");
+        return submitTurn(sessionId, new MessageRequest(content, request.model(), request.reasoningLevel(), null,
+                request.providerId(), null, "compaction", false, null), request);
+    }
+
+    public record CompactRequest(String requestId, String focus, String model, String reasoningLevel, Long providerId) {}
+
+    private SseEmitter submitTurn(String sessionId, MessageRequest request, CompactRequest compact) {
+        Map<String, Object> settings = appSettingStore.raw(AgentSettingsController.SETTING_KEY);
+        String permission = request.permissionMode() != null ? request.permissionMode()
+                : settings == null ? null : (String) settings.get("permissionMode");
+        String reasoning = request.reasoningLevel() != null ? request.reasoningLevel()
+                : settings == null ? null : (String) settings.get("reasoningLevel");
         // 单会话单轮次(2026-09-20 修复):此前 activeTurns.put 直接覆盖句柄,
         // 两个标签页并发发送会双轮并行执行、取消只控其一(隔离检查确认)。
         // 现在用原子占位拒绝并发提交——重复请求返回冲突,不产生第二个编排线程。
         java.util.concurrent.FutureTask<?> handle = new java.util.concurrent.FutureTask<>(() -> null);
         java.util.concurrent.Future<?> existing = activeTurns.putIfAbsent(sessionId, handle);
         if (existing != null) {
-            throw new com.nora.common.exception.BusinessException(
-                    com.nora.common.exception.ErrorCategory.CONFLICT,
-                    "TURN_IN_PROGRESS",
-                    "该会话已有进行中的轮次,请等待完成或先停止生成",
-                    "在界面上点击「停止生成」,或等当前回答结束后再发送");
+            throw turnInProgress();
         }
         SseEmitter emitter = new SseEmitter(CHAT_SSE_TIMEOUT_MS);
         // 轮次入口:sessionId + turnId 进 MDC(经 TraceContext.wrap 传播到 chatExecutor
@@ -166,9 +203,11 @@ public class AgentController {
                 java.util.concurrent.atomic.AtomicBoolean ran = new java.util.concurrent.atomic.AtomicBoolean();
                 java.util.concurrent.FutureTask<Void> task = new java.util.concurrent.FutureTask<>(() -> {
                     ran.set(true);
-                    turnRunner.runChatTurn(sessionId, request.content().trim(),
-                            request.model(), request.reasoningLevel(),
-                            PermissionMode.parse(request.permissionMode()), request.providerId(),
+                    if (compact != null) turnRunner.runCompactTurn(sessionId, request.content(), request.model(), reasoning,
+                            request.providerId(), "compact-" + java.util.UUID.fromString(compact.requestId()), compact.focus(), emitter);
+                    else turnRunner.runChatTurn(sessionId, request.content().trim(),
+                            request.model(), reasoning,
+                            PermissionMode.parse(permission), request.providerId(),
                             request.context(),
                             // 发送者(定时任务=往会话发消息):automation 标进消息落库
                             request.sender() == null || request.sender().isBlank() ? "user" : request.sender().trim(),
@@ -332,32 +371,55 @@ public class AgentController {
      * (见 sendMessage 的收尾)。新轮在此期间仍会被并发闸以 409 拒绝,
      * 用户需等旧轮退出(通常秒级;前端「正在停止」态即此语义)。
      */
+    @PostMapping("/sessions/{sessionId}/steer")
+    public ApiResponse<Boolean> steer(@PathVariable String sessionId, @RequestBody SteeringRequest request) {
+        if (request.content() == null || request.content().isBlank() || request.content().length() > 8000)
+            throw new IllegalArgumentException("content is required and must not exceed 8000 characters");
+        if (request.turnId() == null || !request.turnId().matches("[0-9a-f]{8}"))
+            throw new IllegalArgumentException("turnId is required");
+        if (request.messageId() == null || !request.messageId().matches("[0-9a-fA-F-]{36}"))
+            throw new IllegalArgumentException("messageId must be a UUID");
+        String messageId = java.util.UUID.fromString(request.messageId()).toString();
+        String id = "steer-" + request.turnId() + "-" + messageId;
+        String content = request.content().trim();
+        if (chatStoreService.hasSteeringMessage(sessionId, id, content)) return ApiResponse.ok(true);
+        TurnStreamRegistry.LiveTurn turn = turnStreams.get(sessionId);
+        if (turn == null || !turn.turnId.equals(request.turnId())
+                || !turn.enqueueInput(new TurnStreamRegistry.UserInput(id, content),
+                        () -> chatStoreService.saveSteeringMessage(sessionId, id, content))) {
+            throw new com.nora.common.exception.BusinessException(
+                    com.nora.common.exception.ErrorCategory.CONFLICT, "TURN_FINISHED",
+                    "The requested turn is no longer accepting input", null);
+        }
+        return ApiResponse.ok(true);
+    }
+
+    public record SteeringRequest(String turnId, String messageId, String content) {}
+
     @PostMapping("/sessions/{sessionId}/cancel")
     public ApiResponse<Boolean> cancelTurn(@PathVariable String sessionId) {
-        if (turnCancellation != null) {
-            turnCancellation.request(sessionId);
-        }
-        // 只中断、不移除:占位由轮次自身的 finally 释放(R05)。移除会让
-        // 新轮在旧轮工作退出前拿到占位并行执行,也让旧轮收尾误清新轮。
-        var future = activeTurns.get(sessionId);
-        boolean cancelled = future != null;
-        if (cancelled) {
+        var accepted = new java.util.concurrent.atomic.AtomicBoolean();
+        activeTurns.computeIfPresent(sessionId, (id, future) -> {
+            accepted.set(true);
+            TurnStreamRegistry.LiveTurn turn = turnStreams.get(id);
+            if (turn != null) {
+                turn.closeInputs();
+                if (terminalService != null && !turn.isFinished()) terminalService.stopTurn(id, turn.turnId);
+            }
+            if (turnCancellation != null) turnCancellation.request(id);
             future.cancel(true);
             // 运行状态推进(M3-02):cancelling = 已请求停止、工作尚未全部退出。
             // 终态(cancelled)由轮次收尾写入;此处的中间态让任务页显示「正在停止」。
             try {
-                chatStoreService.markSessionRunsCancelling(sessionId);
+                chatStoreService.markSessionRunsCancelling(id);
             } catch (Exception e) {
                 log.debug("mark cancelling failed for {}: {}", sessionId, e.getMessage());
             }
-        }
-        approvalService.clearPending(sessionId);
-        // ask_user 挂起提问同路径清理:以「未回答」结算,释放阻塞中的工具线程
-        if (questionService != null) {
-            questionService.clearPending(sessionId);
-        }
-        // 有在途轮次或标志已置,都算"取消已受理"(前端据 ok(true) 收敛 UI)
-        return ApiResponse.ok(cancelled || turnCancellation != null);
+            approvalService.clearPending(id);
+            if (questionService != null) questionService.clearPending(id);
+            return future; // 实际退出时才由执行线程释放，取消受理不是完成。
+        });
+        return ApiResponse.ok(accepted.get());
     }
 
     /**
@@ -420,7 +482,7 @@ public class AgentController {
     /** 删除会话及其消息。 */
     @DeleteMapping("/sessions/{sessionId}")
     public ApiResponse<Void> deleteSession(@PathVariable String sessionId) {
-        if (!chatStoreService.deleteSession(sessionId)) {
+        if (!withIdleSession(sessionId, () -> chatStoreService.deleteSession(sessionId))) {
             throw new IllegalArgumentException("session not found: " + sessionId);
         }
         return ApiResponse.ok();
@@ -434,11 +496,27 @@ public class AgentController {
     @DeleteMapping("/sessions/{sessionId}/messages/{index}")
     public ApiResponse<Integer> truncateFrom(@PathVariable String sessionId,
                                              @PathVariable int index) {
-        int deleted = chatStoreService.truncateFrom(sessionId, index);
+        int deleted = withIdleSession(sessionId, () -> chatStoreService.truncateFrom(sessionId, index));
         if (deleted < 0) {
             throw new IllegalArgumentException("message index out of range: " + index);
         }
         return ApiResponse.ok(deleted);
+    }
+
+    private <T> T withIdleSession(String sessionId, java.util.function.Supplier<T> mutation) {
+        var result = new java.util.concurrent.atomic.AtomicReference<T>();
+        activeTurns.compute(sessionId, (id, active) -> {
+            if (active != null) throw turnInProgress();
+            result.set(mutation.get());
+            return null;
+        });
+        return result.get();
+    }
+
+    private static com.nora.common.exception.BusinessException turnInProgress() {
+        return new com.nora.common.exception.BusinessException(com.nora.common.exception.ErrorCategory.CONFLICT,
+                "TURN_IN_PROGRESS", "该会话已有进行中的轮次，请等待完成或停止后再操作",
+                "停止请求受理后，仍需等待后台执行退出");
     }
 
 

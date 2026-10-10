@@ -21,7 +21,7 @@
 1. **不在前端实现后端业务逻辑**：不在此项目中引入 Prisma、Supabase、PostgreSQL 或任何 ORM / 直连数据库。
 2. **不绕过契约层直连**：组件与 Hook 不得直接 `fetch`，必须经由 `src/lib/api/client.ts` 的 `requestJson`
    （统一解开 `{code,data,message}` 信封、统一错误抛出）与 `src/lib/services/*Api.ts`。
-3. **不在前端伪造业务结果**：前端不内置 Mock,不造假数据；接口失败如实报错(humanize + hint),空态引导操作。
+3. **不在前端伪造业务结果**：前端不内置 Mock,不造假数据；接口失败直接展示原始错误,不添加解释或建议,空态引导操作。
 4. **不改动后端仓库**：后端代码在 `../nora-api`，需要改接口时提出契约需求而非在此处绕过。
 
 ## 🏗️ 前端架构与模块化规范 (Architecture & Modularization)
@@ -29,7 +29,7 @@
 
 1. **业务解耦 (契约层)**：
    - 所有数据经 `src/lib/services/*Api.ts` 契约层调用真实后端,组件与 Hook 不直接 fetch。
-   - 接口失败走统一错误体系(humanize + hint + errorRaw 折叠),空态引导操作,不造假数据。
+   - 接口失败直接展示原始错误,同一错误只显示一次,不翻译、截断或折叠错误正文；空态引导操作,不造假数据。
 2. **UI 模块化拆分 (UI Componentization)**：
    - 页面级文件 (`src/app/*/page.tsx`) **仅作为胶水层**，负责引入组件、使用 Hook 传递状态（建议 ≤150 行）。
    - 任何超过 100-150 行，或承担独立业务的 UI 区块，必须抽离为独立组件，存放在按领域划分的目录中（例如 `src/components/chat/ChatMessageItem.tsx`、`src/components/ui/custom/Modal.tsx`）。
@@ -41,6 +41,17 @@
    - 所有实体模型的数据结构必须提取至 `/src/types/index.ts` 中维护。
    - 后端 DTO 与前端类型出现字段差异时，**改前端类型去对齐后端契约**，并在类型定义处注明来源端点。
 
+## 界面样式约定（2026-10-07）
+
+- 颜色、圆角、阴影复用 `globals.css` 与 `tailwind.config.ts` 的主题变量；浅色与深色同步处理。
+- 按钮、输入、下拉、分类切换、弹窗使用现有 `ui/` Radix 组件，不另造视觉体系。
+- 管理页复用 `page-content`、`page-container`、`page-heading`、`page-description`；卡片用 `surface`。聊天内容和输入框共同保持 820px 最大宽度。
+- 白色或中性色承载内容，蓝色表示主要操作；成功、警告、失败保留语义色，避免随机彩色卡片和装饰渐变。
+- 正文和控件以 13–14px 为主，辅助信息不低于 11px；手机文本输入使用 16px。卡片高度随内容增长，列数随实际容器宽度调整。
+- 兼顾窄屏换行、键盘切换、弹窗关闭后的焦点恢复；关闭的手机导航同时从可访问树隐藏。交付时实测窄屏与深色模式。
+- 网页与文件统一进入 `components/layout/SideWorkspace` 的侧面标签面板，共用收起、展开和宽度调整；浏览器状态由该布局提供，对话从 `WorkspaceContext` 读取，禁止重新添加独立的浏览器分栏。
+- 内容中的网页链接复用 `components/shared/BrowserLink`，默认在内置浏览器新建标签；打开偏好在「设置 → 通用」管理，复用 `usePreferences`。文件引用、下载及明确的外部授权入口保留各自处理。
+
 ## 🔌 后端接入现状
 
 - 全部域直连真实后端(无开关、无 Mock);`vite.config.ts` 将 `/api` 代理到 `http://localhost:18080`(gateway)。
@@ -50,15 +61,19 @@
 |---|---|---|---|
 | 文件 | `filesApi.ts` | `/api/files/**` | ✅ 已接入（上传/文件夹/列表/删除/回收站/预览/下载/索引） |
 | 知识库 RAG | `ragService.ts` | `/api/rag/**` | ✅ 已接入（文档/检索/统计/引用/详情/重命名/删除/批量删除/重建索引） |
-| 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval + 断线重连 + 并发冲突 409） |
+| 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval/context_usage + 断线重连；内置斜杠控制命令、压缩排队、语义摘要与持久化检查点、原文回读、编辑失效，完整输入含缓存，生成中每秒估算、实测校准及历史恢复 + 并发冲突 409；运行中消息排队、插入、撤回编辑，实时与历史按插入位置分段；重启恢复过程与检索范围、手动继续，未执行与结果未知分别显示） |
+| Agent 配置 | `/agent` + `useAgentSettings` / `useModelProviders` / `userPreferencesApi.ts` | `/api/chat/settings`、`/api/user-preferences` 与下列管理接口 | ✅ 默认模型、思考等级、权限、过程显示和成果偏好；模型/技能/工具/环境/网络共用已有管理能力；指令记忆复用侧面文件面板。权限与思考等级服务端保存成功才更新，聊天和管理页共享同一 store |
 | 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询；引擎 pg/mysql/redis） |
 | 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE/进程守护） |
 | 自动任务 | `automationsApi.ts` | `/api/automations/**` | ✅ 已接入（规则 CRUD/执行；**file/error 触发条件未接通,UI 已标不可选**） |
-| 模型 Provider | `modelsApi.ts` | `/api/models/**` | ✅ 已接入（CRUD/连通测试/草稿探测不落库） |
+| 模型 Provider | `modelsApi.ts` | `/api/models/**` | ✅ 已接入（CRUD/连通测试/草稿探测不落库；每模型上下文窗口与思考等级；输出额度遵循上游默认） |
 | 技能 | `skillsApi` / `useSkills` | `/api/skills/**` | ✅ 已接入（列表不带正文/详情按需拉取） |
 | MCP 管理 | `mcpApi` | `/api/mcp/**` | ✅ 已接入（含 STDIO/GitHub OAuth） |
+| 环境变量 | `envVarsApi.ts` | `/api/chat/settings/env-vars` | ✅ 与 Agent 原生工具共用存储，添加/删除使用单项接口，密钥回读脱敏；命令自动注入，MCP 使用 `${KEY}` 引用 |
 | 通知 | `notificationsApi.ts` / `useNotifications` | `/api/notifications/**` | ✅ 已接入（Kafka 事件落库 + 前端轮询同步） |
 | 工作区 | `workspaceApi.ts` | `/api/workspace/**` | ✅ 已接入（文件页内「Agent 工作区」浏览器） |
+| 内置浏览器 | `browserApi.ts` / `useBrowser` / `useBrowserResults` | `/api/workspace/browser/:sessionId` | ✅ 真实 Chromium 画面、多标签、人工接管；网页任务表单与进度卡、服务端样本确认、结果选行/去重/补采、CSV 下载与验收、方法保存进技能库 |
+| 照片成长相册 | 首页入口 + 同名 Agent 技能 | `/api/workspace/photo-albums` | ✅ 已接入（真实选片、独立 HTML、内容去重增量、文案与样式反馈、明确偏好继承；open_file 交付） |
 | 媒体缓存 | `mediaCacheApi.ts` | `/api/media/**` | ✅ 已接入（缓存列表/删除/保存到文件中心/代理预览） |
 | 登录 | `auth.ts` | `/api/auth/**` | ✅ 已接入（令牌登录,缺省免登录；SSE/img 走 `?token=`） |
 
@@ -68,7 +83,7 @@ Hook 直接调契约层,接口失败如实报错、空态引导操作。
 
 ## 📁 目录约定 (Directory Structure)
 - `/` 根目录：`index.html`（Vite 入口）、`vite.config.ts`（构建配置，含 `@` 别名与 `/api` 代理）、`src/main.tsx`（ReactDOM.createRoot + BrowserRouter）、`src/App.tsx`（路由表）
-- `/src/app`: 路由页面组件 (Home=助手, Files=资料, Tasks=任务, Chat, Knowledge, Skills, Data-Sources, Environments, Settings, Mcp, Login)。由 `src/App.tsx` 统一注册到 react-router-dom；主视图组件可复用(如 `components/knowledge/KnowledgeView` 同时被资料页与 /knowledge 使用)。**禁止在此存放长段逻辑代码**。
+- `/src/app`: 路由页面组件 (Home=助手, Files=资料, Tasks=任务, Chat, Knowledge, Data-Sources, Environments, Agent, Settings, Login)。Agent 能力设置统一在 `/agent`，`/settings` 管理外观、资料索引、通知与隐私；旧模型/技能/MCP/环境变量入口重定向。由 `src/App.tsx` 统一注册到 react-router-dom；主视图组件可复用(如 `components/knowledge/KnowledgeView` 同时被资料页与 /knowledge 使用)。**禁止在此存放长段逻辑代码**。
 - `/src/components/ui`: 基础 UI 原语（Button, Input, Switch, Select, Tabs, Modal）。
 - `/src/components/{domain}`: 领域业务组件（如 `/chat`, `/files`, `/settings/model` 下的专属拆分组件）。
 - `/src/components/layout`: Sidebar, Header, NotificationBell, ThemeProvider。

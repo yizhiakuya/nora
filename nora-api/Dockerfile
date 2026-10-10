@@ -44,7 +44,7 @@ COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
 # 非 root 运行(容器安全基线);docker 组 GID 用 build-arg 匹配宿主机
 # (默认 999,常见 docker 组 GID;挂载 docker.sock 后 nora 用户靠组成员身份访问)。
 ARG DOCKER_GID=999
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get update && apt-get install -y --no-install-recommends curl util-linux procps \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r nora && useradd -r -g nora -d /app -s /sbin/nologin nora \
     && { groupadd -g "${DOCKER_GID}" docker 2>/dev/null || groupadd docker 2>/dev/null || true; } \
@@ -52,6 +52,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && mkdir -p /app/data /app/logs /app/agent-workspace \
     && chown -R nora:nora /app
 COPY --from=build --chown=nora:nora /build/services/${SERVICE}/target/${SERVICE}-0.1.0-SNAPSHOT.jar /app/app.jar
+
+# 从实际 jar 的 Playwright 版本安装浏览器，构建时完成 Linux 依赖安装。
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN if [ "${SERVICE}" = "agent-service" ]; then \
+      java -Dloader.main=com.microsoft.playwright.CLI -cp /app/app.jar \
+        org.springframework.boot.loader.launch.PropertiesLauncher install --with-deps --only-shell chromium \
+      && chmod -R a+rX /ms-playwright; \
+    fi
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 USER nora
 

@@ -48,7 +48,7 @@ export function RunningTasks({ compact = false }: { compact?: boolean } = {}) {
 
   if (loading) {
     return (
-      <div className="bg-card border border-border rounded-xl py-12 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+      <div className="surface py-12 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在检查后台任务…
       </div>
     );
@@ -59,14 +59,14 @@ export function RunningTasks({ compact = false }: { compact?: boolean } = {}) {
     // 收成一行说明,保留「去助手发起」的指引;compact=false(任务页)保留卡片。
     if (compact) {
       return (
-        <div className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5 px-1">
+        <div className="surface text-xs leading-relaxed text-muted-foreground flex items-start gap-2 p-4">
           <Inbox className="w-3 h-3 shrink-0" />
           当前没有正在处理的任务——在「助手」中提出需求,未完成的轮次会出现在这里。
         </div>
       );
     }
     return (
-      <div className="bg-card border border-border rounded-xl py-16 text-center space-y-2">
+      <div className="surface py-16 text-center space-y-2">
         <Inbox className="w-8 h-8 mx-auto text-muted-foreground/40" />
         <div className="text-xs text-muted-foreground">当前没有正在处理的任务</div>
         <div className="text-[11px] text-muted-foreground/70">
@@ -82,10 +82,10 @@ export function RunningTasks({ compact = false }: { compact?: boolean } = {}) {
         const interrupted = r.status === "interrupted";
         const Icon = interrupted ? AlertTriangle : Loader2;
         return (
-          <div key={r.id} className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
+          <div key={r.id} className="surface p-4 flex items-center gap-3">
             <Icon className={`w-4 h-4 shrink-0 ${interrupted ? "text-amber-500" : "animate-spin text-blue-500"}`} />
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-bold text-foreground truncate">
+              <div className="text-sm font-semibold text-foreground truncate">
                 {r.sessionTitle || r.content?.slice(0, 30) || r.sessionId}
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5">

@@ -55,13 +55,9 @@ export function ConnectionActions({ connectionId, name, database }: ConnectionAc
 
   return (
     <div className="flex items-center gap-2 shrink-0">
-      <button
-        type="button"
-        onClick={handleAskAi}
-        className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
-      >
-        <SquarePen className="w-3 h-3" /> 让 AI 帮我写 SQL
-      </button>
+      <Button variant="ghost" size="sm" onClick={handleAskAi} className="text-primary">
+        <SquarePen /> AI 写 SQL
+      </Button>
       <Button variant="outline" size="sm" className="h-8 text-xs px-3" onClick={handleTest} disabled={testing}>
         {testing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
         测试连接

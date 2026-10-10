@@ -1,7 +1,10 @@
-import { render, screen, fireEvent } from "@testing-library/react";
-import {describe, it} from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { afterEach, describe, it, vi } from "vitest";
 import { AgentProcessBlock, AgentThoughtBlock } from "./AgentThoughtBlock";
 import type { ChatStep } from "@/lib/api/chatApi";
+import { usePreferences } from "@/hooks/usePreferences";
+
+afterEach(() => usePreferences.setState({ reasoningSummary: "concise" }));
 
 // 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行渲染/交互路径,不校验结果。
 
@@ -143,13 +146,13 @@ describe("AgentThoughtBlock ToolRow", () => {
     // (assertion removed)
   });
 
-  it("run_command 执行中显示实时输出", () => {
+  it("powershell 执行中显示实时输出", () => {
     const running: ChatStep = {
       id: "s-tool-live",
       type: "tool",
       title: "构建项目",
       status: "running",
-      toolName: "run_command",
+      toolName: "powershell",
       input: { target: "npm run build" },
       detail: "vite v5.4.0 building for production…\n✓ 42 modules transformed",
     };
@@ -158,6 +161,14 @@ describe("AgentThoughtBlock ToolRow", () => {
     // (assertion removed)
     // (assertion removed)
     // (assertion removed)
+  });
+
+  it("sh 步骤展开命令和执行结果", () => {
+    render(<AgentThoughtBlock steps={[{
+      id: "s-tool-sh", type: "tool", title: "运行 Shell", status: "completed",
+      toolName: "sh", input: { target: "uname -s" }, result: { content: "Linux" },
+    }]} />);
+    fireEvent.click(screen.getByRole("button", { name: /运行 Shell/ }));
   });
 });
 
@@ -191,6 +202,20 @@ describe("AgentThoughtBlock ReasoningRow", () => {
     // (assertion removed)
   });
 
+  it("思考 token 采样、结束与卸载的生命周期", () => {
+    vi.useFakeTimers();
+    const { rerender, unmount } = render(<AgentThoughtBlock steps={[runningThink]} />);
+    try {
+      rerender(<AgentThoughtBlock steps={[{ ...runningThink, detail: "检查更多中文、English 和 🧠 内容。" }]} />);
+      act(() => vi.advanceTimersByTime(1000));
+      rerender(<AgentThoughtBlock steps={[{ ...runningThink, status: "completed", duration: "2.00s" }]} />);
+      act(() => vi.advanceTimersByTime(1000));
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("通知型 think 步骤(s-effort 降级)渲染为标题行,不显示为推理", () => {
     const notice: ChatStep = {
       id: "s-effort-1",
@@ -222,7 +247,7 @@ describe("AgentThoughtBlock ReasoningRow", () => {
   });
 });
 
-describe("AgentProcessBlock 过程常驻可见(对齐 Codex:输出不随完成消失)", () => {
+describe("AgentProcessBlock 按查看行为收起过程", () => {
   const toolStep: ChatStep = {
     id: "s-tool-1",
     type: "tool",
@@ -243,14 +268,45 @@ describe("AgentProcessBlock 过程常驻可见(对齐 Codex:输出不随完成�
     screen.getByText("检索照片");
   });
 
-  it("完成后保持展开(输出不消失),点击可收起回看", () => {
-    render(<AgentProcessBlock steps={steps} isTyping={false} durationMs={3200} />);
-    // 2026-10-02:默认展开——此前完成后自动折叠,执行中可见的输出在轮次结束
-    // 瞬间消失(用户反馈);现在过程常驻,用户可手动收起
-    screen.getByText("检索照片");
-    fireEvent.click(screen.getByRole("button", { name: /工作过程/ })); // 收起
-    screen.getByRole("button", { name: /查看工作过程/ });
-    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ })); // 再展开
+  it("未查看的过程完成后收起，可手动回看", () => {
+    const { rerender } = render(<AgentProcessBlock steps={steps} isTyping />);
+    rerender(<AgentProcessBlock steps={steps.map(step => ({ ...step, status: "completed" }))} isTyping={false} durationMs={3200} />);
+    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ }));
+    fireEvent.click(screen.getByRole("button", { name: /工作过程/ }));
+  });
+
+  it("手动展开工具后保留过程，整体收起再展开保留详情选择", () => {
+    const { rerender } = render(<AgentProcessBlock steps={steps} isTyping />);
+    fireEvent.click(screen.getByRole("button", { name: /检索照片/ }));
+    rerender(<AgentProcessBlock steps={steps.map(step => ({ ...step, status: "completed" }))} isTyping={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /工作过程/ }));
+    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ }));
+    fireEvent.click(screen.getByRole("button", { name: /检索照片/ }));
+  });
+
+  it("查看思考后再收起正文，完成时保留整体过程", () => {
+    const { rerender } = render(<AgentProcessBlock steps={steps} isTyping />);
+    fireEvent.click(screen.getByRole("button", { name: /思考中/ }));
+    fireEvent.click(screen.getByRole("button", { name: /思考中/ }));
+    rerender(<AgentProcessBlock steps={steps.map(step => ({ ...step, status: "completed" }))} isTyping={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /工作过程/ }));
+  });
+
+  it("详细模式自动展开，切换偏好与完成状态不覆盖手动收起", () => {
+    usePreferences.setState({ reasoningSummary: "detailed" });
+    const { rerender } = render(<AgentProcessBlock steps={steps} isTyping />);
+    fireEvent.click(screen.getByRole("button", { name: /检索照片/ }));
+    act(() => usePreferences.setState({ reasoningSummary: "concise" }));
+    act(() => usePreferences.setState({ reasoningSummary: "detailed" }));
+    rerender(<AgentProcessBlock steps={steps.map(step => ({ ...step, status: "completed" }))} isTyping={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /工作过程/ }));
+  });
+
+  it("详细模式自动展开不算手动查看，完成后仍收起", () => {
+    usePreferences.setState({ reasoningSummary: "detailed" });
+    const { rerender } = render(<AgentProcessBlock steps={steps} isTyping />);
+    rerender(<AgentProcessBlock steps={steps.map(step => ({ ...step, status: "completed" }))} isTyping={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ }));
   });
 
   it("收起后保留结果类内容(画廊卡片)", () => {
@@ -269,11 +325,10 @@ describe("AgentProcessBlock 过程常驻可见(对齐 Codex:输出不随完成�
       result: { content: "画廊已生成。\n```nora-gallery\n" + JSON.stringify(gallery) + "\n```\n" },
     };
     render(<AgentProcessBlock steps={[showcaseStep]} isTyping={false} durationMs={800} />);
-    // 默认展开:画廊由工具行渲染
+    // 默认收起仍保留成果。
     screen.getByText("最近的猫照");
-    // 收起:画廊仍可见(结果必须可见),过程行折叠进按钮
+    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ }));
     fireEvent.click(screen.getByRole("button", { name: /工作过程/ }));
-    screen.getByText("最近的猫照");
-    screen.getByRole("button", { name: /查看工作过程/ });
+    fireEvent.click(screen.getByRole("button", { name: /查看工作过程/ }));
   });
 });

@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert, Loader2, BookOpen, CornerDownLeft, Wrench } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert, Loader2, Cpu, ListTree } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
 import { useModelProviders, resolveDefaultProvider, REASONING_LEVELS } from "@/hooks/useModelProviders";
@@ -9,35 +9,60 @@ import type { ChatRef } from "@/lib/chatRefs";
 import { refKey } from "@/lib/chatRefs";
 import { ReferencePicker } from "./ReferencePicker";
 import { RefChip } from "./RefChip";
+import { ChatMessageQueue } from "./ChatMessageQueue";
+import type { QueuedChatMessage } from "@/types";
 import { filesApi } from "@/lib/services/filesApi";
 import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useMcpServers } from "@/hooks/useMcpServers";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useAgentSettings } from "@/hooks/useAgentSettings";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { formatTokenCount } from "@/lib/tokenEstimate";
+import type { ContextMeter } from "@/lib/chatContext";
+import { matchingChatCommands, type ChatSettingsMenu } from "@/lib/chatCommands";
+import { ChatMentionMenu, type MentionItem } from "./ChatMentionMenu";
+import { ChatCommandPanel } from "./ChatCommandPanel";
+import type { ChatCommandPanel as CommandPanel } from "@/hooks/useChatCommands";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 
 interface ChatInputAreaProps {
+  sessionId: string;
+  commandPanel: CommandPanel | null;
+  onCloseCommandPanel: () => void;
   input: string;
   setInput: (value: string) => void;
   isSending: boolean;
+  isStopping?: boolean;
+  isCompacting?: boolean;
+  settingsMenu?: ChatSettingsMenu | null;
+  onSettingsMenuChange?: (menu: ChatSettingsMenu | null) => void;
+  queuedMessages: QueuedChatMessage[];
+  processingQueuedId: string | null;
+  onInsertQueued: (id: string) => void;
+  onRemoveQueued: (id: string) => void;
+  onRestoreQueued: (id: string) => void;
   onSend: () => void;
-  /** 停止生成:中断当前流式响应(流式期间发送按钮变停止按钮) */
+  /** 停止生成；运行中新消息进入队列。 */
   onStop?: () => void;
-  contextTokens?: number;
-  contextLimit?: number;
+  contextMeter?: ContextMeter;
   /** 对话框选的思考等级;undefined = 跟随设置页该模型默认 */
   reasoningLevel?: string;
-  onReasoningLevelChange?: (level: string | undefined) => void;
+   onReasoningLevelChange?: (level: string | undefined) => void | Promise<boolean>;
   /** 权限模式:请求批准 / 帮我批准 / 完全访问权限 */
   permissionMode?: PermissionMode;
-  onPermissionModeChange?: (mode: PermissionMode) => void;
+   onPermissionModeChange?: (mode: PermissionMode) => void | Promise<boolean>;
   /** 待发送引用(📎附件/📄文件/@知识库/技能/MCP 工具) */
   refs?: ChatRef[];
   onAddRef?: (ref: ChatRef) => void;
@@ -48,14 +73,15 @@ interface ChatInputAreaProps {
   onLimitToRefsChange?: (v: boolean) => void;
 }
 
-/** @ 提及菜单条目(引用 + 来源标签) */
-type MentionItem = ChatRef & { hint: string };
-
 const MENTION_MAX_ITEMS = 8;
 
-export function ChatInputArea({ input, setInput, isSending, onSend, onStop, contextTokens = 0, contextLimit = 128000, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange, refs = [], onAddRef, onRemoveRef, limitToRefs = false, onLimitToRefsChange }: ChatInputAreaProps) {
+export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, input, setInput, isSending, isStopping = false, isCompacting = false, settingsMenu, onSettingsMenuChange, queuedMessages, processingQueuedId, onInsertQueued, onRemoveQueued, onRestoreQueued, onSend, onStop, contextMeter = { tokens: 0, limit: 128_000, windowConfigured: false, estimated: true }, reasoningLevel, onReasoningLevelChange, permissionMode = "assist", onPermissionModeChange, refs = [], onAddRef, onRemoveRef, limitToRefs = false, onLimitToRefsChange }: ChatInputAreaProps) {
+  const reasoningSummary = usePreferences((s) => s.reasoningSummary);
+  const setReasoningSummary = usePreferences((s) => s.setReasoningSummary);
+  const settingsBusy = useAgentSettings(s => s.saving || s.loading);
   const navigate = useNavigate();
   const skills = useSkills((s) => s.skills);
+  const enabledSkillCount = skills.filter(skill => skill.enabled).length;
   const toggleSkill = useSkills((s) => s.toggleSkill);
   const providers = useModelProviders((s) => s.providers);
   const defaultModel = useModelProviders((s) => s.defaultModel);
@@ -66,6 +92,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const mcpServers = useMcpServers((s) => s.servers);
   const syncMcpServers = useMcpServers((s) => s.syncServers);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (commandPanel) textareaRef.current?.focus(); }, [commandPanel]);
   const previousRefCount = useRef(refs.length);
   useEffect(() => {
     if (refs.length > previousRefCount.current) textareaRef.current?.focus();
@@ -81,7 +108,15 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   const [mentionIndex, setMentionIndex] = useState(0);
   /** 拖拽文件悬停中(高亮提示) */
   const [dragging, setDragging] = useState(false);
-  const contextPercent = Math.min(100, Math.round((contextTokens / contextLimit) * 100));
+  const contextPercent = Math.min(100, Math.round((contextMeter.tokens / contextMeter.limit) * 100));
+  const contextPrefix = contextMeter.estimated ? "≈" : "";
+  const contextLabel = `上下文${contextMeter.estimated ? "估算" : "计量"} ${contextMeter.tokens}/${contextMeter.limit} tokens${contextMeter.windowConfigured ? "" : "（整理预算）"}`;
+  const contextDescription = [contextLabel,
+    contextMeter.usage?.source === "upstream" ? `最近请求完整输入 ${contextMeter.usage.promptTokens} tokens（含缓存读取 ${contextMeter.usage.cacheReadInputTokens ?? 0}、写入 ${contextMeter.usage.cacheCreationInputTokens ?? 0}）`
+      : "尚无上游输入计数，当前使用估算。",
+    contextMeter.usage?.outputTokens != null ? `本次请求输出 ${contextMeter.usage.outputTokens} tokens（含推理和工具参数）` : "生成中内容每秒估算，收到上游用量后校准。",
+    contextMeter.windowConfigured ? "按配置的模型窗口整理。" : "模型窗口未配置，128K 仅为默认整理预算，不代表模型容量。",
+    "下一次请求前超过预算 83% 时自动整理，目标 65%。"].join("\n");
 
   // 当前生效渠道:显式 id 优先、失效时按模型名回落(与后端同一顺序)。
   // 勾选判定用「渠道 + 模型名」双匹配——同名模型跨渠道时只勾选真实生效的那一条。
@@ -158,7 +193,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   /**
    * 输入变化时探测光标前的触发符与查询串。
    * 三触发符各司其职(对齐 Claude Code/Codex 习惯):
-   *   @ = 文件中心文件; # = 知识库文档; / = 技能与 MCP 服务器(斜杠命令语义)
+   *   @ = 文件中心文件; # = 知识库文档; / = 内置命令、技能与 MCP 服务器
    * 触发符须位于行首/空白后;查询串遇空格即关闭(避免普通文本误触发)。
    */
   const detectMention = (value: string, caret: number) => {
@@ -178,6 +213,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
    *   @ → 文件中心; # → 知识库文档; / → 技能 + MCP 工具。
    */
   const mentionItems: MentionItem[] = useMemo(() => {
+    if (commandPanel === "help") return matchingChatCommands("").map(command => ({ kind: "command", name: command.name, hint: command.description, command }));
     if (!mention) return [];
     const q = mention.query.trim().toLowerCase();
     const items: MentionItem[] = [];
@@ -197,35 +233,50 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
         if (items.length >= MENTION_MAX_ITEMS) break;
       }
     } else {
+      if (!input.slice(0, mention.start).trim()) {
+        items.push(...matchingChatCommands(q).map(command => ({ kind: "command" as const, name: command.name, hint: command.description, command })));
+      }
+      let references = 0;
       for (const s of skills) {
+        const count = items.length;
         push({ kind: "skill", id: s.id, name: s.name, hint: "技能" });
-        if (items.length >= MENTION_MAX_ITEMS) return items;
+        if (items.length > count) references++;
+        if (references >= MENTION_MAX_ITEMS) return items;
       }
       // MCP 以服务器为单位引用(总标题),不展开单个工具——工具名太多且随远端变化
       for (const server of mcpServers) {
         if (!server.enabled || server.toolCount <= 0) continue;
+        const count = items.length;
         push({ kind: "mcp", id: server.id, name: server.name, hint: `MCP · ${server.toolCount} 个工具` });
-        if (items.length >= MENTION_MAX_ITEMS) return items;
+        if (items.length > count) references++;
+        if (references >= MENTION_MAX_ITEMS) return items;
       }
     }
     return items;
-  }, [mention, docs, skills, files, mcpServers]);
+  }, [commandPanel, mention, input, docs, skills, files, mcpServers]);
+
+  const showMentionMenu = !!(mention || commandPanel === "help") && mentionItems.length > 0;
+  const popoverOpen = !!commandPanel || !!mention && (mentionItems.length > 0 || !!mention.query);
+  const mentionTitle = commandPanel === "help" ? "Agent 命令" : mention?.trigger === "@" ? "引用文件" : mention?.trigger === "#" ? "引用知识库文档" : "命令 · 技能 · MCP";
 
   // 查询变化时重置选中位
   useEffect(() => {
     setMentionIndex(0);
-  }, [mention?.query, mention?.start]);
+  }, [mention?.query, mention?.start, commandPanel, mentionItems.length]);
 
   /** 选中提及项:移除输入中的 @查询 文本,加入引用 chip,恢复焦点 */
   const selectMention = (item: MentionItem) => {
-    if (!mention) return;
+    if (!mention && commandPanel !== "help") return;
     const ta = textareaRef.current;
-    const caret = ta?.selectionStart ?? input.length;
-    const newValue = input.slice(0, mention.start) + input.slice(caret);
+    const start = mention?.start ?? 0;
+    const caret = mention ? ta?.selectionStart ?? input.length : input.length;
+    const replacement = item.kind === "command" ? `/${item.name}${"argument" in item.command ? " " : ""}` : "";
+    const newValue = input.slice(0, start) + replacement + input.slice(caret);
     setInput(newValue);
-    onAddRef?.(item);
+    if (item.kind !== "command") onAddRef?.(item);
     setMention(null);
-    const pos = mention.start;
+    onCloseCommandPanel();
+    const pos = start + replacement.length;
     requestAnimationFrame(() => {
       ta?.focus();
       ta?.setSelectionRange(pos, pos);
@@ -268,84 +319,21 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
   });
 
   return (
-    <div className="shrink-0 px-4 pb-4 pt-2 bg-gradient-to-t from-[#f4f5f7] via-[#f4f5f7] to-transparent dark:from-gray-950 dark:via-gray-950 pointer-events-none">
-      <div className="max-w-3xl mx-auto pointer-events-auto">
-          {/* 技能状态条：启用=高亮，停用=置灰；点击切换 */}
-          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground mr-1">
-              <Zap className="w-3 h-3" /> 技能
-            </span>
-            {skills.map((skill) => (
-              <button
-                key={skill.id}
-                type="button"
-                onClick={() => handleToggle(skill.id, skill.name, skill.enabled)}
-                title={skill.desc}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border cursor-pointer transition-colors ${skill.enabled ? "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800" : "bg-muted text-muted-foreground border-border line-through opacity-60"}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${skill.enabled ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-700"}`} />
-                {skill.name}
-              </button>
-            ))}
-          </div>
-
+    <div className="shrink-0 px-4 pb-4 pt-2 bg-card pointer-events-none [@container(min-width:640px)]:px-6">
+      <div className="max-w-[820px] mx-auto pointer-events-auto">
+          <ChatMessageQueue messages={queuedMessages} isSending={isSending} isCompacting={isCompacting} processingId={processingQueuedId}
+            onInsert={onInsertQueued} onRemove={onRemoveQueued} onRestore={(id) => {
+              onRestoreQueued(id);
+              requestAnimationFrame(() => textareaRef.current?.focus());
+            }} />
+          <Popover open={popoverOpen} onOpenChange={open => { if (!open) { setMention(null); onCloseCommandPanel(); } }}>
+          <PopoverAnchor asChild>
           <div className="relative [container-type:inline-size]">
-          {/* 内联提及菜单(@ 文件 / # 知识库 / / 技能与工具):绝对定位在输入框上方,不挤压布局 */}
-          {mention && mentionItems.length > 0 && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 z-20 rounded-xl border border-border bg-card shadow-lg overflow-hidden animate-in fade-in slide-in-from-bottom-1">
-              <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border/60 flex items-center justify-between">
-                <span>
-                  {mention.trigger === "@" ? "引用文件" : mention.trigger === "#" ? "引用知识库文档" : "技能与 MCP 工具"}
-                  {mention.query ? `（筛选「${mention.query}」）` : ""}
-                </span>
-                <span className="flex items-center gap-1 text-muted-foreground/60">
-                  <CornerDownLeft className="w-2.5 h-2.5" /> 选择 · Esc 关闭
-                </span>
-              </div>
-              <ul className="max-h-64 overflow-y-auto custom-scroll">
-                {mentionItems.map((item, i) => (
-                  <li key={refKey(item)}>
-                    <button
-                      type="button"
-                      onMouseDown={(e) => { e.preventDefault(); selectMention(item); }}
-                      onMouseEnter={() => setMentionIndex(i)}
-                      className={`w-full px-3 py-2 flex items-center gap-2.5 text-left transition-colors cursor-pointer ${
-                        i === mentionIndex ? "bg-blue-50 dark:bg-blue-950/40" : "hover:bg-muted/70"
-                      }`}
-                    >
-                      {item.kind === "doc" ? (
-                        <BookOpen className={`w-3.5 h-3.5 shrink-0 ${i === mentionIndex ? "text-purple-500 dark:text-purple-400" : "text-muted-foreground"}`} />
-                      ) : item.kind === "skill" ? (
-                        <Zap className={`w-3.5 h-3.5 shrink-0 ${i === mentionIndex ? "text-green-500 dark:text-green-400" : "text-muted-foreground"}`} />
-                      ) : item.kind === "mcp" ? (
-                        <Wrench className={`w-3.5 h-3.5 shrink-0 ${i === mentionIndex ? "text-orange-500 dark:text-orange-400" : "text-muted-foreground"}`} />
-                      ) : (
-                        <FileText className={`w-3.5 h-3.5 shrink-0 ${i === mentionIndex ? "text-blue-500 dark:text-blue-400" : "text-muted-foreground"}`} />
-                      )}
-                      <span className="flex-1 min-w-0 text-xs text-foreground truncate">{item.name}</span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">{item.hint}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {/* 有查询但无匹配:轻提示(按触发符给对应去处) */}
-          {mention && mention.query && mentionItems.length === 0 && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 z-20 rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 text-[11px] text-muted-foreground animate-in fade-in slide-in-from-bottom-1">
-              {mention.trigger === "@"
-                ? <>没有匹配「{mention.query}」的文件（可去「资料」页导入）</>
-                : mention.trigger === "#"
-                  ? <>没有匹配「{mention.query}」的知识库文档（可去「资料 → 长期知识」导入并索引）</>
-                  : <>没有匹配「{mention.query}」的技能或 MCP 工具（可去「设置 → 技能」/「设置 → 连接与工具」配置）</>}
-            </div>
-          )}
-
           <div
-            className={`border rounded-2xl bg-card shadow-sm transition-all flex flex-col overflow-hidden relative group ${
+            className={`border rounded-2xl bg-card shadow-surface transition-colors flex flex-col overflow-hidden relative group ${
               dragging
-                ? "border-blue-500 ring-4 ring-blue-500/15"
-                : "border-border focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10"
+                ? "border-ring ring-2 ring-ring/15"
+                : "border-input focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/10"
             }`}
             onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }}
             onDragLeave={(e) => {
@@ -394,21 +382,28 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
               <textarea
                 ref={textareaRef}
                 rows={1}
-                style={{ minHeight: '52px', maxHeight: '240px' }}
-                placeholder="给 Nora 发送消息...（@ 文件 · # 知识库 · / 技能与工具）"
-                className="w-full bg-transparent resize-none outline-none text-sm px-4 pt-4 pb-2 text-foreground placeholder:text-muted-foreground overflow-y-auto custom-scroll"
+                style={{ minHeight: '44px', maxHeight: 'min(200px, 25dvh)' }}
+                placeholder={isSending ? "继续发消息，发送后进入排队…" : "给 Nora 发消息…"}
+                aria-label="给 Nora 发消息"
+                title="@ 引用文件 · # 引用知识库 · / 命令、技能与工具"
+                aria-expanded={showMentionMenu}
+                aria-controls={showMentionMenu ? "chat-mention-menu" : undefined}
+                aria-activedescendant={showMentionMenu ? `chat-mention-${mentionIndex}` : undefined}
+                className="block w-full bg-transparent resize-none outline-none text-base sm:text-sm leading-relaxed px-4 pt-4 pb-2 text-foreground placeholder:text-muted-foreground overflow-y-auto custom-scroll"
                 value={input}
                 onChange={(e) => {
                   const value = e.target.value;
                   setInput(value);
+                  onCloseCommandPanel();
                   // @ 提及探测:光标位置为准(支持在文本中间引用)
                   const caret = e.target.selectionStart ?? value.length;
                   setMention(detectMention(value, caret));
                 }}
                 onKeyDown={(e) => {
                     if (e.nativeEvent.isComposing) return;
+                    if ((mention || commandPanel) && e.key === "Escape") { e.preventDefault(); setMention(null); onCloseCommandPanel(); return; }
                     // @ 菜单打开时优先响应导航/选择键
-                    if (mention && mentionItems.length > 0) {
+                    if (showMentionMenu) {
                       if (e.key === 'ArrowDown') {
                         e.preventDefault();
                         setMentionIndex((i) => (i + 1) % mentionItems.length);
@@ -424,15 +419,10 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         selectMention(mentionItems[mentionIndex]);
                         return;
                       }
-                      if (e.key === 'Escape') {
-                        e.preventDefault();
-                        setMention(null);
-                        return;
-                      }
                     }
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        if ((input.trim() || refs.length > 0) && !isSending) {
+                        if ((input.trim() || refs.length > 0) && !uploading) {
                             onSend();
                         }
                     }
@@ -443,7 +433,7 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                 }}
               ></textarea>
 
-              <div className="flex flex-wrap justify-between items-center gap-x-2 gap-y-1.5 p-2.5 pt-1">
+              <div className="flex justify-between items-center gap-1 px-2 pb-2 pt-0.5">
                   <div className="flex shrink-0 items-center gap-0.5">
                       {/* 📎 附件:选本地文件上传到文件中心并引用 */}
                       <input
@@ -458,61 +448,82 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                           else if (picked.length > 1) void handleDropFiles(picked);
                         }}
                       />
-                      <Button
-                        variant="ghost" size="icon"
-                        className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                        title="上传附件(存入资料并引用,AI 可读取)"
-                      >
-                        {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
-                      </Button>
-                      {/* 📄 引用资料里的文件 */}
-                      <Button
-                        variant="ghost" size="icon"
-                        className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
-                        onClick={() => setPicker("file")}
-                        title="引用资料里的文件(AI 可读取)"
-                      >
-                        <FileText className="w-4 h-4" />
-                      </Button>
-                      {/* @ 引用知识库文档 */}
-                      <Button
-                        variant="ghost" size="icon"
-                        className="w-8 h-8 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400"
-                        onClick={() => setPicker("doc")}
-                        title="引用知识库文档(回答优先参考)"
-                      >
-                        <AtSign className="w-4 h-4" />
-                      </Button>
-                      <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[10px] text-muted-foreground font-medium shrink-0" title={`上下文用量 ${contextPercent}%`}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600" disabled={uploading} title="添加附件与引用" aria-label="添加附件与引用">
+                            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="top" className="rounded-xl">
+                          <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}><Paperclip />上传附件</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => setPicker("file")}><FileText />引用资料里的文件</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => setPicker("doc")}><AtSign />引用知识库文档</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 px-2 gap-1 text-xs text-muted-foreground [@container(max-width:480px)]:w-8 [@container(max-width:480px)]:px-0" title="管理启用的技能" aria-label={`技能：已启用 ${enabledSkillCount} 个`}>
+                            <Zap /><span className="[@container(max-width:480px)]:hidden">技能 {enabledSkillCount}</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="top" className="w-64 max-w-[calc(100vw-24px)] rounded-xl">
+                          <DropdownMenuLabel className="text-xs">启用的技能</DropdownMenuLabel>
+                          {skills.map(skill => <DropdownMenuCheckboxItem key={skill.id} checked={skill.enabled} onCheckedChange={() => handleToggle(skill.id, skill.name, skill.enabled)} onSelect={event => event.preventDefault()} title={skill.desc} className="text-xs cursor-pointer">
+                            <span className="min-w-0 truncate">{skill.name}</span>
+                          </DropdownMenuCheckboxItem>)}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-xs" onSelect={() => navigate("/agent?section=skills")}><Settings />管理技能</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <div className="flex items-center gap-1 px-1 py-1 rounded-md text-[10px] text-muted-foreground font-medium shrink-0" role="status" aria-live="off" aria-label={contextLabel} title={contextDescription}>
                           <Layers className={`w-3 h-3 shrink-0 ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : "text-muted-foreground"}`} />
-                          <div className="hidden [@container(min-width:720px)]:flex w-12 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
-                              <div className={`h-full ${contextPercent >= 90 ? "bg-red-500" : contextPercent >= 75 ? "bg-amber-500" : "bg-blue-500"}`} style={{width: `${contextPercent}%`}}></div>
-                          </div>
-                          <span className={`font-mono ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : ""}`}>{contextTokens >= 1000 ? `${Math.round(contextTokens / 1000)}k` : contextTokens}/{contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k` : contextLimit}</span>
+                          <span className={`font-mono [@container(max-width:640px)]:hidden ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : ""}`}>{contextPrefix}{formatTokenCount(contextMeter.tokens)}/{formatTokenCount(contextMeter.limit)}{!contextMeter.windowConfigured && " 预算"}</span>
+                          <span className="hidden font-mono [@container(max-width:640px)]:inline">{contextPrefix}{contextMeter.windowConfigured ? `${contextPercent}%` : formatTokenCount(contextMeter.tokens)}</span>
                       </div>
                   </div>
 
-                  <div className="flex min-w-0 flex-1 justify-end gap-1.5 items-center [@container(max-width:720px)]:basis-full">
+                  <div className="flex min-w-0 flex-1 justify-end gap-1 items-center">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs px-2 shrink-0 text-muted-foreground hover:text-foreground [@container(max-width:640px)]:w-8 [@container(max-width:640px)]:px-0" title={`推理摘要：${reasoningSummary === "detailed" ? "详细" : "简洁"}`} aria-label={`推理摘要：${reasoningSummary === "detailed" ? "详细" : "简洁"}`}>
+                            <ListTree className="w-3 h-3 shrink-0" />
+                            <span className="[@container(max-width:640px)]:hidden">{reasoningSummary === "detailed" ? "详细" : "简洁"}</span>
+                            <ChevronDown className="w-3 h-3 shrink-0 [@container(max-width:640px)]:hidden" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" side="top" className="w-64 max-w-[calc(100vw-24px)]">
+                          <DropdownMenuLabel className="text-xs text-muted-foreground">推理摘要</DropdownMenuLabel>
+                          <DropdownMenuRadioGroup value={reasoningSummary} onValueChange={(value) => {
+                            if (value === "concise" || value === "detailed") setReasoningSummary(value);
+                          }}>
+                            <DropdownMenuRadioItem value="concise" className="items-start text-xs">
+                              <span>简洁<span className="block mt-0.5 text-[11px] text-muted-foreground">默认收起工具和思考详情</span></span>
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="detailed" className="items-start text-xs">
+                              <span>详细<span className="block mt-0.5 text-[11px] text-muted-foreground">自动展开工具和思考详情</span></span>
+                            </DropdownMenuRadioItem>
+                          </DropdownMenuRadioGroup>
+                          <DropdownMenuSeparator />
+                          <p className="px-2 py-1 text-[11px] leading-relaxed text-muted-foreground">未查看的工作过程会在完成后收起。</p>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       {/* 思考等级:仅列出设置页为当前模型启用的等级 */}
                       {onReasoningLevelChange && availableLevels.length > 0 && (
                         <div className="flex shrink-0 items-center">
-                        <DropdownMenu>
+                        <DropdownMenu open={settingsMenu === undefined ? undefined : settingsMenu === "reasoning"} onOpenChange={open => onSettingsMenuChange?.(open ? "reasoning" : null)}>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground" title="思考等级" aria-label={`思考等级：${reasoningLevel ?? "自动"}`}>
+                             <Button disabled={settingsBusy} variant="ghost" size="sm" className="h-8 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground [@container(max-width:640px)]:w-8 [@container(max-width:640px)]:px-0" title={`思考等级：${reasoningLevel ?? "自动"}`} aria-label={`思考等级：${reasoningLevel ?? "自动"}`}>
                               <Brain className="w-3 h-3 shrink-0" />
-                              <span className="[@container(max-width:480px)]:hidden">{reasoningLevel ?? "自动"}</span>
-                              <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+                              <span className="[@container(max-width:640px)]:hidden">{reasoningLevel ?? "自动"}</span>
+                              <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground [@container(max-width:640px)]:hidden" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-40 rounded-xl">
-                            <DropdownMenuLabel className="text-xs text-muted-foreground">思考等级</DropdownMenuLabel>
+                            <DropdownMenuLabel className="text-xs text-muted-foreground">默认思考等级 · 后续请求生效</DropdownMenuLabel>
                             <DropdownMenuItem
                               className="flex items-center justify-between cursor-pointer text-xs"
-                              onClick={() => {
-                                onReasoningLevelChange(undefined);
-                                toast.success("思考等级已设为自动（跟随模型默认）");
+                               onClick={async () => {
+                                 if (await onReasoningLevelChange(undefined) !== false) toast.success("思考等级已设为自动（跟随模型默认）");
                               }}
                             >
                               <span>自动</span>
@@ -522,9 +533,8 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                               <DropdownMenuItem
                                 key={level}
                                 className="flex items-center justify-between cursor-pointer text-xs font-mono"
-                                onClick={() => {
-                                  onReasoningLevelChange(level);
-                                  toast.success(`思考等级已设为 ${level}`);
+                                 onClick={async () => {
+                                   if (await onReasoningLevelChange(level) !== false) toast.success(`思考等级已设为 ${level}`);
                                 }}
                               >
                                 <span>{level}</span>
@@ -536,26 +546,24 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </div>
                       )}
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0 [@container(max-width:480px)]:hidden"></div>
-
                       {/* 三档权限模式 */}
                       {onPermissionModeChange && (
-                        <DropdownMenu>
+                        <DropdownMenu open={settingsMenu === undefined ? undefined : settingsMenu === "permissions"} onOpenChange={open => onSettingsMenuChange?.(open ? "permissions" : null)}>
                           <DropdownMenuTrigger asChild>
                             <Button
-                              variant="ghost"
+                               disabled={settingsBusy} variant="ghost"
                               size="sm"
-                              className={`h-7 gap-1 text-xs px-2 shrink-0 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
-                              title="权限模式"
+                              className={`h-8 gap-1 text-xs px-2 shrink-0 [@container(max-width:640px)]:w-8 [@container(max-width:640px)]:px-0 ${permissionMode === "full" ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground hover:text-foreground"}`}
+                              title={`权限模式：${PERMISSION_MODE_META[permissionMode].label}`}
                               aria-label={`权限模式：${PERMISSION_MODE_META[permissionMode].label}`}
                             >
                               <ShieldAlert className="w-3 h-3 shrink-0" />
-                              <span className="truncate [@container(max-width:480px)]:hidden">{PERMISSION_MODE_META[permissionMode].label}</span>
-                              <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+                              <span className="truncate [@container(max-width:640px)]:hidden">{PERMISSION_MODE_META[permissionMode].label}</span>
+                              <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground [@container(max-width:640px)]:hidden" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-72 rounded-xl p-1.5">
-                            <DropdownMenuLabel className="px-2 py-1.5 text-xs text-muted-foreground">权限模式</DropdownMenuLabel>
+                            <DropdownMenuLabel className="px-2 py-1.5 text-xs text-muted-foreground">默认权限 · 后续请求生效</DropdownMenuLabel>
                             {(Object.keys(PERMISSION_MODE_META) as PermissionMode[]).map((mode) => {
                               const meta = PERMISSION_MODE_META[mode];
                               const active = permissionMode === mode;
@@ -563,9 +571,8 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                                 <DropdownMenuItem
                                   key={mode}
                                   className={`items-start gap-2.5 rounded-lg py-2.5 cursor-pointer ${mode === "full" ? "text-orange-600 dark:text-orange-400 focus:text-orange-600 dark:focus:text-orange-400" : ""}`}
-                                  onClick={() => {
-                                    onPermissionModeChange(mode);
-                                    toast.success(`权限模式已切换为「${meta.label}」`);
+                                   onClick={async () => {
+                                     if (await onPermissionModeChange(mode) !== false) toast.success(`权限模式已切换为「${meta.label}」`);
                                   }}
                                 >
                                   <ShieldAlert className={`w-4 h-4 mt-0.5 shrink-0 ${mode === "full" ? "text-orange-500" : "text-muted-foreground"}`} />
@@ -581,17 +588,16 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                         </DropdownMenu>
                       )}
 
-                      <div className="w-px h-3 bg-gray-200 dark:bg-gray-800 shrink-0 [@container(max-width:480px)]:hidden"></div>
-
-                      <DropdownMenu>
+                      <DropdownMenu open={settingsMenu === undefined ? undefined : settingsMenu === "model"} onOpenChange={open => onSettingsMenuChange?.(open ? "model" : null)}>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 max-w-[160px] flex-1"
-                            title={`模型：${defaultModel}${activeProvider ? ` · 当前渠道：${activeProvider.name}` : ""}`}>
-                            <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+                          <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 max-w-[160px] [@container(max-width:480px)]:w-8 [@container(max-width:480px)]:px-0"
+                            aria-label={`模型：${defaultModel}`} title={`模型：${defaultModel}${activeProvider ? ` · 当前渠道：${activeProvider.name}` : ""}`}>
+                            <Cpu className="hidden [@container(max-width:480px)]:block" />
+                            <span className="truncate [@container(max-width:480px)]:hidden">{defaultModel}</span> <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground [@container(max-width:480px)]:hidden" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-64 rounded-xl max-h-96 overflow-y-auto">
-                          <DropdownMenuLabel className="text-xs text-muted-foreground">切换当前模型</DropdownMenuLabel>
+                          <DropdownMenuLabel className="text-xs text-muted-foreground">默认模型 · 后续请求生效</DropdownMenuLabel>
                           {/* 按渠道分组:同名模型跨渠道时展示各自来源,勾选只落生效的一条 */}
                           {providers
                             .filter((p) => p.enabled && p.models.length > 0)
@@ -620,31 +626,45 @@ export function ChatInputArea({ input, setInput, isSending, onSend, onStop, cont
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer flex items-center gap-1.5"
-                            onClick={() => navigate("/settings?tab=模型管理")}
+                            onClick={() => navigate("/agent?section=model")}
                           >
                             <Settings className="w-3 h-3" /> 管理模型服务商...
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
 
-                      {/* 流式期间发送按钮变停止按钮(调研:frontendpatterns.dev/stop-generation) */}
-                      <Button
-                        size="icon"
-                        className={`shrink-0 w-8 h-8 rounded-lg ml-1 transition-colors ${
-                          isSending
-                            ? "bg-foreground hover:bg-foreground/80 text-background"
-                            : "bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 text-white"
-                        }`}
-                        onClick={isSending ? onStop : onSend}
-                        disabled={!isSending && !input.trim() && refs.length === 0}
-                        title={isSending ? "停止生成" : "发送"}
-                      >
-                          {isSending ? <Square className="w-3 h-3 fill-current" /> : <Send className="w-3.5 h-3.5 ml-0.5" />}
+                      {isSending && (
+                        <Button size="icon" variant="outline" className="shrink-0 w-8 h-8 rounded-lg ml-1"
+                          onClick={onStop} disabled={isStopping} title={isStopping ? "正在停止" : "停止生成"} aria-label={isStopping ? "正在停止" : "停止生成"}>
+                          {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-3 h-3 fill-current" />}
+                        </Button>
+                      )}
+                      <Button size="icon" className="shrink-0 w-8 h-8 rounded-lg ml-1"
+                        onClick={onSend} disabled={uploading || (!input.trim() && refs.length === 0)}
+                        title={isSending ? "加入队列" : "发送"} aria-label={isSending ? "加入队列" : "发送"}>
+                        <Send className="w-3.5 h-3.5 ml-0.5" />
                       </Button>
                   </div>
               </div>
           </div>
           </div>
+          </PopoverAnchor>
+          <PopoverContent collisionPadding={12} className="flex max-h-[min(480px,var(--radix-popover-content-available-height))] w-[min(480px,var(--radix-popover-trigger-width))] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border-border/60"
+            role={showMentionMenu ? "presentation" : "dialog"}
+            aria-label={showMentionMenu ? undefined : commandPanel === "context" ? "上下文" : commandPanel === "status" ? "会话状态" : "引用提示"}
+            onOpenAutoFocus={event => event.preventDefault()} onCloseAutoFocus={event => event.preventDefault()}
+            onEscapeKeyDown={() => textareaRef.current?.focus()}
+            onInteractOutside={event => { if (event.target === textareaRef.current) event.preventDefault(); }}>
+            {showMentionMenu ? <ChatMentionMenu items={mentionItems} selected={mentionIndex} title={mentionTitle} onSelect={selectMention} onHover={setMentionIndex} />
+              : mention && mention.query ? <div className="px-4 py-3 text-xs text-muted-foreground">
+                  {mention.trigger === "@" ? <>没有匹配「{mention.query}」的文件（可去「资料」页导入）</>
+                    : mention.trigger === "#" ? <>没有匹配「{mention.query}」的知识库文档（可去「资料 → 长期知识」导入并索引）</>
+                      : <>没有匹配「{mention.query}」的命令、技能或 MCP；发送时按普通消息处理</>}
+                </div>
+              : commandPanel && commandPanel !== "help" ? <ChatCommandPanel panel={commandPanel} onClose={() => { onCloseCommandPanel(); textareaRef.current?.focus(); }}
+                  sessionId={sessionId} meter={contextMeter} isSending={isSending} isCompacting={isCompacting} queueCount={queuedMessages.length} permissionMode={permissionMode} reasoningLevel={reasoningLevel} /> : null}
+          </PopoverContent>
+          </Popover>
       </div>
 
       {/* 引用选择器:📄 文件中心 / @ 知识库(外层容器 pointer-events-none,须显式恢复) */}

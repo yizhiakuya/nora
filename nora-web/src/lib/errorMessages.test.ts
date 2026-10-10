@@ -1,34 +1,13 @@
-import {describe, it} from "vitest";
+import { describe, it } from "vitest";
+import { ApiError } from "./api/client";
 import { humanizeError } from "./errorMessages";
 
-// 冒烟测试(项目约定 2026-09-12:单测不写断言,行为验证走 E2E):仅执行渲染/交互路径,不校验结果。
-
+// 单测仅作冒烟，原文透传与展示通过真实服务 E2E 验证。
 describe("humanizeError", () => {
-  it("网络不可达 → network", () => {
-    humanizeError("Cannot connect to agent-service");
-    // (assertion removed)
-    // (assertion removed)
-  });
-
-  it("上游 400 免费渠道限制 → auth 类(截图实测案例)", () => {
-    humanizeError("上游 400: Error from provider: Concord's free tier can only be used with OpenCode");
-    // (assertion removed)
-    // (assertion removed)
-    // (assertion removed)
-    // (assertion removed)
-  });
-
-
-  it("5xx → provider", () => {
-    humanizeError("HTTP 502 Bad Gateway");
-    // (assertion removed)
-  });
-
-
-  it("未知错误兜底:保留原文且文案不是原始串", () => {
-    humanizeError("某个完全没见过的错误");
-    // (assertion removed)
-    // (assertion removed)
-    // (assertion removed)
+  it("处理字符串、异常和结构化 API 错误", () => {
+    humanizeError('{"error":{"message":"Invalid API key"}}');
+    humanizeError(new Error("HTTP 502 Bad Gateway"));
+    humanizeError(new ApiError({ message: "finish_reason=length", code: 0, category: "DEPENDENCY", retryable: true }));
+    humanizeError(null);
   });
 });

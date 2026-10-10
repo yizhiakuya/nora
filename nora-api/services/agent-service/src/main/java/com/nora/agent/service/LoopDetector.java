@@ -23,21 +23,20 @@ final class LoopDetector {
 
     private final Map<String, Entry> entries = new HashMap<>();
     private int attempts;
-
     /** 本次调用是否应被阻断:此前已有 ≥ threshold 次同参数且同结果的调用。 */
-    boolean shouldBlock(String fingerprint, int threshold) {
+    synchronized boolean shouldBlock(String fingerprint, int threshold) {
         Entry e = entries.get(fingerprint);
         return e != null && e.count() >= threshold && e.lastResultHash() != null;
     }
 
     /** 被阻断前的重复次数(提示文案用;仅在 shouldBlock 为 true 时有意义)。 */
-    int blockCount(String fingerprint) {
+    synchronized int blockCount(String fingerprint) {
         Entry e = entries.get(fingerprint);
         return e == null ? 0 : e.count();
     }
 
     /** 是否处于警告档(接近阈值;调用方打日志用)。 */
-    boolean shouldWarn(String fingerprint, int warnThreshold) {
+    synchronized boolean shouldWarn(String fingerprint, int warnThreshold) {
         Entry e = entries.get(fingerprint);
         return e != null && e.count() >= warnThreshold;
     }
@@ -57,7 +56,7 @@ final class LoopDetector {
      *
      * @param resultHash 结果指纹(内容+长度);null = 结果未知,不参与判定
      */
-    void recordResult(String fingerprint, String resultHash) {
+    synchronized void recordResult(String fingerprint, String resultHash) {
         if (resultHash == null) {
             return;
         }

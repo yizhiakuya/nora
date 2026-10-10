@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Database, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EmptyState } from "@/components/ui/custom/States";
 import { ConnectionList } from "@/components/data-sources/ConnectionList";
 import { ConnectionActions } from "@/components/data-sources/ConnectionActions";
 import { SchemaBrowser } from "@/components/data-sources/SchemaBrowser";
@@ -52,16 +54,18 @@ export default function DataSourcesPage() {
         <Header
           breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "数据源", isCurrent: true }]}
           actions={
-            <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建连接
+            <Button size="sm" onClick={() => setModalOpen(true)}>
+              <Plus className="w-4 h-4" /> 新建连接
             </Button>
           }
         />
-        <div className="flex-1 overflow-y-auto custom-scroll p-6 bg-background">
-          <div className="max-w-6xl mx-auto pt-24 flex flex-col items-center gap-3 text-muted-foreground">
-            <Database className="w-8 h-8 opacity-20" />
-            <p className="text-sm">暂无数据源连接</p>
-            <p className="text-xs">点击右上角「新建连接」添加第一个数据库</p>
+        <div className="page-content custom-scroll">
+          <div className="page-container">
+            <div>
+              <h1 className="page-heading">数据源</h1>
+              <p className="page-description">连接数据库，浏览表结构，执行查询。</p>
+            </div>
+            <EmptyState icon={Database} title="暂无数据源连接" description="添加第一个数据库后，即可浏览表结构或运行查询。" />
           </div>
           <NewConnectionModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={handleCreated} />
         </div>
@@ -74,19 +78,19 @@ export default function DataSourcesPage() {
       <Header
         breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "数据源", isCurrent: true }]}
         actions={
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => setModalOpen(true)}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建连接
+          <Button size="sm" onClick={() => setModalOpen(true)}>
+            <Plus className="w-4 h-4" /> 新建连接
           </Button>
         }
       />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background">
-        <div className="max-w-6xl mx-auto space-y-5 pb-20">
+      <div className="page-content custom-scroll">
+        <div className="page-container">
           <div className="animate-in fade-in slide-in-from-top-4">
-            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              <Database className="w-5 h-5 text-purple-600 dark:text-purple-400" /> 数据源
+            <h1 className="page-heading flex items-center gap-2.5">
+              <Database className="w-5 h-5 text-muted-foreground" /> 数据源
             </h1>
-            <p className="text-[13px] text-muted-foreground mt-1.5">
+            <p className="page-description">
               连接开发/测试数据库，浏览 Schema，执行查询——AI 可读取表结构辅助生成 SQL。
             </p>
           </div>
@@ -95,33 +99,22 @@ export default function DataSourcesPage() {
             {/* 连接选择条:横向 chip 行,选中即切换当前连接 */}
             <ConnectionList selectedId={selectedId ?? selected.id} onSelect={setSelectedId} />
 
-            <div className="min-w-0 w-full space-y-4">
+            <Tabs value={activeView} onValueChange={(value) => setActiveView(value as (typeof VIEW_TABS)[number])} className="min-w-0 w-full space-y-4">
               {/* 工具行:视图切换 + 当前连接操作(测试/删除/AI 写 SQL) */}
               <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit" role="tablist" aria-label="数据源视图">
-                  {VIEW_TABS.map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      role="tab"
-                      aria-selected={activeView === tab}
-                      onClick={() => setActiveView(tab)}
-                      className={`px-4 py-2 text-[13px] font-medium rounded-md cursor-pointer transition-all ${activeView === tab ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                    >
-                      {tab}
-                    </button>
-                  ))}
-                </div>
+                <TabsList aria-label="数据源视图">
+                  {VIEW_TABS.map((view) => <TabsTrigger key={view} value={view}>{view}</TabsTrigger>)}
+                </TabsList>
                 <ConnectionActions connectionId={selected.id} name={selected.name} database={selected.database} />
               </div>
 
-              {activeView === "Schema 浏览" && (
-                <SchemaBrowser database={selected.database} connectionId={selected.id} engine={selected.engine} onQueryTable={handleQueryTable} />
-              )}
-              {activeView === "查询控制台" && (
+              <TabsContent value="Schema 浏览">
+                <SchemaBrowser key={selected.id} database={selected.database} connectionId={selected.id} engine={selected.engine} onQueryTable={handleQueryTable} />
+              </TabsContent>
+              <TabsContent value="查询控制台">
                 <QueryConsole database={selected.database} connectionId={selected.id} engine={selected.engine} initialSql={targetSql} />
-              )}
-            </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
       </div>

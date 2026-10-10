@@ -1,4 +1,5 @@
-import type { Citation, ViewerFile, ViewerFileError } from "@/types";
+import type { CommandExecution, Citation, ViewerFile, ViewerFileError } from "@/types";
+import { estimateChatMessageTokens, estimateModelOutputTokens } from "@/lib/chatContext";
 
 /** 结构化工具入参(execute_sql → sql;read_service_logs → service/limit) */
 export interface ChatStepInput {
@@ -16,6 +17,7 @@ export interface ChatStepResult {
   fileErrors?: ViewerFileError[];
   /** 文本写操作的变更记录(「已编辑 N 个文件」卡片;后端 ChatStepDto.FileChange 同构) */
   fileChanges?: FileChange[];
+  execution?: CommandExecution;
   content?: string;
   summary?: string;
   rowCount?: number;
@@ -98,7 +100,7 @@ export interface ChatStepContext {
 
 export interface ChatStep {
   id: string;
-  type: "think" | "tool" | "context";
+  type: "think" | "tool" | "context" | "commentary" | "answer";
   title: string;
   detail?: string;
   duration?: string;
@@ -107,6 +109,8 @@ export interface ChatStep {
   toolName?: string;
   /** 解析后的结构化入参 */
   input?: ChatStepInput;
+  /** 脱敏原始参数的 token 估算，供上下文计量，不在工具详情中重复展示参数。 */
+  inputTokens?: number;
   /** 结构化结果:输出内容、行数、截断标记、失败原因 */
   result?: ChatStepResult;
   /** 注入上下文元数据(context 类型步骤才有) */
@@ -117,16 +121,125 @@ export interface ChatStep {
   roundIndex?: number;
 }
 
+/** 正文增量按模型轮次原位追加；直连流与断线接续使用同一顺序。 */
+function appendRoundText(steps: ChatStep[], roundIndex: number, content: string): ChatStep[] {
+  const id = `s-message-${roundIndex}`;
+  const index = steps.findIndex(step => step.id === id);
+  if (index >= 0) {
+    return steps.map((step, i) => i === index
+      ? { ...step, detail: (step.detail ?? "") + content, status: "running" }
+      : step);
+  }
+  return [...steps, { id, type: "commentary", title: "进度说明", detail: content, status: "running", roundIndex }];
+}
+
+export type ChatStreamEvent =
+  | { type: "step"; step: ChatStep }
+  | { type: "delta"; content: string; roundIndex?: number | null }
+  | { type: "reasoning_delta"; content: string; roundIndex?: number | null }
+  | { type: "approval_required"; approval: ApprovalRequest }
+  | { type: "question_required"; question: QuestionRequest }
+  | { type: "sources"; sources: Citation[] }
+  | { type: "context_usage"; contextUsage: ChatContextUsage }
+  | { type: "finish"; stopped?: boolean; failed?: boolean; turnMetrics?: ChatTurnMetrics }
+  | { type: "gap" };
+
+/** 普通流与恢复流共用消息合并和一次性交互的生命周期。 */
+export function applyChatStreamEvent(message: Partial<ChatMessage>, event: ChatStreamEvent): Partial<ChatMessage> {
+  const steps = message.steps ?? [];
+  switch (event.type) {
+    case "step": {
+      const next = steps.map(step => event.step.context?.kind !== "user-input" && step.type === "think" && step.status === "running" && step.id !== event.step.id
+        ? { ...step, status: "completed" as const } : step);
+      const index = next.findIndex(step => step.id === event.step.id);
+      if (index < 0) next.push(event.step);
+      else next[index] = event.step;
+      return {
+        steps: next,
+        approval: message.approval?.stepId === event.step.id ? undefined : message.approval,
+        question: message.question?.stepId === event.step.id && event.step.status !== "running" ? undefined : message.question,
+        ...(event.step.type === "answer" ? { content: event.step.detail ?? "" } : {}),
+      };
+    }
+    case "delta": {
+      const next = steps.map(step => step.type === "think" && step.status === "running"
+        ? { ...step, status: "completed" as const } : step);
+      return event.roundIndex != null
+        ? { steps: appendRoundText(next, event.roundIndex, event.content) }
+        : { steps: next, content: (message.content ?? "") + event.content };
+    }
+    case "reasoning_delta": {
+      const id = `s-reasoning-${event.roundIndex ?? "final"}`;
+      const index = steps.findIndex(step => step.id === id);
+      return { steps: index < 0
+        ? [...steps, { id, type: "think", title: "推理过程", detail: event.content, status: "running", roundIndex: event.roundIndex ?? undefined }]
+        : steps.map((step, i) => i === index ? { ...step, detail: (step.detail ?? "") + event.content, status: "running" } : step) };
+    }
+    case "approval_required": return { approval: event.approval };
+    case "question_required": return { question: event.question };
+    case "sources": return { sources: event.sources };
+    case "context_usage": {
+      const previous = message.contextUsage;
+      const reset = event.contextUsage.source !== "upstream" || previous?.roundIndex !== event.contextUsage.roundIndex;
+      return { contextUsage: {
+        ...event.contextUsage,
+        receivedTokens: reset ? estimateChatMessageTokens(message) : previous?.receivedTokens ?? estimateChatMessageTokens(message),
+        receivedOutputTokens: reset ? estimateModelOutputTokens(message, event.contextUsage.roundIndex)
+          : previous?.receivedOutputTokens ?? estimateModelOutputTokens(message, event.contextUsage.roundIndex),
+      } };
+    }
+    case "gap": return { content: "", steps: [], approval: undefined, question: undefined, contextUsage: undefined };
+    case "finish": return {
+      isTyping: false, approval: undefined, question: undefined,
+      ...(event.stopped ? { stopped: true } : {}),
+      ...(event.turnMetrics ? { turnMetrics: event.turnMetrics } : {}),
+      steps: steps.map(step => {
+        if (step.result?.execution) return step;
+        if (step.toolName && (step.status === "pending" || step.status === "running")) {
+          const pending = step.status === "pending";
+          return { ...step, status: pending ? "declined" : "unknown",
+            result: { ...step.result, error: pending ? "未执行：流结束前工具尚未开始调用。"
+              : "结果未知：未收到工具终态，请先核实实际状态。" } };
+        }
+        if (step.status !== "running") return step;
+        const keepPartial = !event.failed && (step.type === "think" || step.type === "commentary");
+        return { ...step, status: keepPartial ? "completed" : "failed",
+          detail: step.detail ?? (keepPartial ? "" : "流中断，未收到该步骤结果") };
+      }),
+    };
+  }
+}
+
 /** 一轮对话的服务端计量(done 事件下发) */
 export interface ChatTurnMetrics {
-  durationMs: number;
-  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
-  /** 生效模型上下文窗口(tokens;null = 未配置,前端退回默认 128k) */
+  durationMs?: number;
+  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number } | null;
+  /** 输入整理预算；是否配置了模型窗口见 contextUsage.windowConfigured。 */
   contextWindow?: number | null;
-  /** 服务端最后一次请求的 token 估算(CJK 感知;比前端字符估算准) */
+  /** 服务端最后一次请求的完整输入实测；缺失时使用校准估算。 */
   promptTokens?: number | null;
   /** 首 token 延迟 ms(服务端盖章;null = 未收到任何 token) */
   ttftMs?: number | null;
+  status?: string;
+  stopReason?: string;
+  hadToolErrors?: boolean;
+}
+
+/** 最近请求的完整输入；上游计数包含缓存，窗口未配置时仅代表整理预算。 */
+export interface ChatContextUsage {
+  promptTokens: number;
+  outputTokens?: number | null;
+  estimatedTokens?: number;
+  contextWindow: number;
+  windowConfigured?: boolean;
+  roundIndex: number;
+  source?: "estimate" | "upstream";
+  modelKey?: string;
+  cacheReadInputTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  /** 请求开始时已展示的内容计数，前端用于排除已纳入基线的内容。 */
+  receivedTokens?: number;
+  receivedOutputTokens?: number;
 }
 
 export interface ChatMessage {
@@ -135,20 +248,22 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   isTyping?: boolean;
+  /** 分段消息共用运行状态，已有工作过程在整轮结束后才自动收起。 */
+  isRunning?: boolean;
   error?: string;
   steps?: ChatStep[];
   /** RAG 引用来源（回答基于哪些知识库片段） */
   sources?: Citation[];
   /** 本轮执行计量(done 事件带) */
   turnMetrics?: ChatTurnMetrics;
+  contextUsage?: ChatContextUsage;
+  /** 原轮引用和检索范围，重试或继续时沿用。 */
+  taskContext?: TaskContextPayload;
   /** 当前轮等待用户处理的高风险审批 */
   approval?: ApprovalRequest;
   /** 当前轮等待用户作答的澄清提问(ask_user;2026-09-29) */
   question?: QuestionRequest;
-  /** 人性化错误提示 + 建议动作(原始串折叠在详情里) */
-  errorHint?: string;
-  errorKind?: "network" | "provider" | "auth" | "rate-limit" | "timeout" | "approval" | "unknown";
-  /** 原始错误串(排障用,UI 折叠展示) */
+  /** 原始错误串，兼容本地缓存的旧消息。 */
   errorRaw?: string;
   /** 本轮被用户主动停止(保留已流出的部分内容) */
   stopped?: boolean;
@@ -158,15 +273,71 @@ export interface ChatMessage {
    * 发送者(2026-09-20,定时任务=往会话发消息):user=用户输入;
    * automation=定时任务发送——气泡显示「定时任务」徽章。旧数据 undefined 按 user。
    */
-  sender?: "user" | "automation" | "assistant";
+  sender?: "user" | "automation" | "steering" | "assistant" | "compaction";
+}
+
+/** 插入边界只分开消息展示；同一工具的后续更新仍留在它开始的位置。 */
+export function splitChatMessages(messages: ChatMessage[]): ChatMessage[] {
+  const inputs = new Set(messages.flatMap(message => (message.steps ?? [])
+    .filter(step => step.context?.kind === "user-input").map(step => step.id)));
+  if (inputs.size === 0) return messages;
+  const users = new Map(messages.filter(message => message.role === "user").map(message => [message.id, message]));
+  return messages.flatMap(message => {
+    if (inputs.has(message.id) && message.role === "user") return [];
+    const steps = message.steps ?? [];
+    if (message.role !== "assistant" || !steps.some(step => step.context?.kind === "user-input")) return [message];
+    const parts: ChatMessage[] = [];
+    let from = 0;
+    let id = message.id;
+    let timestamp = message.timestamp;
+    for (let index = 0; index <= steps.length; index++) {
+      const boundary = steps[index];
+      const last = index === steps.length;
+      if (!last && boundary.context?.kind !== "user-input") continue;
+      const segment = steps.slice(from, index);
+      const content = last ? message.content : segment.filter(step => step.type === "answer").at(-1)?.detail ?? "";
+      if (last || segment.length > 0 || content) parts.push({
+        ...message, id, timestamp, content, steps: segment,
+        isTyping: last ? message.isTyping : false,
+        isRunning: message.isTyping,
+        startedAtMs: last ? message.startedAtMs : undefined,
+        error: last ? message.error : undefined,
+        errorRaw: last ? message.errorRaw : undefined,
+        stopped: last ? message.stopped : undefined,
+        turnMetrics: last ? message.turnMetrics : undefined,
+        sources: last ? message.sources : undefined,
+        approval: segment.some(step => step.id === message.approval?.stepId) ? message.approval : undefined,
+        question: segment.some(step => step.id === message.question?.stepId) ? message.question : undefined,
+      });
+      if (!last) {
+        const user = users.get(boundary.id) ?? {
+          id: boundary.id, role: "user" as const, sender: "steering" as const,
+          content: boundary.detail ?? "", timestamp,
+        };
+        parts.push(user);
+        id = `${message.id}-${boundary.id}`;
+        timestamp = user.timestamp;
+      }
+      from = index + 1;
+    }
+    return parts;
+  });
+}
+
+/** 同一组对话回填服务端历史时保留渲染 ID，避免重挂载丢失用户查看状态。 */
+export function reconcileChatHistory(current: ChatMessage[], history: ChatMessage[]): ChatMessage[] {
+  current = splitChatMessages(current);
+  const aligned = current.length === history.length && current.every((message, index) =>
+    message.role === history[index].role && (message.role !== "user" || message.content === history[index].content));
+  return aligned ? history.map((message, index) => ({ ...message, id: current[index].id })) : history;
 }
 
 export type PermissionMode = "ask" | "assist" | "full";
 
 export const PERMISSION_MODE_META: Record<PermissionMode, { label: string; description: string }> = {
-  ask: { label: "请求批准", description: "编辑外部文件和使用互联网时始终询问" },
-  assist: { label: "帮我批准", description: "仅对检测到的风险操作请求批准" },
-  full: { label: "完全访问权限", description: "不受限制地访问互联网和你的电脑上的任何文件" },
+  ask: { label: "请求批准", description: "每次工具调用都请求批准" },
+  assist: { label: "帮我批准", description: "只读操作自动执行，写入和命令等风险操作请求批准" },
+  full: { label: "完全访问权限", description: "自动执行工具；关键高风险操作仍请求批准，范围以运行环境为准" },
 };
 
 export interface ApprovalRequest {

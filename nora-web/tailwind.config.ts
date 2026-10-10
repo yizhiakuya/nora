@@ -20,6 +20,7 @@ const config = {
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
+        sidebar: "hsl(var(--sidebar))",
         foreground: "hsl(var(--foreground))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
@@ -54,6 +55,10 @@ const config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        surface: "var(--shadow-surface)",
+        float: "var(--shadow-float)",
       },
       typography: {
         DEFAULT: {

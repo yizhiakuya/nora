@@ -41,20 +41,29 @@ public class AgentSettingsController {
     /** PUT /api/chat/settings → 保存(部分更新,merge 到已存值)。 */
     @PutMapping
     public ApiResponse<Map<String, Object>> update(@RequestBody Map<String, Object> patch) {
-        Map<String, Object> merged = new java.util.HashMap<>(current());
-        // 白名单字段,防未知键写穿
-        for (String k : java.util.List.of("permissionMode", "model", "reasoningLevel")) {
-            if (patch.containsKey(k)) {
-                merged.put(k, patch.get(k));
-            }
+        if (patch.containsKey("permissionMode") && (!(patch.get("permissionMode") instanceof String mode)
+                || !java.util.List.of("ask", "assist", "full").contains(mode))) {
+            throw new IllegalArgumentException("permissionMode 必须是 ask、assist 或 full");
         }
-        appSettingStore.save(SETTING_KEY, merged);
-        return ApiResponse.ok(current());
+        if (patch.get("reasoningLevel") != null && !(patch.get("reasoningLevel") instanceof String)) {
+            throw new IllegalArgumentException("reasoningLevel 必须是字符串或 null");
+        }
+        if (patch.containsKey("commandTimeoutSeconds")) {
+            Object value = patch.get("commandTimeoutSeconds");
+            if (!(value instanceof Number number) || number.longValue() < 1 || number.longValue() > Integer.MAX_VALUE
+                    || number.doubleValue() != number.longValue()) throw new IllegalArgumentException("commandTimeoutSeconds 必须是正整数秒数");
+        }
+        return ApiResponse.ok(appSettingStore.update(SETTING_KEY, stored -> {
+            Map<String, Object> merged = new java.util.HashMap<>(stored);
+            merged.putIfAbsent("permissionMode", "assist");
+            for (String k : java.util.List.of("permissionMode", "model", "reasoningLevel", "commandTimeoutSeconds")) {
+                if (patch.containsKey(k)) merged.put(k, patch.get(k));
+            }
+            return merged;
+        }));
     }
 
     private Map<String, Object> current() {
-        // raw() 自带异常兜底(表未建/库不可用返回 null);设置项无运行时
-        // 副作用,前端每轮把 permissionMode 随请求带上即可
         Map<String, Object> stored = appSettingStore.raw(SETTING_KEY);
         return stored != null ? stored : Map.of("permissionMode", "assist");
     }

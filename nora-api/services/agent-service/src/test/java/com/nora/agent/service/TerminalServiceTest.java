@@ -22,11 +22,16 @@ class TerminalServiceTest {
     }
 
     @Test
+    void reportsCurrentRuntimeCommandsAndExecutionAccount() throws Exception {
+        buildWith(Files.createTempDirectory("nora-term-context")).runtimeContext();
+    }
+
+    @Test
     void runsSimpleCommandAndReportsExitCode() throws Exception {
         Path ws = Files.createTempDirectory("nora-term-ok");
         TerminalService svc = buildWith(ws);
         String cmd = isWindows() ? "Write-Output 'hello-terminal'" : "echo hello-terminal";
-        TerminalService.RunResult r = svc.run(cmd, null, null, null);
+        TerminalService.RunResult r = svc.run(cmd, null, null);
         r.exitCode();
         r.output();
         r.output();
@@ -39,9 +44,20 @@ class TerminalServiceTest {
     void reportsNonZeroExitCode() throws Exception {
         Path ws = Files.createTempDirectory("nora-term-fail");
         TerminalService svc = buildWith(ws);
-        // 不存在的命令:PowerShell 报错但进程 exit 0(命令解析失败)→ 用显式 exit 1
-        TerminalService.RunResult r = svc.run("exit 3", null, null, null);
+        TerminalService.RunResult r = svc.run("exit 3", null, null);
         r.exitCode();
+    }
+
+    @Test
+    void stopsAfterAnIntermediateCommandFails() throws Exception {
+        TerminalService svc = buildWith(Files.createTempDirectory("nora-term-fail-fast"));
+        String command = isWindows() ? "cmd /c exit 7; Write-Output 'after-failure'"
+                : "false && echo after-failure";
+        svc.run(command, null, null).render();
+        if (isWindows()) {
+            svc.run("Get-Content -LiteralPath './missing.txt'; Write-Output 'after-failure'",
+                    null, null).render();
+        }
     }
 
     @Test
@@ -51,11 +67,11 @@ class TerminalServiceTest {
         TerminalService svc = buildWith(ws);
         String cmd = isWindows() ? "(Get-Location).Path" : "pwd";
         // 默认 cwd = 工作区根
-        TerminalService.RunResult atRoot = svc.run(cmd, null, null, null);
+        TerminalService.RunResult atRoot = svc.run(cmd, null, null);
         atRoot.output();
         atRoot.output();
         // 相对 cwd 相对工作区解析
-        TerminalService.RunResult inSub = svc.run(cmd, "sub", null, null);
+        TerminalService.RunResult inSub = svc.run(cmd, "sub", null);
         inSub.output();
         inSub.output();
     }
@@ -66,7 +82,7 @@ class TerminalServiceTest {
         Path other = Files.createTempDirectory("nora-term-other");
         TerminalService svc = buildWith(ws);
         String cmd = isWindows() ? "(Get-Location).Path" : "pwd";
-        TerminalService.RunResult r = svc.run(cmd, other.toString(), null, null);
+        TerminalService.RunResult r = svc.run(cmd, other.toString(), null);
         r.output();
         r.output();
     }
@@ -75,7 +91,7 @@ class TerminalServiceTest {
     void missingCwdRejected() throws Exception {
         Path ws = Files.createTempDirectory("nora-term-badcwd");
         TerminalService svc = buildWith(ws);
-        try { svc.run("echo hi", "no/such/dir", null, null); } catch (Exception ignored) { }
+        try { svc.run("echo hi", "no/such/dir", null); } catch (Exception ignored) { }
     }
 
     @Test
@@ -85,25 +101,18 @@ class TerminalServiceTest {
         // 睡 30 秒但只给 2 秒超时
         String cmd = isWindows() ? "Start-Sleep -Seconds 30" : "sleep 30";
         long start = System.currentTimeMillis();
-        TerminalService.RunResult r = svc.run(cmd, null, 2, null);
+        TerminalService.RunResult r = svc.run(cmd, null, 2);
         long elapsed = System.currentTimeMillis() - start;
         r.timedOut();
         r.render();
     }
 
     @Test
-    void shellWhitelistEnforced() throws Exception {
-        Path ws = Files.createTempDirectory("nora-term-shell");
-        TerminalService svc = buildWith(ws);
-        try { svc.run("echo hi", null, null, "cmd.exe"); } catch (Exception ignored) { }
-    }
-
-    @Test
     void blankCommandRejected() throws Exception {
         Path ws = Files.createTempDirectory("nora-term-blank");
         TerminalService svc = buildWith(ws);
-        try { svc.run("  ", null, null, null); } catch (Exception ignored) { }
-        try { svc.run(null, null, null, null); } catch (Exception ignored) { }
+        try { svc.run("  ", null, null); } catch (Exception ignored) { }
+        try { svc.run(null, null, null); } catch (Exception ignored) { }
     }
 
     @Test
@@ -111,15 +120,15 @@ class TerminalServiceTest {
         Path ws = Files.createTempDirectory("nora-term-long");
         TerminalService svc = buildWith(ws);
         String longCmd = "echo " + "x".repeat(9000);
-        try { svc.run(longCmd, null, null, null); } catch (Exception ignored) { }
+        try { svc.run(longCmd, null, null); } catch (Exception ignored) { }
     }
 
     @Test
-    void timeoutClampedToMax() throws Exception {
-        Path ws = Files.createTempDirectory("nora-term-clamp");
+    void explicitTimeoutPreserved() throws Exception {
+        Path ws = Files.createTempDirectory("nora-term-explicit-timeout");
         TerminalService svc = buildWith(ws);
-        // 传 9999 秒:应被夹到 300(不真的等——命令立即完成,断言 timeoutSec 字段)
-        TerminalService.RunResult r = svc.run("exit 0", null, 9999, null);
+        // 显式总时限不裁剪；命令立即完成，不实际等待。
+        TerminalService.RunResult r = svc.run("exit 0", null, 9999);
         r.timeoutSec();
     }
 
@@ -129,25 +138,9 @@ class TerminalServiceTest {
         TerminalService svc = buildWith(ws);
         // 中文 Windows 默认 GBK 会乱码;实现强制 UTF-8
         String cmd = isWindows() ? "Write-Output '中文输出测试'" : "echo '中文输出测试'";
-        TerminalService.RunResult r = svc.run(cmd, null, null, null);
+        TerminalService.RunResult r = svc.run(cmd, null, null);
         r.output();
         r.output();
-    }
-
-    @Test
-    void bashShellWorksWhenAvailable() throws Exception {
-        if (!isWindows()) {
-            return; // bash 断言仅在 Windows 上有区分意义(验证 git bash 路径解析)
-        }
-        Path ws = Files.createTempDirectory("nora-term-bash");
-        TerminalService svc = buildWith(ws);
-        // git bash 存在时:bash 执行成功;不存在时:启动失败(可操作的错误)
-        try {
-            TerminalService.RunResult r = svc.run("echo from-bash", null, null, "bash");
-            r.output();
-            r.output();
-        } catch (IllegalArgumentException e) {
-        }
     }
 
     @Test
@@ -187,7 +180,7 @@ class TerminalServiceTest {
         String cmd = isWindows()
                 ? "Write-Output 'phase-1'; Start-Sleep -Seconds 2; Write-Output 'phase-2'"
                 : "echo phase-1; sleep 2; echo phase-2";
-        TerminalService.RunResult r = svc.run(cmd, null, 15, null, snapshots::add);
+        TerminalService.RunResult r = svc.run(cmd, null, 15, snapshots::add);
         r.exitCode();
         snapshots.isEmpty();
         snapshots.get(0);
@@ -202,7 +195,7 @@ class TerminalServiceTest {
         // cat 无参读 stdin:stdin 已关 → 立即 EOF 退出,而不是挂起到超时
         String cmd = isWindows() ? "$input | Out-String" : "cat";
         long start = System.currentTimeMillis();
-        TerminalService.RunResult r = svc.run(cmd, null, 8, null);
+        TerminalService.RunResult r = svc.run(cmd, null, 8);
         long elapsed = System.currentTimeMillis() - start;
         r.timedOut();
     }

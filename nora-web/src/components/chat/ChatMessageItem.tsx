@@ -1,4 +1,4 @@
-import { Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock, User, KeyRound, Cpu } from "lucide-react";
+import { Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock, User, Play } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -19,17 +19,9 @@ import { FileChangeCards } from "./FileChangeCards";
 import { parseArtifactsFence } from "@/lib/artifacts";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { usePreferences } from "@/hooks/usePreferences";
-
-/** 错误图标与配色(按 kind 微调,不喧宾夺主) */
-const ERROR_ICON: Record<string, React.ElementType> = {
-  network: Server,
-  auth: KeyRound,
-  "rate-limit": AlertTriangle,
-  timeout: AlertTriangle,
-  provider: Cpu,
-  approval: BookOpen,
-  unknown: AlertTriangle,
-};
+import { humanizeError } from "@/lib/errorMessages";
+import { Button } from "@/components/ui/button";
+import { CompactionMessage } from "./CompactionMessage";
 
 const SOURCE_ICON: Record<string, React.ElementType> = {
   file: FileText,
@@ -227,31 +219,38 @@ function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: st
   );
 }
 
-export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRetry = true, onEdit, canEdit = true }: { msg: ChatMessage; /** 所属会话 id(由 ChatConversation 传入,权威值);不传时回落 store.activeId */ sessionId?: string; onRetry?: (msgId: string) => void; canRetry?: boolean; onEdit?: (msgId: string, edited: string) => void; canEdit?: boolean }) {
+export function ChatMessageItem(props: React.ComponentProps<typeof ConversationMessage>) {
+  return props.msg.sender === "compaction" ? <CompactionMessage {...props} /> : <ConversationMessage {...props} />;
+}
+
+function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry = true, onEdit, canEdit = true }: { msg: ChatMessage; /** 所属会话 id(由 ChatConversation 传入,权威值);不传时回落 store.activeId */ sessionId?: string; onRetry?: (msgId: string) => void; canRetry?: boolean; onEdit?: (msgId: string, edited: string) => void | Promise<void>; canEdit?: boolean }) {
   // 保存状态键必须用**渲染该消息的会话 id**(与 ChatConversation 一致)——
   // 此前用 store.activeId,与 active.id(回落 sessions[0])可能不同,
   // 导致保存时与刷新后的键不一致、状态恢复失败(2026-09-21 实测)
   const storeActiveId = useChatSessions((s) => s.activeId);
   const sessionId = sessionIdProp ?? storeActiveId;
-  const [copied, setCopied] = useState(false);
-  const [rawExpanded, setRawExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const submitEdit = async () => {
+    if (!onEdit || !editDraft.trim() || !canEdit || editBusy) return;
+    setEditBusy(true);
+    try { await onEdit(msg.id, editDraft); setEditing(false); }
+    catch (failure) {
+      const friendly = humanizeError(failure);
+      toast.error(friendly.message, { description: friendly.hint });
+    }
+    finally { setEditBusy(false); }
+  };
   // 流式期间实时秒表(每秒递增);结束后停表不再显示(总耗时走 TurnMeta)
   const elapsedSeconds = useElapsedSeconds(msg.startedAtMs, !!msg.isTyping);
   // 用户头像:有昵称显示首字,未设置昵称显示通用图标(此前硬编码假身份 "NC")
   const accountName = usePreferences((s) => s.account.name);
   const avatarText = accountName.trim() ? accountName.trim().charAt(0).toUpperCase() : null;
-
-  const copyId = async () => {
-    try {
-      await navigator.clipboard.writeText(sessionId ?? "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* 剪贴板不可用时忽略 */
-    }
-  };
+  const hasTimelineText = msg.steps?.some(step => step.type === "commentary" || step.type === "answer");
+  const answerStep = msg.steps?.find(step => step.type === "answer");
+  const displayContent = hasTimelineText || msg.turnMetrics?.status === "interrupted"
+    ? answerStep?.detail ?? "" : msg.content;
 
   const copyContent = async () => {
     try {
@@ -265,7 +264,7 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
   if (msg.role === 'user') {
     return (
       <>
-        <div className="group/user flex gap-4 animate-in fade-in slide-in-from-bottom-2">
+        <div className="group/user flex gap-2 animate-in fade-in slide-in-from-bottom-2">
             <div className="flex-1"></div>
             {editing ? (
               <div className="bg-background border border-blue-400 dark:border-blue-600 rounded-2xl rounded-tr-sm p-3 max-w-[80%] w-full">
@@ -273,26 +272,27 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                   autoFocus
                   rows={Math.min(6, Math.max(1, editDraft.split('\n').length))}
                   value={editDraft}
+                  disabled={editBusy}
                   onChange={(e) => setEditDraft(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.nativeEvent.isComposing) return;
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
-                      if (editDraft.trim() && onEdit) { onEdit(msg.id, editDraft); setEditing(false); }
+                      void submitEdit();
                     } else if (e.key === 'Escape') {
-                      setEditing(false);
+                      if (!editBusy) setEditing(false);
                     }
                   }}
                   className="w-full bg-transparent resize-none outline-none text-sm text-foreground custom-scroll"
                 />
                 <div className="flex justify-end gap-1.5 mt-1.5">
-                  <button type="button" onClick={() => setEditing(false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer">
+                  <button type="button" disabled={editBusy} onClick={() => setEditing(false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer">
                     <X className="w-3 h-3" /> 取消
                   </button>
                   <button
                     type="button"
-                    disabled={!editDraft.trim() || !canEdit}
-                    onClick={() => { if (onEdit && editDraft.trim()) { onEdit(msg.id, editDraft); setEditing(false); } }}
+                    disabled={!editDraft.trim() || !canEdit || editBusy}
+                    onClick={() => void submitEdit()}
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
                   >
                     <Check className="w-3 h-3" /> 重新发送
@@ -300,9 +300,12 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                 </div>
               </div>
             ) : (
-              <div className="bg-background p-4 rounded-2xl rounded-tr-sm border border-border text-sm leading-relaxed max-w-[80%]">
+              <div className="bg-muted/50 min-w-0 px-4 py-3 rounded-2xl rounded-tr-sm border border-border/60 text-sm leading-relaxed max-w-[85%] break-words">
                 {/* 发送者标记(2026-09-20,定时任务=往会话发消息):该消息由定时任务
                     触发写入,不是用户手输——用户看历史时能明确区分 */}
+                {msg.sender === "steering" && (
+                  <div className="mb-1.5 text-[10px] font-medium text-muted-foreground">补充要求</div>
+                )}
                 {msg.sender === "automation" && (
                   <div className="flex items-center gap-1 mb-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                     <Clock className="w-3 h-3" /> 定时任务
@@ -349,14 +352,14 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
 
   return (
     <>
-      <div className="flex gap-4 animate-in fade-in slide-in-from-bottom-2">
+      <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2">
           {/* 头像:气泡 N(深蓝剪影)。深色模式下近黑背景对比度低,
               加一圈浅色细环把剪影从背景里拉出来(审查建议,2026-10-01) */}
-          <div className="w-8 h-8 rounded-full flex-shrink-0 shadow-sm mt-1 overflow-hidden ring-1 ring-black/10 dark:ring-white/25">
+          <div className="w-8 h-8 rounded-full flex-shrink-0 shadow-sm mt-1 overflow-hidden ring-1 ring-black/10 dark:ring-white/25 [@container(max-width:640px)]:hidden">
               <img src="/brand-avatar.png" alt="Nora" width={32} height={32} className="w-8 h-8" />
           </div>
-          <div className="flex-1 overflow-hidden">
-              <div className="text-sm font-medium flex items-center gap-2 mb-4">Nora <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>
+          <div className="min-w-0 flex-1 overflow-hidden">
+              <div className="text-sm font-medium flex items-center gap-2 mb-2">Nora <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>
                 {msg.isTyping && elapsedSeconds != null && (
                   <span className="text-[10px] font-normal tabular-nums text-blue-600 dark:text-blue-400" title="本轮流式响应已用时">{elapsedSeconds}s</span>
                 )}
@@ -365,8 +368,9 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
               <div className="relative pl-6 space-y-3 before:absolute before:inset-y-2 before:left-2.5 before:w-px before:bg-gray-200 dark:before:bg-gray-700">
                   {msg.steps && msg.steps.length > 0 && (
                     <AgentProcessBlock
-                      steps={msg.steps}
-                      isTyping={!!msg.isTyping}
+                      steps={msg.steps.filter(step => step.type !== "answer" && !(msg.error && step.id === "s-error"))}
+                      isTyping={!!msg.isTyping && !answerStep}
+                      isRunning={(msg.isRunning ?? !!msg.isTyping) && !answerStep}
                       durationMs={msg.turnMetrics?.durationMs}
                     />
                   )}
@@ -389,17 +393,24 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
 
                   <FileChangeCards msg={msg} sessionId={sessionId} />
 
-                  {msg.error && (() => {
-                    const ErrIcon = ERROR_ICON[msg.errorKind ?? "unknown"] ?? AlertTriangle;
-                    return (
-                      <div className="mb-2 rounded-xl border border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/25 px-3.5 py-3 max-w-2xl animate-in fade-in slide-in-from-top-1">
+                  {msg.turnMetrics?.status === "interrupted" && (
+                    <div role="status" className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+                      <p className="text-xs text-foreground">服务重启，任务已中断，已保存的工作过程已恢复。</p>
+                      <p className="text-xs text-muted-foreground">继续后会复用已完成结果，并先核实结果未知的操作。</p>
+                      {onRetry && (
+                        <Button size="sm" variant="outline" disabled={!canRetry} onClick={() => onRetry(msg.id)}>
+                          <Play /> 继续任务
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {msg.error && (
+                      <div role="alert" className="mb-2 rounded-xl border border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/25 px-3.5 py-3 max-w-2xl animate-in fade-in slide-in-from-top-1">
                         <div className="flex items-start gap-2.5">
-                          <ErrIcon className="w-4 h-4 text-red-500 dark:text-red-400 shrink-0 mt-0.5" />
+                          <AlertTriangle className="w-4 h-4 text-red-500 dark:text-red-400 shrink-0 mt-0.5" />
                           <div className="min-w-0 flex-1">
-                            <div className="text-xs font-medium text-red-800 dark:text-red-200">{msg.error}</div>
-                            {msg.errorHint && (
-                              <div className="text-[11px] text-red-600/80 dark:text-red-300/80 mt-1 leading-relaxed">{msg.errorHint}</div>
-                            )}
+                            <pre className="whitespace-pre-wrap break-words text-xs text-red-800 dark:text-red-200 max-h-64 overflow-auto">{msg.errorRaw || msg.error}</pre>
                             <div className="flex items-center gap-2 mt-2.5">
                               {onRetry && (
                                 <button
@@ -420,44 +431,25 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                                   复制已生成内容
                                 </button>
                               )}
-                              {msg.errorRaw && (
-                                <button
-                                  type="button"
-                                  onClick={() => setRawExpanded((v) => !v)}
-                                  className="inline-flex items-center gap-1 text-[10px] text-red-500/70 dark:text-red-400/70 hover:text-red-600 dark:hover:text-red-300 cursor-pointer transition-colors"
-                                >
-                                  <ChevronDown className={`w-3 h-3 transition-transform ${rawExpanded ? "rotate-180" : ""}`} />
-                                  技术详情
-                                </button>
-                              )}
                             </div>
-                            {rawExpanded && msg.errorRaw && (
-                              <pre className="mt-2 whitespace-pre-wrap break-words rounded-md bg-red-100/70 dark:bg-red-900/30 px-2 py-1.5 text-[10px] font-mono text-red-700 dark:text-red-300 max-h-32 overflow-auto">{msg.errorRaw}</pre>
-                            )}
-                            {sessionId && (
-                              <button type="button" onClick={copyId} className="mt-2 inline-flex items-center gap-1 font-mono text-[10px] text-red-600/60 dark:text-red-400/60 hover:text-red-700 dark:hover:text-red-300 underline underline-dotted cursor-pointer" title="复制会话 ID 用于排障">
-                                {copied ? <Check className="w-3 h-3" /> : null}{copied ? "已复制" : `会话 ID：${sessionId}`}
-                              </button>
-                            )}
                           </div>
                         </div>
                       </div>
-                    );
-                  })()}
-                  {(msg.content || msg.isTyping || msg.stopped) && (
+                  )}
+                  {(displayContent || (msg.isTyping && !hasTimelineText) || msg.stopped) && (
                     <div className="relative animate-in fade-in">
                         <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)]">
                             <MessageSquare className="w-[10px] h-[10px] text-blue-500 dark:text-blue-400" />
                         </div>
                         <div className="text-sm text-foreground leading-relaxed pt-0.5">
-                            {msg.content ? (
-                              <Markdown className="chat-markdown" sessionId={sessionId ?? undefined}>{msg.content}</Markdown>
+                            {displayContent ? (
+                              <Markdown className="chat-markdown" sessionId={sessionId ?? undefined}>{displayContent}</Markdown>
                             ) : msg.isTyping ? (
                               <span className="text-muted-foreground text-xs">正在思考…{elapsedSeconds != null ? ` ${elapsedSeconds}s` : ""}</span>
                             ) : (
-                              <span className="text-muted-foreground text-xs">已停止生成，未产生内容。可重新编辑发送。</span>
+                              <span className="text-muted-foreground text-xs">{hasTimelineText ? "已停止生成，已保留工作过程。" : "已停止生成，未产生内容。可重新编辑发送。"}</span>
                             )}
-                            {msg.isTyping && msg.content && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
+                            {msg.isTyping && displayContent && <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-blue-500 animate-pulse"></span>}
                         </div>
                         {/* 回答结束后的元信息行:工具次数 · tokens · 耗时 · 已停止标记 + 复制 */}
                         {!msg.isTyping && (
@@ -491,7 +483,7 @@ export function ChatMessageItem({ msg, sessionId: sessionIdProp, onRetry, canRet
                     <SourceCitations sources={msg.sources} />
                   )}
 
-                  {!msg.isTyping && msg.content && (
+                  {!msg.isTyping && displayContent && (
                     <div className="relative pt-1 flex items-center gap-2 flex-wrap">
                       <SaveToKnowledgeButton msg={msg} sessionId={sessionId} />
                       {!msg.steps?.some(step => step.result?.files?.length) && <SaveAsFileButton msg={msg} sessionId={sessionId} />}

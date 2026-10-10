@@ -72,7 +72,7 @@ class ToolsSpecInjectionTest {
         TerminalService terminal = new TerminalService(
                 java.nio.file.Files.createTempDirectory("nora-term-test").toString());
         JsonNode tools = buildWith(null, null, null, terminal).build();
-        containsTool(tools, "run_command");
+        containsTool(tools, TerminalService.toolName());
         // 既有工具不受影响
         containsTool(tools, "execute_sql");
     }
@@ -83,7 +83,8 @@ class ToolsSpecInjectionTest {
         containsTool(tools, "manage_workspace");
         containsTool(tools, "manage_skill");
         containsTool(tools, "manage_mcp");
-        containsTool(tools, "run_command");
+        containsTool(tools, "powershell");
+        containsTool(tools, "sh");
         // 2026-09-18 新增工具:客户端未接时不挂载
         containsTool(tools, "search_knowledge");
         containsTool(tools, "manage_knowledge");

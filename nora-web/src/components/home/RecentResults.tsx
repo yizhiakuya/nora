@@ -56,7 +56,7 @@ export function RecentResults() {
 
   return (
     <>
-      <div className="bg-card border border-border rounded-xl divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
+      <div className="surface divide-y divide-border/70 overflow-hidden">
         {records.map((rec) => {
           const meta = executionStatusMeta(rec.status);
           const Icon = meta.icon;
@@ -66,12 +66,12 @@ export function RecentResults() {
               type="button"
               onClick={() => setViewing(rec)}
               title={meta.actionHint ?? undefined}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/40 transition-colors cursor-pointer"
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/50 transition-colors cursor-pointer"
             >
               <Icon className={`w-3.5 h-3.5 shrink-0 ${meta.cls} ${rec.status === "running" ? "animate-spin" : ""}`} />
-              <span className="text-xs font-medium text-foreground truncate min-w-0 flex-1">{rec.ruleName}</span>
-              <span className={`text-[10px] shrink-0 ${meta.cls}`}>{meta.label}</span>
-              <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{rec.time}</span>
+              <span className="text-[13px] font-medium text-foreground truncate min-w-0 flex-1">{rec.ruleName}</span>
+              <span className={`text-[11px] shrink-0 ${meta.cls}`}>{meta.label}</span>
+              <span className="text-[11px] text-muted-foreground tabular-nums shrink-0 hidden min-[480px]:inline">{rec.time}</span>
               <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
             </button>
           );

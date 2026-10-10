@@ -48,19 +48,24 @@ needApproval = ASK || (ASSIST && risk != LOW) || (FULL && risk == CRITICAL)
 | manage_service | enable/disable | HIGH |
 | manage_service | **register/remove** | **CRITICAL** |
 | manage_mcp | list / **tools**(读缓存快照) | LOW |
+| manage_env_vars | list | LOW(只回变量名、备注和脱敏值) |
+| manage_env_vars | set/delete | HIGH(单项修改，与设置页共用存储，跟随全局权限档位) |
 | manage_mcp | refresh/enable/disable/register/remove/**setPolicy**/**call** | **HIGH(跟随全局档,无单独强制审批)** |
 | mcp__* 挂载工具 | — | HIGH |
 | mcp__*__photos_manage | trash_list | LOW(只读查看回收站) |
 | mcp__*__photos_manage | move/copy/rename/delete(→回收站)/trash_restore/album_create | HIGH(可恢复写操作) |
 | mcp__*__photos_manage | **trash_purge** | **CRITICAL**(彻底删除手机照片,仅回收站内可用;无人值守直接拒绝) |
 | manage_skill | 全部动作 | LOW |
+| manage_browser | state/open/snapshot/inspect/extract/plan/export/verify/learn/rows、滚动和标签导航 | LOW(真实 Chromium；服务端冻结验收、DOM 采集、CSV 重读核验；样本确认仅由用户提交；方法保存需本次验收仍有效) |
+| manage_browser | click/fill/key | HIGH(可能提交表单或修改网站；用户接管后 Agent 操作被拒绝；超时结果未知不自动重放) |
+| manage_photo_album | list/read/create/update/feedback | LOW(固定工作区内相册；版本更新、内容去重、明确风格反馈；不修改源照片) |
 | manage_knowledge | list/stats | LOW |
 | manage_knowledge | index/reindex | HIGH |
 | manage_knowledge | **remove** | **CRITICAL**(删文档+分块/向量) |
 | manage_automation | list/executions | LOW |
 | manage_automation | create/toggle/run | HIGH(prompt 进无人值守通道) |
 | manage_automation | **remove** | **CRITICAL** |
-| run_command | — | HIGH(本机终端;不做命令白名单,防线=审批卡完整命令) |
+| powershell/sh（仅当前平台注册的工具） | — | HIGH(本机终端;不做命令白名单,防线=审批卡完整命令) |
 
 **易错点**:
 - `manage_mcp` 的 register/remove 是 **HIGH 不是 CRITICAL**(2026-09-11 用户明确要求:跟随全局权限档,不做单独审批业务)。曾被定成 CRITICAL 导致 FULL 档下注册仍弹窗,已修正
@@ -84,6 +89,8 @@ needApproval = ASK || (ASSIST && risk != LOW) || (FULL && risk == CRITICAL)
 
 ## 敏感数据三层脱敏(register MCP / 数据源时)
 
+环境变量使用原生 `manage_env_vars list/set/delete`，不要猜设置接口或扫描应用包。set 默认 `secret=true`，只改指定项并保留其他变量；命令自动注入，MCP 配置使用 `${KEY}` 引用。变量工具的 value 在日志、步骤原始参数和审批中隐藏，标题只显示动作与变量名；密钥 API 回读完整遮蔽。沿用现有变量存储格式，secret 是显示脱敏标记，不是加密开关。
+
 | 层 | 行为 |
 |---|---|
 | 日志 | headers/env 值、password/token → `***`(`scrubArgsForLog`) |
@@ -101,7 +108,7 @@ needApproval = ASK || (ASSIST && risk != LOW) || (FULL && risk == CRITICAL)
 
 ## 审批卡明细(actionType)
 
-`sql_write` / `container_control` / `datasource_manage` / `service_manage` / `mcp_manage`(STDIO 显示完整命令行) / `workspace_file` / `terminal_command`(run_command,命令原文完整展示) / `mcp_tool`
+`sql_write` / `container_control` / `datasource_manage` / `service_manage` / `mcp_manage`(STDIO 显示完整命令行) / `env_vars_manage`(动作、变量名，隐藏值) / `workspace_file` / `terminal_command`(powershell/sh（仅当前平台注册的工具）,命令原文完整展示) / `mcp_tool`
 
 新增工具时:①RiskClassifier 分级 ②buildApprovalRequest 明细 ③本文件+权威文档+测试断言,四处同步。
 

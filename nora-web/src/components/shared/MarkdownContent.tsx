@@ -5,6 +5,7 @@ import { parseArtifactsJson, parseLegacyGalleryFence } from "@/lib/artifacts";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { viewerApi, viewerTargetFromUrl } from "@/lib/services/viewerApi";
 import { mediaCacheUrl, originalVariant } from "@/lib/mediaCache";
+import { BrowserLink } from "./BrowserLink";
 
 /**
  * 图片与文件链接进入共享查看器；工作区 Markdown 支持相对资源。
@@ -142,11 +143,11 @@ export default function MarkdownContent({
     img: ({ src, alt }: { src?: string; alt?: string }) => <MarkdownImage src={src} alt={alt} fileTarget={fileTarget} sessionId={sessionId} />,
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
       const target = href ? markdownFileTarget(href, fileTarget) : null;
-      return <a href={target ? `?viewer=${encodeURIComponent(target)}` : href} onClick={event => {
+      return <BrowserLink href={target ? `?viewer=${encodeURIComponent(target)}` : href} onClick={event => {
         if (!target || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         void useFileViewer.getState().openTargets([target], undefined, { sessionId });
-      }}>{children}</a>;
+      }}>{children}</BrowserLink>;
     },
   };
   const urlTransform = (url: string) => /^(workspace:|file:|media:)/.test(url) ? url : defaultUrlTransform(url);

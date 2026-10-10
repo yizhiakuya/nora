@@ -1,96 +1,88 @@
-import { useState, useEffect } from "react";
-import { CheckCircle2, Moon, Sun } from "lucide-react";
+import { Bot, ArrowRight, Globe, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTheme } from "next-themes";
-import { toast } from "sonner";
-import { useTimedSequence } from "@/hooks/useTimedSequence";
 import { useNavigate } from "react-router-dom";
-import { Cpu, ArrowRight } from "lucide-react";
+import { usePreferences, type LinkOpenMode } from "@/hooks/usePreferences";
 
 export function GeneralSettings() {
-  const [saved, setSaved] = useState(false);
-  const { schedule, cancelAll } = useTimedSequence();
-  const { setTheme, resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const navigate = useNavigate();
-
-  // Avoid hydration mismatch
-  useEffect(() => setMounted(true), []);
-
-  const handleSave = () => {
-    cancelAll();
-    setSaved(true);
-    toast.success("设置已保存");
-    schedule(() => setSaved(false), 2000);
-  };
-
-  const handleReset = () => {
-    setTheme("system");
-    toast.success("已恢复默认外观（跟随系统）");
-  };
+  const linkOpenMode = usePreferences(state => state.linkOpenMode);
+  const setLinkOpenMode = usePreferences(state => state.setLinkOpenMode);
 
   return (
-    <div className="bg-card dark:bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-      <div className="p-6 space-y-6">
+    <div className="surface overflow-hidden">
+      <div className="p-5 sm:p-6 space-y-6">
         <button
           type="button"
-          onClick={() => navigate("/settings?section=model")}
-          className="w-full flex items-center justify-between px-4 py-3 rounded-lg bg-muted/40 border border-border cursor-pointer hover:border-primary/40 transition-colors text-left"
+          onClick={() => navigate("/agent")}
+          className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-muted/40 border border-border cursor-pointer hover:border-primary/40 transition-colors text-left"
         >
-          <div className="flex items-center gap-3">
-            <Cpu className="w-4 h-4 text-primary" />
+          <div className="min-w-0 flex items-center gap-3">
+            <Bot className="w-4 h-4 text-primary shrink-0" />
             <div>
-              <div className="text-sm font-medium text-foreground">默认大语言模型与服务商接入</div>
-              <div className="text-xs text-muted-foreground mt-0.5">在设置 → 模型 中配置</div>
+              <div className="text-sm font-medium text-foreground">Agent 配置</div>
+              <div className="text-xs text-muted-foreground mt-0.5">管理模型、权限、指令与记忆</div>
             </div>
           </div>
-          <ArrowRight className="w-4 h-4 text-muted-foreground" />
+          <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
         </button>
 
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-bold text-foreground">工作区偏好</label>
-            <p className="text-xs text-muted-foreground">自定义 Nora 的视觉与交互体验。</p>
+            <h2 className="section-heading">外观</h2>
+            <p className="text-xs text-muted-foreground mt-1">设置会立即生效。</p>
           </div>
-
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-                {mounted && resolvedTheme === "dark" ? <Moon className="w-4 h-4 text-foreground" /> : <Sun className="w-4 h-4 text-foreground" />}
+              <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center">
+                {resolvedTheme === "dark" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
               </div>
+              <label htmlFor="appearance-theme" className="text-sm font-medium">主题</label>
+            </div>
+            <Select value={theme} onValueChange={(value) => setTheme(value as typeof theme)}>
+              <SelectTrigger id="appearance-theme" className="w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="system">跟随系统</SelectItem>
+                <SelectItem value="light">浅色</SelectItem>
+                <SelectItem value="dark">深色</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="border-t border-border pt-6 space-y-4">
+          <div>
+            <h2 className="section-heading">链接</h2>
+            <p className="text-xs text-muted-foreground mt-1">即时生效，并保存在当前浏览器。</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center shrink-0"><Globe className="w-4 h-4" /></div>
               <div>
-                <div className="text-sm font-medium text-foreground">深色模式 (Dark Mode)</div>
-                <div className="text-xs text-muted-foreground mt-0.5">全局应用极夜风格视觉</div>
+                <label htmlFor="links-open-mode" className="text-sm font-medium">链接打开方式</label>
+                <p className="text-xs text-muted-foreground mt-1">文档、对话和采集结果中的网页链接</p>
               </div>
             </div>
-            <Switch
-              checked={mounted && resolvedTheme === "dark"}
-              onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
-            />
+            <Select value={linkOpenMode} onValueChange={value => setLinkOpenMode(value as LinkOpenMode)}>
+              <SelectTrigger id="links-open-mode" className="w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="internal">内置浏览器</SelectItem>
+                <SelectItem value="external">外部浏览器</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-
+          <p className="text-xs leading-relaxed text-muted-foreground">内置浏览器在右侧工作区新建标签页；外部浏览器在访问 Nora 的浏览器里新建标签页。</p>
         </div>
 
-        <div className="w-full h-px bg-border"></div>
-
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-bold text-foreground">本地数据</label>
-            <p className="text-xs text-muted-foreground">所有文件与索引数据仅保存在本机浏览器与本地存储，不上传云端。</p>
-          </div>
+        <div className="border-t border-border pt-6 space-y-2">
+          <h2 className="section-heading">数据存储</h2>
+          <p className="text-sm leading-relaxed text-muted-foreground">文件、索引和会话由 Nora 部署的服务器管理。调用模型时，相关内容会发送到你配置的模型服务商。</p>
         </div>
       </div>
-
-      <div className="bg-muted/30 p-4 border-t border-border flex justify-end gap-3">
-        <Button variant="outline" size="sm" className="bg-background" onClick={handleReset}>还原默认</Button>
-        <Button
-          size="sm"
-          className={`transition-colors ${saved ? "bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 text-white" : "bg-primary hover:bg-primary/90 text-primary-foreground"}`}
-          onClick={handleSave}
-        >
-          {saved ? <><CheckCircle2 className="w-4 h-4 mr-1.5" /> 已保存</> : "保存更改"}
-        </Button>
+      <div className="bg-muted/30 px-5 sm:px-6 py-4 border-t border-border flex justify-end">
+        <Button variant="outline" size="sm" onClick={() => setTheme("system")}>跟随系统外观</Button>
       </div>
     </div>
   );

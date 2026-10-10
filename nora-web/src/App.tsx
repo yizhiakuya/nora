@@ -2,8 +2,8 @@ import { Routes, Route, Navigate, useLocation, useSearchParams } from "react-rou
 import { lazy, Suspense, useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { FileViewerWorkspace } from "@/components/layout/FileViewerWorkspace";
-import { useFileViewer } from "@/hooks/useFileViewer";
+import { SideWorkspace } from "@/components/layout/SideWorkspace";
+import { useChatSessions } from "@/hooks/useChatSessions";
 import { ServiceUnavailablePage } from "@/components/layout/ServiceUnavailablePage";
 import { NotificationWatcher } from "@/components/layout/NotificationWatcher";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
@@ -22,8 +22,7 @@ const HomePage = lazy(() => import("@/app/page"));
 const FilesPage = lazy(() => import("@/app/files/page"));
 const ChatPage = lazy(() => import("@/app/chat/page"));
 const KnowledgePage = lazy(() => import("@/app/knowledge/page"));
-const SkillsPage = lazy(() => import("@/app/skills/page"));
-const McpPage = lazy(() => import("@/app/mcp/page"));
+const AgentPage = lazy(() => import("@/app/agent/page"));
 const DataSourcesPage = lazy(() => import("@/app/data-sources/page"));
 const EnvironmentsPage = lazy(() => import("@/app/environments/page"));
 const TasksPage = lazy(() => import("@/app/tasks/page"));
@@ -43,11 +42,12 @@ const TITLES: Record<string, string> = {
   "/environments": "环境控制台",
   "/automations": "任务",
   "/settings": "设置",
+  "/agent": "Agent",
   "/login": "登录",
 };
 
 function RouteShell({ children }: { children: React.ReactNode }) {
-  const viewerOpen = useFileViewer(state => state.isOpen);
+  const sessionId = useChatSessions(state => state.sessions.find(session => session.id === state.activeId)?.id ?? state.sessions[0]?.id ?? "");
   const location = useLocation();
   const startPolling = useBackendHealth((s) => s.startPolling);
   const online = useBackendHealth((s) => s.online);
@@ -57,7 +57,7 @@ function RouteShell({ children }: { children: React.ReactNode }) {
   const isCmdKOpen = useCommandPalette((s) => s.isOpen);
   const toggleCmdK = useCommandPalette((s) => s.toggle);
   const closeCmdK = useCommandPalette((s) => s.close);
-  // 全局后端健康探测:离线时所有路由替换为服务不可用页
+  // 全局后端健康探测；离线提示覆盖路由，保留未提交的编辑与选行草稿。
   useEffect(() => {
     startPolling();
   }, [startPolling]);
@@ -76,12 +76,8 @@ function RouteShell({ children }: { children: React.ReactNode }) {
     const title = TITLES[location.pathname];
     document.title = title ? `${title} · Nora` : "Nora";
   }, [location.pathname]);
-  // API 不在线 = 全部功能不可用:整屏替换为服务不可用页(无侧栏/导航)
-  if (online === false) {
-    return <ServiceUnavailablePage />;
-  }
   return (
-    <div className="h-screen flex overflow-hidden text-gray-800 dark:text-gray-100 bg-background dark:bg-background">
+    <div className="h-dvh flex overflow-hidden text-foreground bg-background">
       {/* 全局后台事件观察器:自动任务执行/PROC 守护事件在任何页面都能进通知中心 */}
       <NotificationWatcher />
       {/* 全局搜索(Cmd+K):任何页面可呼出;首页搜索框复用同一实例。
@@ -91,8 +87,9 @@ function RouteShell({ children }: { children: React.ReactNode }) {
           <CommandPalette isOpen onClose={closeCmdK} />
         </Suspense>
       )}
-      <Sidebar compact={viewerOpen} />
-      <FileViewerWorkspace>{children}</FileViewerWorkspace>
+      <Sidebar />
+      <SideWorkspace key={sessionId} sessionId={sessionId}>{children}</SideWorkspace>
+      {online === false && <ServiceUnavailablePage />}
     </div>
   );
 }
@@ -126,21 +123,25 @@ function RouteLoading() {
 }
 
 export default function App() {
+  const { search } = useLocation();
+  const chatParams = new URLSearchParams(search);
+  chatParams.delete("viewer");
   return (
     <Routes>
       <Route path="/" element={<Page><HomePage /></Page>} />
       <Route path="/files" element={<Page><FilesPage /></Page>} />
-      <Route path="/chat" element={<Page><ChatPage /></Page>} />
+      <Route path="/chat" element={<Page><ChatPage key={chatParams.toString()} /></Page>} />
       {/* 任务聚合页(M1):view=running|schedules|history */}
       <Route path="/tasks" element={<Page><TasksPage /></Page>} />
       {/* 兼容旧路由(产品改造方案 §3.2):/automations → /tasks(view 保留) */}
       <Route path="/automations" element={<CompatAutomations />} />
       <Route path="/knowledge" element={<Page><KnowledgePage /></Page>} />
-      <Route path="/skills" element={<Page><SkillsPage /></Page>} />
-      <Route path="/mcp" element={<Page><McpPage /></Page>} />
+      <Route path="/skills" element={<Navigate to="/agent?section=skills" replace />} />
+      <Route path="/mcp" element={<Navigate to="/agent?section=connections" replace />} />
       <Route path="/data-sources" element={<Page><DataSourcesPage /></Page>} />
       <Route path="/environments" element={<Page><EnvironmentsPage /></Page>} />
       <Route path="/settings" element={<Page><SettingsPage /></Page>} />
+      <Route path="/agent" element={<Page><AgentPage /></Page>} />
       {/* 令牌登录页(2026-09-19):独立全屏,无侧栏/无健康探测壳 */}
       <Route path="/login" element={
         <Suspense fallback={<RouteLoading />}>
@@ -148,8 +149,8 @@ export default function App() {
         </Suspense>
       } />
       {/* 兼容旧路由 → 重定向 */}
-      <Route path="/models" element={<Navigate to="/settings?tab=模型管理" replace />} />
-      <Route path="/env-vars" element={<Navigate to="/settings?tab=环境变量" replace />} />
+      <Route path="/models" element={<Navigate to="/agent?section=model" replace />} />
+      <Route path="/env-vars" element={<Navigate to="/agent?section=env" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

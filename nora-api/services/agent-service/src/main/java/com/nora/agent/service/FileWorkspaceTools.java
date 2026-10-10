@@ -1,6 +1,6 @@
 package com.nora.agent.service;
 
-import static com.nora.agent.service.ChatToolExecutor.bounded;
+import static com.nora.agent.service.ChatToolExecutor.textOutcome;
 
 import java.time.Duration;
 import java.util.List;
@@ -62,7 +62,7 @@ class FileWorkspaceTools {
         }
         if ("list".equals(action) || parsed.input().target() == null) {
             // 无 id = 列出文件让模型挑;显式 action=list 同理
-            return bounded(fileToolClient.list(), null);
+            return textOutcome(fileToolClient.list(), null);
         }
         String target = parsed.input().target();
         if (!target.matches("\\d+")) {
@@ -79,10 +79,10 @@ class FileWorkspaceTools {
     private ToolOutcome readCenterFile(long fileId) {
         FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
         if (info.failed()) {
-            return bounded("ERROR: " + info.error(), null);
+            return textOutcome("ERROR: " + info.error(), null);
         }
         if (info.hasText()) {
-            return bounded(fileToolClient.renderPreview(info), null);
+            return textOutcome(fileToolClient.renderPreview(info), null);
         }
         // 无文本=二进制/图片:图片走图像通道(视觉模型直接看图;
         // 非视觉模型由 backfillToolMessage 明确告知看不到,不静默丢弃)
@@ -98,7 +98,7 @@ class FileWorkspaceTools {
                         List.of(new McpServerService.McpToolResult.ImageBlock(mime, b64)));
             }
         }
-        return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
+        return textOutcome("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
     }
 
     /**
@@ -127,8 +127,8 @@ class FileWorkspaceTools {
                     return new ToolOutcome("图片 " + file.name() + " 已作为图像附件返回", "图片", null, false,
                             List.of(new McpServerService.McpToolResult.ImageBlock(file.mimeType(), java.util.Base64.getEncoder().encodeToString(raw.bytes()))));
                 }
-                if (file.capabilities().source()) return bounded(viewerService.text(file.target()).content(), null);
-                return bounded("文件 " + file.name() + " 不支持内容提取，可使用 open_file 展示给用户查看", null);
+                if (file.capabilities().source()) return textOutcome(viewerService.text(file.target()).content(), null);
+                return textOutcome("文件 " + file.name() + " 不支持内容提取，可使用 open_file 展示给用户查看", null);
             } catch (java.io.IOException | IllegalArgumentException | org.springframework.web.client.RestClientException e) {
                 return new ToolOutcome("ERROR: 文件暂时无法读取或格式不支持，请核对引用", null, null, false);
             }
@@ -142,7 +142,7 @@ class FileWorkspaceTools {
                 FileToolClient.PreviewInfo info = fileToolClient.previewInfo(fileId);
                 if (!info.failed()) {
                     if (info.hasText()) {
-                        return bounded("(文件中心 id=" + fileId + ")\n" + fileToolClient.renderPreview(info), null);
+                        return textOutcome("(文件中心 id=" + fileId + ")\n" + fileToolClient.renderPreview(info), null);
                     }
                     // 无文本:复用图像通道逻辑(与数字 id 路径一致)
                     JsonNode meta = fileToolClient.meta(fileId);
@@ -157,7 +157,7 @@ class FileWorkspaceTools {
                                     List.of(new McpServerService.McpToolResult.ImageBlock(mime, b64)));
                         }
                     }
-                    return bounded("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
+                    return textOutcome("文件 " + info.name() + " 没有可提取的文本内容(可能是二进制/图片)", null);
                 }
             }
             if (explicitCenter) {
@@ -195,7 +195,7 @@ class FileWorkspaceTools {
             }
         }
         try {
-            return bounded("(工作区文件 " + path + ")\n" + agentWorkspaceService.readAny(path), null);
+            return textOutcome("(工作区文件 " + path + ")\n" + agentWorkspaceService.readAny(path), null);
         } catch (IllegalArgumentException e) {
             return new ToolOutcome("ERROR: " + e.getMessage(), null, null, false);
         }
@@ -214,7 +214,7 @@ class FileWorkspaceTools {
         }
         switch (action) {
             case "folders" -> {
-                return bounded(fileToolClient.folders(), null);
+                return textOutcome(fileToolClient.folders(), null);
             }
             case "mkdir" -> {
                 String folderName = a.path("name").asText(null);
@@ -222,7 +222,7 @@ class FileWorkspaceTools {
                     return new ToolOutcome("ERROR: mkdir 需要 name 参数(新文件夹名)。"
                             + "示例:{\"action\": \"mkdir\", \"name\": \"合同\"}", null, null, false);
                 }
-                return bounded(fileToolClient.mkdir(folderName), null);
+                return textOutcome(fileToolClient.mkdir(folderName), null);
             }
             default -> {
                 // rename / move / delete 都需要文件 id(rename 单个;move/delete 支持逗号分隔多个)
@@ -242,14 +242,14 @@ class FileWorkspaceTools {
                         return new ToolOutcome("ERROR: rename 一次只能改一个文件(逐个改,或告诉我批量命名规则)",
                                 null, null, false);
                     }
-                    return bounded(fileToolClient.rename(ids.get(0), newName), null);
+                    return textOutcome(fileToolClient.rename(ids.get(0), newName), null);
                 }
                 if ("move".equals(action)) {
                     Long folderId = a.path("folderId").isNumber() ? a.path("folderId").asLong() : null;
-                    return bounded(fileToolClient.move(ids, folderId), null);
+                    return textOutcome(fileToolClient.move(ids, folderId), null);
                 }
                 // delete(软删,进回收站)
-                return bounded(fileToolClient.delete(ids), null);
+                return textOutcome(fileToolClient.delete(ids), null);
             }
         }
     }
@@ -355,9 +355,11 @@ class FileWorkspaceTools {
                     }
                     // 分段读(设计 §5.3 大结果回读):offset/limit 给截断后的续读出路
                     Integer readOffset = a.path("offset").isNumber() ? a.path("offset").asInt() : null;
-                    if (readOffset != null) {
-                        Integer readLimit = a.path("limit").isNumber() ? a.path("limit").asInt() : 500;
-                        yield agentWorkspaceService.readRangeAny(path, readOffset, readLimit);
+                    if (readOffset != null || a.has("unit") || a.has("limit")) {
+                        String unit = a.path("unit").asText("lines");
+                        int readLimit = a.path("limit").isNumber() ? a.path("limit").asInt()
+                                : "chars".equals(unit) ? AgentWorkspaceService.READ_PAGE_CHARS : 500;
+                        yield agentWorkspaceService.readRangeAny(path, readOffset == null ? 1 : readOffset, readLimit, unit);
                     }
                     yield agentWorkspaceService.readAny(path);
                 }
@@ -407,11 +409,9 @@ class FileWorkspaceTools {
                     }
                     String before = agentWorkspaceService.readTextOrNull(path);
                     String editResult = agentWorkspaceService.editAny(path, oldString, newString);
-                    // editAny 成功后 oldString 必然唯一,重放替换即为写后内容
                     if (before != null) {
-                        int idx = before.indexOf(oldString);
-                        if (idx >= 0) {
-                            String after = before.substring(0, idx) + newString + before.substring(idx + oldString.length());
+                        String after = agentWorkspaceService.readTextOrNull(path);
+                        if (after != null) {
                             addFileChange(fileChanges, path, "edit", before, after, true);
                         }
                     }
@@ -696,7 +696,7 @@ class FileWorkspaceTools {
             for (var error : resolved.errors()) content.append(error.target()).append(" | ").append(error.message()).append('\n');
             boolean partial = !resolved.errors().isEmpty() || resolved.files().stream()
                     .anyMatch(file -> file.delivery() != null && "failed".equals(file.delivery().status()));
-            var boundedContent = bounded(content.toString(), null);
+            var boundedContent = textOutcome(content.toString(), null);
             return new ToolOutcome(boundedContent.content(), resolved.files().size() + " 个文件可查看", null, boundedContent.truncated(),
                     List.of(), false, partial && !resolved.files().isEmpty(), resolved.files(), focusTarget, resolved.errors());
         } catch (java.io.IOException | IllegalArgumentException e) {

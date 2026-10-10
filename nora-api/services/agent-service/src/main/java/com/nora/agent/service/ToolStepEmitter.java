@@ -1,6 +1,12 @@
 package com.nora.agent.service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +17,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nora.agent.dto.ApprovalRequestDto;
 import com.nora.agent.dto.ChatStepDto;
+import com.nora.common.logging.TraceContext;
 
 /**
  * 工具步骤发射器(2026-09-17 从 ChatOrchestrationService 拆出,拆分方案收尾):
@@ -59,12 +66,70 @@ class ToolStepEmitter {
         this.turnCancellation = turnCancellation;
     }
 
+    void emitToolCalls(List<JsonNode> calls, LoopDetector loopDetector, List<WireMessage> messages,
+                       int roundIndex, PermissionMode permissionMode, String sessionId, boolean unattended,
+                       ResolvedLlm llm, ChatOrchestrationService.ChatEventConsumer eventConsumer) throws Exception {
+        List<Callable<List<WireMessage>>> tasks = new ArrayList<>();
+        Set<String> fingerprints = new java.util.HashSet<>();
+        boolean parallel = calls.size() > 1;
+        for (JsonNode call : calls) {
+            String callId = call.path("id").asText();
+            String name = call.path("function").path("name").asText();
+            String args = call.path("function").path("arguments").asText("{}");
+            parallel &= canRunInParallel(name, args, permissionMode)
+                    && fingerprints.add(canonicalToolName(name) + "|" + canonicalArgs(name, args));
+            loopDetector.countAttempt();
+            String stepId = "s-call-" + loopDetector.attempts() + "-" + callId;
+            tasks.add(() -> {
+                if (Thread.currentThread().isInterrupted()
+                        || turnCancellation != null && turnCancellation.isCancelled(sessionId)) {
+                    throw new CancellationException("turn cancelled");
+                }
+                List<WireMessage> results = new ArrayList<>();
+                emitToolStep(stepId, name, args, loopDetector, results, callId, roundIndex,
+                        permissionMode, sessionId, unattended, llm, eventConsumer);
+                return results;
+            });
+        }
+        if (!parallel) {
+            for (var task : tasks) messages.addAll(task.call());
+            return;
+        }
+        // ponytail: 每轮最多 4 个工具并发;独立 I/O 确实排队时再调整,不引入调度框架。
+        try (var pool = Executors.newFixedThreadPool(4, Thread.ofVirtual().factory())) {
+            List<Future<List<WireMessage>>> futures = new ArrayList<>();
+            try {
+                for (var task : tasks) futures.add(pool.submit(TraceContext.wrap(task)));
+                // 执行和展示按实际完成时间;模型结果按原调用顺序回填,不共享消息列表。
+                for (var future : futures) messages.addAll(future.get());
+            } finally {
+                for (var future : futures) future.cancel(true);
+            }
+        }
+    }
+
+    private boolean canRunInParallel(String name, String args, PermissionMode permissionMode) {
+        if (permissionMode == PermissionMode.ASK) return false;
+        if (TerminalService.isCommandTool(name)) return permissionMode == PermissionMode.FULL;
+        if (toolExecutor.classifyRisk(name, args) != RiskClassifier.Risk.LOW) return false;
+        return switch (name) {
+            case "manage_workspace" -> Set.of("list", "read").contains(
+                    RiskClassifier.normalizeWorkspaceAction(parseArgsSafe(args).path("action").asText("")));
+            case "manage_skill" -> Set.of("list", "read").contains(
+                    parseArgsSafe(args).path("action").asText("").trim().toLowerCase(java.util.Locale.ROOT));
+            case "execute_sql", "search_knowledge", "read_service_logs", "environment_status",
+                    "manage_file", "read_file", "manage_automation", "manage_datasource",
+                    "manage_service", "manage_mcp", "manage_env_vars", "manage_knowledge" -> true;
+            default -> false; // 浏览器、写入、交互和未知工具保留串行生命周期。
+        };
+    }
+
     /**
-     * 执行一次工具调用并发出结构化步骤对(running → 终态)。终态状态:
+     * 执行一次工具调用并发出步骤(pending → running → 终态)。终态状态:
      * 守卫拒绝输入时为 {@code declined}(规则拒绝,非执行错误),
      * 执行抛异常时为 {@code failed},其余为 {@code completed}。
      * ASK 档每次都请求批准;ASSIST 档仅高风险(RiskClassifier)请求批准;
-     * FULL 档不询问。等待批准期间 step 保持 running,批准事件由 SSE 下发。
+     * 等待批准期间保持 pending；实际调用前才转 running。
      */
     /** 遗留的测试/辅助入口:无会话即绕过审批。 */
     void emitToolStep(String toolStepId, String name, String args,
@@ -115,25 +180,27 @@ class ToolStepEmitter {
                               ResolvedLlm llm,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
         ParsedArgs parsed = parseArgs(name, args);
+        String displayArgs = scrubArgsForLog(args, name);
+        ParsedArgs displayed = parseArgs(name, displayArgs);
         // 跨轮历史重建(对齐 Claude Code/Codex「工具链即历史」):step 持久化脱敏后的
         // 原始参数,下一轮把它重放为 wire 层 assistant(tool_calls)+tool(result) 对——
         // 模型看到自己真实的调用记录,而不是"纯文本声称跑过命令"(实测:缺失工具链
         // 结构时弱模型会续写编造工具结果)。脱敏与日志同口径,不存凭据明文。
-        ChatStepDto.StepInput input = withRawArgs(parsed.input(), args);
+        ChatStepDto.StepInput input = withRawArgs(displayed.input(), displayArgs, name);
         // 标题管线(2026-09-29 统一,对齐 Claude Code 的工具标题):
         //   ① 模型经 description 参数填的标题(所有内置工具 schema 已统一注入该参数)
         //   ② 省略时从参数派生「动作 + 目标」(「读取 memory/x.md」,比静态工具名有信息量)
         //   ③ 无法派生回退静态名(defaultTitle)
-        String title = parsed.description() != null && !parsed.description().isBlank()
-                ? parsed.description() : derivedTitle(name, parsed);
+        String title = displayed.description() != null && !displayed.description().isBlank()
+                ? displayed.description() : derivedTitle(name, displayed);
         long toolStart = System.currentTimeMillis();
         // 审批等待时间不计入工具执行耗时(2026-09-18 复盘):批准后重置锚点,
         // completed 步骤的 duration=纯执行时间;declined 保留全程时长(等的是用户)。
         long[] execStart = {toolStart};
         log.info("tool call: {} (round={}, args={})", name, roundIndex,
-                Texts.abbreviate(scrubArgsForLog(args), 200));
-        eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
-                null, null, "running", name, input, null, roundIndex));
+                Texts.abbreviate(scrubArgsForLog(args, name), 200));
+        emitStep(eventConsumer, new ChatStepDto(toolStepId, "tool", title,
+                null, null, "pending", name, input, null, roundIndex));
 
         // 循环检测(2026-09-20 改为结果感知,设计 §9.3;验收 F4 修正):
         // 指纹 = 标准工具名 + 规范化参数(JSON 键排序、剔除展示字段 description、
@@ -164,7 +231,7 @@ class ToolStepEmitter {
         // CRITICAL(不可逆/带外操作)一律拒绝,不等交互审批;模型收到引导文案。
         // 有会话的无人值守仍落库(步骤/回答进会话,用户事后可查)。
         if ((sessionId == null || unattended)
-                && RiskClassifier.classify(name, args) == RiskClassifier.Risk.CRITICAL) {
+                && toolExecutor.classifyRisk(name, args) == RiskClassifier.Risk.CRITICAL) {
             String error = "拒绝执行：" + name + " 属于不可逆操作(删除/注册类),只能在有人值守的聊天对话中执行"
                     + "(用户需亲自批准)。请把这一结论连同操作目的返回给调用方";
             finishToolStep(toolStepId, name, title, input, toolStart,
@@ -217,7 +284,7 @@ class ToolStepEmitter {
                     sessionId, toolStepId, Texts.abbreviate(question, 2000),
                     options.isEmpty() ? null : options, timeout);
             eventConsumer.questionRequired(registered.ticket());
-            // 等待期间步骤保持 running(前端提问卡展示中);不重置 execStart——
+            // 等待期间步骤保持 pending(前端提问卡展示中);不重置 execStart——
             // 等待时长对用户是可见的等待,不是工具执行耗时
             String answer = questionService.awaitFuture(registered);
             if (answer == null) {
@@ -244,12 +311,12 @@ class ToolStepEmitter {
         // 服务端(ApprovalService),模型文本中的"同意"不构成批准。
         // unattended=true 时不进此门(无人可答,上面已处理 CRITICAL)。
         if (approvalService != null && sessionId != null && !unattended) {
-            RiskClassifier.Risk risk = RiskClassifier.classify(name, args);
+            RiskClassifier.Risk risk = toolExecutor.classifyRisk(name, args);
             boolean needApproval = permissionMode == PermissionMode.ASK
                     || permissionMode == PermissionMode.ASSIST && risk != RiskClassifier.Risk.LOW
                     || permissionMode == PermissionMode.FULL && risk == RiskClassifier.Risk.CRITICAL;
             if (needApproval) {
-                ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, parsed, permissionMode, args);
+                ApprovalRequestDto request = buildApprovalRequest(toolStepId, name, displayed, permissionMode, displayArgs);
                 // 持有注册句柄并等待其 future(2026-09-20 修复):不要把 token
                 // 传回 await(token) 查表——future 完成回调先删条目,查表等待会
                 // 把已批准的操作误判为拒绝(resolve=true → await=false)。
@@ -266,14 +333,13 @@ class ToolStepEmitter {
                             "ERROR: 用户拒绝批准该操作。请说明操作目的,或改用无需写权限的方式回答");
                     return;
                 }
-                // 批准后重新发出 running(用户等待期间 step 可能显示为等待批准态),
-                // 并把执行计时锚点重置到此刻——完成态的 duration 只反映真实执行
-                eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
-                        null, null, "running", name, input, null, roundIndex));
-                execStart[0] = System.currentTimeMillis();
             }
         }
 
+        // 这条记录持久化成功后才调用工具，启动恢复可据此区分未执行与结果未知。
+        emitStep(eventConsumer, new ChatStepDto(toolStepId, "tool", title,
+                null, null, "running", name, input, null, roundIndex));
+        execStart[0] = System.currentTimeMillis();
         ChatToolExecutor.ToolOutcome outcome = toolExecutor.executeTool(name, args, parsed,
                 new ChatToolExecutor.LiveOutput() {
                     /** 文本通道最近一行(run_command 实时输出):原地刷新 detail。 */
@@ -281,7 +347,7 @@ class ToolStepEmitter {
                     public void text(String chunk) {
                         // 实时输出流(run_command)/进度文本(fetch_media):同 id step
                         // 原地替换,前端自然刷新(与 reasoning_delta 同款机制)
-                        eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+                        emitStep(eventConsumer, new ChatStepDto(toolStepId, "tool", title,
                                 chunk, null, "running", name, input, null, roundIndex));
                     }
 
@@ -289,7 +355,7 @@ class ToolStepEmitter {
                      *  progress 供前端渲染进度条/速率/ETA(旧前端忽略未知字段)。 */
                     @Override
                     public void progress(ChatStepDto.StepProgress progress) {
-                        eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+                        emitStep(eventConsumer, new ChatStepDto(toolStepId, "tool", title,
                                 renderProgressLine(progress), null, "running",
                                 name, input, null, roundIndex, null, progress));
                     }
@@ -321,7 +387,7 @@ class ToolStepEmitter {
                 outcome.truncated(),
                 failure ? outcome.content() : null,
                 outcome.files(), outcome.focusTarget(), outcome.fileErrors(),
-                outcome.fileChanges());
+                outcome.fileChanges(), outcome.execution());
         // 记录本次结果(结果感知的循环检测,设计 §9.3):结果变化会重置计数——
         // 「正常轮询/有进展的重复读取」不被误拦;结果未知不参与判定
         loopDetector.recordResult(fingerprint, outcome.unknown() ? null
@@ -363,7 +429,7 @@ class ToolStepEmitter {
                                 ChatOrchestrationService.ChatEventConsumer eventConsumer) {
         String summaryLine = result.summary() != null ? result.summary()
                 : (result.error() != null ? Texts.abbreviate(result.error(), 160) : null);
-        eventConsumer.step(new ChatStepDto(toolStepId, "tool", title,
+        emitStep(eventConsumer, new ChatStepDto(toolStepId, "tool", title,
                 summaryLine, System.currentTimeMillis() - toolStart, status, name, input, result, roundIndex));
     }
 
@@ -405,8 +471,8 @@ class ToolStepEmitter {
      * 带可选图片附件的工具结果回填。
      *
      * <p>{@code images} 非空且当前模型能识图时,工具消息携带多模态内容数组
-     * (text + image_url 部件)——chat/completions 与 responses 两种协议均已
-     * 对中继端到端验证。否则图片被丢弃并附明确说明,纯文本模型绝不静默
+     * (text + image_url 部件)。chat/completions 发送时将图片移到工具批次后
+     * 的 user 附件；responses 映射为多模态输出。否则图片被丢弃并附明确说明,纯文本模型绝不静默
      * 假装看过。
      *
      * @param visionOverride TRUE/FALSE = 设置强制;null = 运行时自适应
@@ -461,6 +527,11 @@ class ToolStepEmitter {
             }
             String action = node.path("action").asText(null);
             switch (toolName) {
+                case "manage_env_vars" -> {
+                    String key = node.path("key").asText("").trim().toUpperCase(java.util.Locale.ROOT);
+                    String target = key.matches("[A-Z][A-Z0-9_]*") ? key : "环境变量";
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target), null, null, action);
+                }
                 case "execute_sql", "execute_write_sql" -> {
                     return new ParsedArgs(new ChatStepDto.StepInput(node.path("sql").asText(null), null, null,
                                     node.path("datasource").asText(null)),
@@ -496,6 +567,14 @@ class ToolStepEmitter {
                     }
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, p1),
                             description, null, action);
+                }
+                case "manage_photo_album" -> {
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null,
+                            node.path("album").asText("相册目录")), description, null, action);
+                }
+                case "manage_browser" -> {
+                    return new ParsedArgs(new ChatStepDto.StepInput(null, null, null,
+                            node.path("url").asText(node.path("selector").asText("当前网页"))), description, null, action);
                 }
                 case "fetch_media" -> {
                     // 展示目标文件夹(无则 imports);审批卡与折叠行都显示它
@@ -545,7 +624,7 @@ class ToolStepEmitter {
                     return new ParsedArgs(new ChatStepDto.StepInput(null, null, null, target),
                             description, null, action);
                 }
-                case "run_command" -> {
+                case "powershell", "sh" -> {
                     // 命令原文放 target 字段(折叠行与审批卡都要完整可见);
                     // cwd 不进 typed input(避免误当"目标"显示)
                     String cmd = node.path("command").asText(null);
@@ -613,7 +692,7 @@ class ToolStepEmitter {
                 }
                 yield defaultTitle(name);
             }
-            case "manage_datasource", "manage_service", "manage_mcp", "manage_skill",
+            case "manage_datasource", "manage_service", "manage_mcp", "manage_env_vars", "manage_skill",
                  "manage_knowledge", "manage_automation" -> {
                 if (target != null && !target.isBlank()) {
                     String act = actionLabel(action);
@@ -622,7 +701,7 @@ class ToolStepEmitter {
                 }
                 yield defaultTitle(name);
             }
-            case "run_command" -> target != null && !target.isBlank()
+            case "powershell", "sh" -> target != null && !target.isBlank()
                     ? Texts.abbreviate(target, 48) : defaultTitle(name);
             case "search_knowledge" -> target != null && !target.isBlank()
                     ? "检索「" + Texts.abbreviate(target, 30) + "」" : defaultTitle(name);
@@ -641,6 +720,7 @@ class ToolStepEmitter {
             case "list" -> "列出";
             case "read" -> "读取";
             case "write" -> "写入";
+            case "set" -> "设置";
             case "append" -> "追加";
             case "edit", "update" -> "编辑";
             case "delete", "remove" -> "删除";
@@ -694,9 +774,13 @@ class ToolStepEmitter {
             case "manage_service" -> "服务纳管";
             case "manage_file", "read_file" -> "文件中心";
             case "manage_workspace" -> "工作区文件";
+            case "manage_photo_album" -> "照片成长相册";
+            case "manage_browser" -> "内置浏览器";
             case "manage_skill" -> "技能管理";
             case "manage_mcp" -> "MCP 服务器管理";
-            case "run_command" -> "运行命令";
+            case "manage_env_vars" -> "环境变量管理";
+            case "powershell" -> "运行 PowerShell";
+            case "sh" -> "运行 Shell";
             case "fetch_media" -> "拉取媒体文件";
             case "search_knowledge" -> "检索知识库";
             case "manage_knowledge" -> "知识库管理";
@@ -831,6 +915,24 @@ class ToolStepEmitter {
         String risk;
         String detail = null;
         switch (toolName) {
+            case "manage_env_vars" -> {
+                actionType = "env_vars_manage";
+                target = parsed.input().target();
+                detail = "操作: " + parsed.datasourceAction() + "\n变量: " + target + "\n变量值已隐藏";
+                risk = "将修改工作台环境变量，影响后续命令及引用它的 MCP 连接";
+            }
+            case "manage_browser" -> {
+                actionType = "browser";
+                target = parsed.input().target();
+                detail = "网页操作: " + parsed.datasourceAction() + "\n参数: " + rawArgs;
+                risk = "点击、输入或键盘操作可能提交网页表单或修改网站数据";
+            }
+            case "manage_photo_album" -> {
+                actionType = "workspace_file";
+                target = parsed.input().target();
+                detail = "相册: " + target + "\n操作: " + parsed.datasourceAction() + "\n参数: " + rawArgs;
+                risk = "工作区内相册操作，生成新版本，源照片和旧版保持可用";
+            }
             case "execute_write_sql" -> {
                 actionType = "sql_write";
                 target = parsed.input().target() != null
@@ -974,18 +1076,17 @@ class ToolStepEmitter {
                     risk = "对 MCP 服务器执行 " + action + " 操作";
                 }
             }
-            case "run_command" -> {
+            case "powershell", "sh" -> {
                 actionType = "terminal_command";
                 JsonNode a = parseArgsSafe(rawArgs);
                 String cmd = a.path("command").asText("?");
                 String cwd = a.path("cwd").asText(null);
                 Integer timeout = a.path("timeout").isInt() ? a.path("timeout").asInt() : null;
-                String shell = a.path("shell").asText(null);
                 // 命令原文完整展示(与 Claude Code 同款防线:用户审的就是将执行的)
                 target = Texts.abbreviate(cmd, 60);
                 detail = "命令: " + cmd
                         + (cwd != null ? "\n工作目录: " + cwd : "\n工作目录: 工作区根")
-                        + (shell != null ? "\nShell: " + shell : "")
+                        + "\n执行器: " + toolName
                         + (timeout != null ? "\n超时: " + timeout + "s" : "");
                 risk = "命令将在本机以当前用户权限执行,可能有文件/网络副作用";
             }
@@ -1086,9 +1187,9 @@ class ToolStepEmitter {
                 // "在工作区之外"——相对路径(区内 LOW 风险)也被这样展示,误导用户;
                 // 区内/区外分别给准确描述(move/copy 需看 to 字段)
                 String to = a.path("to").asText(null);
-                boolean outside = RiskClassifier.isOutsideWorkspace(p)
+                boolean outside = toolExecutor.isOutsideWorkspace(p)
                         || ("move".equals(action) || "copy".equals(action))
-                        && RiskClassifier.isOutsideWorkspace(to);
+                        && toolExecutor.isOutsideWorkspace(to);
                 risk = outside
                         ? "该路径在工作区之外——将改动本机的真实文件(不可自动撤销)"
                         : "工作区内文件操作(可回退)";
@@ -1137,8 +1238,12 @@ class ToolStepEmitter {
                 }
             }
         }
-        return new ApprovalRequestDto(null, stepId, actionType, target,
-                defaultTitle(toolName) + " · " + target, risk, detail);
+        return toolExecutor.redactValue(new ApprovalRequestDto(null, stepId, actionType, target,
+                defaultTitle(toolName) + " · " + target, risk, detail), ApprovalRequestDto.class);
+    }
+
+    private void emitStep(ChatOrchestrationService.ChatEventConsumer consumer, ChatStepDto step) {
+        consumer.step(toolExecutor.redactValue(step, ChatStepDto.class));
     }
 
     /** 解析审批明细用的 args JSON;失败返回空节点(明细降级为不含参数)。 */
@@ -1165,7 +1270,7 @@ class ToolStepEmitter {
 
 
     /** 把脱敏后的原始参数附到 typed input 上(跨轮历史重建用;null/空/非法 = 不附)。 */
-    private ChatStepDto.StepInput withRawArgs(ChatStepDto.StepInput input, String args) {
+    private ChatStepDto.StepInput withRawArgs(ChatStepDto.StepInput input, String args, String name) {
         if (input == null || args == null || args.isBlank()) {
             return input;
         }
@@ -1177,56 +1282,33 @@ class ToolStepEmitter {
         } catch (Exception e) {
             return input;
         }
-        String raw = scrubArgsForLog(args);
+        String raw = scrubArgsForLog(args, name);
         if (raw.length() > MAX_REPLAY_ARGS_CHARS) {
             return input;
         }
         return new ChatStepDto.StepInput(input.sql(), input.service(), input.limit(), input.target(), raw);
     }
 
-    private String scrubArgsForLog(String args) {
+    private String scrubArgsForLog(String args, String name) {
         if (args == null || args.isBlank()) {
             return "{}";
         }
         try {
             JsonNode node = objectMapper.readTree(args);
             if (!node.isContainerNode()) return "{}";
-            scrubCredentials(node);
+            if ("manage_env_vars".equals(name) && node instanceof ObjectNode obj) {
+                String value = obj.path("value").asText("");
+                if (obj.has("value")) obj.put("value", "***");
+                obj.remove("description");
+                if (!value.isBlank() && obj.path("note").isTextual()) {
+                    obj.put("note", obj.path("note").asText().replace(value, "***"));
+                }
+            }
+            toolExecutor.scrubCredentials(node);
             return node.toString();
         } catch (Exception e) {
             return "{}"; // 非法 JSON 也可能包含凭据,不写入日志或历史。
         }
     }
 
-    private void scrubCredentials(JsonNode node) {
-        if (node instanceof ObjectNode obj) {
-            obj.fieldNames().forEachRemaining(key -> {
-                String normalized = key.replace("_", "").replace("-", "").toLowerCase(java.util.Locale.ROOT);
-                switch (normalized) {
-                    case "password", "token", "apikey", "secret", "authorization", "accesstoken", "refreshtoken" ->
-                            obj.put(key, "***");
-                    case "headers", "env" -> {
-                        JsonNode values = obj.get(key);
-                        if (values instanceof ObjectNode fields) {
-                            fields.fieldNames().forEachRemaining(field -> fields.put(field, "***"));
-                        } else {
-                            obj.put(key, "***");
-                        }
-                    }
-                    case "arguments" -> {
-                        JsonNode value = obj.get(key);
-                        if (value != null && value.isTextual()) {
-                            // MCP 参数允许 JSON 字符串;日志与重放保留字符串形态。
-                            obj.put(key, scrubArgsForLog(value.asText()));
-                        } else {
-                            scrubCredentials(value);
-                        }
-                    }
-                    default -> scrubCredentials(obj.get(key));
-                }
-            });
-        } else if (node != null && node.isArray()) {
-            node.forEach(this::scrubCredentials);
-        }
-    }
 }

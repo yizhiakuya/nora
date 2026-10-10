@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Search, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { SkillCard } from "@/components/skills/SkillCard";
 import { SkillTabs } from "@/components/skills/SkillTabs";
 import { SkillFormModal, SkillFormValues } from "@/components/skills/SkillFormModal";
@@ -32,7 +33,8 @@ export function SkillsView() {
   }, [syncFromBackend]);
 
   const filteredSkills = skills.filter((skill) => {
-    const matchesTab = activeTab === "全部" || skill.category === activeTab;
+    const matchesTab = activeTab === "全部"
+      || (activeTab === "内置" ? skill.isOfficial : activeTab === "自定义" ? !skill.isOfficial : skill.category === activeTab);
     const q = searchQuery.toLowerCase();
     const matchesSearch = skill.name.toLowerCase().includes(q) || skill.desc.toLowerCase().includes(q);
     return matchesTab && matchesSearch;
@@ -81,36 +83,33 @@ export function SkillsView() {
 
   return (
     <>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            可复用的处理方法：启用后 AI 可按需读取正文执行。技能不授予工具权限（连接与权限在「连接与工具」/「安全」中管理）。
-          </p>
-          <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={openCreate}>
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建技能
-          </Button>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm leading-relaxed text-muted-foreground max-w-xl">
+              把常用处理方法保存成技能，供 Nora 在任务中使用。启用技能不会改变工具权限。
+            </p>
+            <Button size="sm" className="shrink-0" onClick={openCreate}>
+              <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建技能
+            </Button>
+          </div>
+
+          <SkillTabs searchQuery={searchQuery} onSearchChange={setSearchQuery} />
         </div>
-
-        <SkillTabs
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        {filteredSkills.map((skill) => (
-          <SkillCard key={skill.id} skill={skill} onToggle={toggleSkill} onOpen={setDetail} />
-        ))}
-      </div>
-
-      {filteredSkills.length === 0 && (
-        <div className="py-16 flex flex-col items-center justify-center text-muted-foreground animate-in fade-in">
-          <Search className="w-10 h-10 mb-4 opacity-20" />
-          <div className="text-sm">没有找到匹配的技能</div>
-        </div>
-      )}
+        <TabsContent value={activeTab}>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,250px),1fr))] gap-4">
+            {filteredSkills.map((skill) => (
+              <SkillCard key={skill.id} skill={skill} onToggle={toggleSkill} onOpen={setDetail} />
+            ))}
+          </div>
+          {filteredSkills.length === 0 && (
+            <div className="py-16 flex flex-col items-center justify-center text-muted-foreground animate-in fade-in">
+              <Search className="w-10 h-10 mb-4 opacity-20" />
+              <div className="text-sm">没有找到匹配的技能</div>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       <SkillFormModal
         isOpen={formOpen}

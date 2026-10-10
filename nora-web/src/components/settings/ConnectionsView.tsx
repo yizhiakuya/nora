@@ -19,18 +19,17 @@ export function ConnectionsView() {
 
   return (
     <>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-muted-foreground max-w-[60%]">
-          接入 MCP 工具服务器——远程(HTTP/SSE)或本地进程(STDIO)。工具调用按风险分级，
-          审批跟随当前权限档位；GitHub 可一键登录（OAuth）。
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <p className="text-sm leading-relaxed text-muted-foreground max-w-xl">
+          连接工具服务器，让 Nora 使用外部服务。可以注册服务器地址，或通过 GitHub 登录接入。
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setGithubOpen(true)}>
             <LogIn className="w-3.5 h-3.5 mr-1.5" /> GitHub 登录
           </Button>
           <Button
             size="sm"
-            className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600"
+            className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => setModalOpen(true)}
           >
             <Plus className="w-3.5 h-3.5 mr-1.5" /> 注册服务器

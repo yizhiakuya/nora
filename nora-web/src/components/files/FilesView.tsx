@@ -2,6 +2,7 @@ import { useFileLibrary } from "@/hooks/useFileLibrary";
 import { FilesHeader } from "./FilesHeader";
 import { FileListing } from "./FileListing";
 import { FileDialogs } from "./FileDialogs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
 import { SavedArtifactsView } from "./SavedArtifactsView";
 import { WorkspaceBrowser } from "./WorkspaceBrowser";
@@ -16,30 +17,23 @@ export function FilesView() {
     <>
       <FilesHeader library={library} />
 
-      <div className="flex-1 overflow-y-auto custom-scroll p-4 sm:p-6 bg-background relative">
-        <div className="max-w-6xl mx-auto pb-24">
+      <div className="page-content custom-scroll">
+        <div className="page-container">
+          <div><h1 className="page-heading">资料</h1><p className="page-description">集中管理文件、长期知识与已保存的成果。</p></div>
+          <Tabs value={dataView} onValueChange={value => switchDataView(value as "files" | "knowledge" | "results")}>
           {/* 资料视图切换(M1-03;B1 修正 2026-09-27):第三个 tab 改为
               「已保存成果」= 对话保存的文件/文档(saved_artifact 服务端登记,
               可打开并回到来源会话);自动任务执行记录在「任务 → 执行历史」 */}
-          <div role="tablist" aria-label="资料视图" className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit mb-4">
+          <TabsList aria-label="资料视图">
             {([
               { key: "files", label: "全部文件" },
               { key: "knowledge", label: "长期知识" },
               { key: "results", label: "已保存成果" },
             ] as const).map((v) => (
-              <button
-                key={v.key}
-                type="button"
-                role="tab"
-                aria-selected={dataView === v.key}
-                onClick={() => switchDataView(v.key)}
-                className={`px-4 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${dataView === v.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {v.label}
-              </button>
+              <TabsTrigger key={v.key} value={v.key}>{v.label}</TabsTrigger>
             ))}
-          </div>
-
+          </TabsList>
+          <TabsContent value={dataView} className="mt-6">
           {dataView === "knowledge" ? (
             <KnowledgeView />
           ) : dataView === "results" ? (
@@ -59,6 +53,8 @@ export function FilesView() {
               <FileListing library={library} />
             </>
           )}
+          </TabsContent>
+          </Tabs>
 
         </div>
       </div>

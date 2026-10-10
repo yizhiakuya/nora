@@ -63,7 +63,7 @@ export function FilesHeader({ library }: { library: FileLibraryState }) {
             >
               <FolderPlus className="w-3.5 h-3.5" /> <span className="hidden [@container(min-width:600px)]:inline">新建文件夹</span>
             </Button>
-            <Button size="sm" className="h-8 gap-1 px-2 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 shrink-0" onClick={upload.open}
+            <Button size="sm" className="h-8 gap-1 px-2 text-xs bg-primary text-primary-foreground hover:bg-primary/90 shrink-0" onClick={upload.open}
               title={currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"} aria-label={currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"}>
               <CloudUpload className="w-3.5 h-3.5" /> <span className="hidden max-w-40 truncate [@container(min-width:600px)]:inline">{currentFolder ? `上传到「${currentFolder.name}」` : "上传文件"}</span>
             </Button>
