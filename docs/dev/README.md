@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [agent-domain-splits-2026-10-22.md](agent-domain-splits-2026-10-22.md) | Agent 域体量收敛:工具展示层、工作区引导注入、检索阶段三处拆分与验证 |
 | [question-steering-2026-10-18.md](question-steering-2026-10-18.md) | 提问期间插入请求唤醒、同轮再次提问、幂等与引用、实时状态恢复 |
 | [deployment-2026-10-18.md](deployment-2026-10-18.md) | megumin 发布按需工具与流畅交互，含数据备份、29 项线上检查与真实模型工具复用 |
 | [agent-tools-simplification-2026-10-17.md](agent-tools-simplification-2026-10-17.md) | 通用 Agent 按需工具、统一环境入口、契约减量与真实模型验收 |
