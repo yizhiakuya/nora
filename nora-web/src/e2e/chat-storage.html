@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>聊天存储真实浏览器回归</title>
+<style>body{max-width:900px;margin:48px auto;font:15px system-ui;padding:24px}button{padding:10px 16px}pre{white-space:pre-wrap;line-height:1.8}</style>
+<h1>聊天存储真实浏览器回归</h1>
+<p>使用真实 localStorage、实际会话 store 和本地后端历史接口；结束后恢复原缓存。</p>
+<button id="run">运行验收</button>
+<pre id="result">尚未运行</pre>
+<div id="notifications"></div>
+<script type="module">
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { Toaster } from "sonner";
+createRoot(document.getElementById("notifications")).render(createElement(Toaster));
+
+document.getElementById("run").onclick = async () => {
+  const result = document.getElementById("result");
+  const original = localStorage.getItem("chat-sessions");
+  const fillerKey = "chat-storage-e2e-filler";
+  const originalFiller = localStorage.getItem(fillerKey);
+  const id = "chat-storage-e2e";
+  let passed = 0;
+  result.textContent = "";
+  const check = (condition, label) => {
+    if (!condition) throw new Error(label);
+    passed += 1;
+    result.textContent += `PASS ${label}\n`;
+  };
+  try {
+    const draft = { input: "保留这份草稿", refs: [{ kind: "file", id: 1, name: "截图.png" }], limitToRefs: true };
+    const queue = [{ id: "queued", content: "保留这条排队要求", refs: draft.refs, limitToRefs: true }];
+    localStorage.setItem("chat-sessions", JSON.stringify({ version: 1, state: {
+      activeId: id,
+      sessions: [{ id, title: "迁移验收", updatedAt: Date.now(), messages: [
+        { id: "old", role: "assistant", content: "工具结果".repeat(450000), timestamp: "12:00" },
+      ], composerDraft: draft, queuedMessages: queue, queuePaused: true }],
+    } }));
+    const { useChatSessions: store } = await import("/src/hooks/useChatSessions.ts");
+    await store.persist.rehydrate();
+    const session = () => store.getState().sessions.find(value => value.id === id);
+    const saved = () => JSON.parse(localStorage.getItem("chat-sessions"));
+    check(saved().version === 2 && saved().state.sessions[0].messages.length === 0, "旧大缓存迁移为 v2，移除持久化历史");
+    check(session().composerDraft.input === draft.input && session().composerDraft.refs[0].id === 1
+      && session().composerDraft.limitToRefs && session().queuedMessages[0].id === "queued"
+      && session().queuePaused && store.getState().activeId === id, "草稿、引用、队列、暂停状态和选中会话保留");
+
+    const big = "工具结果".repeat(1024 * 1024);
+    store.getState().saveMessages(id, [{ id: "large", role: "assistant", content: big, timestamp: "12:00" }]);
+    check((store.getState().messagesBySession[id] ?? [])[0].content.length === big.length && localStorage.getItem("chat-sessions").length < 10000,
+      "超大消息完整留在内存，浏览器缓存保持小于 10KB");
+
+    const options = new URLSearchParams(location.search);
+    const historyId = options.get("history"), text = options.get("text");
+    if (!historyId || !text) throw new Error("请通过 history 和 text 参数指定真实后端会话及验证文本");
+    store.setState(state => ({ sessions: [...state.sessions, { id: historyId, title: "真实后端历史", updatedAt: Date.now() }] }));
+    await store.getState().loadHistory(historyId);
+    check((store.getState().messagesBySession[historyId] ?? []).some(message => message.content.includes(text)),
+      "真实后端历史可加载，验证文本完整保留");
+
+    let full = false;
+    for (let size = 256 * 1024; size <= 8 * 1024 * 1024; size += 256 * 1024) {
+      try { localStorage.setItem(fillerKey, "x".repeat(size)); }
+      catch (error) {
+        if (error.name !== "QuotaExceededError") throw error;
+        full = true;
+        break;
+      }
+    }
+    check(full, "实际填充浏览器存储并触发配额限制");
+    const largeDraft = { ...draft, input: "草稿".repeat(512 * 1024) };
+    store.getState().saveComposerDraft(id, largeDraft);
+    check(session().composerDraft.input.length === largeDraft.input.length, "写入超限时草稿仍完整留在当前页面，操作不抛异常");
+    check(saved().state.sessions.find(value => value.id === id).composerDraft.input === draft.input, "失败写入没有伪报持久化成功");
+    localStorage.removeItem(fillerKey);
+    store.getState().saveComposerDraft(id, draft);
+    store.setState({ messagesBySession: {} }); // 模拟新页面的空内存缓存。
+    await store.persist.rehydrate();
+    check((store.getState().messagesBySession[id] ?? []).length === 0 && session().composerDraft.input === draft.input
+      && session().queuedMessages[0].content === queue[0].content && session().queuePaused, "空间恢复后草稿、队列可以持久化及重新加载");
+    result.textContent += `\n完成：${passed} 项通过`;
+  } catch (error) {
+    result.textContent += `FAIL ${error.message}`;
+  } finally {
+    if (originalFiller === null) localStorage.removeItem(fillerKey); else localStorage.setItem(fillerKey, originalFiller);
+    if (original === null) localStorage.removeItem("chat-sessions"); else localStorage.setItem("chat-sessions", original);
+  }
+};
+</script>
+</html>

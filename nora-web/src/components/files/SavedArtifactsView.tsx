@@ -101,7 +101,7 @@ export function SavedArtifactsView() {
                   if (isFile) {
                     void useFileViewer.getState().openTargets([`workspace:${a.path}`], undefined, { sessionId: a.sessionId ?? undefined });
                   } else {
-                    navigate("/files?view=knowledge");
+                    navigate(`/files?view=knowledge&doc=${encodeURIComponent(a.path)}`);
                   }
                 }}
                 title={isFile ? `打开工作区文件:${a.path}` : `打开知识库文档 #${a.path}`}

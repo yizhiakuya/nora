@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { ListCheck, Plus } from "lucide-react";
@@ -11,6 +11,7 @@ import { ExecutionHistory } from "@/components/automations/ExecutionHistory";
 import { NewAutomationModal } from "@/components/automations/NewAutomationModal";
 import { RunningTasks } from "@/components/automations/RunningTasks";
 import { useAutomations } from "@/hooks/useAutomations";
+import { usePollingResource } from "@/hooks/usePollingResource";
 
 /**
  * 任务页(M1,2026-09-20,按产品改造方案 §4.3):
@@ -37,9 +38,8 @@ export default function TasksPage() {
   const [modalPrefill, setModalPrefill] = useState<{ name?: string; action?: string } | null>(null);
   const syncFromBackend = useAutomations((s) => s.syncFromBackend);
 
-  useEffect(() => {
-    void syncFromBackend();
-  }, [syncFromBackend]);
+  const syncError = useAutomations((s) => s.syncError);
+  const { refresh } = usePollingResource(syncFromBackend);
 
   // 视图切换写入 URL(刷新/返回键/复制链接都保持一致)
   const setView = (next: TaskView) => {
@@ -69,6 +69,12 @@ export default function TasksPage() {
               让 AI 定期处理重复性工作,并查看每次执行的完整结果。
             </p>
           </div>
+          {syncError && (
+            <div role="alert" className="mb-4 rounded-lg border border-destructive/30 p-3 text-sm">
+              <p>任务同步失败：{syncError}</p>
+              <Button variant="ghost" size="sm" onClick={refresh}>重新同步</Button>
+            </div>
+          )}
           <Tabs value={view} onValueChange={value => setView(value as TaskView)}>
             <TabsList aria-label="任务视图">
               {VIEWS.map((v) => (

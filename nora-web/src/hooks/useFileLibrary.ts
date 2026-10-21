@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Bot, HardDrive, Trash2 } from "lucide-react";
 import { useSelection } from "@/hooks/useSelection";
@@ -49,6 +49,24 @@ export function useFileLibrary() {
   const [currentFolder, setCurrentFolder] = useState<BackendFolder | null>(null);
   /** 用户文件夹列表(来自后端)。 */
   const [folders, setFolders] = useState<BackendFolder[]>([]);
+  const [foldersLoading, setFoldersLoading] = useState(false);
+  const [foldersError, setFoldersError] = useState<string | null>(null);
+  const foldersRevision = useRef<symbol>();
+  const refreshFolders = useCallback(async () => {
+    const revision = Symbol();
+    foldersRevision.current = revision;
+    setFoldersLoading(true);
+    try {
+      const rows = await filesApi.listFolders();
+      if (revision !== foldersRevision.current) return;
+      setFolders(rows);
+      setFoldersError(null);
+    } catch (error) {
+      if (revision === foldersRevision.current) setFoldersError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (revision === foldersRevision.current) setFoldersLoading(false);
+    }
+  }, []);
   /** 回收站视图。 */
   const [trashOpen, setTrashOpen] = useState(false);
   /** 排序:名称/大小/时间 × 升降序(前端排序,列表数据量级小)。 */
@@ -94,8 +112,9 @@ export function useFileLibrary() {
   // 后端模式:进入页面拉一次真实文件列表 + 文件夹列表
   useEffect(() => {
     void syncFromBackend();
-    filesApi.listFolders().then(setFolders).catch(() => { /* 文件夹不可用时留空 */ });
-  }, [syncFromBackend]);
+    void refreshFolders();
+    return () => { foldersRevision.current = Symbol(); };
+  }, [syncFromBackend, refreshFolders]);
 
   // 深链:?open=<fileId>(知识库「原文件」跳转)→ 拉取该文件并打开预览
   useEffect(() => {
@@ -186,10 +205,6 @@ export function useFileLibrary() {
   useEffect(() => {
     upload.setTargetFolder(currentFolder?.id ?? null);
   }, [currentFolder, upload]);
-
-  const refreshFolders = () => {
-    filesApi.listFolders().then(setFolders).catch(() => { /* 忽略瞬时失败 */ });
-  };
 
   const handleDeleteSelected = () => {
     const count = selection.selectedIds.length;
@@ -300,8 +315,8 @@ export function useFileLibrary() {
     if (!window.confirm(`确认删除文件夹「${folder.name}」？\n其中的 ${folder.fileCount} 个文件会回到根目录（不删除文件）。`)) return;
     try {
       const moved = await filesApi.deleteFolder(folder.id);
+      await Promise.all([syncFromBackend(), refreshFolders()]);
       toast.success(`已删除文件夹${moved > 0 ? `，${moved} 个文件已回到根目录` : ""}`);
-      refreshFolders();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "删除失败");
     }
@@ -419,6 +434,7 @@ export function useFileLibrary() {
   };
 
   return {
+    foldersLoading, foldersError,
     dataView, switchDataView, workspaceDir, setWorkspaceDir, mediaCacheOpen, setMediaCacheOpen, trashOpen, setTrashOpen, currentFolder, setCurrentFolder, inRootView, breadcrumbTail, searchQuery, setSearchQuery, folderNameInput, setFolderNameInput, folderDialog, setFolderDialog, upload, viewMode, switchView, sortBy, setSortAsc, setSortBy, sortAsc, viewFiles, folders, selection, handleDownloadSelected, handleMoveSelected, handleDeleteSelected, handleAskAssistant, effectiveView, filteredFiles, viewer, handleIndexFile, handleDownloadOne, handleRenameFile, handleMoveOne, handleDeleteOne, folderRowsData, submitFolderDialog, moveOpen, setMoveOpen, moveTargetIds, doMove, handoff, setHandoff, handleUploadComplete, syncFromBackend, refreshFolders, indexTarget, setIndexTarget, handleIndexConfirm, indexSubmitting
   };
 }

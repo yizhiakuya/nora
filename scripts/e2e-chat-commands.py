@@ -13,7 +13,7 @@ import uuid
 
 def main():
     stamp = str(time.time_ns())
-    base = "http://127.0.0.1:18083"
+    base = "http://127.0.0.1:18080"
     model = "deepseek-v4.1-flash"
     op = build_opener(ProxyHandler({}))
     report = {"checks": [], "turns": [], "session": "slash-e2e-" + stamp}
@@ -147,6 +147,8 @@ def main():
         check(len(after) == len(before) + 1 and after[-1]["sender"] == "compaction", "只增加系统事件，没有伪造用户问题")
         check(after[-1]["id"] == "compact-" + request_id, "压缩事件使用请求同源的稳定标识")
         check(after[-1]["contextUsage"] == checkpoint["contextUsage"], "压缩事件恢复相同工作上下文快照")
+        compact_step = next(step for step in after[-1]["steps"] if step["id"] == "s-compaction")
+        check(compact_step["context"]["content"] == checkpoint["summary"], "手动压缩步骤直接携带实际持久化工作摘要")
         check(checkpoint["contextUsage"]["source"] == "estimate" and checkpoint["contextUsage"]["outputTokens"] is None, "摘要计费不冒充压缩后的上下文")
         context_view = api(f"/api/chat/sessions/{session}/context")
         check(context_view["latestUsage"]["source"] == "estimate" and context_view["latestRequestUsage"]["source"] == "upstream", "整理后的估算与最近请求实测分别保留")
@@ -204,6 +206,8 @@ def main():
         check(any(event["event"] == "step" and event["data"].get("id") == "s-auto-compact"
                   and event["data"].get("status") == "completed" for event in automatic["events"]), "自动整理调用共用语义压缩核心")
         auto_checkpoint = api(f"/api/chat/sessions/{session}/context")["checkpoint"]
+        auto_step = next(event["data"] for event in automatic["events"] if event["event"] == "step" and event["data"].get("id") == "s-auto-compact" and event["data"].get("status") == "completed")
+        check(auto_step["context"]["content"] == auto_checkpoint["summary"], "自动摘要与手动压缩采用相同正文契约")
         check(auto_checkpoint and auto_checkpoint["boundaryId"] == before[1]["id"], "自动检查点只覆盖已完成的稳定历史")
         check(code in answer(automatic) and "蓝" in answer(automatic), "自动压缩保留本轮最新要求与验收码")
         check(len(requests[start:]) == 2 and not requests[start].get("tools") and requests[start + 1].get("tools"), "自动摘要无工具，正常回答仍使用原工具能力")

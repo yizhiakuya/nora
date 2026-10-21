@@ -7,7 +7,7 @@ $toolCalls = New-Object System.Collections.Generic.List[string]
 $calibs = New-Object System.Collections.Generic.List[string]
 $reqBodies = New-Object System.Collections.Generic.List[string]
 
-Get-ChildItem $dir -Filter 'agent-service-text*.log*' | Sort-Object LastWriteTime | ForEach-Object {
+Get-ChildItem $dir -Filter 'nora-text*.log*' | Sort-Object LastWriteTime | ForEach-Object {
   if ($_.Extension -eq '.gz') {
     $fs = [System.IO.File]::OpenRead($_.FullName)
     $gs = New-Object System.IO.Compression.GZipStream($fs, [System.IO.Compression.CompressionMode]::Decompress)

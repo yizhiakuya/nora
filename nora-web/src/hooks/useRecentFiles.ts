@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export interface RecentFile {
+interface RecentFile {
   target?: string;
   name: string;
   type: string;

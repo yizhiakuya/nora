@@ -1,8 +1,8 @@
 import type { CommandExecution, Citation, ViewerFile, ViewerFileError } from "@/types";
-import { estimateChatMessageTokens, estimateModelOutputTokens } from "@/lib/chatContext";
+import { estimateChatMessageTokens } from "@/lib/chatContext";
 
 /** 结构化工具入参(execute_sql → sql;read_service_logs → service/limit) */
-export interface ChatStepInput {
+interface ChatStepInput {
   sql?: string;
   service?: string;
   limit?: number;
@@ -78,7 +78,7 @@ export interface ContextFile {
 }
 
 /** 目录条目(注入上下文步骤,catalog 形态;如技能目录) */
-export interface ContextEntry {
+interface ContextEntry {
   name: string;
   description?: string;
   category?: string;
@@ -88,7 +88,7 @@ export interface ContextEntry {
  * 注入上下文元数据(dsh 自描述模式):form 声明信息形态,前端按 form 渲染;
  * 未知 form 降级为通用展示(不丢内容)。
  */
-export interface ChatStepContext {
+interface ChatStepContext {
   form?: "instructions" | "catalog" | string;
   /** 生产者标识(如 workspace-bootstrap / skill-catalog) */
   kind?: string;
@@ -96,6 +96,8 @@ export interface ChatStepContext {
   entries?: ContextEntry[];
   /** 日记清单(只列名不注入正文) */
   dailyNotes?: string[];
+  /** 整理后实际保留的正文；展示副本不重复计入上下文。 */
+  content?: string;
 }
 
 export interface ChatStep {
@@ -134,6 +136,7 @@ function appendRoundText(steps: ChatStep[], roundIndex: number, content: string)
 }
 
 export type ChatStreamEvent =
+  | { type: "snapshot"; message: Pick<ChatMessage, "content" | "steps" | "sources" | "contextUsage" | "approval" | "question"> }
   | { type: "step"; step: ChatStep }
   | { type: "delta"; content: string; roundIndex?: number | null }
   | { type: "reasoning_delta"; content: string; roundIndex?: number | null }
@@ -141,13 +144,44 @@ export type ChatStreamEvent =
   | { type: "question_required"; question: QuestionRequest }
   | { type: "sources"; sources: Citation[] }
   | { type: "context_usage"; contextUsage: ChatContextUsage }
-  | { type: "finish"; stopped?: boolean; failed?: boolean; turnMetrics?: ChatTurnMetrics }
-  | { type: "gap" };
+  | { type: "error"; error: Error }
+  | { type: "finish"; stopped?: boolean; failed?: boolean; turnMetrics?: ChatTurnMetrics };
+
+/** 合并相邻文本增量；控制事件先刷新文本，避免终态或工具状态超车。 */
+export function createChatStreamBuffer(onEvent: (event: ChatStreamEvent) => void) {
+  let pending: Extract<ChatStreamEvent, { type: "delta" | "reasoning_delta" }> | undefined;
+  let chunks: string[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const flush = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    if (!pending) return;
+    const event = { ...pending, content: chunks.join("") };
+    pending = undefined;
+    chunks = [];
+    onEvent(event);
+  };
+  return {
+    push(event: ChatStreamEvent) {
+      if (event.type !== "delta" && event.type !== "reasoning_delta") {
+        flush();
+        onEvent(event);
+        return;
+      }
+      if (pending && (pending.type !== event.type || pending.roundIndex !== event.roundIndex)) flush();
+      pending = event;
+      chunks.push(event.content);
+      timer ??= setTimeout(flush, 50);
+    },
+    flush,
+  };
+}
 
 /** 普通流与恢复流共用消息合并和一次性交互的生命周期。 */
 export function applyChatStreamEvent(message: Partial<ChatMessage>, event: ChatStreamEvent): Partial<ChatMessage> {
   const steps = message.steps ?? [];
   switch (event.type) {
+    case "snapshot": return event.message;
     case "step": {
       const next = steps.map(step => event.step.context?.kind !== "user-input" && step.type === "think" && step.status === "running" && step.id !== event.step.id
         ? { ...step, status: "completed" as const } : step);
@@ -178,17 +212,15 @@ export function applyChatStreamEvent(message: Partial<ChatMessage>, event: ChatS
     case "approval_required": return { approval: event.approval };
     case "question_required": return { question: event.question };
     case "sources": return { sources: event.sources };
+    case "error": return { error: event.error.message, errorRaw: event.error.message };
     case "context_usage": {
       const previous = message.contextUsage;
       const reset = event.contextUsage.source !== "upstream" || previous?.roundIndex !== event.contextUsage.roundIndex;
       return { contextUsage: {
         ...event.contextUsage,
         receivedTokens: reset ? estimateChatMessageTokens(message) : previous?.receivedTokens ?? estimateChatMessageTokens(message),
-        receivedOutputTokens: reset ? estimateModelOutputTokens(message, event.contextUsage.roundIndex)
-          : previous?.receivedOutputTokens ?? estimateModelOutputTokens(message, event.contextUsage.roundIndex),
       } };
     }
-    case "gap": return { content: "", steps: [], approval: undefined, question: undefined, contextUsage: undefined };
     case "finish": return {
       isTyping: false, approval: undefined, question: undefined,
       ...(event.stopped ? { stopped: true } : {}),
@@ -202,7 +234,7 @@ export function applyChatStreamEvent(message: Partial<ChatMessage>, event: ChatS
               : "结果未知：未收到工具终态，请先核实实际状态。" } };
         }
         if (step.status !== "running") return step;
-        const keepPartial = !event.failed && (step.type === "think" || step.type === "commentary");
+        const keepPartial = !event.failed && !message.error && (step.type === "think" || step.type === "commentary");
         return { ...step, status: keepPartial ? "completed" : "failed",
           detail: step.detail ?? (keepPartial ? "" : "流中断，未收到该步骤结果") };
       }),
@@ -211,7 +243,7 @@ export function applyChatStreamEvent(message: Partial<ChatMessage>, event: ChatS
 }
 
 /** 一轮对话的服务端计量(done 事件下发) */
-export interface ChatTurnMetrics {
+interface ChatTurnMetrics {
   durationMs?: number;
   usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number } | null;
   /** 输入整理预算；是否配置了模型窗口见 contextUsage.windowConfigured。 */
@@ -239,7 +271,6 @@ export interface ChatContextUsage {
   cacheCreationInputTokens?: number | null;
   /** 请求开始时已展示的内容计数，前端用于排除已纳入基线的内容。 */
   receivedTokens?: number;
-  receivedOutputTokens?: number;
 }
 
 export interface ChatMessage {
@@ -367,7 +398,7 @@ export interface QuestionRequest {
 
 export type ChatResponder = (
   message: string,
-  onUpdate: (partial: Partial<ChatMessage>) => void,
+  onEvent: (event: ChatStreamEvent) => void,
   sessionId?: string,
   model?: string,
   reasoningLevel?: string,
@@ -394,14 +425,3 @@ export interface TaskContextPayload {
    *  缺省 = 不限(引用排前,其余资料仍参与检索)。 */
   retrievalScope?: { baseId?: number; docIds?: number[]; sources?: string[] };
 }
-
-/**
- * 停止生成的结果约定：
- * - 用户中断时 responder 以 { stopped: true } 结束（不是 throw），
- *   已流出的部分文本保留并标记 stoppedAt（消息上显示「已停止」角标）。
- * 研究来源：frontendpatterns.dev/stop-generation —— abort 是正常结果不是错误。
- */
-export interface StopHandle {
-  stopped?: boolean;
-}
-

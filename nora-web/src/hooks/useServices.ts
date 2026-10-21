@@ -5,6 +5,8 @@ import { environmentApi } from "@/lib/services/environmentApi";
 import { nowHms } from "@/lib/format";
 
 interface ServicesState {
+  loading: boolean;
+  syncError: string | null;
   services: ServiceInstance[];
   logs: LogEntry[];
   /** 当前选中的服务卡片(环境控制台卡片高亮 + 日志流联动展示该服务);null=自动取第一个 */
@@ -53,28 +55,37 @@ function extractLogTime(line: string): string {
  * 首页环境看板共享，实现服务启停全站实时联动。
  * 服务列表/启停走 env-service 的真实 Docker 操作。
  */
+let revision = 0;
+
 export const useServices = create<ServicesState>()(
   persist(
     (set, get) => ({
       services: [],
+      loading: true,
+      syncError: null,
       logs: [],
       activeServiceId: null,
       setActiveService: (id) => set({ activeServiceId: id }),
       clearLogsFor: (service) =>
         set((state) => ({ logs: state.logs.filter((l) => l.service !== service) })),
       syncFromBackend: async () => {
+        const request = ++revision;
+        set({ loading: true });
         try {
           const services = await environmentApi.listServices();
           // 纳管清单是唯一事实来源:空列表也覆盖(空态引导用户添加),
           // 不再「沿用本地缓存」掩盖后端真实状态
-          set({ services });
-        } catch {
-          /* 后端不可用时保留上次数据 */
+          if (request === revision) set({ services, syncError: null });
+        } catch (error) {
+          if (request === revision) set({ syncError: error instanceof Error ? error.message : String(error) });
+        } finally {
+          if (request === revision) set({ loading: false });
         }
       },
       addManaged: async (input) => {
         await environmentApi.addManaged(input);
-        await useServices.getState().syncFromBackend();},
+        await useServices.getState().syncFromBackend();
+      },
       removeManaged: async (id) => {
         // PROC 源:先停托管进程再删记录,避免子进程变孤儿继续跑
         const target = get().services.find((s) => s.id === id);
@@ -83,7 +94,10 @@ export const useServices = create<ServicesState>()(
           if (result.status === "error") throw new Error(result.detail ?? "停止进程失败,未删除纳管记录");
         }
         await environmentApi.deleteManaged(id);
-        set((state) => ({ services: state.services.filter((s) => s.id !== id) }));
+        set((state) => {
+          revision++;
+          return { loading: false, services: state.services.filter((s) => s.id !== id) };
+        });
       },
       toggleService: async (id) => {
         const target = get().services.find((s) => s.id === id);
@@ -92,26 +106,34 @@ export const useServices = create<ServicesState>()(
           target.status === "running" ? "stopped" : "running";
 
         // 乐观更新(界面即时反馈);后端失败时回滚(2026-09-21 修假成功)
-        const applyOptimistic = (status: "running" | "stopped") => set((state) => ({
-          services: state.services.map((s) =>
-            s.id === id
-              ? {
+        const applyOptimistic = (status: "running" | "stopped") => set((state) => {
+          revision++;
+          return {
+            loading: false,
+            services: state.services.map((s) =>
+              s.id === id
+                ? {
                   ...s,
                   status,
                   health: status === "running" ? "healthy" : "down",
                   uptime: status === "running" ? "刚刚" : "—",
                 }
-              : s
-          ),
-        }));
+                : s
+            ),
+          };
+        });
         // 回滚:恢复完整原始字段(状态可能是 running/stopped/error 三态,逐字段还原)
-        const rollback = () => set((state) => ({
-          services: state.services.map((s) =>
-            s.id === id
-              ? { ...s, status: target.status, health: target.health, uptime: target.uptime }
-              : s
-          ),
-        }));
+        const rollback = () => set((state) => {
+          revision++;
+          return {
+            loading: false,
+            services: state.services.map((s) =>
+              s.id === id
+                ? { ...s, status: target.status, health: target.health, uptime: target.uptime }
+                : s
+            ),
+          };
+        });
         applyOptimistic(nextStatus);
 
         const newLogs: LogEntry[] = [
@@ -142,8 +164,10 @@ export const useServices = create<ServicesState>()(
           return { ok: true, nextStatus, name: target.name, detail: result.detail };
         } catch (e) {
           rollback();
-          return { ok: false, nextStatus, name: target.name,
-            detail: e instanceof Error ? e.message : String(e) };
+          return {
+            ok: false, nextStatus, name: target.name,
+            detail: e instanceof Error ? e.message : String(e)
+          };
         }
       },
       restartService: async (id) => {
@@ -156,31 +180,43 @@ export const useServices = create<ServicesState>()(
           service: target.name,
           message: "Container restart requested via env-service.",
         };
-        set((state) => ({
-          services: state.services.map((s) =>
-            s.id === id ? { ...s, uptime: "刚刚", status: "running", health: "healthy" } : s
-          ),
-          logs: [restartLog, ...state.logs].slice(0, 100),
-        }));
+        set((state) => {
+          revision++;
+          return {
+            loading: false,
+            services: state.services.map((s) =>
+              s.id === id ? { ...s, uptime: "刚刚", status: "running", health: "healthy" } : s
+            ),
+            logs: [restartLog, ...state.logs].slice(0, 100),
+          };
+        });
         try {
           const result = await environmentApi.restartService(target.name);
           if (result.status === "error") {
             // 回滚到重启前状态
-            set((state) => ({
-              services: state.services.map((s) =>
-                s.id === id ? { ...s, status: target.status, health: target.health, uptime: target.uptime } : s
-              ),
-            }));
+            set((state) => {
+              revision++;
+              return {
+                loading: false,
+                services: state.services.map((s) =>
+                  s.id === id ? { ...s, status: target.status, health: target.health, uptime: target.uptime } : s
+                ),
+              };
+            });
             return { ok: false, name: target.name, detail: result.detail };
           }
           void useServices.getState().syncFromBackend();
           return { ok: true, name: target.name, detail: result.detail };
         } catch (e) {
-          set((state) => ({
-            services: state.services.map((s) =>
-              s.id === id ? { ...s, status: target.status, health: target.health, uptime: target.uptime } : s
-            ),
-          }));
+          set((state) => {
+            revision++;
+            return {
+              loading: false,
+              services: state.services.map((s) =>
+                s.id === id ? { ...s, status: target.status, health: target.health, uptime: target.uptime } : s
+              ),
+            };
+          });
           return { ok: false, name: target.name, detail: e instanceof Error ? e.message : String(e) };
         }
       },
@@ -199,8 +235,12 @@ export const useServices = create<ServicesState>()(
     }) as ServicesState,
     {
       name: "environment-services",
-      // 只持久化纳管清单与选中态;logs 高频变化,落 localStorage 是写放大
-      partialize: (state) => ({ services: state.services, activeServiceId: state.activeServiceId }),
+      version: 1,
+      partialize: ({ activeServiceId }) => ({ activeServiceId }),
+      migrate: (stored) => {
+        const value = stored as Partial<ServicesState> | null;
+        return { activeServiceId: typeof value?.activeServiceId === "number" ? value.activeServiceId : null };
+      },
     }
   )
 );

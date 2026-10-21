@@ -11,8 +11,9 @@ export interface BackendServiceItem {
   command?: string;
   workDir?: string;
   image?: string;
-  status: "running" | "stopped" | "error";
-  health: "healthy" | "degraded" | "down";
+  status: ServiceInstance["status"];
+  health: ServiceInstance["health"];
+  observer?: ServiceInstance["observer"];
   port?: string;
   uptime?: string;
   cpu?: string;
@@ -28,6 +29,7 @@ function toService(item: BackendServiceItem, used?: Set<number>): ServiceInstanc
     port: Number(item.port) || 0,
     status: item.status,
     health: item.health,
+    observer: item.observer,
     uptime: item.uptime ?? item.detail ?? "—",
     cpu: item.cpu ?? "—",
     memory: item.memory ?? "—",
@@ -191,5 +193,3 @@ export function subscribeSourceLogs(
   })();
   return () => controller.abort();
 }
-
-export { toService };

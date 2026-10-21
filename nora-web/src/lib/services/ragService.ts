@@ -1,5 +1,4 @@
 import {
-  Citation,
   DocDetail,
   IndexStats,
   KnowledgeBase,
@@ -16,7 +15,6 @@ import { requestJson } from "@/lib/api/client";
  * 后端端点：
  * - searchDocsAsync    → POST /api/rag/search        { query, topK } → RetrievalResult[]
  * - fetchIndexStats    → GET  /api/rag/index/stats    → IndexStats
- * - generateCitationsAsync → POST /api/rag/citations  { query, topK } → Citation[]
  * - saveTextAsync      → POST /api/rag/index/text      { name, text } → KnowledgeDoc
  */
 
@@ -44,11 +42,6 @@ export async function createBase(name: string, description?: string): Promise<Kn
     method: "POST",
     body: JSON.stringify({ name, description }),
   });
-}
-
-/** DELETE /api/rag/bases/{id} → 删除资料库（默认库拒绝;库内文档回默认库） */
-export async function deleteBase(id: number): Promise<void> {
-  await requestJson(`/rag/bases/${id}`, { method: "DELETE" });
 }
 
 /** POST /api/rag/docs/{id}/enabled → 文档停用/启用（阶段 B;停用=退出检索） */
@@ -128,26 +121,9 @@ export async function previewChunks(input: {
   });
 }
 
-/** PUT /api/rag/bases/{id}/retrieval-config → 库级检索配置（JSON 串） */
-export async function setBaseRetrievalConfig(id: number, config: Record<string, unknown>): Promise<KnowledgeBase> {
-  return requestJson<KnowledgeBase>(`/rag/bases/${id}/retrieval-config`, {
-    method: "PUT",
-    body: JSON.stringify({ config: JSON.stringify(config) }),
-  });
-}
-
 /** 索引统计：后端真实统计 / 本地文档推导 */
 export async function fetchIndexStats(): Promise<IndexStats> {
   return requestJson<IndexStats>("/rag/index/stats");
-}
-
-/** 对话引用来源（服务端计算） */
-export async function generateCitationsAsync(query: string, topK = 2): Promise<Citation[]> {
-  const outcome = await requestJson<RetrievalOutcome>("/rag/citations", {
-    method: "POST",
-    body: JSON.stringify({ query, topK }),
-  });
-  return outcome?.results ?? [];
 }
 
 /** POST /api/rag/index/text → 保存文本到知识库(name-keyed,同名覆盖重建索引) */

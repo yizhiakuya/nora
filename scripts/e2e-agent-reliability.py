@@ -1,6 +1,6 @@
 """真实模型/服务验收：执行边界、默认权限、MCP 审批、输出脱敏与保存恢复。
 
---faults 仅允许本机 18083；对独立会话注入数据库保存故障，并重启本机 Agent。
+--faults 仅允许本机 18080；对独立会话注入数据库保存故障，并重启本机 Agent。
 测试只创建独立会话、变量、MCP 和工作区文件，始终恢复原设置。
 """
 import argparse
@@ -22,12 +22,12 @@ import uvicorn
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="http://127.0.0.1:18083")
+    parser.add_argument("--base", default="http://127.0.0.1:18080")
     parser.add_argument("--workspace", type=Path, default=Path("agent-workspace"))
     parser.add_argument("--faults", action="store_true")
     args = parser.parse_args()
-    if args.faults and (urlparse(args.base).hostname not in ("127.0.0.1", "localhost") or urlparse(args.base).port != 18083):
-        raise RuntimeError("保存故障验收仅可在本机 18083 运行")
+    if args.faults and (urlparse(args.base).hostname not in ("127.0.0.1", "localhost") or urlparse(args.base).port != 18080):
+        raise RuntimeError("保存故障验收仅可在本机 18080 运行")
     opener = build_opener(ProxyHandler({}))
     root = args.base.rstrip("/") + "/api"
     headers = {"Content-Type": "application/json"}
@@ -207,7 +207,7 @@ def main():
                 check(sql("SELECT status FROM schema_agent.chat_run WHERE session_id='" + sid + "' ORDER BY started_at DESC LIMIT 1;") == "running", "保存失败保留可恢复运行记录")
             finally:
                 sql("DROP TRIGGER IF EXISTS " + function + " ON schema_agent.chat_message; DROP FUNCTION IF EXISTS schema_agent." + function + "();")
-            subprocess.Popen(["rtk", "proxy", "pwsh", "-NoProfile", "-File", "nora-api/start-agent.ps1"],
+            subprocess.Popen(["rtk", "proxy", "pwsh", "-NoProfile", "-File", "scripts/backend.ps1", "-Action", "start"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             deadline = time.monotonic() + 70
             history = []

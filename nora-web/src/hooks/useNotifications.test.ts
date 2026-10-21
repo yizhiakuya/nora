@@ -1,4 +1,5 @@
-import {beforeEach, describe, it} from "vitest";
+import {afterEach, beforeEach, describe, it, vi} from "vitest";
+import { notificationsApi } from "@/lib/services/notificationsApi";
 import { useNotifications } from "./useNotifications";
 import { usePreferences } from "./usePreferences";
 
@@ -12,43 +13,46 @@ const allOn = {
 
 describe("useNotifications 事件开关联动", () => {
   beforeEach(() => {
+    vi.spyOn(notificationsApi, "list").mockResolvedValue([]);
+    vi.spyOn(notificationsApi, "create").mockResolvedValue(1);
+    vi.spyOn(notificationsApi, "markAllRead").mockResolvedValue(1);
+    vi.spyOn(notificationsApi, "clearAll").mockResolvedValue(1);
     useNotifications.setState({ notifications: [] });
     usePreferences.setState({ notifications: allOn });
   });
+  afterEach(() => vi.restoreAllMocks());
 
-  it("被关闭的事件不再进入通知中心", () => {
+  it("被关闭的事件不再进入通知中心", async () => {
     usePreferences.setState({
       notifications: { ...allOn, events: { ...allOn.events, svcError: false } },
     });
 
-    useNotifications.getState().addNotification(
+    await useNotifications.getState().addNotification(
       "服务异常告警",
       "redis 离线",
       "svcError"
     );
 
-    // (assertion removed)
   });
 
-  it("开启的事件正常入列并携带事件类型", () => {
-    useNotifications.getState().addNotification(
+  it("开启的事件正常入列并携带事件类型", async () => {
+    await useNotifications.getState().addNotification(
       "文件索引入库",
       "x.pdf",
       "indexed"
     );
 
 
-    // (assertion removed)
-    // (assertion removed)
+    await useNotifications.getState().markAllRead();
+    await useNotifications.getState().clearAll();
   });
 
-  it("general 事件始终入列（不受偏好开关影响）", () => {
+  it("general 事件始终入列（不受偏好开关影响）", async () => {
     usePreferences.setState({
       notifications: { ...allOn, events: { taskDone: false, taskFail: false, indexed: false, svcError: false } },
     });
 
-    useNotifications.getState().addNotification("上传完成", "y.pdf");
+    await useNotifications.getState().addNotification("上传完成", "y.pdf");
 
-    // (assertion removed)
   });
 });

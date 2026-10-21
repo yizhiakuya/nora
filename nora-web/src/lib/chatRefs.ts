@@ -37,7 +37,7 @@ export function formatChatRefs(refs: ChatRef[]): string {
     .map((r) => {
       switch (r.kind) {
         case "viewer":
-          return `[引用文件资源] ${r.name} (target=${encodeURIComponent(r.id)}) —— 文件内容由服务端验证后提供;需补读时用 manage_file 的 read，target=${r.id}`;
+          return `[引用文件资源] ${r.name} (target=${encodeURIComponent(r.id)}) —— 文件内容由服务端验证后提供;需补读时用 manage_file 的 read，id=${r.id}`;
         case "file":
           return `[引用文件] ${r.name} (file_id=${r.id}${r.size ? `, ${r.size}` : ""}) —— 内容已随消息提供;如需完整原文可用 manage_file 工具读取`;
         case "doc":

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>可维护性真实服务验收</title>
+<style>body{max-width:960px;margin:32px auto;font:15px system-ui;padding:24px}button{padding:10px 16px}pre{white-space:pre-wrap;line-height:1.8}</style>
+<h1>可维护性真实服务验收</h1>
+<p>连接本地真实后端和已启用的模型。请在独立验收数据库运行；过程中会创建并清理验收技能和会话。</p>
+<button id="run">运行验收</button>
+<pre id="result">尚未运行</pre>
+<div id="chat"></div>
+<script type="module">
+import { createElement, useEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { cached, invalidate, invalidateAll } from "/src/lib/api/requestCache.ts";
+import { ttlFor } from "/src/lib/api/client.ts";
+import { skillsApi } from "/src/lib/services/skillsApi.ts";
+import { useSkills } from "/src/hooks/useSkills.ts";
+import { useChatSessions } from "/src/hooks/useChatSessions.ts";
+import { useChat } from "/src/hooks/useChat.ts";
+import { useModelProviders } from "/src/hooks/useModelProviders.ts";
+import { answerQuestion, cancelTurnOnBackend, deleteSessionOnBackend, fetchSessionMessages, fetchLiveTurn } from "/src/lib/api/agentApi.ts";
+
+let chat;
+function Chat({ sessionId }) {
+  const value = useChat({ sessionId });
+  useEffect(() => { chat = value; });
+  return createElement("pre", null, value.messages.map(message => message.content || message.question?.question || "…").join("\n"));
+}
+const root = createRoot(document.getElementById("chat"));
+const wait = async predicate => {
+  const deadline = Date.now() + 120000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("等待真实服务结果超时");
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+};
+document.getElementById("run").onclick = async () => {
+  const button = document.getElementById("run");
+  const result = document.getElementById("result");
+  button.disabled = true;
+  result.textContent = "";
+  let id, sessionId, unsubscribe;
+  let passed = 0;
+  const check = (condition, label) => {
+    if (!condition) throw new Error(label);
+    result.textContent += `PASS ${++passed}. ${label}\n`;
+  };
+  try {
+    const name = "maint-" + Date.now();
+    const skill = await skillsApi.createSkill({ name, description: "真实 HTTP 验收", instructions: "验收使用", category: "自定义" });
+    id = skill.id;
+    const read = () => skillsApi.getSkill(id);
+    const before = await read();
+    let release;
+    const old = cached("e2e-force", 60000, false, () => new Promise(resolve => { release = () => resolve(before); }));
+    await skillsApi.updateSkill(id, { name: name + "-new" });
+    const fresh = await cached("e2e-force", 60000, true, read);
+    release();
+    await old;
+    const retained = await cached("e2e-force", 60000, false, () => { throw new Error("新缓存被旧请求覆盖或清除"); });
+    check(retained.name === fresh.name && retained.name.endsWith("-new"), "旧 HTTP 响应晚到不能覆盖强制刷新的新值");
+    const pending = cached("e2e-invalidated", 60000, false, () => new Promise(resolve => { release = () => resolve(before); }));
+    invalidate("e2e-invalidated");
+    release();
+    await pending;
+    const current = await cached("e2e-invalidated", 60000, false, read);
+    check(current.name === fresh.name, "失效后的旧响应不会重新进入缓存");
+    let reads = 0;
+    const fetcher = () => { reads++; return read(); };
+    await Promise.all([cached("e2e-dedupe", 0, false, fetcher), cached("e2e-dedupe", 0, false, fetcher)]);
+    await cached("e2e-dedupe", 0, false, fetcher);
+    check(reads === 2 && ttlFor("/chat/sessions/id/messages") === 0 && ttlFor("/chat/sessions/id/turn/live") === 0,
+      "并发读取合并，历史和运行状态不保留 TTL 快照");
+    await useSkills.getState().syncFromBackend();
+    const existing = useSkills.getState().skills.find(value => value.id === id);
+    let failed = false;
+    try { await useSkills.getState().updateSkill(id, { name: "x".repeat(101) }); } catch { failed = true; }
+    check(failed && useSkills.getState().skills.find(value => value.id === id) === existing,
+      "真实后端拒绝更新时，技能 store 保留原数据并返回失败");
+
+    await useModelProviders.getState().syncFromBackend();
+    sessionId = useChatSessions.getState().createSession();
+    const messages = () => useChatSessions.getState().messagesBySession[sessionId] ?? [];
+    let metadataChanges = 0, messageChanges = 0;
+    unsubscribe = useChatSessions.subscribe((state, previous) => {
+      if (state.sessions !== previous.sessions) metadataChanges++;
+      if (state.messagesBySession !== previous.messagesBySession) messageChanges++;
+    });
+    root.render(createElement(Chat, { sessionId }));
+    await wait(() => chat && !chat.isSending);
+    const sending = chat.sendTaskMessage("这是恢复验收。先直接输出 80 行编号文本，每行 20 字，然后只调用一次 ask_user，question='MAINT_RECOVER_WAIT'、options=['继续','停止']；收到继续后只回答 MAINT_RECOVER_DONE，不再调用工具。");
+    await wait(() => messages().some(message => message.question));
+    check(messageChanges > metadataChanges * 3, "真实流式消息更新共享 store，侧栏摘要不随增量刷新");
+    check(JSON.parse(localStorage.getItem("chat-sessions")).state.sessions.every(value => value.messages.length === 0),
+      "流式正文、审批和提问瞬态不写入 localStorage");
+    root.render(null);
+    chat = undefined;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    root.render(createElement(Chat, { sessionId }));
+    await wait(() => chat?.isSending && messages().at(-1)?.question);
+    const token = messages().at(-1).question.questionToken;
+    check((await fetchLiveTurn(sessionId)).running && chat.messages.at(-1).question.questionToken === token,
+      "切页重新挂载后接续真实运行轮次和同一个问题");
+    await answerQuestion(sessionId, token, "继续");
+    await sending;
+    await wait(() => !chat.isSending && messages().at(-1)?.content.includes("MAINT_RECOVER_DONE"));
+    check(!messages().at(-1).question && !messages().at(-1).isTyping, "接续后完成原轮次，清除提问和生成状态");
+    const history = await fetchSessionMessages(sessionId, true);
+    check(history.at(-1).content.trim() === "MAINT_RECOVER_DONE", "真实后端历史保留最终回答");
+
+    await chat.editAndResend(chat.messages[0].id, "不调用工具，只回复 MAINT_EDIT_DONE。");
+    await wait(() => !chat.isSending && messages().at(-1)?.content.includes("MAINT_EDIT_DONE"));
+    check((await fetchSessionMessages(sessionId, true)).length === 2 && !messages().some(message => message.question),
+      "编辑重发替换服务端分支，界面保留新的唯一回复");
+    const count = chat.messages.length;
+    await chat.retryMessage(chat.messages.at(-1).id);
+    await wait(() => !chat.isSending);
+    check(chat.messages.length === count + 2 && (await fetchSessionMessages(sessionId, true)).length === count + 2,
+      "重试追加新轮，前端与服务端历史条数一致");
+
+    const cancelling = chat.sendTaskMessage("只调用一次 ask_user，question='MAINT_CANCEL_WAIT'，等待回答。");
+    await wait(() => messages().at(-1)?.question && chat.isSending);
+    await chat.sendTaskMessage("MAINT_QUEUED_DRAFT");
+    await wait(() => chat.queuedMessages.length === 1);
+    await chat.restoreQueuedMessage(chat.queuedMessages[0].id);
+    await wait(() => chat.input.includes("MAINT_QUEUED_DRAFT") && chat.queuedMessages.length === 0);
+    check(chat.input.includes("MAINT_QUEUED_DRAFT"), "生成中排队及撤回编辑保留草稿");
+    await chat.stopGenerating();
+    await cancelling;
+    await wait(() => !chat.isSending && messages().at(-1)?.stopped);
+    check(messages().at(-1).turnMetrics.status === "cancelled" && !messages().at(-1).question,
+      "停止真实挂起轮次后保留已停止终态并清除问题");
+    result.textContent += `\n完成：${passed} 项通过\n`;
+  } catch (error) {
+    result.textContent += `FAIL ${error.stack || error}\n`;
+  } finally {
+    unsubscribe?.();
+    root.render(null);
+    if (id) await skillsApi.deleteSkill(id);
+    if (sessionId) {
+      await cancelTurnOnBackend(sessionId);
+      await deleteSessionOnBackend(sessionId);
+      useChatSessions.getState().deleteSession(sessionId);
+    }
+    invalidateAll();
+    button.disabled = false;
+  }
+};
+</script>
+</html>

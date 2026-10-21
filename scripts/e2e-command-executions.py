@@ -13,7 +13,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="http://127.0.0.1:18083")
+    parser.add_argument("--base", default="http://127.0.0.1:18080")
     parser.add_argument("--tool", choices=["sh", "powershell"], default="powershell")
     parser.add_argument("--keep", action="store_true", help="保留首个运行任务用于浏览器验收")
     args = parser.parse_args()

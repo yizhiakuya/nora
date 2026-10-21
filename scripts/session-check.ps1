@@ -5,7 +5,7 @@ if (-not $Sid) {
 }
 if (-not $Sid) { Write-Host 'no session id'; exit 1 }
 Write-Host ("session: " + $Sid)
-$log = 'D:\claude\Nora\logs\agent-service-text.log'
+$log = 'D:\claude\Nora\logs\nora-text.log'
 $hits = Select-String -Path $log -Pattern $Sid -ErrorAction SilentlyContinue
 Write-Host ("log lines: " + $hits.Count)
 Write-Host "--- tool calls ---"

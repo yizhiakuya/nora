@@ -1,18 +1,18 @@
 'use client';
 
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { usePreferences } from "@/hooks/usePreferences";
-import { Search, ArrowUp, Loader2, Paperclip, BookOpen } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Loader2, Paperclip, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { QuickActions } from "@/components/home/QuickActions";
 import { RunningTasks } from "@/components/automations/RunningTasks";
 import { RecentResults } from "@/components/home/RecentResults";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { ReferencePicker } from "@/components/chat/ReferencePicker";
 import { RefChip } from "@/components/chat/RefChip";
+import { SessionProjectButton } from "@/components/chat/SessionProjectButton";
 import { refKey, type ChatRef } from "@/lib/chatRefs";
 
 /**
@@ -41,52 +41,42 @@ export default function Home() {
   const [picker, setPicker] = useState<"file" | "doc" | null>(null);
   const navigate = useNavigate();
   const createSession = useChatSessions((s) => s.createSession);
+  const [draftSessionId, setDraftSessionId] = useState("");
+  const homeSession = useChatSessions(state => state.sessions.find(session => session.id === draftSessionId));
+  useEffect(() => {
+    if (!homeSession) setDraftSessionId(createSession(false));
+  }, [homeSession, createSession]);
 
-  // 全局搜索(Cmd+K)监听与面板实例已提到 RouteShell(§7 评审);
-  // 首页搜索框点击打开同一实例
-  const openCmdK = useCommandPalette((s) => s.open);
 
   /** 开始新需求:创建会话,带输入内容跳转对话页并自动发送(autosend=1) */
   const startDemand = () => {
     const text = demand.trim();
-    if (!text || starting) return;
+    if (!text || starting || !homeSession) return;
     setStarting(true);
-    const sessionId = createSession();
+    const sessionId = homeSession.id;
     // B3:选中的资料引用随跳转带进新会话(对话页解析为 chips,发送时序列化)
     const refsParam = refs.length > 0 ? `&refs=${encodeURIComponent(JSON.stringify(refs))}` : "";
     navigate(`/chat?prompt=${encodeURIComponent(text)}&session=${encodeURIComponent(sessionId)}&autosend=1${refsParam}`);
   };
 
-  const headerActions = (
-    <>
-      <Button variant="outline" aria-label="打开快速查找" className="hidden sm:flex h-8 w-48 justify-start bg-muted/50 text-muted-foreground" onClick={openCmdK}>
-        <Search className="w-4 h-4" />
-        <span className="flex-1 text-left">搜索…</span>
-        <kbd className="hidden md:inline rounded border border-border bg-card px-1 text-[11px]">⌘K</kbd>
-      </Button>
-      <Button variant="ghost" size="icon" aria-label="打开快速查找" className="sm:hidden h-8 w-8 text-muted-foreground" onClick={openCmdK}>
-        <Search className="w-4 h-4" />
-      </Button>
-    </>
-  );
-
   return (
     <>
       <Header
         breadcrumbs={[{ label: "Nora", href: "/", isCurrent: false }, { label: "助手", isCurrent: true }]}
-        actions={headerActions}
       />
 
-      <div className="page-content custom-scroll">
-        <div className="max-w-4xl mx-auto space-y-7 pb-10">
+      <div className="page-content custom-scroll [container-type:inline-size]">
+        <div className="content-enter max-w-[820px] mx-auto space-y-9 pb-10">
           {/* 首要焦点:输入需求 */}
-          <div className="pt-2 sm:pt-5 animate-in fade-in duration-200">
-            <p className="mb-2 text-sm text-muted-foreground">{greetLine}</p>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">今天想完成什么？</h1>
-            <p className="page-description mb-6">告诉 Nora 你的目标，或带上资料一起开始。</p>
-            <div className="bg-card border border-input rounded-2xl shadow-surface focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/10 transition-colors p-4">
+          <div className="pt-1 sm:pt-5">
+            <div className="mb-6 sm:mb-8">
+              <p className="mb-3 flex items-center gap-2 text-[13px] text-muted-foreground"><span className="h-px w-5 bg-border" aria-hidden="true" />{greetLine}</p>
+              <h1 className="text-[28px] sm:text-[36px] font-medium tracking-[-0.045em] leading-tight text-foreground">今天，想完成什么？</h1>
+              <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">带上你的问题和资料，让 Nora 和你一起推进。</p>
+            </div>
+            <div className="composer p-3 sm:p-4">
               <textarea
-                rows={3}
+                rows={4}
                 aria-label="告诉 Nora 你想完成的事"
                 value={demand}
                 onChange={(e) => setDemand(e.target.value)}
@@ -97,8 +87,8 @@ export default function Home() {
                     startDemand();
                   }
                 }}
-                placeholder="描述你的目标，或添加资料后开始…"
-                className="w-full bg-transparent border-none outline-none resize-none text-base sm:text-sm leading-relaxed text-foreground placeholder:text-muted-foreground px-1 py-1"
+                placeholder="想做些什么？描述任务，或带上文件一起开始…"
+                className="w-full bg-transparent border-none outline-none resize-none text-base sm:text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground/75 px-2 py-2"
               />
               {/* B3:发送前选中的资料 chips(可删;随跳转带进新会话) */}
               {refs.length > 0 && (
@@ -109,60 +99,63 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <div className="flex items-center justify-between gap-3 mt-3">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-3 mt-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
                   {/* B3:发送前可加资料——📎 文件 / 📄 知识库 */}
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setPicker("file")}
-                    className="inline-flex h-8 items-center gap-1.5 px-2 rounded-lg hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    className="gap-1.5 px-2 text-xs"
                     title="添加文件(随需求一起交给 AI)"
                   >
                     <Paperclip className="w-4 h-4" /> 文件
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setPicker("doc")}
-                    className="inline-flex h-8 items-center gap-1.5 px-2 rounded-lg hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    className="gap-1.5 px-2 text-xs"
                     title="添加知识库文档(随需求一起交给 AI)"
                   >
                     <BookOpen className="w-4 h-4" /> 知识库
-                  </button>
-                  <span className="hidden md:inline text-[11px]">Enter 发送 · Shift+Enter 换行</span>
+                  </Button>
                 </div>
                 <Button
                   size="icon"
+                  variant="composer"
                   aria-label="发送需求"
+                  aria-busy={starting}
                   className="h-9 w-9 shrink-0"
                   onClick={startDemand}
-                  disabled={!demand.trim() || starting}
+                  disabled={!demand.trim() || starting || !homeSession}
                 >
                   {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUp className="w-3.5 h-3.5" />}
                 </Button>
               </div>
             </div>
+            <div className="mt-2 flex min-w-0 items-center justify-between gap-2 px-1">
+              {homeSession && <SessionProjectButton sessionId={homeSession.id} disabled={starting} />}
+              <span className="hidden sm:block shrink-0 text-[11px] text-muted-foreground/70">Enter 发送 · Shift + Enter 换行</span>
+            </div>
+            <div className="mt-6"><h2 className="section-label mb-3">从这里开始</h2><QuickActions /></div>
           </div>
 
           {/* 常用操作 */}
-          <section className="animate-in fade-in duration-200">
-            <h2 className="section-heading mb-3">常用操作</h2>
-            <QuickActions />
-          </section>
-
-          {/* 继续处理:后台运行中的轮次(真实探测,无则不显示空卡片) */}
-          <section className="animate-in fade-in duration-200">
-            <h2 className="section-heading mb-3">继续处理</h2>
+          <div className="grid items-start gap-7 [@container(min-width:760px)]:grid-cols-2 border-t border-border/60 pt-7">
+          <section className="min-w-0 min-h-32">
+            <div className="mb-4 flex items-center justify-between"><h2 className="section-heading">继续处理</h2><Link to="/tasks?view=running" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">全部运行 <ArrowUpRight className="h-3 w-3" /></Link></div>
             <RunningTasks compact />
           </section>
 
-          {/* 最近任务结果(B1 命名修正 2026-09-27:内容是执行记录,含失败/取消,
-              不叫「成果」;真正的已保存文件在「资料 → 工作区/长期知识」) */}
-          <section className="animate-in fade-in duration-200">
-            <h2 className="section-heading mb-3">最近任务结果</h2>
+          {/* 运行结果与已保存成果分别展示，均可回到来源会话。 */}
+          <section className="min-w-0 min-h-64">
+            <div className="mb-4 flex items-center justify-between"><h2 className="section-heading">最近任务结果</h2><Link to="/sessions" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">会话历史 <ArrowUpRight className="h-3 w-3" /></Link></div>
             <RecentResults />
           </section>
-
-
+          </div>
         </div>
       </div>
 

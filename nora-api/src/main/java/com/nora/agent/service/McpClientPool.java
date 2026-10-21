@@ -1,0 +1,334 @@
+package com.nora.agent.service;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpClientTransport;
+import io.modelcontextprotocol.spec.McpSchema;
+
+/**
+ * MCP 客户端连接池(2026-09-17 从 McpServerService 拆出,复杂度审计建议 #2):
+ * 按 server id 懒连接 + 池化;STDIO 子进程树的生命周期管理
+ * (evict/disable/delete/shutdown 时杀树,快照句柄兜底孤儿进程)。
+ * 纯机械平移,行为与拆分前逐行一致。
+ */
+class McpClientPool {
+
+    private static final Logger log = LoggerFactory.getLogger(McpClientPool.class);
+
+    /** stdio 首轮可能触发 npx 下载包(30s+),请求超时放宽;HTTP 保持 60s。 */
+    private static final Duration STDIO_REQUEST_TIMEOUT = Duration.ofSeconds(120);
+    private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+
+    private final ObjectMapper objectMapper;
+    /** 链路自动选择(局域网优先,公网兜底);可为 null(功能未启用)。 */
+    private final RelayMediaRouter router;
+    private final Map<Long, Slot> slots = new ConcurrentHashMap<>();
+    private volatile boolean closed;
+
+    private static class Slot {
+        McpSyncClient client;
+        McpClientTransport transport;
+        McpServerService.RawServer config;
+        List<ProcessHandle> tree = List.of();
+    }
+
+    <T> T withServer(long serverId, java.util.function.Supplier<T> operation) {
+        Slot slot = slots.computeIfAbsent(serverId, id -> new Slot());
+        synchronized (slot) {
+            if (closed) throw new IllegalStateException("MCP pool is closed");
+            return operation.get();
+        }
+    }
+
+    McpClientPool(ObjectMapper objectMapper, RelayMediaRouter router) {
+        this.objectMapper = objectMapper;
+        this.router = router;
+    }
+
+    /** 为服务器构建(或复用)已连接客户端。 */
+    McpSyncClient clientFor(McpServerService.RawServer server) {
+        return withServer(server.id(), () -> connect(server, slots.get(server.id())));
+    }
+
+    private McpSyncClient connect(McpServerService.RawServer server, Slot slot) {
+        String desiredUrl = router == null ? server.url() : router.preferLan(server.url());
+        var config = new McpServerService.RawServer(server.id(), server.name(), desiredUrl, server.transport(),
+                server.headers(), server.command(), server.args(), server.env(), server.enabled(), server.toolPolicy());
+        if (slot.client != null && config.equals(slot.config)) return slot.client;
+        close(slot);
+        String transportName = server.transport() == null ? "STREAMABLE" : server.transport();
+        McpClientTransport transport;
+        Duration requestTimeout;
+        if ("STDIO".equals(transportName)) {
+            String resolved = McpCommandResolver.resolveCommand(server.command());
+            if (resolved == null) {
+                throw new IllegalStateException("命令未找到:「" + server.command() + "」——请确认本机已安装对应运行时"
+                        + "(Node 包需 Node.js;Python 包需 uv/uvx),或用 Docker 方式(docker run -i --rm 镜像名)");
+            }
+            io.modelcontextprotocol.client.transport.ServerParameters.Builder params =
+                    io.modelcontextprotocol.client.transport.ServerParameters.builder(resolved);
+            List<String> args = parseStringList(server.args());
+            if (!args.isEmpty()) {
+                params.args(args);
+            }
+            Map<String, String> env = parseHeaders(server.env());
+            if (!env.isEmpty()) {
+                params.env(env);
+            }
+            io.modelcontextprotocol.client.transport.StdioClientTransport stdio =
+                    new io.modelcontextprotocol.client.transport.StdioClientTransport(
+                            params.build(), new io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapperSupplier().get());
+            // stderr 必须持续排空(否则管道写满会死锁),内容进日志便于排障
+            stdio.setStdErrorHandler(line -> log.debug("mcp stdio [{}] stderr: {}", server.name(), line));
+            transport = stdio;
+            requestTimeout = STDIO_REQUEST_TIMEOUT;
+        } else {
+            // 注册时收集的鉴权头(Authorization 等)必须真正带上——SDK 2.x 没有
+            // headers builder API,统一走 httpRequestCustomizer 在每个请求上注入
+            Map<String, String> headers = parseHeaders(server.headers());
+            // 链路自动选择(2026-09-17):中继地址(如 home.rainaki.top:8900)在
+            // 局域网可达时自动改走内网端口(192.168.x.x:8902)——MCP 调用
+            // 同样享受「在家快一档」。URL 为空/非中继地址时原样。
+            String effectiveUrl = desiredUrl;
+            io.modelcontextprotocol.client.transport.customizer.McpSyncHttpClientRequestCustomizer
+                    headerInjector = (requestBuilder, method, uri, requestBody, context) -> {
+                headers.forEach(requestBuilder::header);
+            };
+            // query-string 密钥修复(2026-09-29):SDK 用 URI.resolve 拼接 endpoint——
+            // RFC 3986 的绝对路径引用会**替换掉 base 的 path 与 query**,tavily/exa
+            // 那种 `https://mcp.tavily.com/mcp/?tavilyApiKey=xxx` 的 query 被静默
+            // 丢弃(实测探针:请求到达但无 query)。修法:
+            //  · STREAMABLE:endpoint = 注册 URL 的 path+query(该协议 endpoint
+            //    就是完整 URL,path 与 query 都有效);
+            //  · SSE:SDK 约定始终连 base 的 /sse(中继:GET /sse 是流、POST /mcp
+            //    是消息端点,注册 URL 的 path 本就无意义)——保持 /sse 路径不变,
+            //    只把 query 透传到 /sse(密钥形态 SSE 服务器)。
+            String sseQuery = rawQueryOf(effectiveUrl);
+            transport = switch (transportName) {
+                case "SSE" ->
+                    io.modelcontextprotocol.client.transport.HttpClientSseClientTransport.builder(effectiveUrl)
+                            .sseEndpoint(sseQuery == null ? "/sse" : "/sse?" + sseQuery)
+                            .customizeClient(http11For(effectiveUrl))
+                            .httpRequestCustomizer(headerInjector)
+                            .build();
+                default ->
+                    io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport.builder(effectiveUrl)
+                            .endpoint(endpointOf(effectiveUrl))
+                            .customizeClient(http11For(effectiveUrl))
+                            .httpRequestCustomizer(headerInjector)
+                            .build();
+            };
+            requestTimeout = HTTP_REQUEST_TIMEOUT;
+        }
+        Slot candidate = new Slot();
+        candidate.transport = transport;
+        try {
+            candidate.client = McpClient.sync(transport).requestTimeout(requestTimeout)
+                    .clientInfo(new McpSchema.Implementation("nora-agent", "1.0")).build();
+            candidate.client.initialize();
+            if ("STDIO".equals(transportName)) {
+                Process proc = extractProcess(transport);
+                if (proc != null) {
+                    List<ProcessHandle> tree = new ArrayList<>();
+                    tree.add(proc.toHandle());
+                    proc.descendants().forEach(tree::add);
+                    candidate.tree = List.copyOf(tree);
+                }
+            }
+        } catch (RuntimeException e) {
+            close(candidate);
+            throw e;
+        }
+        slot.client = candidate.client;
+        slot.transport = transport;
+        slot.config = config;
+        slot.tree = candidate.tree;
+        return slot.client;
+    }
+
+    /**
+     * 从注册 URL 提取「path + query」作为 Streamable HTTP 的传输 endpoint
+     * (2026-09-29)。
+     *
+     * <p>SDK 默认 endpoint="/mcp" 是绝对路径引用,URI.resolve 会丢弃 base 的
+     * path/query——query-string 形态的密钥(tavily/exa)会被静默丢掉。这里
+     * 原样提取,resolve 后得到与注册完全一致的 URL;path 为空时回退 SDK 默认 /mcp。
+     */
+    static String endpointOf(String url) {
+        try {
+            java.net.URI u = java.net.URI.create(url);
+            String path = u.getRawPath();
+            String query = u.getRawQuery();
+            String endpoint = (path == null || path.isEmpty()) ? "/mcp" : path;
+            return query == null ? endpoint : endpoint + "?" + query;
+        } catch (Exception e) {
+            return "/mcp";
+        }
+    }
+
+    /** 注册 URL 的 raw query(SSE 传输透传用;无则 null)。 */
+    static String rawQueryOf(String url) {
+        try {
+            return java.net.URI.create(url).getRawQuery();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 明文 http 地址强制 HTTP/1.1(https 保持默认协商)。
+     *
+     * <p>原因:JDK HttpClient 对明文 http 默认先发 h2c 升级(Upgrade: h2c 头),
+     * 中继的 WebSocket upgrade 处理器会把这些 socket 当非法升级销毁——局域网
+     * 链路(明文 8902 端口)下 MCP 调用会全部失败(实测 "header parser received
+     * no bytes")。https 走 ALPN 正常协商 h2,不受影响。
+     */
+    private static java.util.function.Consumer<java.net.http.HttpClient.Builder> http11For(String url) {
+        boolean plainHttp = url != null && url.regionMatches(true, 0, "http://", 0, 7);
+        return builder -> {
+            if (plainHttp) {
+                builder.version(java.net.http.HttpClient.Version.HTTP_1_1);
+            }
+        };
+    }
+
+    // shortcut: MCP SDK 2.0.1 未公开 stdio Process；升级 SDK 时重新验证该字段与失败清理。
+    private Process extractProcess(McpClientTransport transport) {
+        try {
+            java.lang.reflect.Field f = transport.getClass().getDeclaredField("process");
+            f.setAccessible(true);
+            Object proc = f.get(transport);
+            return proc instanceof Process p ? p : null;
+        } catch (Exception e) {
+            log.warn("mcp stdio process handle unavailable (reflection): {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** Parses a JSON string-array column; malformed → empty list(不阻断连接). */
+    private List<String> parseStringList(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(raw);
+            List<String> out = new ArrayList<>();
+            if (root.isArray()) {
+                for (JsonNode n : root) {
+                    out.add(n.asText(""));
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("mcp args parse failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** Parses a JSON string-map column (headers / env); malformed → empty map(不阻断连接). */
+    private Map<String, String> parseHeaders(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(raw);
+            Map<String, String> out = new LinkedHashMap<>();
+            root.fields().forEachRemaining(e -> out.put(e.getKey(), e.getValue().asText("")));
+            return out;
+        } catch (Exception e) {
+            log.warn("mcp headers/env parse failed: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** 关闭池化客户端并杀 stdio 进程树(失败时自愈)。 */
+    void evictClient(long serverId) {
+        Slot slot = slots.get(serverId);
+        if (slot != null) synchronized (slot) { close(slot); }
+    }
+
+    private void close(Slot slot) {
+        // 先杀树，避免 close 先退出包装进程后遗留孤儿。
+        killProcessTree(slot);
+        McpSyncClient stale = slot.client;
+        McpClientTransport transport = slot.transport;
+        slot.client = null;
+        slot.transport = null;
+        slot.config = null;
+        slot.tree = List.of();
+        if (stale != null) {
+            try {
+                stale.close();
+            } catch (Exception e) {
+                log.debug("mcp client close failed: {}", e.getMessage());
+            }
+        } else if (transport != null) {
+            try { transport.closeGracefully().block(Duration.ofSeconds(3)); }
+            catch (RuntimeException e) { log.debug("mcp transport close failed: {}", e.getMessage()); }
+        }
+    }
+
+    /** 杀掉某服务器拉起的 stdio 进程树(HTTP 传输为无操作)。 */
+    private void killProcessTree(Slot slot) {
+        Process proc = slot.transport instanceof io.modelcontextprotocol.client.transport.StdioClientTransport
+                ? extractProcess(slot.transport) : null;
+        // 快照兜底:即使根进程已死/树被截断,连接时记录的全部句柄仍可逐个强杀
+        List<ProcessHandle> snapshot = slot.tree;
+        if (proc == null && (snapshot == null || snapshot.isEmpty())) {
+            return;
+        }
+        try {
+            // 先捕获当前后代句柄:taskkill /T 覆盖当前树,但被孤儿化的
+            // 孙进程需要按句柄逐个兜底强杀
+            List<ProcessHandle> descendants = proc != null && proc.isAlive()
+                    ? proc.descendants().toList() : List.of();
+            if (proc != null && McpCommandResolver.isWindows() && proc.isAlive()) {
+                // npx.cmd 的孙进程(node)不在 Process.destroy 覆盖范围内,
+                // 必须用 taskkill /T 杀整棵树,否则孤儿进程继续占着 stdin/stdout
+                Process killer = new ProcessBuilder("taskkill", "/T", "/F", "/PID", String.valueOf(proc.pid()))
+                        .redirectErrorStream(true).start();
+                killer.waitFor(5, TimeUnit.SECONDS);
+            }
+            for (ProcessHandle h : descendants) {
+                if (h.isAlive()) {
+                    h.destroyForcibly();
+                }
+            }
+            // 快照句柄:覆盖被截断/孤儿化的进程(不依赖父子链)
+            if (snapshot != null) {
+                for (ProcessHandle h : snapshot) {
+                    if (h.isAlive()) {
+                        h.destroyForcibly();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("mcp stdio tree kill failed: {}", e.getMessage());
+        } finally {
+            if (proc != null) {
+                proc.destroyForcibly();
+            }
+        }
+    }
+
+    /** Closes all pooled clients + kills all stdio processes (service shutdown 委托)。 */
+    void shutdown() {
+        closed = true;
+        for (Long id : slots.keySet()) evictClient(id);
+        slots.clear();
+    }
+}

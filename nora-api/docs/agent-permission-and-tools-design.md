@@ -1,8 +1,8 @@
 # Nora Agent 权限与工具设计（权威参考）
 
-> 状态：2026-09-11 定稿。本文是权限档位、风险分级与全部 agent 工具的**权威清单**。
+> 状态：2026-10-17 同步按需工具与统一环境入口。本文是权限档位、风险分级与全部 agent 工具的**权威清单**。
 > 改 `RiskClassifier` / `toolsSpec()` / `ApprovalService` 前先读本文，改后同步更新本文。
-> 代码位置：`services/agent-service/src/main/java/com/nora/agent/service/`
+> 代码位置：`src/main/java/com/nora/agent/service/`
 > （`RiskClassifier` / `ChatOrchestrationService` / `ApprovalService` / `McpServerService`）
 
 ## 1. 权限档位（PermissionMode）
@@ -15,7 +15,7 @@
 | `ASSIST` | 帮我批准 | 只读（LOW）自动执行；**HIGH/CRITICAL 询问** |
 | `FULL` | 完全访问权限 | LOW/HIGH 自动执行；**仅 CRITICAL 询问** |
 
-**审批门判定**（`ChatOrchestrationService.emitToolStep`）：
+**审批门判定**（`ToolStepEmitter.emitToolStep`）：
 
 ```
 needApproval = mode == ASK
@@ -26,7 +26,7 @@ needApproval = mode == ASK
 **核心原则**：
 - 判定在 **harness 层**（`RiskClassifier`），永不信任模型自评；模型文本里的"同意/已授权"不构成批准
 - 审批状态保存在服务端内存（`ApprovalService`），绑定 `sessionId + stepId + 一次性 token`，**120 秒**超时自动拒绝
-- 无人值守通道（`/api/chat/agent/run`，automation 调用，无会话）**CRITICAL 一律拒绝**（没有用户在场，审批不可达）；HIGH 按设计放行
+- 无人值守 Run（自动任务、环境诊断，同样保存会话和工作过程）不能等待交互审批：CRITICAL 一律拒绝；HIGH 只在 FULL 放行；ASK 拒绝全部工具。调用方通过同一运行句柄取得已持久化的终态，不解析内部 SSE。
 - 审批交互：SSE 下发 `approval_required`（含 actionType/target/risk/detail 摘要）→ 前端 `ApprovalCard` → `POST /api/chat/approvals/{token}?sessionId={id}` body `{approved}`
 
 ## 2. 风险三级（RiskClassifier.Risk）
@@ -39,13 +39,14 @@ needApproval = mode == ASK
 
 ## 3. 全部工具 × 风险分级（权威表）
 
+基础工具为 `manage_workspace`、`manage_file`、`open_file`、当前平台终端、`command_execution`、`search_knowledge`、`manage_skill`、`ask_user` 和 `load_tools`。其余内置能力先按 `load_tools` 声明中的真实目录加载，随后直接按 SDK schema 调用。加载不执行业务，也不改变风险或审批。保留的模型工具历史恢复已用/已加载能力；压缩掉相关历史后可重新加载。MCP 继续遵守服务器的 eager/lazy 配置。请求与预算使用同一工具选择逻辑，不再按全部内置 schema 估算。
+
 改任何工具的风险档位必须同时更新此表 + `ChatOrchestrationServiceTest.riskClassifierTiers*` 测试。
 
 | 工具 | 动作 | 风险 | 说明 |
 |---|---|---|---|
-| `execute_sql` | — | LOW | 单条 SELECT/SHOW/EXPLAIN（guardrail 拒绝写与多语句） |
-| `read_service_logs` | — | LOW | 容器日志，最多 100 行，DEBUG 过滤 |
-| `environment_status` | — | LOW | 环境健康快照（全部启用纳管源状态；2026-09-18 新增） |
+| `execute_sql` | — | HIGH | SQL / Redis 原生命令，支持读写；遵循统一权限档位，无语句白名单 |
+| `load_tools` | — | LOW | 只加载真实注册工具的声明；未知名称整次拒绝，不部分加载 |
 | `manage_file` | list/read/folders | LOW | 文件中心（用户上传文件）；2026-09-20 由 read_file 更名，read_file 保留兼容别名 |
 | `manage_file` | import/rename/move/delete/mkdir | HIGH | 文件中心管理面（2026-09-18 复查补齐）；delete=软删进回收站可恢复 |
 | `manage_workspace` | list/read | LOW | 含**区外读**（只读无破坏） |
@@ -56,19 +57,17 @@ needApproval = mode == ASK
 | `manage_workspace` | delete 区内 | HIGH | |
 | `manage_workspace` | delete **区外** | **CRITICAL** | 不可逆 |
 | `manage_workspace` | 系统目录（Windows/Program Files/盘根）写删 | 硬拒 | 不走审批，直接拒绝 |
-| `execute_write_sql` | — | HIGH | WriteGuard 只允许单条写语句 |
-| `manage_container` | start/stop/restart | HIGH | 服务名必须来自环境注册表 |
 | `manage_datasource` | list/test/schema | LOW | |
 | `manage_datasource` | create | HIGH | 创建后自动 test |
 | `manage_datasource` | remove | **CRITICAL** | 级联删除查询历史，不可逆 |
-| `manage_service` | list | LOW | |
-| `manage_service` | enable/disable | HIGH | |
+| `manage_service` | list/status/logs | LOW | 注册项、实时状态与日志；target 统一为真实名称或 ID，日志默认 50/最多 100 行 |
+| `manage_service` | start/stop/restart/enable/disable | HIGH | 前三者控制服务进程，后两者切换监控；结果未知先核实、不重发 |
 | `manage_service` | register/remove | **CRITICAL** | PROC 注册=宿主机命令纳入守护；删除不可逆 |
-| `manage_mcp` | list / **tools** | LOW | 视图已脱敏；tools 读缓存快照不触发远端（2026-09-18 P2-9） |
+| `manage_mcp` | list / **get** / **tools** | LOW | get 只读地址、状态和脱敏鉴权配置，隐藏 URL 查询/用户信息与启动参数；tools 读缓存快照不触发远端 |
 | `manage_env_vars` | list | LOW | 查询环境变量名称、备注和脱敏值 |
 | `manage_env_vars` | set/delete | HIGH | 单项设置或删除，保留其他变量，与设置页共用 `EnvVarsService` 和事务存储；跟随全局档位 |
 | `manage_mcp` | refresh/enable/disable/register/remove/setPolicy/**call** | HIGH | **跟随全局档位，无单独强制审批**（2026-09-11 用户明确要求；register 引入外部能力/落库凭据，remove 删注册，但均归 HIGH）。**call**=按名调用 lazy 服务器工具（与 mcp__* 挂载同语义）；**setPolicy** 改变挂载面（eager/lazy） |
-| `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守通道放行 |
+| `mcp__<server>__<tool>` | — | HIGH | 外部能力未知，一律 HIGH；无人值守 FULL 允许，ASSIST/ASK 拒绝 |
 | `mcp__*__photos_manage` | trash_list | LOW | 手机相册回收站查看（只读；2026-09-20） |
 | `mcp__*__photos_manage` | move/copy/rename/delete/trash_restore/album_create | HIGH | 手机相册整理写操作；delete=移入 App 回收站（Pictures/Nora回收站）可恢复，不是销毁 |
 | `mcp__*__photos_manage` | **trash_purge** | **CRITICAL** | 彻底删除手机照片（不可恢复；仅回收站内文件可被 purge）；无人值守通道直接拒绝 |
@@ -86,6 +85,7 @@ needApproval = mode == ASK
 | `powershell/sh（仅当前平台注册的工具）` | — | HIGH | 本机终端非交互命令（构建/测试/git/包管理）；不做命令白名单（假安全），防线=审批卡完整展示命令+档位选择 |
 
 **MCP 管理特例说明**（2026-09-11 定）：
+- MCP 注册、配置修改、连接测试统一走 `manage_mcp`（管理 CLI 的工具入口）；先 list，疑似已有服务用 get 核对连接配置，再用 update/refresh；新服务 register。凭据用 `manage_env_vars` 引用，缺少时 ask_user；不扫描源码、数据库或应用包猜管理接口/寻找隐藏密钥。仅缺少 STDIO 运行依赖时使用终端安装，已知远程端点直接配置。
 - `manage_mcp` 的 register/remove 曾定 CRITICAL，导致 FULL 档下注册仍弹审批——与全局档位语义脱节，用户要求改为跟随全局
 - action 别名归一化 `create→register`、`delete→remove`（`RiskClassifier.normalizeMcpAction`）：**分类器、执行层、审批明细三处必须共用**，否则会出现「一处按未知 HIGH、另一处按 CRITICAL 真执行」的判定漂移
 
@@ -107,8 +107,8 @@ needApproval = mode == ASK
 
 | actionType | 工具 | 明细展示 |
 |---|---|---|
-| `sql_write` | execute_write_sql | 完整 SQL + "不可自动撤销" |
-| `container_control` | manage_container | 操作名 + 服务短暂不可用提示 |
+| `sql` | execute_sql | 目标数据源与完整命令；可能修改真实数据 |
+| `service_manage` | manage_service start/stop/restart | 操作名 + 服务短暂不可用提示 |
 | `datasource_manage` | manage_datasource | create 显示连接信息（密码隐藏）；remove 显示级联后果 |
 | `service_manage` | manage_service | register 按 kind 显示对应字段；remove 提示不再监控 |
 | `mcp_manage` | manage_mcp | register：**STDIO 显示完整命令行**（装的什么包一眼可见）/ 远程显示 url+header 键名；remove 提示工具立即不可用 |
@@ -119,7 +119,7 @@ needApproval = mode == ASK
 | `file_manage` | manage_file 管理动作 | rename 显示新名称；move 显示目标文件夹；delete 提示回收站可恢复；mkdir 显示文件夹名（2026-09-18 新增） |
 | `terminal_command` | powershell/sh（仅当前平台注册的工具） | **命令原文完整展示** + cwd + shell + 超时（用户审的就是将执行的） |
 | `knowledge_manage` | manage_knowledge | index 显示 fileId+展示名；remove 显示分块一并删除的后果（2026-09-18 新增） |
-| `automation_manage` | manage_automation | create **完整展示无人值守指令 prompt** + 触发方式 + 「没有审批门」提示；remove/run 显示后果（2026-09-18 新增） |
+| `automation_manage` | manage_automation | create **完整展示无人值守指令 prompt** + 触发方式 + 无人值守权限提示；remove/run 显示后果（2026-09-18 新增） |
 | `mcp_tool` | mcp__* | 服务器名 + 参数（截断 400 字） |
 | `mcp_manage`(call) | manage_mcp action=call | 服务器 + 工具名 + 参数（截断 400 字；2026-09-18 P2-9） |
 | `mcp_manage`(setPolicy) | manage_mcp action=setPolicy | 服务器 + 目标策略 + 挂载面影响 |

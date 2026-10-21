@@ -1,7 +1,7 @@
 import { Bot, ArrowRight, Globe, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/ThemeProvider";
 import { useNavigate } from "react-router-dom";
 import { usePreferences, type LinkOpenMode } from "@/hooks/usePreferences";
 

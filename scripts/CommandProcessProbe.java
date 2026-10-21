@@ -1,5 +1,14 @@
 import com.nora.agent.service.TerminalService;
+import com.nora.agent.service.AgentWorkspaceService;
+import com.nora.agent.service.AppSettingStore;
+import com.nora.agent.service.CommandExecutionStore;
+import com.nora.agent.service.EnvVarsService;
+import com.nora.agent.service.SessionProjectService;
+import com.nora.agent.service.TurnStreamRegistry;
 import com.nora.agent.dto.CommandExecutionDto;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import java.nio.file.*;
 import java.util.*;
 
@@ -22,9 +31,39 @@ public class CommandProcessProbe {
     }
     static String output(String text) { return windows ? "[Console]::Write('" + text + "')" : "printf '%s' '" + text + "'"; }
     static String sleep(int seconds) { return windows ? "Start-Sleep -Seconds " + seconds : "sleep " + seconds; }
+    static JdbcTemplate database(String schema) {
+        String url = System.getenv().getOrDefault("NORA_DB_URL", "jdbc:postgresql://localhost:15432/nora");
+        return new JdbcTemplate(new DriverManagerDataSource(url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema,
+                System.getenv().getOrDefault("NORA_DB_USERNAME", "nora"), System.getenv().getOrDefault("NORA_DB_PASSWORD", "nora")));
+    }
+    static void waitJournal(Path directory) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
+        while (true) {
+            try (var files = Files.list(directory)) { if (files.anyMatch(p -> p.toString().endsWith(".json"))) return; }
+            if (System.nanoTime() > deadline) throw new IllegalStateException("终态日志未生成");
+            Thread.sleep(50);
+        }
+    }
     public static void main(String[] args) throws Exception {
         System.setOut(new java.io.PrintStream(System.out, true, java.nio.charset.StandardCharsets.UTF_8));
-        terminal = new TerminalService(Files.createTempDirectory("nora-process-e2e-").toString());
+        if (args.length == 2) {
+            new CommandExecutionStore(database(args[0]), new ObjectMapper(), new AgentWorkspaceService(args[1])).recover();
+            return;
+        }
+        String schema = "e2e_command_" + UUID.randomUUID().toString().replace("-", "");
+        var admin = database("schema_agent");
+        Path directory = Files.createTempDirectory("nora-process-e2e-").toRealPath();
+        admin.execute("CREATE SCHEMA " + schema);
+        var jdbc = database(schema);
+        for (String table : List.of("command_execution", "chat_session", "app_setting")) {
+            jdbc.execute("CREATE TABLE " + table + " (LIKE schema_agent." + table + " INCLUDING ALL)");
+        }
+        var mapper = new ObjectMapper();
+        var workspace = new AgentWorkspaceService(directory.toString());
+        var settings = new AppSettingStore(jdbc, mapper);
+        var store = new CommandExecutionStore(jdbc, mapper, workspace);
+        terminal = new TerminalService(directory.toString(), "", "",
+                settings, new EnvVarsService(settings), store, new TurnStreamRegistry(), new SessionProjectService(jdbc, workspace));
         try {
             var shortJob = finish(start(output("中文🙂SHORT"), 10));
             check(shortJob.exitCode() == 0 && shortJob.output().contains("中文🙂SHORT"), "UTF8 与真实退出码");
@@ -52,12 +91,30 @@ public class CommandProcessProbe {
             Thread.sleep(2500);
             check(terminal.get(session, slow.executionId()).status().equals("timed_out"), "慢输出订阅者不延长进程超时");
             callback.join(5000);
-            String overLimit = windows ? "1..70 | ForEach-Object { [Console]::Write('x' * 1048576) }"
-                    : "head -c 73400320 /dev/zero | tr '\\000' x";
-            var capped = finish(start(overLimit, 45));
-            Path cappedLog = Path.of(capped.cwd()).resolve(capped.logTarget().substring("workspace:".length()));
-            check(capped.status().equals("failed") && capped.error().contains("64 MiB")
-                    && Files.size(cappedLog) <= 64L * 1024 * 1024, "连续海量输出有界且明确停止");
+            Path journals = directory.resolve(".runtime/command-finalizations");
+            String once = windows ? "[IO.File]::AppendAllText('once.txt','x')" : "printf x >> once.txt";
+            terminal.takeCompletions(session);
+            var pending = start(once + "; " + sleep(2) + "; " + output("DURABLE"), 10);
+            jdbc.execute("ALTER TABLE command_execution RENAME TO command_execution_offline");
+            waitJournal(journals);
+            check(terminal.get(session, pending.executionId()).running(), "数据库提交失败不能宣布命令完成");
+            check(terminal.takeCompletions(session).isEmpty(), "待提交结果不发布完成通知");
+            jdbc.execute("ALTER TABLE command_execution_offline RENAME TO command_execution");
+            var retry = TerminalService.class.getDeclaredMethod("retryFinalizations");
+            retry.setAccessible(true); retry.invoke(terminal);
+            check(finish(pending).status().equals("completed") && Files.readString(directory.resolve("once.txt")).equals("x"), "恢复只保存结果，不重放命令");
+            check(terminal.takeCompletions(session).size() == 1, "保存成功只发布一次完成通知");
+
+            var restart = start(output("RESTART_DURABLE") + "; " + sleep(2), 10);
+            jdbc.execute("ALTER TABLE command_execution RENAME TO command_execution_offline");
+            waitJournal(journals);
+            jdbc.execute("ALTER TABLE command_execution_offline RENAME TO command_execution");
+            var child = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java").toString(),
+                    "-cp", System.getProperty("java.class.path"), "CommandProcessProbe", schema, directory.toString()).inheritIO().start();
+            check(child.waitFor() == 0, "新 JVM 恢复终态日志");
+            check(store.find(session, restart.executionId()).status().equals("completed"), "重启恢复后保留真实完成状态");
+            retry.invoke(terminal);
+            try (var files = Files.list(journals)) { check(files.findAny().isEmpty(), "提交成功清理恢复日志"); }
             var failure = finish(start("exit 7", 10));
             check(failure.status().equals("failed") && failure.exitCode() == 7, "非零退出保持原始状态");
             var explicit = finish(start("exit 0", 9999));
@@ -84,7 +141,24 @@ public class CommandProcessProbe {
             boolean alive = ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false);
             if (alive) ProcessHandle.of(childPid).ifPresent(ProcessHandle::destroyForcibly);
             check(!alive, "父 shell 先退出仍清理子进程");
+            String overLimit = windows ? "1..70 | ForEach-Object { [Console]::Write('x' * 1048576) }"
+                    : "head -c 73400320 /dev/zero | tr '\\000' x";
+            var capped = finish(start(overLimit, 45));
+            Path cappedLog = Path.of(capped.cwd()).resolve(capped.logTarget().substring("workspace:".length()));
+            System.out.println("OUTPUT_LIMIT status=" + capped.status() + " bytes=" + Files.size(cappedLog) + " error=" + capped.error());
+            check(capped.status().equals("failed") && capped.error().contains("64 MiB")
+                    && Files.size(cappedLog) <= 64L * 1024 * 1024, "连续海量输出有界且明确停止");
             System.out.println("TOTAL " + passed);
-        } finally { terminal.shutdown(); }
+        } finally {
+            terminal.shutdown();
+            if (!schema.matches("e2e_command_[a-f0-9]{32}")) throw new IllegalStateException("验收 schema 越界");
+            admin.execute("DROP SCHEMA " + schema + " CASCADE");
+            try (var paths = Files.walk(directory)) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                    if (!path.toAbsolutePath().normalize().startsWith(directory)) throw new IllegalStateException("验收工作区越界");
+                    Files.delete(path);
+                }
+            }
+        }
     }
 }

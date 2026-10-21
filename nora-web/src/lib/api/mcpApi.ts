@@ -20,7 +20,7 @@ export interface McpServer {
   toolPolicy: "eager" | "lazy";
 }
 
-export interface McpToolInfo {
+interface McpToolInfo {
   name: string;
   description: string | null;
 }
@@ -134,10 +134,6 @@ export async function saveGitHubClientId(clientId: string): Promise<GitHubOAuthS
     method: "PUT",
     body: JSON.stringify({ clientId }),
   });
-}
-
-export async function clearGitHubClientId(): Promise<GitHubOAuthStatus> {
-  return requestJson("/mcp/oauth/github/client-id", { method: "DELETE" });
 }
 
 export async function startGitHubOAuth(): Promise<GitHubOAuthStart> {

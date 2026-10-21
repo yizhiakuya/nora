@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Paperclip, FileText, AtSign, Layers, ChevronDown, Send, Square, Zap, Check, Settings, Brain, ShieldAlert, Loader2, Cpu, ListTree } from "lucide-react";
+import { Paperclip, FileText, AtSign, Layers, ChevronDown, CornerDownLeft, Zap, Check, Settings, Brain, ShieldAlert, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSkills } from "@/hooks/useSkills";
 import { useModelProviders, resolveDefaultProvider, REASONING_LEVELS } from "@/hooks/useModelProviders";
@@ -10,8 +10,10 @@ import { refKey } from "@/lib/chatRefs";
 import { ReferencePicker } from "./ReferencePicker";
 import { RefChip } from "./RefChip";
 import { ChatMessageQueue } from "./ChatMessageQueue";
+import { SessionProjectButton } from "./SessionProjectButton";
+import { ChatSubmitButton } from "./ChatSubmitButton";
 import type { QueuedChatMessage } from "@/types";
-import { filesApi } from "@/lib/services/filesApi";
+import { useChatAttachments } from "@/hooks/useChatAttachments";
 import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { useMcpServers } from "@/hooks/useMcpServers";
@@ -29,7 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { formatTokenCount } from "@/lib/tokenEstimate";
+import { ContextUsageMeter } from "./ContextUsageMeter";
 import type { ContextMeter } from "@/lib/chatContext";
 import { matchingChatCommands, type ChatSettingsMenu } from "@/lib/chatCommands";
 import { ChatMentionMenu, type MentionItem } from "./ChatMentionMenu";
@@ -99,8 +101,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
     previousRefCount.current = refs.length;
   }, [refs.length]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  /** 📎 上传中(禁用按钮防重复) */
-  const [uploading, setUploading] = useState(false);
+  const { uploading, uploadFiles, handlePaste } = useChatAttachments(onAddRef);
   /** 引用选择器:file=📄 文件中心 / doc=@ 知识库;null=关闭 */
   const [picker, setPicker] = useState<"file" | "doc" | null>(null);
   /** @ 内联提及:光标前的触发符与查询串;null=菜单关闭 */
@@ -108,15 +109,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
   const [mentionIndex, setMentionIndex] = useState(0);
   /** 拖拽文件悬停中(高亮提示) */
   const [dragging, setDragging] = useState(false);
-  const contextPercent = Math.min(100, Math.round((contextMeter.tokens / contextMeter.limit) * 100));
-  const contextPrefix = contextMeter.estimated ? "≈" : "";
-  const contextLabel = `上下文${contextMeter.estimated ? "估算" : "计量"} ${contextMeter.tokens}/${contextMeter.limit} tokens${contextMeter.windowConfigured ? "" : "（整理预算）"}`;
-  const contextDescription = [contextLabel,
-    contextMeter.usage?.source === "upstream" ? `最近请求完整输入 ${contextMeter.usage.promptTokens} tokens（含缓存读取 ${contextMeter.usage.cacheReadInputTokens ?? 0}、写入 ${contextMeter.usage.cacheCreationInputTokens ?? 0}）`
-      : "尚无上游输入计数，当前使用估算。",
-    contextMeter.usage?.outputTokens != null ? `本次请求输出 ${contextMeter.usage.outputTokens} tokens（含推理和工具参数）` : "生成中内容每秒估算，收到上游用量后校准。",
-    contextMeter.windowConfigured ? "按配置的模型窗口整理。" : "模型窗口未配置，128K 仅为默认整理预算，不代表模型容量。",
-    "下一次请求前超过预算 83% 时自动整理，目标 65%。"].join("\n");
+  const hasDraft = !!input.trim() || refs.length > 0;
 
   // 当前生效渠道:显式 id 优先、失效时按模型名回落(与后端同一顺序)。
   // 勾选判定用「渠道 + 模型名」双匹配——同名模型跨渠道时只勾选真实生效的那一条。
@@ -129,45 +122,6 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
   const handleToggle = (id: number, name: string, enabled: boolean) => {
     toggleSkill(id);
     toast.success(`能力「${name}」已${enabled ? "停用" : "启用"}，AI ${enabled ? "不再" : "现在"}可以使用它`);
-  };
-
-  /**
-   * 📎 附件:选本地文件 → 上传文件中心 → 作为 file 引用加入待发送区。
-   * 上传成功后同步文件中心列表(引用要能被 manage_file 工具读到,必须服务端可见)。
-   */
-  const handlePickLocalFile = async (file: globalThis.File) => {
-    if (uploading) return;
-    setUploading(true);
-    try {
-      const item = await filesApi.uploadFile(file);
-      useFiles.getState().syncFile(item);
-      onAddRef?.({ kind: "file", id: item.id, name: item.name, size: item.size });
-      toast.success(`「${item.name}」已上传并引用,发送后 AI 可读取`);
-    } catch (e) {
-      toast.error(`上传失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  /** 拖拽上传:依次上传多个文件(失败不阻断后续) */
-  const handleDropFiles = async (dropped: globalThis.File[]) => {
-    if (uploading || dropped.length === 0) return;
-    setUploading(true);
-    try {
-      for (const file of dropped) {
-        try {
-          const item = await filesApi.uploadFile(file);
-          useFiles.getState().syncFile(item);
-          onAddRef?.({ kind: "file", id: item.id, name: item.name, size: item.size });
-        } catch (e) {
-          toast.error(`「${file.name}」上传失败：${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      toast.success(dropped.length > 1 ? `${dropped.length} 个文件已上传并引用` : `「${dropped[0].name}」已上传并引用`);
-    } finally {
-      setUploading(false);
-    }
   };
 
   // ---- 内联提及(三触发符,对齐 Claude Code/Codex 约定) ----
@@ -319,7 +273,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
   });
 
   return (
-    <div className="shrink-0 px-4 pb-4 pt-2 bg-card pointer-events-none [@container(min-width:640px)]:px-6">
+    <div className="shrink-0 px-4 pb-3 pt-3 bg-background pointer-events-none [@container(min-width:640px)]:px-6">
       <div className="max-w-[820px] mx-auto pointer-events-auto">
           <ChatMessageQueue messages={queuedMessages} isSending={isSending} isCompacting={isCompacting} processingId={processingQueuedId}
             onInsert={onInsertQueued} onRemove={onRemoveQueued} onRestore={(id) => {
@@ -330,10 +284,10 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
           <PopoverAnchor asChild>
           <div className="relative [container-type:inline-size]">
           <div
-            className={`border rounded-2xl bg-card shadow-surface transition-colors flex flex-col overflow-hidden relative group ${
+            className={`composer flex flex-col overflow-hidden relative group ${
               dragging
                 ? "border-ring ring-2 ring-ring/15"
-                : "border-input focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/10"
+                : ""
             }`}
             onDragOver={(e) => { e.preventDefault(); if (!dragging) setDragging(true); }}
             onDragLeave={(e) => {
@@ -343,7 +297,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
               e.preventDefault();
               setDragging(false);
               const dropped = Array.from(e.dataTransfer.files ?? []);
-              if (dropped.length) void handleDropFiles(dropped);
+              void uploadFiles(dropped);
             }}
           >
               {/* 拖拽悬停提示层 */}
@@ -382,8 +336,8 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
               <textarea
                 ref={textareaRef}
                 rows={1}
-                style={{ minHeight: '44px', maxHeight: 'min(200px, 25dvh)' }}
-                placeholder={isSending ? "继续发消息，发送后进入排队…" : "给 Nora 发消息…"}
+                style={{ minHeight: '68px', maxHeight: 'min(200px, 25dvh)' }}
+                placeholder={isSending ? "补充要求，发送后加入队列…" : "继续这项工作，或提出新的想法…"}
                 aria-label="给 Nora 发消息"
                 title="@ 引用文件 · # 引用知识库 · / 命令、技能与工具"
                 aria-expanded={showMentionMenu}
@@ -391,6 +345,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                 aria-activedescendant={showMentionMenu ? `chat-mention-${mentionIndex}` : undefined}
                 className="block w-full bg-transparent resize-none outline-none text-base sm:text-sm leading-relaxed px-4 pt-4 pb-2 text-foreground placeholder:text-muted-foreground overflow-y-auto custom-scroll"
                 value={input}
+                onPaste={handlePaste}
                 onChange={(e) => {
                   const value = e.target.value;
                   setInput(value);
@@ -433,6 +388,13 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                 }}
               ></textarea>
 
+              {isSending && hasDraft && <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg bg-muted/60 px-2.5 py-1.5">
+                <span className="text-[11px] text-muted-foreground">当前任务结束后发送</span>
+                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs" disabled={uploading} onClick={onSend} aria-label="加入队列" title="加入队列 · Enter">
+                  <CornerDownLeft className="h-3.5 w-3.5" />加入队列
+                </Button>
+              </div>}
+
               <div className="flex justify-between items-center gap-1 px-2 pb-2 pt-0.5">
                   <div className="flex shrink-0 items-center gap-0.5">
                       {/* 📎 附件:选本地文件上传到文件中心并引用 */}
@@ -444,13 +406,12 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                         onChange={(e) => {
                           const picked = Array.from(e.target.files ?? []);
                           e.target.value = ""; // 允许连续选同一文件
-                          if (picked.length === 1) void handlePickLocalFile(picked[0]);
-                          else if (picked.length > 1) void handleDropFiles(picked);
+                          void uploadFiles(picked);
                         }}
                       />
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-blue-600" disabled={uploading} title="添加附件与引用" aria-label="添加附件与引用">
+                          <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground" disabled={uploading} title="添加附件与引用" aria-label="添加附件与引用">
                             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
                           </Button>
                         </DropdownMenuTrigger>
@@ -462,37 +423,19 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                       </DropdownMenu>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 px-2 gap-1 text-xs text-muted-foreground [@container(max-width:480px)]:w-8 [@container(max-width:480px)]:px-0" title="管理启用的技能" aria-label={`技能：已启用 ${enabledSkillCount} 个`}>
-                            <Zap /><span className="[@container(max-width:480px)]:hidden">技能 {enabledSkillCount}</span>
+                          <Button variant="ghost" size="sm" className="h-8 px-2 gap-1 text-xs text-muted-foreground [@container(max-width:480px)]:w-8 [@container(max-width:480px)]:px-0" title="技能与工作过程显示" aria-label={`能力与显示：${enabledSkillCount} 个技能，${reasoningSummary === "detailed" ? "详细" : "简洁"}过程`}>
+                            <Zap /><span className="[@container(max-width:480px)]:hidden">能力</span>
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" className="w-64 max-w-[calc(100vw-24px)] rounded-xl">
+                        <DropdownMenuContent align="start" side="top" className="w-64 max-w-[calc(100vw-24px)] max-h-[min(480px,var(--radix-dropdown-menu-content-available-height))] overflow-y-auto rounded-xl">
                           <DropdownMenuLabel className="text-xs">启用的技能</DropdownMenuLabel>
                           {skills.map(skill => <DropdownMenuCheckboxItem key={skill.id} checked={skill.enabled} onCheckedChange={() => handleToggle(skill.id, skill.name, skill.enabled)} onSelect={event => event.preventDefault()} title={skill.desc} className="text-xs cursor-pointer">
                             <span className="min-w-0 truncate">{skill.name}</span>
                           </DropdownMenuCheckboxItem>)}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem className="text-xs" onSelect={() => navigate("/agent?section=skills")}><Settings />管理技能</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <div className="flex items-center gap-1 px-1 py-1 rounded-md text-[10px] text-muted-foreground font-medium shrink-0" role="status" aria-live="off" aria-label={contextLabel} title={contextDescription}>
-                          <Layers className={`w-3 h-3 shrink-0 ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : "text-muted-foreground"}`} />
-                          <span className={`font-mono [@container(max-width:640px)]:hidden ${contextPercent >= 90 ? "text-red-500" : contextPercent >= 75 ? "text-amber-500" : ""}`}>{contextPrefix}{formatTokenCount(contextMeter.tokens)}/{formatTokenCount(contextMeter.limit)}{!contextMeter.windowConfigured && " 预算"}</span>
-                          <span className="hidden font-mono [@container(max-width:640px)]:inline">{contextPrefix}{contextMeter.windowConfigured ? `${contextPercent}%` : formatTokenCount(contextMeter.tokens)}</span>
-                      </div>
-                  </div>
-
-                  <div className="flex min-w-0 flex-1 justify-end gap-1 items-center">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs px-2 shrink-0 text-muted-foreground hover:text-foreground [@container(max-width:640px)]:w-8 [@container(max-width:640px)]:px-0" title={`推理摘要：${reasoningSummary === "detailed" ? "详细" : "简洁"}`} aria-label={`推理摘要：${reasoningSummary === "detailed" ? "详细" : "简洁"}`}>
-                            <ListTree className="w-3 h-3 shrink-0" />
-                            <span className="[@container(max-width:640px)]:hidden">{reasoningSummary === "detailed" ? "详细" : "简洁"}</span>
-                            <ChevronDown className="w-3 h-3 shrink-0 [@container(max-width:640px)]:hidden" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" side="top" className="w-64 max-w-[calc(100vw-24px)]">
-                          <DropdownMenuLabel className="text-xs text-muted-foreground">推理摘要</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuLabel className="text-xs text-muted-foreground">工作过程显示</DropdownMenuLabel>
                           <DropdownMenuRadioGroup value={reasoningSummary} onValueChange={(value) => {
                             if (value === "concise" || value === "detailed") setReasoningSummary(value);
                           }}>
@@ -503,10 +446,12 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                               <span>详细<span className="block mt-0.5 text-[11px] text-muted-foreground">自动展开工具和思考详情</span></span>
                             </DropdownMenuRadioItem>
                           </DropdownMenuRadioGroup>
-                          <DropdownMenuSeparator />
-                          <p className="px-2 py-1 text-[11px] leading-relaxed text-muted-foreground">未查看的工作过程会在完成后收起。</p>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      <ContextUsageMeter meter={contextMeter} />
+                  </div>
+
+                  <div className="flex min-w-0 flex-1 justify-end gap-1 items-center">
                       {/* 思考等级:仅列出设置页为当前模型启用的等级 */}
                       {onReasoningLevelChange && availableLevels.length > 0 && (
                         <div className="flex shrink-0 items-center">
@@ -590,10 +535,9 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
 
                       <DropdownMenu open={settingsMenu === undefined ? undefined : settingsMenu === "model"} onOpenChange={open => onSettingsMenuChange?.(open ? "model" : null)}>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 max-w-[160px] [@container(max-width:480px)]:w-8 [@container(max-width:480px)]:px-0"
+                          <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs px-2 text-muted-foreground hover:text-foreground min-w-0 max-w-[160px] [@container(max-width:480px)]:max-w-[120px]"
                             aria-label={`模型：${defaultModel}`} title={`模型：${defaultModel}${activeProvider ? ` · 当前渠道：${activeProvider.name}` : ""}`}>
-                            <Cpu className="hidden [@container(max-width:480px)]:block" />
-                            <span className="truncate [@container(max-width:480px)]:hidden">{defaultModel}</span> <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground [@container(max-width:480px)]:hidden" />
+                            <span className="truncate">{defaultModel}</span> <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-64 rounded-xl max-h-96 overflow-y-auto">
@@ -633,17 +577,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                         </DropdownMenuContent>
                       </DropdownMenu>
 
-                      {isSending && (
-                        <Button size="icon" variant="outline" className="shrink-0 w-8 h-8 rounded-lg ml-1"
-                          onClick={onStop} disabled={isStopping} title={isStopping ? "正在停止" : "停止生成"} aria-label={isStopping ? "正在停止" : "停止生成"}>
-                          {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-3 h-3 fill-current" />}
-                        </Button>
-                      )}
-                      <Button size="icon" className="shrink-0 w-8 h-8 rounded-lg ml-1"
-                        onClick={onSend} disabled={uploading || (!input.trim() && refs.length === 0)}
-                        title={isSending ? "加入队列" : "发送"} aria-label={isSending ? "加入队列" : "发送"}>
-                        <Send className="w-3.5 h-3.5 ml-0.5" />
-                      </Button>
+                      <ChatSubmitButton running={isSending} stopping={isStopping} uploading={uploading} hasDraft={hasDraft} onSend={onSend} onStop={onStop} />
                   </div>
               </div>
           </div>
@@ -665,6 +599,10 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
                   sessionId={sessionId} meter={contextMeter} isSending={isSending} isCompacting={isCompacting} queueCount={queuedMessages.length} permissionMode={permissionMode} reasoningLevel={reasoningLevel} /> : null}
           </PopoverContent>
           </Popover>
+          <div className="mt-1.5 flex items-center justify-between gap-2 px-1">
+            <SessionProjectButton sessionId={sessionId} disabled={isSending} />
+            <span className="hidden sm:block shrink-0 text-[11px] text-muted-foreground/70">Enter {isSending ? "加入队列" : "发送"} · Shift + Enter 换行</span>
+          </div>
       </div>
 
       {/* 引用选择器:📄 文件中心 / @ 知识库(外层容器 pointer-events-none,须显式恢复) */}

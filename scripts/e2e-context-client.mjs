@@ -13,6 +13,7 @@ const traces = JSON.parse(fs.readFileSync(filename, "utf8"));
 const step = value => ({ ...value, inputTokens: value.input?.rawArgs == null ? undefined : estimateTextTokens(value.input.rawArgs) });
 let measured = 0;
 let growing = 0;
+let thinking = 0;
 for (const trace of traces) {
   let message = { id: "assistant", role: "assistant", content: "", timestamp: "", steps: [] };
   for (const { event, data } of trace.events) {
@@ -23,13 +24,18 @@ for (const trace of traces) {
     else if (event === "done") update = { type: "finish", stopped: data.stopped, turnMetrics: data };
     else continue;
     const before = estimateChatContextTokens([message]);
+    const previousPrompt = message.contextUsage?.promptTokens ?? message.turnMetrics?.promptTokens ?? 0;
     message = { ...message, ...applyChatStreamEvent(message, update) };
     const after = estimateChatContextTokens([message]);
     if (event === "context_usage" && data.source === "upstream" && data.outputTokens != null) {
-      assert.equal(after, data.promptTokens + data.outputTokens, `${trace.label} 当前输入+输出；不重复添加工具参数/推理`);
+      assert.equal(after - before, data.promptTokens - previousPrompt, `${trace.label} 仅替换输入基线，不加计费输出`);
       measured++;
     }
-    if (event === "delta" || event === "reasoning_delta") {
+    if (event === "reasoning_delta") {
+      assert.equal(after, before, `${trace.label} 思考展示不增加输入占用`);
+      thinking++;
+    }
+    if (event === "delta") {
       if (after > before) growing++;
     }
   }
@@ -39,5 +45,6 @@ for (const trace of traces) {
 }
 assert.ok(measured >= 5, "已核对至少五次真实请求的完整计量");
 assert.ok(growing > 0, "生成过程中计量随真实文本增长");
+assert.ok(thinking > 0, "真实思考流与输入计量分离");
 assert.equal(formatTokenCount(1100), "1.1K");
 console.log("PASS", measured, "次真实请求，", growing, "次生成增量");

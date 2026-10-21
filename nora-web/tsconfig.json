@@ -19,9 +19,7 @@
     "jsx": "react-jsx",
     "incremental": true,
     "paths": {
-      "@/*": ["./src/*"],
-      "next/dynamic": ["./src/lib/next-shims/dynamic.tsx"],
-      "next-themes": ["./src/components/ThemeProvider.tsx"]
+      "@/*": ["./src/*"]
     }
   },
   "include": [

@@ -1,25 +1,25 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export interface AccountPrefs {
+interface AccountPrefs {
   name: string;
   email: string;
   timezone: string;
   lang: string;
 }
 
-export interface NotificationPrefs {
+interface NotificationPrefs {
   events: Record<string, boolean>;
   inApp: boolean;
   browser: boolean;
 }
 
-export interface KnowledgeAIPrefs {
+interface KnowledgeAIPrefs {
   /** 上传后自动入库(真实消费:files 页上传完成回调)。 */
   autoIndex: boolean;
 }
 
-export type ReasoningSummary = "concise" | "detailed";
+type ReasoningSummary = "concise" | "detailed";
 export type LinkOpenMode = "internal" | "external";
 
 interface PreferencesState {

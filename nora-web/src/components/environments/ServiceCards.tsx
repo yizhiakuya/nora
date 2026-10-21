@@ -11,6 +11,7 @@ const HEALTH_MAP = {
   healthy:  { label: "健康", cls: "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800",   dot: "bg-green-500 animate-pulse" },
   degraded: { label: "降级", cls: "bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800", dot: "bg-yellow-500 animate-pulse" },
   down:     { label: "离线", cls: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800",       dot: "bg-red-500" },
+  unknown:  { label: "未探测", cls: "bg-muted text-muted-foreground border-border", dot: "bg-muted-foreground" },
 };
 
 export function ServiceCards() {

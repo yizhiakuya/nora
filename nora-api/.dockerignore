@@ -1,11 +1,10 @@
-# 构建上下文瘦身:排除本地构建产物与运行数据
-**/target/
+**/target/**
+!target/nora-api-0.1.0-SNAPSHOT.jar
 **/*.log
 **/logs/
 **/data/
 **/agent-workspace/
-**/.env.local
+**/.env*
 **/.git/
 **/node_modules/
-# 开发文档不参与构建
 docs/

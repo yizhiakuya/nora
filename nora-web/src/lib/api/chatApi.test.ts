@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { applyChatStreamEvent, reconcileChatHistory, splitChatMessages, type ChatMessage, type ChatStreamEvent } from "./chatApi";
+import { applyChatStreamEvent, createChatStreamBuffer, reconcileChatHistory, splitChatMessages, type ChatMessage, type ChatStreamEvent } from "./chatApi";
 
 describe("chat stream messages", () => {
   it("历史回填与对话变更的渲染身份冒烟", () => {
@@ -63,6 +63,24 @@ describe("chat stream messages", () => {
     for (const event of events) message = { ...message, ...applyChatStreamEvent(message, event) };
     applyChatStreamEvent(message, { type: "finish", stopped: true });
     applyChatStreamEvent(message, { type: "finish", failed: true });
-    applyChatStreamEvent(message, { type: "gap" });
+    applyChatStreamEvent(message, { type: "snapshot", message: { content: "恢复正文", steps: message.steps,
+      sources: [], approval: undefined, question: undefined, contextUsage: undefined } });
+  });
+
+  it("文本批处理、轮次切换与快照恢复冒烟", async () => {
+    let message: Partial<ChatMessage> = {};
+    const buffer = createChatStreamBuffer(event => {
+      message = { ...message, ...applyChatStreamEvent(message, event) };
+    });
+    for (let i = 0; i < 10_000; i++) buffer.push({ type: "reasoning_delta", roundIndex: 1, content: "思考" });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    buffer.push({ type: "reasoning_delta", roundIndex: 1, content: "补充" });
+    buffer.push({ type: "delta", roundIndex: 1, content: "正文" });
+    buffer.push({ type: "delta", roundIndex: 2, content: "第二轮" });
+    buffer.push({ type: "snapshot", message: { content: "", steps: message.steps,
+      sources: [], approval: undefined, question: undefined, contextUsage: { promptTokens: 5000, contextWindow: 128000, roundIndex: 2 } } });
+    buffer.push({ type: "delta", content: "最终回答" });
+    buffer.push({ type: "finish" });
+    buffer.flush();
   });
 });

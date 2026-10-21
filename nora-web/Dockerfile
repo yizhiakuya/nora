@@ -1,4 +1,4 @@
-# Nora 前端镜像(多阶段:Node 构建 → nginx 托管 + 反代网关)
+# Nora 前端镜像(多阶段:Node 构建 → nginx 托管 + 反代后端)
 # 构建(在 nora-web 目录):docker build -t nora-web .
 #
 # 多架构优化:构建阶段固定在 BUILDPLATFORM(原生架构)运行——
@@ -15,7 +15,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
 COPY . .
-# 生产构建(走同源 /api,nginx 反代到网关)
+# 生产构建(走同源 /api,nginx 反代到后端)
 RUN pnpm build
 
 # ---- 运行阶段:nginx(随目标架构) ----

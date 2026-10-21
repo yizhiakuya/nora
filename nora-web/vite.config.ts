@@ -7,8 +7,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "next/dynamic": fileURLToPath(new URL("./src/lib/next-shims/dynamic.tsx", import.meta.url)),
-      "next-themes": fileURLToPath(new URL("./src/components/ThemeProvider.tsx", import.meta.url)),
     },
   },
   server: {

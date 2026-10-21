@@ -1,44 +1,10 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { FileItem } from "@/types";
 import { filesApi } from "@/lib/services/filesApi";
-import { FileText, FileSpreadsheet, FileImage, File } from "lucide-react";
-
-type PersistedFile = Omit<FileItem, "icon">;
-type PersistedFilesState = { files: PersistedFile[] };
-
-function getFileMeta(name: string, type?: string) {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (["xlsx", "csv"].includes(ext)) {
-    return { type: type || "Excel 表格", icon: FileSpreadsheet, color: "text-green-600 dark:text-green-400" };
-  }
-  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-    return { type: type || "PNG 图像", icon: FileImage, color: "text-purple-500 dark:text-purple-400" };
-  }
-  if (["docx", "doc"].includes(ext)) {
-    return { type: type || "Word 文档", icon: FileText, color: "text-blue-500 dark:text-blue-400" };
-  }
-  if (["txt", "md"].includes(ext)) {
-    return { type: type || "纯文本", icon: File, color: "text-gray-500 dark:text-gray-400" };
-  }
-  return { type: type || "PDF 文档", icon: FileText, color: "text-red-500 dark:text-red-400" };
-}
-
-function restoreFile(f: PersistedFile): FileItem {
-  const meta = getFileMeta(f.name, f.type);
-  return {
-    ...f,
-    icon: meta.icon,
-    color: f.color || meta.color,
-  };
-}
-
-function stripFile(f: FileItem): PersistedFile {
-  const { icon, ...rest } = f;
-  return rest;
-}
 
 interface FilesState {
+  loading: boolean;
+  syncError: string | null;
   files: FileItem[];
   markIndexed: (id: number) => void;
   /** 后端模式:用服务端 FileItem 覆盖同 id 行(或插入到头部) */
@@ -48,44 +14,45 @@ interface FilesState {
 }
 
 /**
- * 文件中心唯一数据源：持久化存储上传与索引状态，刷新不丢失。
+ * 文件中心唯一数据源：服务端列表的内存视图，刷新后重新读取。
  */
+let revision = 0;
+
 export const useFiles = create<FilesState>()(
-  persist<FilesState, [], [], PersistedFilesState>(
-    (set) => ({
-      files: [],
-      syncFromBackend: async () => {
-        try {
-          const files = await filesApi.listFiles();
-          set({ files });
-        } catch {
-          /* 后端不可用时保留现状(横幅已提示) */
-        }
-      },
-      markIndexed: (id) =>
-        set((state) => ({
+  (set) => ({
+    files: [],
+    loading: true,
+    syncError: null,
+    syncFromBackend: async () => {
+      const request = ++revision;
+      set({ loading: true });
+      try {
+        const files = await filesApi.listFiles();
+        if (request === revision) set({ files, syncError: null });
+      } catch (error) {
+        if (request === revision) set({ syncError: error instanceof Error ? error.message : String(error) });
+      } finally {
+        if (request === revision) set({ loading: false });
+      }
+    },
+    markIndexed: (id) =>
+      set((state) => {
+        revision++;
+        return {
+          loading: false,
           files: state.files.map((f) => (f.id === id ? { ...f, indexed: true } : f)),
-        })),
-      syncFile: (file) =>
-        set((state) => {
-          const exists = state.files.some((f) => f.id === file.id);
-          return {
-            files: exists
-              ? state.files.map((f) => (f.id === file.id ? file : f))
-              : [file, ...state.files],
-          };
-        }),
-    }),
-    {
-      name: "nora-files",
-      partialize: (state): PersistedFilesState => ({
-        files: state.files.map(stripFile),
+        };
       }),
-      merge: (persisted, current) => {
-        const p = (persisted ?? {}) as Partial<PersistedFilesState>;
-        const files = (p.files ?? current.files.map(stripFile)).map(restoreFile);
-        return { ...current, files };
-      },
-    }
-  )
+    syncFile: (file) =>
+      set((state) => {
+        revision++;
+        const exists = state.files.some((f) => f.id === file.id);
+        return {
+          loading: false,
+          files: exists
+            ? state.files.map((f) => (f.id === file.id ? file : f))
+            : [file, ...state.files],
+        };
+      }),
+  })
 );

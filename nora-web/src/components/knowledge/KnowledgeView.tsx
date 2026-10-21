@@ -13,6 +13,7 @@ import { DocumentLibrary } from "@/components/knowledge/DocumentLibrary";
 import { RetrievalTest } from "@/components/knowledge/RetrievalTest";
 import { IndexStatus } from "@/components/knowledge/IndexStatus";
 import { FileItem } from "@/types";
+import { ResourceStatus } from "@/components/ui/custom/States";
 
 /**
  * 长期知识视图(M1-03,2026-09-20):原知识库页主体,抽为组件供
@@ -23,9 +24,10 @@ export function KnowledgeView() {
   const upload = useSimulatedUpload();
   const indexFileFromBackend = useKnowledgeDocs((s) => s.indexFileFromBackend);
   const syncFromBackend = useKnowledgeDocs((s) => s.syncFromBackend);
+  const { docs, loading, syncError } = useKnowledgeDocs();
   const addNotification = useNotifications((s) => s.addNotification);
 
-  useEffect(() => { void syncFromBackend().catch(() => undefined); }, [syncFromBackend]);
+  useEffect(() => { void syncFromBackend(); }, [syncFromBackend]);
 
   const handleImport = (uploadedFile: FileItem) => {
     // 上传已完成,再触发 rag-service 索引(异步)
@@ -56,7 +58,7 @@ export function KnowledgeView() {
       </div>
 
       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-        {activeTab === "文档库" && <DocumentLibrary />}
+        {activeTab === "文档库" && <><ResourceStatus loading={loading} error={syncError} retry={syncFromBackend} />{!(docs.length === 0 && (loading || syncError)) && <DocumentLibrary />}</>}
         {activeTab === "检索测试" && <RetrievalTest />}
         {activeTab === "索引状态" && <IndexStatus />}
       </div>

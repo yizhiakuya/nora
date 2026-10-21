@@ -1,4 +1,4 @@
-$dir = 'D:\claude\Nora\nora-api\services\agent-service\target\surefire-reports'
+$dir = 'D:\claude\Nora\nora-api\target\surefire-reports'
 Get-ChildItem $dir -ErrorAction SilentlyContinue | Select-Object Name, LastWriteTime | Format-Table -AutoSize
 Write-Host "--- summaries ---"
 Get-ChildItem "$dir\*.txt" -ErrorAction SilentlyContinue | ForEach-Object {

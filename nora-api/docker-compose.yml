@@ -1,3 +1,4 @@
+# Local development needs only PostgreSQL; applications run on the host.
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -7,110 +8,14 @@ services:
       POSTGRES_DB: nora
       POSTGRES_USER: nora
       POSTGRES_PASSWORD: nora
-    ports:
-      - "15432:5432"
+    ports: ["127.0.0.1:15432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 首次创建数据卷时自动建 pgvector 扩展(rag-service 依赖)
       - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-nora-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nora -d nora"]
       interval: 5s
       timeout: 3s
-      retries: 10
-    profiles: ["dev-basic", "dev-all"]
-
-  redis:
-    image: redis:7-alpine
-    container_name: nora-redis
-    restart: unless-stopped
-    ports:
-      - "16379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    profiles: ["dev-basic", "dev-all"]
-
-  nacos:
-    image: nacos/nacos-server:v2.3.2
-    container_name: nora-nacos
-    restart: unless-stopped
-    environment:
-      MODE: standalone
-    ports:
-      - "18848:8848"
-      - "19848:9848"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    profiles: ["dev-basic", "dev-all"]
-
-  # Kafka(KRaft 单节点,2026-09-19 通知服务事件总线):
-  # 无 ZooKeeper,broker+controller 合一;内存限 512M(与 N100/开发机共存)。
-  # 业务服务作为 producer 发事件,notification-service 作为 consumer 落库。
-  # 降级语义:Kafka 挂了只丢通知,不影响任何主业务(发送方静默失败)。
-  kafka:
-    image: apache/kafka:3.7.1
-    container_name: nora-kafka
-    restart: unless-stopped
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:29092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
-      # 数据目录固定到卷(2026-09-27):默认 /tmp 在容器重建时丢失,
-      # nora.notifications topic 要手动重建(实测踩过)
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    ports:
-      - "29092:9092"
-    volumes:
-      - kafkadata:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 8s
-      retries: 12
-    profiles: ["dev-basic", "dev-all"]
-
-  rocketmq-namesrv:
-    image: apache/rocketmq:5.1.4
-    container_name: nora-rocketmq-namesrv
-    restart: unless-stopped
-    command: sh mqnamesrv
-    ports:
-      - "9876:9876"
-    profiles: ["dev-all"]
-
-  rocketmq-broker:
-    image: apache/rocketmq:5.1.4
-    container_name: nora-rocketmq-broker
-    restart: unless-stopped
-    command: sh mqbroker -n rocketmq-namesrv:9876
-    depends_on:
-      - rocketmq-namesrv
-    ports:
-      - "10911:10911"
-    profiles: ["dev-all"]
-
-  # 服务镜像在 Phase 1+ 逐个加入（services/<name>/Dockerfile 就绪后取消注释）
-  # gateway-service:
-  #   build: services/gateway-service
-  #   ports: ["8080:8080"]
-  #   depends_on: [nacos, postgres, redis]
-  #   profiles: ["dev-all"]
-
+      retries: 20
 volumes:
   pgdata:
-  kafkadata:

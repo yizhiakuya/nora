@@ -18,7 +18,7 @@ import uuid
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="http://127.0.0.1:18083")
+    parser.add_argument("--base", default="http://127.0.0.1:18080")
     parser.add_argument("--provider", type=int, default=7)
     parser.add_argument("--model", default="deepseek-v4.1-flash")
     parser.add_argument("--case", choices=["all", "retry", "interaction", "configuration"], default="all")

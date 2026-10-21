@@ -26,7 +26,7 @@ import uvicorn
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="http://127.0.0.1:18083")
+    parser.add_argument("--base", default="http://127.0.0.1:18080")
     parser.add_argument("--tool", choices=["powershell", "sh"], default="powershell")
     parser.add_argument("--mcp-host", default="127.0.0.1")
     args = parser.parse_args()
@@ -105,9 +105,9 @@ def main():
     sdk = MCPServer("environment-variables-e2e")
 
     @sdk.tool()
-    def credential_probe() -> dict:
-        """仅返回测试连接是否工作，不返回凭据。"""
-        return {"ok": True}
+    def credential_probe(options: dict) -> dict:
+        """核对嵌套 JSON 参数完整传入，不返回凭据。"""
+        return {"ok": options == {"labels": ["SDK", 2], "active": True}}
 
     app = sdk.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0",
                                   transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
@@ -167,14 +167,18 @@ def main():
         check(any(t["toolName"] == args.tool and t["status"] == "completed"
                   and hashlib.sha256(secret.encode()).hexdigest() in json.dumps(t.get("result")) for t in tools.values()),
               "命令收到精确变量值，包括引号、反斜线和占位符")
-        fixture = api("/mcp/servers", {"name": "env-vars-e2e-" + stamp, "url": "${" + public + "}",
-                                       "transport": "STREAMABLE", "headers": {"Authorization": "Bearer ${" + key + "}"}}, "POST")
+        server_name = "env-vars-e2e-" + stamp
+        tools, _ = turn("只调用 manage_mcp action=register，name=" + server_name + ", url=${" + public
+                        + "}, transport=STREAMABLE, toolPolicy=lazy, headers="
+                        + json.dumps({"Authorization": "Bearer ${" + key + "}"}) + "。不要执行命令。")
+        fixture = next(v for v in api("/mcp/servers") if v["name"] == server_name)
         server_id = fixture["id"]
         refreshed = api("/mcp/servers/" + str(server_id) + "/refresh", {}, "POST")
         check(refreshed["status"] == "connected" and len(matched_headers) >= 2 and all(matched_headers),
               "MCP 真实握手和工具发现使用引用，JSON 替换不损坏值")
         tools, _ = turn("只调用一次 manage_mcp，action=call，target=" + str(server_id)
-                        + "，tool=credential_probe，arguments={}。返回成功则结束。")
+                        + "，tool=credential_probe，arguments="
+                        + json.dumps({"options": {"labels": ["SDK", 2], "active": True}}) + "。返回成功则结束。")
         check(any(t["toolName"] == "manage_mcp" and t["status"] == "completed"
                   and 'true' in json.dumps(t.get("result")) for t in tools.values()), "真实 MCP 工具可调用")
         _, approvals = turn("只调用 manage_env_vars，action=set，key=" + blocked

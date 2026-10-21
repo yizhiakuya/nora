@@ -1,126 +1,70 @@
-# Nora — 前端
+# Nora 前端
 
-Nora 个人 AI 助手的前端仓库。
-
-> 后端 `nora-api`（8 个微服务）为唯一数据源,前端不内置 Mock——所有业务域均走真实 API。
+个人智能体的 Web 界面。所有业务域连接真实后端，不提供本地 Mock 开关。
 
 ## 技术栈
 
-Vite 7 · React 18 · react-router-dom v7 · TypeScript 5 · Tailwind CSS 3 · Radix UI · Zustand 5 · Vitest 4
+Vite 7 · React 18 · react-router-dom v7 · TypeScript 5 · Tailwind CSS 3 · Radix UI · Zustand 5 · Vitest 4 · Knip
 
-## 快速开始
+## 开发与检查
 
-```bash
-pnpm install        # 安装依赖（严禁 npm / npx）
-pnpm dev            # 开发服务器（固定 3001 端口，HMR 即时生效）
-```
-
-## 常用命令
+在本目录执行，使用 pnpm：
 
 | 命令 | 用途 |
-|------|------|
-| `pnpm dev` | 开发服务器（3001，改代码即时热更新） |
-| `pnpm build` | 生产构建（输出 `dist/`） |
-| `pnpm preview` | 生产预览（需先 build） |
-| `pnpm typecheck` | TypeScript 编译检查 |
+|---|---|
+| `pnpm install` | 安装依赖 |
+| `pnpm dev` | 开发服务器，固定端口 3001 |
+| `pnpm typecheck` | TypeScript 检查 |
 | `pnpm lint` | ESLint 检查 |
-| `pnpm test` | Vitest 单元测试 |
+| `pnpm deadcode` | Knip 检查未使用文件、导出和依赖 |
+| `pnpm test` | Vitest 冒烟测试 |
+| `pnpm build` | 生产构建，输出 dist/ |
+| `pnpm preview` | 预览生产构建 |
 
-## 项目结构
+CI 执行类型、Lint、死代码、测试和构建检查。行为正确性通过真实 HTTP 与浏览器验收。
 
-```
-nora-web/
-├── index.html              # Vite 入口（含字体、favicon）
-├── vite.config.ts          # 构建配置（@ 别名 + next/* 兼容层映射）
-├── src/
-│   ├── main.tsx            # ReactDOM.createRoot + BrowserRouter + ThemeProvider
-│   ├── App.tsx             # 路由表（助手/资料/任务/设置四入口 + 兼容路由,全部 React.lazy 懒加载 + 重定向 + 404 兜底）
-│   ├── app/                # 路由页面组件（仅胶水层，≤150 行）
-│   │   ├── page.tsx        #   助手首页（输入需求/继续处理/最近成果）
-│   │   ├── files/          #   资料（全部文件/长期知识/已保存成果三视图）
-│   │   ├── tasks/          #   任务（正在处理/定期任务/执行记录）
-│   │   ├── chat/           #   会话工作区
-│   │   ├── knowledge/      #   长期知识（兼容页,复用 KnowledgeView）
-│   │   ├── skills/         #   技能（兼容页,复用 SkillsView）
-│   │   ├── mcp/            #   连接与工具（兼容页,复用 ConnectionsView）
-│   │   ├── data-sources/   #   数据源（高级工具）
-│   │   ├── environments/   #   环境控制台（高级工具）
-│   │   ├── settings/       #   设置（含 我的偏好/连接与工具/技能）
-│   │   └── login/          #   令牌登录页
-│   ├── components/
-│   │   ├── ui/             # 基础 UI 原语（Button/Input/Switch/Select/Tabs/Modal）
-│   │   │   └── custom/     #   共享 UI（Modal/UploadModal/States）
-│   │   ├── {domain}/       # 领域业务组件（chat/files/knowledge/settings/model…）
-│   │   ├── layout/         # Sidebar/Header/NotificationBell/ThemeProvider
-│   │   └── shared/         # Markdown 等跨域组件
-│   ├── hooks/              # 业务逻辑 Hooks（Zustand store + persist）
-│   ├── lib/
-│   │   ├── api/            # HTTP 客户端 / SSE / 请求缓存（client.ts、sse.ts、agentApi.ts、chatApi.ts、requestCache.ts）
-│   │   ├── services/       # 后端 API 契约层（filesApi / ragService / datasourcesApi / environmentApi / automationsApi / modelsApi）
-│   │   ├── next-shims/     # Next.js 兼容残留（仅 dynamic.tsx，其余已删）
-│   │   ├── knowledgeSourceMeta.ts  # 文档来源的展示元数据
-│   │   └── utils.ts        # 通用工具
-│   └── types/              # 全局 TypeScript 接口
-├── docs/                   # 设计文档与验证记录
-└── scripts/                # 工具脚本（apply-dark-variants.ps1）
-```
+## 代码结构
 
-## 核心业务流
+| 目录 | 职责 |
+|---|---|
+| `src/main.tsx` / `src/App.tsx` | React 入口、路由、ThemeProvider、懒加载与错误边界 |
+| `src/app/` | 助手首页、聊天、资料、任务、数据源、环境、Agent 管理和应用设置页面 |
+| `src/components/ui/` | Radix 基础控件与项目通用 UI |
+| `src/components/{domain}/` | 各业务域组件 |
+| `src/components/shared/` | Markdown 等共享组件 |
+| `src/components/ThemeProvider.tsx` | 主题状态，业务组件直接引用 |
+| `src/hooks/` | 业务状态与接口编排 |
+| `src/lib/api/` | HTTP、SSE、聊天和 Agent 契约 |
+| `src/lib/services/` | 文件、知识库、数据源、环境、自动任务和模型接口 |
+| `src/types/` | 共享业务类型 |
+| `docs/` | 设计与演进记录 |
 
-| 流程 | 说明 |
-|------|------|
-| 文件 → 知识库 → 对话 | 上传文件 → 加入知识库索引 → 对话引用知识库片段回答 → 可保存对话产出回知识库 |
-| 数据源 → 查询 → 沉淀 | 连接数据库 → SQL 查询 → 导出 CSV 或保存为自动任务 |
-| 环境 → 诊断 → 修复 | 服务异常 → AI 诊断 → 创建修复任务 → 自动任务执行 → 通知 |
-| 模型管理 | 设置 → 模型管理：接入 OpenAI 兼容 / Anthropic / Ollama 服务商（协议类型 + 端点 + 密钥），多模型切换默认 |
+组件懒加载使用 React `lazy` / `Suspense`。不保留 Next.js shim 或别名。
 
-## 后端接入现状
+## 主要链路
 
-前端不内置 Mock——所有数据都经 `requestJson` 走真实后端(开发时 Vite 把 `/api` 代理到
-gateway `http://localhost:18080`)。请求统一解开 `{code,data,message}` 信封,`code != 0` 直接抛错。
+- 聊天：引用资料 → SSE 工作过程 → 排队/插入新要求 → 交付文件；工作过程可恢复。
+- 文件与知识库：上传 → 文件管理 → 解析与索引 → 检索 → 对话引用。聊天图片点击后居中放大。
+- 数据源：连接 PostgreSQL、MySQL 或 Redis → 浏览结构 → 执行读写命令 → 查看结果与历史。SQL 批次展示最后一组结果，最多展示 200 行。
+- 自动任务：手动/每日/每周执行 → 记录结果 → 通知。文件/异常触发尚未接通。
+- Agent 管理：模型、技能、MCP、上下文、工具和运行偏好；模型支持 OpenAI、Anthropic、Ollama。
+- 统一侧面板：浏览器与文件查看器共用标签页；超链接默认在内置浏览器打开，打开方式可配置。
 
-以 `ragService.ts` 为例,检索/统计/引用都直接调用后端:
+## 接口与配置
 
-| 能力 | 实现 |
-|------|------|
-| 检索 | `searchDocsAsync(query, topK)` → `POST /api/rag/search` |
-| 索引统计 | `fetchIndexStats()` → `GET /api/rag/index/stats` |
-| 引用来源 | `generateCitationsAsync(query, topK)` → `POST /api/rag/citations` |
+开发时 Vite 将 `/api` 代理到 Nora 后端 `http://localhost:18080`。统一 HTTP 客户端解开
+`{code,data,message}` 信封并处理错误；聊天 SSE 单独处理步骤、流事件和终态。
 
-各域统一按「`lib/services/xxxApi.ts` 契约层 + Hook 内调真实接口」的模式接入。
+知识库检索和统计由 `ragService.ts` 访问 `/api/rag/search`、`/api/rag/index/stats`；
+聊天引用随 Agent 的 sources 事件返回。环境变量由 `/api/chat/settings/env-vars` 管理。
 
-| 域 | 状态 |
-|----|------|
-| 文件 / 知识库 / 对话 / 数据源 / 环境 / 自动任务 / 模型管理 | ✅ 已接入后端 |
-| AI 能力（技能）/ MCP 管理 / 通知 / 工作区 / 媒体缓存 / 登录 | ✅ 已接入后端 |
-| 环境变量（设置页） | ✅ 已接入后端（`/api/env-vars`） |
+实现以代码和 [AGENTS.md](AGENTS.md) 为准。旧设计记录中的 Mock、旧导航和框架选型不代表当前实现。
 
-接入新域或改契约后，请同步更新 [AGENTS.md](AGENTS.md) 的「后端接入现状」表。
+## 维护文档
 
-## 设计文档索引
-
-| 文档 | 内容 |
-|------|------|
-| [docs/product-redesign.md](docs/product-redesign.md) | 产品重定位、信息架构、业务流程闭环 |
-| [docs/home.md](docs/home.md) | 首页概览（快捷入口 / 最近文件 / 侧栏状态） |
-| [docs/chat.md](docs/chat.md) | 对话（多会话 / 流式消息 / 引用来源） |
-| [docs/data-sources.md](docs/data-sources.md) | 数据源（连接管理 / Schema 浏览 / 查询控制台） |
-| [docs/environments.md](docs/environments.md) | 环境控制台（服务卡片 / 日志流 / AI 诊断） |
-| [docs/automations.md](docs/automations.md) | 自动任务（触发条件 / 执行历史 / 通知联动） |
-| [docs/model-settings.md](docs/model-settings.md) | 模型管理设计（Tab 布局 + 协议类型 + 弹窗接入） |
-| [docs/rag-service.md](docs/rag-service.md) | RAG 服务层（后端 API 契约预留） |
-| [docs/skills-center.md](docs/skills-center.md) | AI 能力中心业务闭环设计 |
-| [docs/file-viewer.md](docs/file-viewer.md) | 文件查看（File Viewer）功能设计 |
-| [docs/vite-migration-2026-09-04.md](docs/vite-migration-2026-09-04.md) | Next.js → Vite 迁移记录 |
-| [docs/engineering-fixes-2026-09-03.md](docs/engineering-fixes-2026-09-03.md) | 工程修复验证记录 |
-| [docs/dark-mode-2026-09-03.md](docs/dark-mode-2026-09-03.md) | 全站暗色模式收口验证 |
-
-## 开发规约
-
-详见 [AGENTS.md](AGENTS.md)。核心约束：
-
-- **只用 pnpm**——npm/npx 会破坏 pnpm 结构的 node_modules
-- **页面仅胶水**——`src/app/*/page.tsx` ≤150 行，业务在 `components/{domain}`，逻辑在 `hooks`
-- **不造假数据**——后端模式不内置 Mock;接口失败如实报错(humanize + hint),空态引导操作
-- **dev 固定 3001**——HMR 即时生效，改代码不刷新页面
-- **路由集中**——`src/App.tsx` 统一注册，`/src/app` 下只放页面胶水组件
+- [前端开发规范](AGENTS.md)
+- [业务接入参考](docs/api-integration-status.md)
+- [代码质量清理与验证](../docs/dev/code-quality-2026-10-11.md)
+- [Agent 架构审查与整改](../docs/dev/agent-architecture-audit-2026-10-10.md)
+- [统一文件查看器](docs/unified-file-viewer-design.md)
+- [开发记录索引](../docs/dev/README.md)

@@ -15,5 +15,5 @@ foreach ($m in [regex]::Matches($t, 'event:done\s*\r?\ndata:(\{.*?\})\r?\n\r?\n'
 Write-Host ""
 Write-Host "=== calibration line (full) ==="
 $sid = (Get-Content 'D:\claude\Nora\scripts\e2e-sid.txt' -Raw).Trim()
-Select-String -Path 'D:\claude\Nora\logs\agent-service-text.log' -Pattern 'context estimate' |
+Select-String -Path 'D:\claude\Nora\logs\nora-text.log' -Pattern 'context estimate' |
   Where-Object { $_.Line -match $sid } | Select-Object -Last 6 | ForEach-Object { Write-Host $_.Line }

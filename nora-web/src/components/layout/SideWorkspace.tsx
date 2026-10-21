@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { useSideWorkspace } from "@/hooks/useSideWorkspace";
@@ -21,6 +21,11 @@ export function SideWorkspace({ children, sessionId }: { children: ReactNode; se
   const browserOpened = useSideWorkspace(state => state.browserOpened);
   const missing = useFileViewer(state => state.missing);
   const open = useSideWorkspace(state => state.isOpen);
+  // 原页面隐藏及面板懒加载之前记录入口，避免首次打开时焦点已经落到 body。
+  const [focus, setFocus] = useState(() => ({ open, opener: document.activeElement }));
+  if (focus.open !== open) {
+    setFocus({ open, opener: open ? document.activeElement : focus.opener });
+  }
   const wide = useSideWorkspace(state => state.wide);
   const expanded = useSideWorkspace(state => state.expanded);
   const width = useSideWorkspace(state => state.width);
@@ -118,7 +123,7 @@ export function SideWorkspace({ children, sessionId }: { children: ReactNode; se
     const stop = () => { separator.removeEventListener("pointermove", move); separator.removeEventListener("pointerup", stop); separator.removeEventListener("pointercancel", stop); };
     separator.addEventListener("pointermove", move); separator.addEventListener("pointerup", stop); separator.addEventListener("pointercancel", stop);
   };
-  return <WorkspaceContext.Provider value={{ sessionId, browser, tabs, activeId, selectTab, closeTab }}><main ref={ref} className="flex-1 min-w-0 min-h-0 grid overflow-hidden bg-background relative" style={{ gridTemplateColumns: columns }}>
+  return <WorkspaceContext.Provider value={{ sessionId, browser, tabs, activeId, selectTab, closeTab }}><main ref={ref} className="flex-1 min-w-0 min-h-0 grid overflow-hidden bg-background relative md:rounded-xl md:border md:border-border/80 md:shadow-surface" style={{ gridTemplateColumns: columns }}>
     <div className={`min-w-0 min-h-0 h-full flex flex-col overflow-hidden ${open && (!wide || expanded) ? "hidden" : ""}`}>{children}</div>
     {open && wide && !expanded && <button type="button" role="separator" aria-label="调整工作区宽度" aria-orientation="vertical" aria-valuenow={width} aria-valuemin={45} aria-valuemax={70} className="bg-border hover:bg-blue-400 focus-visible:bg-blue-500 cursor-col-resize touch-none outline-none" onPointerDown={resize} onKeyDown={event => {
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
@@ -126,6 +131,6 @@ export function SideWorkspace({ children, sessionId }: { children: ReactNode; se
         useSideWorkspace.getState().setWidth(width + (event.key === "ArrowLeft" ? 2 : -2));
       }
     }} />}
-    {open && <Suspense fallback={<div className="bg-card p-6 text-sm text-muted-foreground">加载工作区…</div>}><WorkspacePanel /></Suspense>}
+    {open && <Suspense fallback={<div className="bg-card p-6 text-sm text-muted-foreground">加载工作区…</div>}><WorkspacePanel returnFocus={focus.opener} /></Suspense>}
   </main></WorkspaceContext.Provider>;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Server, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ServiceCards } from "@/components/environments/ServiceCards";
 import { LogStream } from "@/components/environments/LogStream";
 import { AddSourceModal } from "@/components/environments/AddSourceModal";
-import { EmptyState } from "@/components/ui/custom/States";
+import { EmptyState, ResourceStatus } from "@/components/ui/custom/States";
+import { usePollingResource } from "@/hooks/usePollingResource";
 import { Container } from "lucide-react";
 import { useServices } from "@/hooks/useServices";
 
@@ -19,23 +20,8 @@ export default function EnvironmentsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const services = useServices((s) => s.services);
   const syncFromBackend = useServices((s) => s.syncFromBackend);
-  // 后端首次同步未完成前不渲染空态,避免「暂无纳管服务」闪现;
-  // persist 已有上次服务列表时直接渲染(stale-while-revalidate:同步原地刷新),
-  // 不再让骨架屏卡住首屏等慢同步
-  const [loaded, setLoaded] = useState(services.length > 0);
-
-  // 后端模式:进入页面拉一次真实容器/纳管源列表,之后 30s 轮询保持状态新鲜
-  // (容器/进程在外部挂掉、PROC 崩溃自愈,卡片与 Header 指标实时联动)。
-  // PROC 守护事件的通知已上移全局 NotificationWatcher(2026-09-19)——
-  // 此前只在打开本页时才产生通知,其他页面收不到;这里不再重复触发。
-  useEffect(() => {
-    const poll = async () => {
-      await syncFromBackend().finally(() => setLoaded(true));
-    };
-    void poll();
-    const timer = setInterval(() => { void poll(); }, 30_000);
-    return () => clearInterval(timer);
-  }, [syncFromBackend]);
+  const { loading, syncError } = useServices();
+  usePollingResource(syncFromBackend);
 
   return (
     <>
@@ -57,20 +43,27 @@ export default function EnvironmentsPage() {
             <p className="page-description">
               管理本地/测试环境服务，查看日志流，AI 自动诊断错误并给出修复建议。
             </p>
+            {services[0]?.observer && (
+              <p className="text-xs text-muted-foreground">
+                观察位置：{services[0].observer.host} · {services[0].observer.platform}
+                {services[0].observer.scope === "container" ? " · 容器内" : " · 主机"}
+              </p>
+            )}
             <TabsList aria-label="环境视图">
               {TABS.map((view) => <TabsTrigger key={view} value={view}>{view}</TabsTrigger>)}
             </TabsList>
           </div>
 
           <TabsContent value={tab} className="space-y-6">
+            <ResourceStatus loading={loading} error={syncError} retry={syncFromBackend} />
             {tab === "服务" && (
-              !loaded ? (
+              services.length === 0 && loading && !syncError ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {[0, 1, 2, 3].map((i) => (
                     <div key={i} className="bg-card border border-border rounded-xl p-4 h-36 animate-pulse" />
                   ))}
                 </div>
-              ) : services.length === 0 ? (
+              ) : services.length === 0 && syncError ? null : services.length === 0 ? (
                 <EmptyState
                   icon={Container}
                   title="暂无纳管服务"

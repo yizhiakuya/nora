@@ -76,7 +76,7 @@ function toConnection(c: BackendConnection): DbConnection {
  * - deleteConnection → DELETE /api/datasources/{id}
  * - testConnection   → POST   /api/datasources/{id}/test  → {ok, message, latencyMs}
  * - fetchSchema      → GET    /api/datasources/{id}/schema → tables
- * - runQuery         → POST   /api/datasources/{id}/query → result(只读,限 200 行)
+ * - runQuery         → POST   /api/datasources/{id}/query → result(支持读写,展示最多 200 行)
  * - fetchHistory     → GET    /api/datasources/{id}/history → history[]
  */
 export const datasourcesApi = {
@@ -127,5 +127,3 @@ export const datasourcesApi = {
     return requestJson<BackendHistory[]>(`/datasources/${id}/history?limit=${limit}`);
   },
 };
-
-export { toConnection };

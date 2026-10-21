@@ -47,14 +47,6 @@ export interface ArtifactGallery {
   data: Record<string, unknown>;
 }
 
-/** 所有画廊共享的头部字段(各组件自行取用)。 */
-export interface GalleryHeaderFields {
-  title?: string;
-  summary?: string;
-  stats?: Array<{ label: string; value: string }>;
-  note?: string;
-}
-
 // ---------- 围栏解析 ----------
 
 /**

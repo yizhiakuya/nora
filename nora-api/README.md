@@ -1,96 +1,57 @@
 # Nora API
 
-Nora(个人 AI 助手)的 Java 后端。设计文档见 [docs/](docs/)：
+运行在宿主系统上的单用户智能体，Java 21 / Spring Boot 3.3 / LangChain4j。
+后端是一个 Maven 应用、一个 JVM、一个 HTTP 端口（默认 18080）。
 
-- [docs/architecture-v2.md](docs/architecture-v2.md) — **微服务架构设计（当前基准，含 Phase 0–4 路线图）**
-- [docs/agent-implementation-spec.md](docs/agent-implementation-spec.md) — **Agent 实施规格**（ReAct 协议、工具契约、高风险审批协议）
-- [docs/agent-permission-and-tools-design.md](docs/agent-permission-and-tools-design.md) — **权限/风险/工具权威参考**（改 RiskClassifier/toolsSpec/审批前必读）
-- [docs/harness-tool-calling-research-2026-09-05.md](docs/harness-tool-calling-research-2026-09-05.md) — 工具调用 Harness 调研
+## 职责
 
-## 定位
+`src/main/java/com/nora/` 按 agent、file、rag、datasource、env、automation、notification 分包。
+HTTP 控制器只接入请求；Agent 工具与控制器共用领域服务，不再请求自己的 HTTP 接口。
 
-- 微服务架构：**8 个服务**（gateway / file / rag / agent / datasource / env / automation / **notification**）
-- Spring Boot 3.3 · Java 21 · Spring Cloud Alibaba（Nacos 服务发现）
-- PostgreSQL 16 + pgvector · Redis（平台组件：嵌入缓存 / 审批票据）· **Kafka**（通知事件总线）
-- Maven 多模块 + Docker Compose（PG+pgvector / Redis / Nacos / Kafka）
+- 会话、排队、插入、压缩、取消和自动任务使用 `ChatRunService`；`ChatTurnRunner` 执行并通过 `ChatRunFinalizer` 保存终态。SSE 是订阅方式。
+- Agent 编排、工具执行、上下文和模型组件由 Spring 构造器统一装配；内置工具固定注册，MCP 工具动态发现。
+- 全部内置工具从实际 `@Tool` 方法、`@P` 或请求 record 生成契约，由 LangChain4j `DefaultToolExecutor` 绑定参数和执行；Nora 统一管理审批、并发、取消与记录。MCP 工具保留远端 schema。
+- 模型循环直接使用 SDK 的消息、工具声明和调用类型；JSON 仅用于存储、HTTP 与前端事件，不重复转换模型历史。
+- 取消停止模型和工具执行，终态提交暂时清除线程中断并在保存后恢复；回答、工作过程和 Run 状态保存成功后才发出 `done`。
+- 文件删除、恢复、清理与知识库状态共用数据库事务；磁盘清理在提交后。启动时处理旧 `pending_rag_sync` 未送达记录。
+- 通知直接写 PostgreSQL，写入失败记录日志，不影响主业务。
+- 嵌入使用 Caffeine 有界内存缓存（32 MiB 权重上限、7 天过期）；审批票据绑定会话并在 120 秒后拒绝。
+- SQL / Redis 命令支持真实读写；自动 SQL 规则必须显式绑定数据源，不猜测第一个连接。
+- 自动任务没有用户在线审批：FULL 可执行 LOW/HIGH，CRITICAL 拒绝；环境诊断使用 ASSIST，只执行 LOW。
 
-## 当前状态（2026-09-20）
+## 数据与迁移
 
-系统是**能实际使用的单用户工作台**。最新全面分析见仓库根目录
-[PROJECT-ANALYSIS-2026-09-19.md](../docs/dev/PROJECT-ANALYSIS-2026-09-19.md)（其 P1/P2 问题已在 09-19/20 修复）。
+仅依赖 PostgreSQL 16 + pgvector。既有七个 `schema_*` 和各自 Flyway 历史保留，迁移位于 `src/main/resources/db/migration/{domain}`。
+`DatabaseConfig` 逐域执行迁移，应用连接的 search_path 包含所有领域和 public。旧迁移内容与校验和保持不变。
 
-| 阶段 | 状态 | 说明 |
-|------|------|------|
-| Phase 0 基础设施 | ✅ | Maven 多模块、docker-compose dev-basic（PG+pgvector / Redis / Nacos / Kafka）、gateway 路由 |
-| Phase 1 RAG 链路 | ✅ | file-service（Tika 解析）+ rag-service（分块 / Jina v3 1024 维 / pgvector HNSW + pg_trgm 混合检索） |
-| Phase 2 Agent 链路 | ✅ | SSE 流式、工具循环、会话持久化、模型 Provider、审批流、断线重连、上下文压缩 |
-| Phase 3 数据源 + 任务 | ✅ | datasource-service（PG/MySQL/Redis）、automation-service（手动/每日/每周） |
-| Phase 4 环境控制台 | ✅ | env-service 容器管理 / 日志 / 进程守护 / AI 诊断→修复任务 |
-| 通知 | ✅ | **Kafka 事件总线**（notification-service 消费落库，前端轮询；非文档计划的 SSE） |
-| 访问控制 | ✅ | **令牌登录**（`NORA_AUTH_TOKEN`，缺省免登录；网关一处生效） |
+新数据库须先执行 `docker/postgres-init.sql` 安装 vector；Compose 首次创建数据卷时自动执行。
+Redis 继续作为可连接的用户数据源，平台不再需要 Redis、Nacos 或 Kafka。
+系统按单后端实例运行，内存中的 Run 占用、审批和浏览器所有权不支持多个副本同时运行。
 
-**已知能力边界（与产品文案对齐）**：自动任务的「文件上传/服务异常」触发条件**未接通**（UI 已标注不可选，后端调度只扫 daily/weekly）；当前系统按**单用户、单 Agent 实例**运行（LiveTurn/activeTurns 为进程内状态）。
-
-### 服务与端点
-
-| 服务 | 端口 | 主要端点 |
-|------|------|---------|
-| gateway-service | 18080 | 路由 `/api/{chat,files,rag,datasources,automations,environment,notifications,media,mcp,skills,workspace,log}/**`；令牌鉴权 |
-| file-service | 18081 | 文件/文件夹 CRUD、`POST /upload`、`GET /{id}/preview|raw`、`GET /download`（zip）、`POST /{id}/index`；**RAG 生命周期通知带持久化重试**（`pending_rag_sync`） |
-| rag-service | 18082 | `POST /rag/index[/text]`、docs CRUD/reindex、`POST /rag/search`、`POST /rag/citations`、`POST /rag/docs/by-file/{id}`（文件生命周期联动） |
-| agent-service | 18083 | `POST /chat/sessions/{id}/messages`（SSE）、审批、会话/消息、`/turn/live|stream`（断线重连）、`/models`、MCP 管理、技能、工作区、媒体缓存 |
-| datasource-service | 18084 | 连接 CRUD、test、schema、`POST /{id}/query`（**数据库级只读连接**）、`POST /{id}/execute`（受控写）、history；引擎 postgresql / mysql / redis |
-| env-service | 18085 | 容器/进程/日志纳管、`GET /services`、start/stop/restart、日志流、守护事件 |
-| automation-service | 18086 | 规则 CRUD、`POST /{id}/toggle|run`、`GET /executions` |
-| notification-service | 18087 | `GET /api/notifications`、unread-count、read-all、清空（Kafka 消费落库） |
-
-## 快速开始
+## 开发与检查
 
 ```bash
-# 基础设施（PG :5432 / Redis :6379 / Nacos :8848）
-cd nora-api && docker compose --profile dev-basic up -d
-
-# 构建（14 模块全部构建 + 测试）
-mvn install
-
-# 起服务（示例：file + rag + agent + gateway）
-java -jar services/file-service/target/file-service-0.1.0-SNAPSHOT.jar
-java -jar services/rag-service/target/rag-service-0.1.0-SNAPSHOT.jar
-java -jar services/agent-service/target/agent-service-0.1.0-SNAPSHOT.jar
-java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
-# 验证：curl http://localhost:18080/api/chat/health → ok（经 Nacos 服务发现转发）
+cd nora-api
+docker compose up -d
+mvn verify
+java -jar target/nora-api-0.1.0-SNAPSHOT.jar
 ```
 
-Embedding 使用 Jina AI OpenAI 兼容端点，密钥放在 `nora-api/.env.local` 的 `NORA_EMBEDDING_API_KEY`
-（**禁止提交、禁止回显**）。启动时由 nora-common 的 `DotenvEnvironmentPostProcessor` 自动加载
-（最低优先级，真实环境变量优先；查找顺序 `NORA_ENV_FILE` > cwd/.env.local > cwd/nora-api/.env.local）。
-未配置时检索类端点降级为业务异常，文档列表仍可用。外网调用（Jina/LLM 上游）需经代理，`.env.local`
-中配 `NORA_PROXY_ENABLED/HOST/PORT`。
+仓库根 `./nora.sh build` 会停止本项目后端、执行 verify、启动并检查健康；Windows 由 `scripts/backend.ps1` 执行。
+模型在 Agent → 模型中配置并保存至数据库；`.env.local` 自动读取，真实环境变量优先。
 
-> ✅ **环境说明（2026-09-06 已修复）**：本机 Git Bash 下 `mvn` 曾启动失败
-> （`ClassNotFoundException: plexus.classworlds.launcher`）。根因是 Maven 官方 `bin/mvn`
-> 脚本不识别 Git Bash 的 `MINGW64_NT` uname、未把路径转回 Windows 格式；
-> 已在 `D:/tools/apache-maven-3.9.16/bin/mvn` 中补 `MSYS*)` 分支并让 `MINGW*` 启用
-> cygpath 转换（原脚本备份为 `mvn.bak-20260906`）。**升级 Maven 后需重新打此补丁。**
-> 当前 `mvn test` 全绿：14 模块 SUCCESS，272 测试 0 失败（2026-09-27）。
+常用环境变量：`NORA_PORT`、`NORA_DB_URL`、`NORA_DB_USERNAME`、`NORA_DB_PASSWORD`、`NORA_AUTH_TOKEN`、`NORA_FILE_STORAGE_DIR`、`NORA_AGENT_WORKSPACE`、`LOG_PATH`、`NORA_EMBEDDING_API_KEY`、`NORA_PROXY_*`。
+未设置访问令牌时免登录；配置后所有业务接口在同一 servlet 过滤器鉴权，支持 Bearer 和媒体 URL 的 token 参数。
 
-## 已知设计偏差
+## 外部接口
 
-- **Dubbo/Sentinel 未接线**（2026-09-19 审计确认）：跨服务调用一律 RestClient + envelope + Nacos 服务发现；
-  POM 中的 Dubbo/Sentinel 版本声明不代表已投入使用。
-- **Embedding 维度 1024**：v1 文档写 1536（OpenAI），实际使用 `jina-embeddings-v3` 上限 1024，迁移脚本中已注明。
-- **检索为混合检索（向量 + pg_trgm）**：`V3__hybrid_search.sql` 引入 `pg_trgm` 扩展，
-  关键词侧用 `strict_word_similarity`（免中文分词），与向量侧按权重 RRF 融合
-  （`nora.retrieval.*`）。`pg_trgm` 缺失时自动降级为纯向量，不影响服务启动。
-  相似度下限 `min-score` 默认 `0.51`（2026-09-22 评测校准：无关查询最高 0.476、
-  相关查询最低 0.540，取两带中点；复校详见 `scripts/rag-eval.py` 基线）；换 embedding
-  模型后需重新标定，否则可能全砍或全放。
-- **文件→RAG 同步**：生命周期通知（删/恢复/永久删）带持久化重试（`pending_rag_sync` + 定时退避，2026-09-20）；
-  索引触发仍为 `@Async` 火忘调用（失败可在文件页重新索引）。
-- **单实例假设**：LiveTurn / activeTurns / 自动任务防重集合都在进程内；Redis 审批票据不等于多实例恢复能力。
+原有 `/api/chat`、`/files`、`/rag`、`/datasources`、`/environment`、`/automations`、`/notifications`、`/models`、`/mcp`、`/skills`、`/workspace`、`/media` 路由保留。
+`/api/chat/agent/run`、RAG 的内部文件生命周期回调和文件已索引回调已删除，内部调用直接使用领域方法。
+健康检查：`GET /actuator/health`；访问状态：`GET /api/auth/status`。
 
-## 前端对接
+## 文档
 
-与 `nora-web` 完全独立，各自安装 / 启动。前端通过 `VITE_USE_BACKEND=true` 接入，
-开发时 Vite 将 `/api` 代理到 gateway :18080。API 契约以 v1 文档第 5、6 章 + v2 文档第 8 章为准，
-前端接入现状见 `nora-web/AGENTS.md` 的「后端接入现状」表。
+- [部署与升级](../docs/deployment.md)
+- [精简方案与验证](../docs/dev/backend-simplification-2026-10-11.md)
+- [权限、风险与工具](docs/agent-permission-and-tools-design.md)
+- [早期架构设计（历史档案）](docs/architecture-v2.md)

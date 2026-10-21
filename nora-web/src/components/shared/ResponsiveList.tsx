@@ -12,7 +12,7 @@ import React from "react";
  * 用法:只需提供列定义(表头 + 单元格渲染 + 移动端 label),两个形态自动生成。
  */
 
-export interface ResponsiveColumn<T> {
+interface ResponsiveColumn<T> {
   /** 表头文字(桌面) */
   header: React.ReactNode;
   /** 单元格渲染(桌面与移动共用;移动端卡片里是 value) */

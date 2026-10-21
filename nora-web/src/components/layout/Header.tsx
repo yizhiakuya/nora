@@ -7,6 +7,7 @@ import { NavigationToggle } from "./NavigationToggle";
 import { NotificationBell } from "./NotificationBell";
 import { useServices } from "@/hooks/useServices";
 import { WorkspaceControls } from "./WorkspaceControls";
+import { Button } from "@/components/ui/button";
 interface Breadcrumb {
   label: string;
   href?: string;
@@ -18,16 +19,21 @@ interface Breadcrumb {
 interface HeaderProps {
   breadcrumbs: Breadcrumb[];
   actions?: React.ReactNode;
+  compactActions?: boolean;
 }
 
-export function Header({ breadcrumbs, actions }: HeaderProps) {
+export function Header({ breadcrumbs, actions, compactActions = false }: HeaderProps) {
   const navigate = useNavigate();
   const services = useServices((s) => s.services);
-  const runningServices = services.filter((s) => s.status === "running");
+  const unknownServices = services.filter((s) => s.health === "unknown");
+  const runningServices = services.filter((s) => s.status === "running" && s.health !== "unknown");
+  const serviceSummary = unknownServices.length
+    ? `${runningServices.length} 已确认运行 · ${unknownServices.length} 未探测`
+    : `${runningServices.length}/${services.length} 服务运行中`;
 
   return (
-    <header className="h-14 flex items-center justify-between gap-2 px-4 sm:px-6 border-b border-border/80 bg-card z-10 flex-shrink-0 sticky top-0 overflow-hidden [container-type:inline-size]">
-      <div className="flex flex-1 items-center gap-3 min-w-0">
+    <header className="app-toolbar h-auto min-h-12 flex-wrap justify-between gap-x-2 px-4 sm:px-6 z-10 sticky top-0 [container-type:inline-size]">
+      <div className="order-1 flex min-h-12 flex-1 items-center gap-3 min-w-0">
         <NavigationToggle />
 
         {/* Breadcrumbs */}
@@ -54,26 +60,17 @@ export function Header({ breadcrumbs, actions }: HeaderProps) {
         </nav>
       </div>
       
-      {/* Right Actions & Global Task Indicator */}
-      <div className="flex items-center gap-1.5 shrink-0 [@container(min-width:1000px)]:gap-3">
+      {actions && <div className={`order-2 flex min-w-0 items-center gap-2 ${compactActions ? "shrink-0" : "border-r border-border/60 pr-3 [@container(max-width:600px)]:order-3 [@container(max-width:600px)]:w-full [@container(max-width:600px)]:justify-end [@container(max-width:600px)]:border-r-0 [@container(max-width:600px)]:border-t [@container(max-width:600px)]:py-2 [@container(max-width:600px)]:pr-0"}`}>{actions}</div>}
+      <div className="order-3 flex min-h-12 items-center gap-1 shrink-0 [@container(max-width:600px)]:order-2">
         {/* Environment services indicator */}
-        <button
+        <Button type="button" variant="ghost" size="icon"
           onClick={() => navigate("/environments")}
-          className={`relative cursor-pointer flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-muted border border-transparent hover:border-border transition-colors group shrink-0 ${runningServices.length === 0 ? "opacity-50 grayscale" : ""}`}
-          title="环境控制台"
+          className="h-8 w-8 shrink-0 text-muted-foreground"
+          title={`环境控制台 · ${serviceSummary}`}
+          aria-label={`环境控制台 · ${serviceSummary}`}
         >
           <Server className="w-4 h-4 text-muted-foreground shrink-0" />
-          <span className="text-xs text-muted-foreground hidden [@container(min-width:1000px)]:inline-block">
-            {runningServices.length}/{services.length} 服务运行中
-          </span>
-        </button>
-        
-        {actions && (
-          <>
-            <div className="w-px h-4 bg-border hidden sm:block shrink-0"></div>
-            {actions}
-          </>
-        )}
+        </Button>
         
         <WorkspaceControls />
         <NotificationBell />

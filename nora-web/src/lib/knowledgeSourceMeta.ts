@@ -11,12 +11,3 @@ export const SOURCE_META: Record<KnowledgeSource, { label: string; icon: LucideI
   chat:        { label: "对话产出", icon: MessageSquare,  color: "text-teal-600 dark:text-teal-400",     bg: "bg-teal-100 dark:bg-teal-900/50" },
   text:        { label: "文本保存", icon: MessageSquare,  color: "text-teal-600 dark:text-teal-400",     bg: "bg-teal-100 dark:bg-teal-900/50" },
 };
-
-export const SOURCE_LABEL: Record<KnowledgeSource, string> = {
-  file: "文件上传",
-  database: "数据库",
-  repo: "代码仓库",
-  environment: "环境配置",
-  chat: "对话产出",
-  text: "文本保存",
-};

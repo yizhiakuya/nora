@@ -1,4 +1,5 @@
-import { requestJson, defaultTimeoutSignal } from "@/lib/api/client";import { mdHmFromLocalIso } from "@/lib/format";
+import { requestJson, defaultTimeoutSignal } from "@/lib/api/client";
+import { mdHmFromLocalIso } from "@/lib/format";
 import type { AutomationRule, ExecutionRecord } from "@/types";
 
 /** 后端 automation_rule 行(M4-01 扩展日程字段) */
@@ -144,25 +145,23 @@ function summarize(detail: string, max: number): string {
  * - runRule        → POST   /api/automations/{id}/run   → ExecutionRecord
  * - listExecutions → GET    /api/automations/executions → ExecutionRecord[]
  */
+export type AutomationAction =
+  | { actionType: "agent"; prompt: string }
+  | { actionType: "sql"; sql: string; connectionId: number };
+
+export type AutomationTrigger = "manual" | "daily" | "weekly";
+
 export const automationsApi = {
   async listRules(): Promise<AutomationRule[]> {
     const items = await requestJson<BackendRule[]>("/automations");
     return items.map(toRule);
   },
 
-  async createRule(input: {
+  async createRule(input: AutomationAction & {
     name: string;
-    triggerType: string;
-    /** 动作类型:"sql"(默认)或 "agent" */
-    actionType?: string;
-    sql?: string;
-    /** actionType="agent" 时的自然语言指令 */
-    prompt?: string;
+    triggerType: AutomationTrigger;
     /** daily/weekly 必填:日程 JSON 字符串(M4-01,{frequency,localTime,dayOfWeek,timezone}) */
     schedule?: string;
-    /** SQL 动作的目标数据源连接 id(B3,2026-09-27:随规则落库,执行时优先使用;
-     *  不传 = 旧行为「列表第一项」,多库时执行目标会丢失) */
-    connectionId?: number;
   }): Promise<AutomationRule> {
     const item = await requestJson<BackendRule>("/automations", {
       method: "POST",
@@ -180,8 +179,9 @@ export const automationsApi = {
     return items;
   },
 
-  async toggleRule(id: number): Promise<void> {
-    await requestJson(`/automations/${id}/toggle`, { method: "POST" });
+  async toggleRule(id: number): Promise<AutomationRule> {
+    const item = await requestJson<BackendRule>(`/automations/${id}/toggle`, { method: "POST" });
+    return toRule(item);
   },
 
   async deleteRule(id: number): Promise<void> {
@@ -205,5 +205,3 @@ export const automationsApi = {
     return items.map(toExecution);
   },
 };
-
-export { toRule, toExecution };

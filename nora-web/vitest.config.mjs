@@ -8,16 +8,10 @@ export default defineConfig({
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./src/test-setup.ts"],
-    // 测试始终走 Mock,不受开发者本地 .env.local 的 VITE_USE_BACKEND 影响
-    env: {
-      VITE_USE_BACKEND: "false",
-    },
   },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "next/dynamic": fileURLToPath(new URL("./src/lib/next-shims/dynamic.tsx", import.meta.url)),
-      "next-themes": fileURLToPath(new URL("./src/components/ThemeProvider.tsx", import.meta.url)),
     },
   },
 });

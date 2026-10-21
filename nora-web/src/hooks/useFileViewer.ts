@@ -8,7 +8,7 @@ import { viewerApi } from "@/lib/services/viewerApi";
 import type { ChatRef } from "@/lib/chatRefs";
 import { contentHashSuffix } from "@/lib/saveState";
 
-export type FileViewerStatus = "idle" | "loading" | "ready" | "error";
+type FileViewerStatus = "idle" | "loading" | "ready" | "error";
 type Origin = { sessionId?: string; collection?: string[]; index?: number };
 interface ViewerState {
   active: ViewerFile | null;

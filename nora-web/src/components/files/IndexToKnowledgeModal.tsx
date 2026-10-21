@@ -10,7 +10,7 @@ import { fetchBases, previewChunks, type ChunkPreview } from "@/lib/services/rag
 import { filesApi } from "@/lib/services/filesApi";
 
 /** 入知识库的分段配置(与后端 /index 的 chunkMode/chunkSize/overlap/separator 对齐)。 */
-export interface IndexChunkConfig {
+interface IndexChunkConfig {
   mode?: string;
   chunkSize?: number;
   overlap?: number;

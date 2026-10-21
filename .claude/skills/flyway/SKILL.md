@@ -1,39 +1,30 @@
 ---
-description: 新建/检查 Nora 各服务的 Flyway 迁移(命名、位置、校验)
-argument-hint: [服务名] [迁移描述,如 add-index-on-messages]
+description: 新建和检查 Nora 按领域保留的 Flyway 迁移
+argument-hint: [agent|file|rag|datasource|env|automation|notification] [迁移描述]
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
-# Flyway 迁移约定
+# Flyway 迁移
 
-服务: $ARGUMENTS(缺省 agent);描述: 第二个参数。库均为 `nora`(nora-postgres,5432,用户/密码 nora)。
+一个应用连接一个 PostgreSQL，按领域独立执行 Flyway。配置在 `nora-api/src/main/java/com/nora/common/config/DatabaseConfig.java`。
 
-## 1. 找最新版本号
+| 目录 | schema |
+|---|---|
+| agent | schema_agent |
+| file | schema_file |
+| rag | schema_rag |
+| datasource | schema_datasource |
+| env | schema_env |
+| automation | schema_automation |
+| notification | schema_notification |
 
-```bash
-ls nora-api/services/<服务名>-service/src/main/resources/db/migration/
-```
-
-取最大 `V<N>__` 的 N,新迁移 = N+1。
-
-## 2. 命名规则(必须遵守)
-
-- 位置: `services/<服务名>-service/src/main/resources/db/migration/`
-- 文件: `V<下一个版本>__<snake_case 描述>.sql`(双下划线分隔版本与描述)
-- 每服务独立 schema: agent→schema_agent, rag→schema_rag(以该服务 application.yml 的 currentSchema 为准),SQL 里写表名即可,勿跨 schema 引用
-
-## 3. 写迁移
-
-- 只向前迁移,不写 DOWN
-- ALTER 有锁风险时加 `-- 锁表风险:短` 注释说明;大表加列用 `ADD COLUMN ... DEFAULT` 前先评估
-- 在 nora-postgres 运行时,可用只读方式先查现状: `docker exec nora-postgres psql -U nora -d nora -c "\dt <schema>.*"`
-
-## 4. 生效
-
-重启对应服务(用 /restart-service <服务名>)让 Flyway 自动执行,然后验证:
+1. 在 `nora-api/src/main/resources/db/migration/<领域>/` 找最大版本号，新建 `V<N+1>__<snake_case>.sql`。
+2. 已执行迁移不得改内容、改编号或合并；每个 schema 保留自己的 `flyway_schema_history`。迁移不解析 `${...}` 占位符，正文可存 MCP 环境变量引用。
+3. 只做向前迁移，说明必要的锁表或数据变更风险。全新外部数据库先执行 `nora-api/docker/postgres-init.sql`，确保 public.vector 可用；Compose 会自动初始化新卷。
+4. 在隔离数据库验证新装与升级。重启整个后端后检查各自 schema 的 history 和受影响业务：
 
 ```bash
-docker exec nora-postgres psql -U nora -d nora -c "select version, description, success from flyway_schema_history order by installed_rank desc limit 3;"
+docker exec nora-postgres psql -U nora -d nora -c "SELECT version, description, success FROM schema_agent.flyway_schema_history ORDER BY installed_rank DESC LIMIT 3"
 ```
 
-汇报: 新文件路径、版本号、重启后 flyway_schema_history 最新记录。
+替换为实际领域 schema、数据库和用户；不要输出密码。构建和重启参见 `/restart-service`。

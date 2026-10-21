@@ -13,6 +13,8 @@ describe("上下文计量冒烟", () => {
       { type: "step" as const, step: { id: "call-1", type: "tool" as const, status: "completed" as const, title: "读文件", roundIndex: 1, inputTokens: 20, result: { content: "真实结果" } } },
       { type: "context_usage" as const, contextUsage: { promptTokens: 8_000, contextWindow: 128_000, roundIndex: 2 } },
       { type: "reasoning_delta" as const, roundIndex: 2, content: "继续核实" },
+      { type: "step" as const, step: { id: "s-compact-1", type: "context" as const, status: "completed" as const, title: "整理上下文", roundIndex: 2,
+        context: { form: "compaction", kind: "microcompaction", content: "实际保留的早期过程索引".repeat(100) } } },
       { type: "delta" as const, roundIndex: 2, content: "完成" },
     ]) {
       message = { ...message, ...applyChatStreamEvent(message, event) };
@@ -21,6 +23,7 @@ describe("上下文计量冒烟", () => {
     }
     estimateChatContextTokens([{ ...message, contextUsage: undefined, turnMetrics: { usage: null, promptTokens: 8_000, contextWindow: 128_000 } }]);
     estimateChatContextTokens([{ ...message, contextUsage: undefined }]);
+    estimateChatContextTokens([{ ...message, sender: "compaction" }]);
     resolveChatContextLimit([], 32_000);
     for (const value of [0, 41, 999, 1_000, 1_100, 118_799]) formatTokenCount(value);
   });

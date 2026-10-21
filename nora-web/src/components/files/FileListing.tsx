@@ -1,14 +1,24 @@
 'use client';
 
-import { LayoutGrid, List } from "lucide-react";
+import { LayoutGrid, List, Search } from "lucide-react";
 import { FileTable, BatchActionBar } from "@/components/files/FileTable";
 import { FileGrid } from "@/components/files/FileGrid";
 
 import type { FileLibraryState } from "@/hooks/useFileLibrary";
+import { useFiles } from "@/hooks/useFiles";
+import { EmptyState, ResourceStatus } from "@/components/ui/custom/States";
+import { Button } from "@/components/ui/button";
 
 export function FileListing({ library }: { library: FileLibraryState }) {
+  const { loading: filesLoading, syncError, syncFromBackend, files } = useFiles();
+  const loading = filesLoading || library.foldersLoading;
+  const error = Array.from(new Set([syncError, library.foldersError].filter(Boolean))).join("\n") || null;
+  const retry = async () => { await Promise.all([syncFromBackend(), library.refreshFolders()]); };
+  if (files.length === 0 && library.folders.length === 0 && (loading || error)) return <ResourceStatus loading={loading} error={error} retry={retry} />;
   const { currentFolder, setCurrentFolder, viewMode, switchView, sortBy, setSortAsc, setSortBy, sortAsc, viewFiles, folders, selection, handleDownloadSelected, handleMoveSelected, handleDeleteSelected, handleAskAssistant, effectiveView, filteredFiles, viewer, handleIndexFile, handleDownloadOne, handleRenameFile, handleMoveOne, handleDeleteOne, folderRowsData } = library;
+  const { searchQuery, setSearchQuery } = library;
   return (<>
+              <ResourceStatus loading={loading} error={error} retry={retry} />
               {/* 面包屑(文件夹内可点击返回根) */}
               {currentFolder && (
                 <div className="flex items-center gap-1.5 mb-4 text-xs animate-in fade-in">
@@ -71,7 +81,7 @@ export function FileListing({ library }: { library: FileLibraryState }) {
                     ))}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    共 {viewFiles.length} 个文件{!currentFolder && folders.length > 0 ? ` · ${folders.length} 个文件夹` : ""}
+                    {searchQuery ? `找到 ${filteredFiles.length} 个文件 · 共 ${viewFiles.length} 个` : `共 ${viewFiles.length} 个文件${!currentFolder && folders.length > 0 ? ` · ${folders.length} 个文件夹` : ""}`}
                   </div>
                 </div>
               </div>
@@ -85,7 +95,10 @@ export function FileListing({ library }: { library: FileLibraryState }) {
                 onAskAssistant={handleAskAssistant}
               />
 
-              {effectiveView === "list" ? (
+              {searchQuery && filteredFiles.length === 0 ? (
+                !loading && !error && <EmptyState icon={Search} title="未找到匹配的文件" description="试试其他关键词，或清除搜索查看当前目录的全部文件。"
+                  action={<Button variant="outline" onClick={() => setSearchQuery("")}>清除搜索</Button>} />
+              ) : effectiveView === "list" ? (
                 <FileTable
                   files={filteredFiles}
                   selection={selection}
@@ -98,7 +111,7 @@ export function FileListing({ library }: { library: FileLibraryState }) {
                   onRename={handleRenameFile}
                   onMove={handleMoveOne}
                   onDelete={handleDeleteOne}
-                  folderRows={folderRowsData}
+                  folderRows={searchQuery ? [] : folderRowsData}
                 />
               ) : (
                 <FileGrid
@@ -109,7 +122,7 @@ export function FileListing({ library }: { library: FileLibraryState }) {
                   onRename={handleRenameFile}
                   onMove={handleMoveOne}
                   onDelete={handleDeleteOne}
-                  folderRows={folderRowsData}
+                  folderRows={searchQuery ? [] : folderRowsData}
                 />
               )}
   </>);

@@ -30,7 +30,7 @@ interface AddProviderDialogProps {
  * 模糊匹配:query 的字符按序出现在 target 中即命中(子序列)。
  * 忽略大小写与常见分隔符(-_./@ :),「dsflash」能命中「DeepSeek-V4-Flash」。
  */
-export function fuzzyMatch(target: string, query: string): boolean {
+function fuzzyMatch(target: string, query: string): boolean {
   if (!query) return true;
   const clean = (s: string) => s.toLowerCase().replace(/[-_./@:\s]/g, "");
   const t = clean(target);

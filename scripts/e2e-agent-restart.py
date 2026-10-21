@@ -13,7 +13,7 @@ import uuid
 
 
 def main():
-    base = "http://127.0.0.1:18083"
+    base = "http://127.0.0.1:18080"
     stamp = str(time.time_ns())
     prefix = "restart-e2e-" + stamp
     model = "deepseek-v4.1-flash"
@@ -56,12 +56,12 @@ def main():
     def restart():
         assert sql("SELECT count(*) FROM schema_agent.chat_run WHERE status IN ('queued','running','awaiting_approval','cancelling') "
                    f"AND session_id NOT LIKE '{prefix}%';") == "0", "有用户任务运行，不能中断服务"
-        command = "$p=Get-NetTCPConnection -LocalPort 18083 -State Listen | Select-Object -First 1; "
+        command = "$p=Get-NetTCPConnection -LocalPort 18080 -State Listen | Select-Object -First 1; "
         command += "$j=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $p.OwningProcess); "
-        command += "if ($j.CommandLine -notlike '*agent-service-0.1.0-SNAPSHOT.jar*') {throw 'Unexpected port owner'}; Stop-Process -Id $p.OwningProcess -Force"
+        command += "if ($j.CommandLine -notlike '*nora-api-0.1.0-SNAPSHOT.jar*') {throw 'Unexpected port owner'}; Stop-Process -Id $p.OwningProcess -Force"
         subprocess.run(["rtk", "proxy", "powershell", "-NoProfile", "-Command", command], check=True, capture_output=True)
         release.set()
-        subprocess.Popen(["rtk", "proxy", "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "nora-api/start-agent.ps1"],
+        subprocess.Popen(["rtk", "proxy", "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/backend.ps1", "-Action", "start"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         def ready():
             try:

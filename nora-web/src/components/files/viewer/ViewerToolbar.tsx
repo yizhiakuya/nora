@@ -28,9 +28,12 @@ export function ViewerToolbar() {
     const path = `reports/${file.name.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]/g, "_")}-${contentHashSuffix(viewer.preview?.text ?? "")}.md`;
     try {
       await workspaceApi.writeFile(path, viewer.preview?.text ?? "");
-      const registered = await savedArtifactsApi.register({ kind: "workspace_file", path, name: path.split("/").pop()!, sessionId: viewer.origin.sessionId });
-      if (!registered) toast.warning("文件已保存，成果登记失败");
-      else toast.success("已保存为文件");
+      try {
+        await savedArtifactsApi.register({ kind: "workspace_file", path, name: path.split("/").pop()!, sessionId: viewer.origin.sessionId });
+        toast.success("已保存为文件");
+      } catch (error) {
+        toast.warning("文件已保存，成果登记失败", { description: error instanceof Error ? error.message : String(error) });
+      }
       await viewer.openTargets([`workspace:${path}`], undefined, viewer.origin);
     } catch (error) { toast.error(error instanceof Error ? error.message : "保存失败"); }
   };

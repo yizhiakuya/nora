@@ -1,17 +1,6 @@
 import type { ExecutionRecord } from "@/types";
 import { CheckCircle2, XCircle, Loader2, AlertTriangle, CircleSlash, HelpCircle, CalendarX } from "lucide-react";
 
-/**
- * 执行终态的统一展示映射(B5,2026-09-27)。
- *
- * 问题(评审报告 B5):后端与执行历史已区分 partial/cancelled/unknown/
- * missed_schedule,但首页「最近成果」与「已保存成果」仍用
- * `status === "success" ? "成功" : "失败"` 二分——同一条记录在任务历史显示
- * 「结果未知」,在成果入口显示「失败」,用户无法判断该等待、核对还是重试。
- *
- * 三个消费方(ExecutionHistory / RecentResults / SavedResultsView)共用这一份,
- * 改状态语义时只改这里。
- */
 export interface ExecutionStatusMeta {
   icon: React.ElementType;
   /** 图标/文字的 Tailwind 颜色类(明暗两套) */
@@ -31,8 +20,3 @@ export const EXECUTION_STATUS_META: Record<ExecutionRecord["status"], ExecutionS
   queued:          { icon: Loader2,       cls: "text-muted-foreground",                 label: "排队中",     actionHint: "已领取，等待执行线程开始" },
   missed_schedule: { icon: CalendarX,     cls: "text-amber-600 dark:text-amber-400",   label: "错过计划点", actionHint: "超过宽限未自动补跑,可在任务页手动运行" },
 };
-
-/** 便捷取用(未知状态兜底 failed,绝不冒充成功)。 */
-export function executionStatusMeta(status: ExecutionRecord["status"]): ExecutionStatusMeta {
-  return EXECUTION_STATUS_META[status] ?? EXECUTION_STATUS_META.failed;
-}

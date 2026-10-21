@@ -5,7 +5,7 @@ import { estimateTextTokens } from "@/lib/tokenEstimate";
 import { resolveDefaultProvider, useModelProviders } from "./useModelProviders";
 import { parseChatCommand } from "@/lib/chatCommands";
 
-/** 大段推理每秒采样一次，新请求和结束立即更新。 */
+/** 正文与工具增量每秒采样，新请求和结束立即更新。 */
 export function useContextMeter(messages: ChatMessage[], input: string, active: boolean): ContextMeter {
   const latest = useRef(messages);
   useEffect(() => { latest.current = messages; }, [messages]);
@@ -25,7 +25,7 @@ export function useContextMeter(messages: ChatMessage[], input: string, active: 
   return { tokens,
     limit: active ? resolveChatContextLimit(messages, configured ?? 128_000) : configured ?? 128_000,
     windowConfigured: active && usage ? usage.windowConfigured === true : configured != null,
-    estimated: usage?.source !== "upstream" || usage.outputTokens == null || tokens !== usage.promptTokens + usage.outputTokens,
+    estimated: usage?.source !== "upstream" || tokens !== usage.promptTokens,
     usage,
   };
 }

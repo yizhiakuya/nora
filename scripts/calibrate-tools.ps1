@@ -1,6 +1,6 @@
 # 用逐轮真实数据标定 tools spec 的 chars/token 比例:
 # 对每个请求,拿 body 字符数 与 该轮上报的 usage.in 配对
-$log = 'D:\claude\Nora\logs\agent-service-text.log'
+$log = 'D:\claude\Nora\logs\nora-text.log'
 $sse = 'D:\claude\Nora\logs\agent-service-sse.log'
 
 $reqLines = Select-String -Path $log -Pattern 'LLM upstream request' | Select-Object -Last 40

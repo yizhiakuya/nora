@@ -15,14 +15,14 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="http://localhost:18083")
+    parser.add_argument("--base", default="http://localhost:18080")
     parser.add_argument("--model", default="deepseek-v4.1-flash")
     parser.add_argument("--provider", type=int, default=7)
     parser.add_argument("--reasoning-level", default="minimal")
     parser.add_argument("--case", choices=["platform", "batch", "edit", "approval", "cancel", "automation", "all"], default="all")
     parser.add_argument("--tool", choices=["powershell", "sh"], default="powershell" if sys.platform == "win32" else "sh")
     parser.add_argument("--keep-sessions", action="store_true")
-    parser.add_argument("--automation-base", default="http://localhost:18086")
+    parser.add_argument("--automation-base", default="http://localhost:18080")
     args = parser.parse_args()
     opener = build_opener(ProxyHandler({}))
     prefix = "agent-tools-e2e-" + str(time.time_ns())

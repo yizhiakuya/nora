@@ -9,10 +9,8 @@ import { SkillTabs } from "@/components/skills/SkillTabs";
 import { SkillFormModal, SkillFormValues } from "@/components/skills/SkillFormModal";
 import { SkillDetailModal } from "@/components/skills/SkillDetailModal";
 import { useSkills } from "@/hooks/useSkills";
-import { nowDateTime } from "@/lib/format";
 import { Skill } from "@/types";
 import { toast } from "sonner";
-import { Braces } from "lucide-react";
 
 /**
  * 技能管理主体(M1-04,2026-09-20):原 AI 能力页主体,抽为组件供
@@ -51,9 +49,9 @@ export function SkillsView() {
     setFormOpen(true);
   };
 
-  const handleSubmit = (values: SkillFormValues) => {
+  const handleSubmit = async (values: SkillFormValues) => {
     if (editing) {
-      updateSkill(editing.id, {
+      await updateSkill(editing.id, {
         name: values.name,
         desc: values.description,
         instructions: values.instructions,
@@ -61,20 +59,12 @@ export function SkillsView() {
       });
       toast.success(`技能「${values.name}」已更新`);
     } else {
-      const newSkill: Skill = {
-        id: Date.now(),
+      await addSkill({
         name: values.name,
-        desc: values.description || "自定义技能",
-        icon: Braces,
-        color: "text-blue-500 dark:text-blue-400",
-        bg: "bg-blue-100 dark:bg-blue-900/50",
+        desc: values.description,
         category: values.category,
-        enabled: true,
-        isOfficial: false,
-        createdAt: nowDateTime(),
         instructions: values.instructions,
-      };
-      addSkill(newSkill);
+      });
       toast.success(`技能「${values.name}」创建成功`);
     }
     setFormOpen(false);

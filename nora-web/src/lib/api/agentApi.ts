@@ -1,13 +1,46 @@
 import type { ChatMessage, ChatResponder, ChatStep, ChatStepResult, ChatContextUsage, ApprovalRequest, QuestionRequest, TaskContextPayload } from "./chatApi";
-import { applyChatStreamEvent, type ChatStreamEvent } from "./chatApi";
+import type { ChatStreamEvent } from "./chatApi";
 import { emitSessionTitle } from "./sessionTitleEvents";
-import { API_BASE, ApiError, defaultTimeoutSignal, requestJson } from "./client";
+import { API_BASE, ApiError, requestJson } from "./client";
 import { authHeaders, handleUnauthorized, withAuthToken } from "@/lib/auth";
-import type { AgentSettings, Citation } from "@/types";
+import type { AgentSettings, Citation, QueuedChatMessage } from "@/types";
 import { parseSSEStream } from "./sse";
 import { cached, invalidateForPath } from "./requestCache";
 import { hmFromLocalIso } from "@/lib/format";
 import { estimateTextTokens } from "@/lib/tokenEstimate";
+
+export interface SessionProject {
+  projectRoot: string;
+  platform: string;
+  environment: string;
+  rules: { path: string; truncated: boolean; missing: boolean }[];
+}
+
+export const fetchSessionProject = (id: string) => requestJson<SessionProject>(`/chat/sessions/${encodeURIComponent(id)}/project`);
+export interface ProjectDirectories {
+  path: string;
+  parent: string | null;
+  defaultRoot: string;
+  roots: string[];
+  directories: { name: string; path: string }[];
+  truncated: boolean;
+}
+export const fetchProjectDirectories = (id: string, path: string) => requestJson<ProjectDirectories>(
+  `/chat/sessions/${encodeURIComponent(id)}/project/directories?path=${encodeURIComponent(path)}`);
+export const bindSessionProject = (id: string, projectRoot: string) => requestJson<SessionProject>(`/chat/sessions/${encodeURIComponent(id)}/project`, {
+  method: "POST", body: JSON.stringify({ projectRoot }),
+});
+
+export interface ChatQueueView { messages: QueuedChatMessage[]; paused: boolean; latestRunId: string | null }
+export const fetchChatQueue = (id: string) => requestJson<ChatQueueView>(`/chat/sessions/${encodeURIComponent(id)}/queue`);
+export const enqueueChatInput = (id: string, message: QueuedChatMessage) => requestJson<ChatQueueView>(`/chat/sessions/${encodeURIComponent(id)}/queue`, {
+  method: "POST", body: JSON.stringify(message),
+});
+export const withdrawChatInput = (id: string, messageId: string) => requestJson<QueuedChatMessage>(`/chat/sessions/${encodeURIComponent(id)}/queue/${encodeURIComponent(messageId)}`, { method: "DELETE" });
+export const insertChatInput = (id: string, messageId: string, turnId: string) => requestJson<boolean>(`/chat/sessions/${encodeURIComponent(id)}/queue/${encodeURIComponent(messageId)}/insert`, {
+  method: "POST", body: JSON.stringify({ turnId }),
+});
+export const resumeChatQueue = (id: string) => requestJson<boolean>(`/chat/sessions/${encodeURIComponent(id)}/queue/resume`, { method: "POST" });
 
 /** 结构化工具结果(后端 ChatStepDto.StepResult) */
 type StepResultPayload = ChatStepResult;
@@ -45,11 +78,6 @@ interface StepPayload {
   /** 批量任务实时进度(fetch_media;后端 ChatStepDto.StepProgress) */
   progress?: ChatStep["progress"];
   roundIndex?: number;
-}
-
-interface ReasoningDeltaPayload {
-  roundIndex?: number;
-  content?: string;
 }
 
 interface DeltaPayload {
@@ -97,7 +125,7 @@ interface ErrorPayload {
 }
 
 export function normalizeStep(step: StepPayload, index: number): ChatStep {
-  const title = step.title === "调用工具 execute_sql" ? "查询数据库" : step.title === "调用工具 read_service_logs" ? "读取服务日志" : step.title;
+  const title = step.title === "调用工具 execute_sql" ? "执行数据库命令" : step.title === "调用工具 read_service_logs" ? "读取服务日志" : step.title;
   const duration =
     typeof step.duration === "number" ? `${(step.duration / 1000).toFixed(2)}s` : step.duration;
   // rawArgs 是服务端跨轮历史重建字段(脱敏原始参数),UI 各展示位都不用——
@@ -151,19 +179,9 @@ export async function resolveApproval(
   approvalToken: string,
   approved: boolean
 ): Promise<boolean> {
-  const response = await fetch(
-    `${API_BASE}/chat/approvals/${encodeURIComponent(approvalToken)}?sessionId=${encodeURIComponent(sessionId)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ approved }),
-    }
-  );
-  if (response.status === 401) handleUnauthorized();
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(text || `审批请求失败(HTTP ${response.status})`);
-  }
+  await requestJson<unknown>(`/chat/approvals/${encodeURIComponent(approvalToken)}?sessionId=${encodeURIComponent(sessionId)}`, {
+    method: "POST", body: JSON.stringify({ approved }),
+  });
   return approved;
 }
 
@@ -173,152 +191,123 @@ export async function answerQuestion(
   questionToken: string,
   answer: string
 ): Promise<boolean> {
-  const response = await fetch(
-    `${API_BASE}/chat/answers/${encodeURIComponent(questionToken)}?sessionId=${encodeURIComponent(sessionId)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ answer }),
-    }
-  );
-  if (response.status === 401) handleUnauthorized();
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(text || `回答提交失败(HTTP ${response.status})`);
-  }
+  await requestJson<unknown>(`/chat/answers/${encodeURIComponent(questionToken)}?sessionId=${encodeURIComponent(sessionId)}`, {
+    method: "POST", body: JSON.stringify({ answer }),
+  });
   return true;
 }
 
-function createResponder(compactRequestId?: string): ChatResponder {
-  return async (message, onUpdate, sessionId, model, _reasoningLevel, _permissionMode, signal, providerId, context) => {
-    if (!sessionId) {
-      throw new Error("Agent API requires a sessionId");
+/** 两种传输只解码事件；消息合并与节流由 useChat 统一处理。 */
+function decodeChatStreamEvent(event: string, data: string): ChatStreamEvent | undefined {
+  switch (event) {
+    case "snapshot": {
+      const p = parseData<{
+        content: string; steps: StepPayload[]; sources?: Citation[];
+        contextUsage?: ChatContextUsage; approval?: ApprovalRequest; question?: QuestionRequest;
+      }>(data);
+      if (!p || typeof p.content !== "string" || !Array.isArray(p.steps)) throw new Error("Invalid live turn snapshot");
+      return { type: "snapshot", message: {
+        content: p.content, steps: p.steps.map(normalizeStep), sources: normalizeSources(p.sources),
+        contextUsage: p.contextUsage ?? undefined, approval: p.approval ?? undefined, question: p.question ?? undefined,
+      } };
     }
+    case "step": {
+      const p = parseData<StepPayload>(data);
+      if (!p?.id) throw new Error("Invalid Agent step event");
+      return { type: "step", step: normalizeStep(p, 0) };
+    }
+    case "delta":
+    case "reasoning_delta": {
+      const p = parseData<DeltaPayload>(data);
+      if (typeof p?.content === "string" && p.content) return { type: event, content: p.content, roundIndex: p.roundIndex };
+      return;
+    }
+    case "sources": {
+      const sources = normalizeSources(parseData<Citation[]>(data));
+      if (sources) return { type: "sources", sources };
+      return;
+    }
+    case "context_usage": {
+      const p = parseData<ChatContextUsage>(data);
+      if (p) return { type: "context_usage", contextUsage: p };
+      return;
+    }
+    case "approval_required": {
+      const p = parseData<ApprovalRequest>(data);
+      if (p?.approvalToken) return { type: "approval_required", approval: p };
+      return;
+    }
+    case "question_required": {
+      const p = parseData<QuestionRequest>(data);
+      if (p?.questionToken) return { type: "question_required", question: p };
+      return;
+    }
+    case "done": {
+      const p = parseData<DonePayload>(data);
+      if (!p || typeof p !== "object") throw new Error("Invalid Agent completion event");
+      return {
+        type: "finish", stopped: p.stopped, failed: p.status === "failed",
+        turnMetrics: p.durationMs != null ? {
+          durationMs: p.durationMs, usage: p.usage ?? null, contextWindow: p.contextWindow ?? null,
+          promptTokens: p.promptTokens ?? null, ttftMs: p.ttftMs ?? null,
+          status: p.status, stopReason: p.stopReason, hadToolErrors: p.hadToolErrors,
+        } : undefined,
+      };
+    }
+    case "error": {
+      const p = parseData<ErrorPayload>(data);
+      return { type: "error", error: new ApiError({
+        message: p?.message || "Agent 执行失败", code: 0, category: p?.category,
+        errorCode: p?.errorCode, hint: p?.hint, retryable: p?.retryable, traceId: p?.traceId,
+      }) };
+    }
+    case "title": {
+      const p = parseData<TitlePayload>(data);
+      if (p?.sessionId && p.title) emitSessionTitle(p.sessionId, p.title);
+    }
+  }
+}
 
+function createResponder(compactRequestId?: string): ChatResponder {
+  return async (message, onEvent, sessionId, model, _reasoningLevel, _permissionMode, signal, providerId, context) => {
+    if (!sessionId) throw new Error("Agent API requires a sessionId");
     let response: Response;
     try {
       response = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/${compactRequestId ? "compact" : "messages"}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(compactRequestId ? { requestId: compactRequestId, focus: message, model, providerId: providerId ?? null } : {
-          content: message,
-          model,
-          providerId: providerId ?? null,
-          // M2-01:结构化上下文(可空);后端优先解析它,旧行格式作兼容回退
-          context: context ?? null,
+          content: message, model, providerId: providerId ?? null, context: context ?? null,
         }),
-        // 切页时可断开连接；停止执行使用后端取消接口，并继续接收终态。
+        // 切页只断开连接；停止执行使用后端取消接口，继续接收终态。
         signal,
       });
     } catch (error) {
-      // 用户主动停止:以正常结果结束(部分文本已由 onUpdate 流出),不按错误处理
-      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-        return;
-      }
+      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
       throw new Error("Cannot connect to agent-service", { cause: error });
     }
-
-    if (response.status === 401) {
-      handleUnauthorized();
-    }
+    if (response.status === 401) handleUnauthorized();
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
       throw new Error(text || `Agent API HTTP ${response.status}`);
     }
-
-    // 写后失效：本轮会写入消息、可能改变会话标题与活跃时间，缓存必须清。
-    // 放在请求成功之后（失败/中止不该清缓存——那会让「停止生成」白丢历史缓存）。
     invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
-
-    let stream: Partial<ChatMessage> = { content: "", sender: compactRequestId ? "compaction" : undefined, steps: [] };
     let receivedDone = false;
-    let streamError: ApiError | undefined;
-    const publish = (event: ChatStreamEvent) => {
-      const partial = applyChatStreamEvent(stream, event);
-      stream = { ...stream, ...partial };
-      onUpdate(partial);
-    };
-
+    let receivedContent = false;
+    let streamError: Error | undefined;
     await parseSSEStream(response.body.getReader(), ({ event, data }) => {
-      // 用户已停止:退出事件处理(SSE 解析循环由 signal 监听终止)
       if (signal?.aborted) return;
-      if (event === "approval_required") {
-        const approval = parseData<ApprovalRequest>(data);
-        if (approval?.approvalToken) {
-          publish({ type: "approval_required", approval });
-        }
-      } else if (event === "question_required") {
-        const question = parseData<QuestionRequest>(data);
-        if (question?.questionToken) {
-          publish({ type: "question_required", question });
-        }
-      } else if (event === "step") {
-        const payload = parseData<StepPayload>(data);
-        if (!payload) return;
-        publish({ type: "step", step: normalizeStep(payload, stream.steps?.length ?? 0) });
-    } else if (event === "delta") {
-        const payload = parseData<DeltaPayload>(data);
-        if (!payload?.content) return;
-        publish({ type: "delta", content: payload.content, roundIndex: payload.roundIndex });
-      } else if (event === "reasoning_delta") {
-        const payload = parseData<ReasoningDeltaPayload>(data);
-        if (!payload?.content) return;
-        publish({ type: "reasoning_delta", content: payload.content, roundIndex: payload.roundIndex });
-      } else if (event === "sources") {
-        const payload = parseData<Citation[]>(data);
-        const sources = normalizeSources(payload);
-        if (sources) publish({ type: "sources", sources });
-      } else if (event === "context_usage") {
-        const payload = parseData<ChatContextUsage>(data);
-        if (payload) publish({ type: "context_usage", contextUsage: payload });
-      } else if (event === "title") {
-        // AI 异步起好的标题：广播给会话 store 刷新侧栏（不占用消息流）
-        const payload = parseData<TitlePayload>(data);
-        if (payload?.sessionId && payload.title) {
-          emitSessionTitle(payload.sessionId, payload.title);
-        }
-      } else if (event === "done") {
-        const donePayload = parseData<DonePayload>(data);
-        if (!donePayload) throw new Error("Invalid Agent completion event");
-        receivedDone = true;
-        publish({
-          type: "finish", stopped: donePayload?.stopped, failed: !!streamError || donePayload?.status === "failed",
-          turnMetrics: donePayload?.durationMs != null
-            ? {
-                durationMs: donePayload.durationMs,
-                usage: donePayload.usage ?? null,
-                contextWindow: donePayload.contextWindow ?? null,
-                promptTokens: donePayload.promptTokens ?? null,
-                ttftMs: donePayload.ttftMs ?? null,
-                status: donePayload.status,
-                stopReason: donePayload.stopReason,
-                hadToolErrors: donePayload.hadToolErrors,
-              }
-            : undefined,
-        });
-      } else if (event === "error") {
-        const payload = parseData<ErrorPayload>(data);
-        publish({ type: "finish", failed: true });
-        // 保留原始错误，同时接收紧随其后的 done 终态与计量。
-        streamError = new ApiError({
-          message: payload?.message || data || "Agent 执行失败",
-          code: 0,
-          category: payload?.category,
-          errorCode: payload?.errorCode,
-          hint: payload?.hint,
-          retryable: payload?.retryable,
-          traceId: payload?.traceId,
-        });
-      }
+      const decoded = decodeChatStreamEvent(event, data);
+      if (!decoded) return;
+      if (decoded.type === "finish") receivedDone = true;
+      else if (decoded.type === "error") streamError = decoded.error;
+      else if (decoded.type === "step" || decoded.type === "delta" || decoded.type === "reasoning_delta"
+        || (decoded.type === "snapshot" && (decoded.message.content || decoded.message.steps?.length))) receivedContent = true;
+      onEvent(decoded);
     }, signal);
-
     if (signal?.aborted) return;
     if (streamError) throw streamError;
     if (!receivedDone) throw new Error("Agent stream ended before completion");
-    if (!stream.content && !stream.steps?.length) {
-      throw new Error("Agent API returned an empty stream");
-    }
-
+    if (!receivedContent) throw new Error("Agent API returned an empty stream");
   };
 }
 
@@ -329,48 +318,41 @@ export async function cancelTurnOnBackend(sessionId: string): Promise<boolean> {
   return requestJson<boolean>(`/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
 }
 
-/**
- * GET /chat/sessions → 会话摘要列表(最近活跃在前)
- *
- * 走统一缓存：实测这个端点被反复调用（切换会话、后端在线恢复时各 store
- * 一起 re-sync），30s 内复用同一份结果。会话变更（发消息/改名/删除）会
- * 通过写操作失效缓存，所以「写后立刻看得到」不受影响。
- */
-export async function fetchSessions(force = false): Promise<
-  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string; origin?: string | null }[]
-> {
-  return cached("/chat/sessions", 30_000, force, fetchSessionsUncached);
+export interface SessionSummary {
+  id: string;
+  title: string;
+  titleGenerated?: boolean;
+  messageCount: number;
+  createdAt: string;
+  lastActivity?: string;
+  origin?: string | null;
 }
 
-/** 真实请求；缓存包装见 {@link fetchSessions}。 */
-async function fetchSessionsUncached(): Promise<
-  { id: string; title: string; titleGenerated?: boolean; messageCount: number; createdAt: string; lastActivity?: string; origin?: string | null }[]
-> {
-  const res = await fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`fetchSessions failed: ${res.status}`);
-  const body = await res.json();
-  const list = (body?.data ?? body) as Array<{
-    id: string;
-    title: string;
-    /** 标题是否已由 AI 生成；false/缺失 = 仍是首轮占位标题 */
-    titleGenerated?: boolean;
-    messageCount: number;
-    createdAt: string;
-    lastActivity?: string;
-    /** user=用户创建;automation=定时任务会话(2026-09-20) */
-    origin?: string | null;
-  }>;
-  return Array.isArray(list) ? list : [];
+export function fetchSessions(force = false): Promise<SessionSummary[]> {
+  return cached("/chat/sessions", 30_000, force,
+    () => requestJson<SessionSummary[]>("/chat/sessions", { cache: "no-store" }));
 }
 
-/**
- * GET /chat/sessions/{id}/messages → 完整消息历史(steps 合并后)
- * 走统一缓存：实测单次响应 123KB、被重复调用 27 次（切会话/重连各拉一遍），
- * 是本地最大的重复负载来源。历史只在发消息/截断时变化，那些写操作会失效缓存。
- */
-export async function steerTurnOnBackend(sessionId: string, turnId: string, messageId: string, content: string): Promise<void> {
+export interface SessionPage { items: SessionSummary[]; hasMore: boolean }
+
+export function searchSessions(query: string, offset = 0, limit = 30, signal?: AbortSignal): Promise<SessionPage> {
+  const params = new URLSearchParams({ q: query, offset: String(offset), limit: String(limit) });
+  return requestJson<SessionPage>(`/chat/sessions/search?${params}`, { cache: "no-store", signal });
+}
+
+export function fetchSession(id: string): Promise<SessionSummary> {
+  return requestJson<SessionSummary>(`/chat/sessions/${encodeURIComponent(id)}`, { cache: "no-store" });
+}
+
+export interface PendingAction { kind: "approval" | "question"; sessionId: string; stepId: string; summary: string }
+
+export function fetchPendingActions(): Promise<PendingAction[]> {
+  return requestJson<PendingAction[]>("/chat/pending-actions", { cache: "no-store" });
+}
+
+export async function steerTurnOnBackend(sessionId: string, turnId: string, messageId: string, content: string, context?: TaskContextPayload): Promise<void> {
   await requestJson<boolean>(`/chat/sessions/${encodeURIComponent(sessionId)}/steer`, {
-    method: "POST", body: JSON.stringify({ turnId, messageId, content }),
+    method: "POST", body: JSON.stringify({ turnId, messageId, content, context }),
   });
   invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
 }
@@ -378,16 +360,14 @@ export async function steerTurnOnBackend(sessionId: string, turnId: string, mess
 export async function fetchSessionMessages(sessionId: string, force = false): Promise<ChatMessage[]> {
   return cached(
     `/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
-    30_000,
+    0,
     force,
     () => fetchSessionMessagesUncached(sessionId),
   );
 }
 
 async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMessage[]> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`fetchSessionMessages failed: ${res.status}`);
-  const stored = (await res.json()) as Array<{
+  const stored = await requestJson<Array<{
     id?: string;
     role: "user" | "assistant";
     content: string;
@@ -405,7 +385,7 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
     createdAt?: string;
     /** 发送者(2026-09-20):automation=定时任务发送;旧数据 null 按 user */
     sender?: string | null;
-  }>;
+  }>>(`/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { cache: "no-store" });
   return (stored ?? []).map((m, i) => ({
     id: m.id ?? `${sessionId}-${i}`,
     role: m.role,
@@ -441,10 +421,7 @@ async function fetchSessionMessagesUncached(sessionId: string): Promise<ChatMess
 
 /** DELETE /chat/sessions/{id} → 删除会话及消息 */
 export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`deleteSession failed: ${res.status}`);
-  // 写后失效：会话列表与历史缓存都要清（删掉的会话不该继续出现在缓存里）
-  invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+  await requestJson<unknown>(`/chat/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 }
 
 /**
@@ -453,18 +430,12 @@ export async function deleteSessionOnBackend(sessionId: string): Promise<void> {
  * 服务端 LLM 上下文才不会残留已被 UI 丢弃的消息。
  */
 export async function truncateMessagesFrom(sessionId: string, index: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${index}`, { method: "DELETE", headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`truncateMessagesFrom failed: ${res.status}`);
-  // 写后失效：截断改变了历史，缓存必须清（否则「编辑重发」后仍看到旧分支）
-  invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+  await requestJson<unknown>(`/chat/sessions/${encodeURIComponent(sessionId)}/messages/${index}`, { method: "DELETE" });
 }
 
 /** GET /chat/sessions/{id}/turn/live → 会话是否有进行中轮次及其已缓冲事件 */
 export async function fetchLiveTurn(sessionId: string): Promise<LiveTurnInfo> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/live`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`fetchLiveTurn failed: ${res.status}`);
-  const envelope = await res.json() as { code: number; data: LiveTurnInfo; message: string };
-  return envelope.data ?? { running: false };
+  return requestJson<LiveTurnInfo>(`/chat/sessions/${encodeURIComponent(sessionId)}/turn/live`, { cache: "no-store" });
 }
 
 export interface LiveTurnInfo {
@@ -498,10 +469,7 @@ export async function fetchChatRuns(statuses?: string[], limit = 50): Promise<Ch
   const params = new URLSearchParams();
   if (statuses && statuses.length > 0) params.set("status", statuses.join(","));
   params.set("limit", String(limit));
-  const res = await fetch(`${API_BASE}/chat/runs?${params.toString()}`, { headers: authHeaders(), signal: defaultTimeoutSignal() });
-  if (!res.ok) throw new Error(`fetchChatRuns failed: ${res.status}`);
-  const envelope = await res.json() as { code: number; data: ChatRunInfo[]; message: string };
-  return envelope.data ?? [];
+  return requestJson<ChatRunInfo[]>(`/chat/runs?${params.toString()}`, { cache: "no-store" });
 }
 
 /**
@@ -515,105 +483,47 @@ export async function fetchChatRuns(statuses?: string[], limit = 50): Promise<Ch
 export function attachLiveTurnStream(
   sessionId: string,
   handlers: {
-    onStep?: (s: StepPayload) => void;
-    onDelta?: (c: string, roundIndex?: number | null) => void;
-    onReasoningDelta?: (roundIndex: number | null, c: string) => void;
-    onSources?: (c: Citation[]) => void;
-    onContextUsage?: (usage: ChatContextUsage) => void;
-    onApproval?: (a: ApprovalRequest) => void;
-    /** ask_user 澄清提问(2026-09-29);作答经 answerQuestion 提交 */
-    onQuestion?: (q: QuestionRequest) => void;
-    onDone?: (p?: DonePayload) => void;
-    onError?: (msg: string) => void;
-    onIdle?: () => void;
-    /**
-     * 回放缺口(2026-09-20):服务端滚动窗口已淘汰游标之前的中间事件,
-     * 本连接回放的事件序列不完整——已收到的增量内容不可信,应清空后
-     * 等 done 从权威消息状态恢复。缺失时忽略(旧后端不发送该事件)。
-     */
-    onGap?: (info: { cursor: number; oldestSeq: number }) => void;
+    onEvent: (event: ChatStreamEvent) => void;
+    onDone: (stopped: boolean) => void;
+    onError: (error: Error) => void;
+    onIdle: () => void;
   }
 ): () => void {
-  // EventSource 只支持 GET,SSE 端点恰好是 GET;token 无需鉴权(本地单用户部署)
-  // EventSource 无法自定义 header:令牌走 ?token=(服务端 filter 支持两种通道)
+  // EventSource 无法携带自定义 header；服务端过滤器同样接受查询令牌。
   const es = new EventSource(withAuthToken(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}/turn/stream`));
-  es.addEventListener("gap", (e) => {
-    const p = safeParse<{ cursor: number; oldestSeq: number }>((e as MessageEvent).data);
-    if (p) handlers.onGap?.(p);
-  });
-  es.addEventListener("step", (e) => {
-    const p = safeParse<StepPayload>((e as MessageEvent).data);
-    if (p) handlers.onStep?.(p);
-  });
-  es.addEventListener("delta", (e) => {
-    const p = safeParse<DeltaPayload>((e as MessageEvent).data);
-    if (p?.content) handlers.onDelta?.(p.content, p.roundIndex);
-  });
-  es.addEventListener("reasoning_delta", (e) => {
-    const p = safeParse<{ roundIndex: number | null; content: string }>((e as MessageEvent).data);
-    if (p?.content) handlers.onReasoningDelta?.(p.roundIndex ?? null, p.content);
-  });
-  es.addEventListener("sources", (e) => {
-    const p = safeParse<Citation[]>((e as MessageEvent).data);
-    if (p) handlers.onSources?.(p);
-  });
-  es.addEventListener("context_usage", (e) => {
-    const p = safeParse<ChatContextUsage>((e as MessageEvent).data);
-    if (p) handlers.onContextUsage?.(p);
-  });
-  es.addEventListener("approval_required", (e) => {
-    const p = safeParse<ApprovalRequest>((e as MessageEvent).data);
-    if (p) handlers.onApproval?.(p);
-  });
-  es.addEventListener("question_required", (e) => {
-    const p = safeParse<QuestionRequest>((e as MessageEvent).data);
-    if (p) handlers.onQuestion?.(p);
-  });
-  es.addEventListener("done", (e) => {
-    // 接续轮已写入历史，先失效运行中的缓存，避免回填时短暂移除当前回答。
-    invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
-    handlers.onDone?.(safeParse((e as MessageEvent).data));
-    es.close();
-  });
-  es.addEventListener("error", (e) => {
-    // 服务端 error 事件(带 data)与传输层错误(EventSource 自动重连)共用 event name:
-    // 有 data 是业务错误;无 data 是连接断开,EventSource 会自动重连,不关闭
-    const data = (e as MessageEvent).data;
-    if (data) {
-      const p = safeParse<{ message?: string }>(data);
-      invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
-      handlers.onError?.(p?.message ?? "未知错误");
-      es.close();
-    }
-  });
+  for (const type of ["snapshot", "step", "delta", "reasoning_delta", "sources", "context_usage", "approval_required", "question_required", "done", "error", "title"]) {
+    es.addEventListener(type, event => {
+      const data = (event as MessageEvent).data;
+      // 无 data 是传输错误，交给 EventSource 按 Last-Event-ID 重连。
+      if (!data) return;
+      try {
+        const decoded = decodeChatStreamEvent(type, data);
+        if (!decoded) return;
+        handlers.onEvent(decoded);
+        if (decoded.type === "finish") {
+          invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+          es.close();
+          handlers.onDone(!!decoded.stopped);
+        }
+        // 业务 error 后继续接收 done，保留服务端终态和计量。
+      } catch (error) {
+        es.close();
+        handlers.onError(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
   es.addEventListener("idle", () => {
     invalidateForPath(`/chat/sessions/${encodeURIComponent(sessionId)}`);
-    handlers.onIdle?.();
     es.close();
-  });
-  // 接续流(切页返回/断线重连)同样可能收到标题事件:AI 起标题是旁路任务,
-  // 可能在轮次 done 之后才回来——那时前端已切回,靠这条事件刷新侧栏
-  es.addEventListener("title", (e) => {
-    const p = safeParse<TitlePayload>((e as MessageEvent).data);
-    if (p?.sessionId && p.title) emitSessionTitle(p.sessionId, p.title);
+    handlers.onIdle();
   });
   return () => es.close();
-}
-
-function safeParse<T>(data: string | undefined): T | undefined {
-  if (!data) return undefined;
-  try {
-    return JSON.parse(data) as T;
-  } catch {
-    return undefined;
-  }
 }
 
 export function fetchAgentSettings(): Promise<AgentSettings> {
   return requestJson<AgentSettings>("/chat/settings", { cache: "no-store" });
 }
 
-/** PUT /chat/settings → 部分更新 agent 全局设置(merge 语义) */
 export function saveAgentSettings(patch: AgentSettings): Promise<AgentSettings> {
   return requestJson<AgentSettings>("/chat/settings", {
     method: "PUT", body: JSON.stringify(patch),

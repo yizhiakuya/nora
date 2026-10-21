@@ -11,7 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="http://localhost:18083")
+    parser.add_argument("--base", default="http://localhost:18080")
     parser.add_argument("--source-provider", type=int, default=7)
     parser.add_argument("--model", default="deepseek-v4.1-flash")
     parser.add_argument("--case", choices=["all", "success", "tools", "error", "network", "cancel", "write"], default="all")

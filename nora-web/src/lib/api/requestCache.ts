@@ -12,7 +12,7 @@
  *   1. 写操作必定失效——任何非 GET 成功响应都会清掉对应资源前缀的缓存。
  *      宁可多取一次，也不能把写后的旧数据当新的用。
  *   2. 并发只发一次——同 key 同时在途时复用同一个 Promise。
- *   3. 失效与在途互不干扰——失效后旧请求的结果不得回填（版本号守卫），
+ *   3. 失效与在途互不干扰——失效或强制刷新后旧请求的结果不得回填（请求身份守卫），
  *      否则「失效 → 旧响应晚到 → 覆盖」会把刚清的脏数据又写回来。
  *
  * 本模块不依赖任何其它模块（纯容器），避免与 client.ts 形成循环引用。
@@ -25,14 +25,10 @@ interface CacheEntry {
 
 interface InFlight {
   promise: Promise<unknown>;
-  /** 发起时的版本号：与当前版本不一致说明期间被失效过，结果必须丢弃 */
-  version: number;
 }
 
 const entries = new Map<string, CacheEntry>();
 const inFlight = new Map<string, InFlight>();
-/** 每个 key 的失效代数；失效一次自增，用于识别「失效前发出的请求」。 */
-const versions = new Map<string, number>();
 
 const stats = {
   hits: 0,
@@ -41,10 +37,6 @@ const stats = {
   staleDrops: 0,
   invalidations: 0,
 };
-
-function bumpVersion(key: string): void {
-  versions.set(key, (versions.get(key) ?? 0) + 1);
-}
 
 /**
  * 从请求路径取资源前缀（第一段），用于失效范围。
@@ -84,11 +76,10 @@ export function cached<T>(key: string, ttlMs: number, force: boolean, fetcher: (
   }
 
   stats.misses++;
-  const myVersion = versions.get(key) ?? 0;
   const promise = fetcher()
     .then((value) => {
-      // 版本守卫：期间被失效过就丢弃结果，不回填
-      if ((versions.get(key) ?? 0) !== myVersion) {
+      // 失效或被新请求替代后，旧响应只返回给原调用者，不回填缓存。
+      if (inFlight.get(key)?.promise !== promise) {
         stats.staleDrops++;
         return value;
       }
@@ -102,14 +93,13 @@ export function cached<T>(key: string, ttlMs: number, force: boolean, fetcher: (
       if (inFlight.get(key)?.promise === promise) inFlight.delete(key);
     });
 
-  inFlight.set(key, { promise, version: myVersion });
+  inFlight.set(key, { promise });
   return promise;
 }
 
 /** 失效匹配的资源前缀（精确前缀匹配，含边界）。 */
 export function invalidate(prefix: string): void {
   if (!prefix) return;
-  let dropped = 0;
   // Array.from 而非展开 Map 迭代器：本项目 tsconfig 的 target 不支持直接
   // 迭代 Map（TS2802，需 downlevelIteration）
   const allKeys = Array.from(new Set([...Array.from(entries.keys()), ...Array.from(inFlight.keys())]));
@@ -119,13 +109,11 @@ export function invalidate(prefix: string): void {
     const isChild = key.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`);
     const isQuery = key.startsWith(`${prefix}?`);
     if (isSame || isChild || isQuery) {
-      bumpVersion(key);
-      if (entries.delete(key)) dropped++;
+      entries.delete(key);
       inFlight.delete(key);
       stats.invalidations++;
     }
   }
-  if (dropped === 0) return;
 }
 
 /** 按请求路径失效（写操作成功后调用）。 */
@@ -135,10 +123,6 @@ export function invalidateForPath(path: string): void {
 
 /** 清空全部缓存。 */
 export function invalidateAll(): void {
-  const allKeys = Array.from(new Set([...Array.from(entries.keys()), ...Array.from(inFlight.keys())]));
-  for (const key of allKeys) {
-    bumpVersion(key);
-  }
   entries.clear();
   inFlight.clear();
   stats.invalidations++;

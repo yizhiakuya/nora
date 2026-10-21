@@ -2,7 +2,7 @@
 
 import { lazy, Suspense, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Globe, FileText, FileSpreadsheet, BookOpen, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Globe, FileText, FileSpreadsheet, BookOpen } from "lucide-react";
 
 const WebTaskDialog = lazy(() => import("@/components/browser/WebTaskDialog"));
 
@@ -21,16 +21,13 @@ export function QuickActions() {
 
   return (
     <>
-      <div className="grid grid-cols-1 min-[360px]:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-2 min-[400px]:grid-cols-2" aria-label="常用操作">
         {ACTIONS.map(({ label, desc, icon: Icon, href }) => (
-          <button type="button" key={label} onClick={() => href ? navigate(href) : setTaskOpen(true)}
-            className="group surface flex flex-col items-start text-left p-4 hover:border-primary/30 hover:bg-accent/30 transition-colors">
-            <div className="flex w-full items-center justify-between mb-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-primary transition-colors"><Icon className="h-4 w-4" /></span>
-              <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/60 group-hover:text-primary transition-colors" />
-            </div>
-            <div className="text-[13px] font-semibold text-foreground">{label}</div>
-            <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{desc}</div>
+          <button type="button" key={label} title={desc} onClick={() => href ? navigate(href) : setTaskOpen(true)}
+            className="quick-action group">
+            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1"><span className="block text-[13px] font-medium text-foreground">{label}</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{desc}</span></span>
+            <ArrowUpRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover:text-foreground" />
           </button>
         ))}
       </div>

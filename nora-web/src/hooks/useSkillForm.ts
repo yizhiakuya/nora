@@ -43,13 +43,13 @@ export function useSkillForm(initial: Skill | null, isOpen: boolean) {
   }, [name, instructions]);
 
   const submit = useCallback(
-    (onValid: (values: SkillFormValues) => void) => {
+    (onValid: (values: SkillFormValues) => void | Promise<void>) => {
       const errs = validate();
       if (errs) {
         setErrors(errs);
         return;
       }
-      onValid({
+      return onValid({
         name: name.trim(),
         description: description.trim(),
         instructions: instructions.trim(),

@@ -6,6 +6,8 @@ export interface WorkspaceEntry {
   directory: boolean;
   size: number;
   modifiedAt: string;
+  fileCount: number;
+  incomplete: boolean;
 }
 
 export interface WorkspaceStats {

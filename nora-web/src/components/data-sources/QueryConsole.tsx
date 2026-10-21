@@ -38,14 +38,13 @@ interface QueryConsoleProps {
   database: string;
   /** 服务端连接 id */
   connectionId: number;
-  /** 引擎类型:redis 时执行只读 Redis 命令而非 SQL */
+  /** 引擎类型:redis 时执行 Redis 命令而非 SQL */
   engine?: string;
   initialSql?: string;
 }
 
 /**
- * 查询控制台:走 datasource-service 只读执行(限 200 行,
- * 非 SELECT/SHOW/EXPLAIN 会被后端 SqlGuard 拒绝),历史来自服务端。
+ * 数据库命令控制台:支持读写，结果展示最多 200 行，历史来自服务端。
  */
 export function QueryConsole({ database, connectionId, engine, initialSql }: QueryConsoleProps) {
   const navigate = useNavigate();
@@ -126,12 +125,9 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
     })();
     const saved = await addRule(
       isRedis ? "定时执行 Redis 命令" : "定时执行查询：订单状态分布",
-      "每日 09:00",
-      sql.trim() || AI_SUGGEST,
+      "daily",
+      { actionType: "sql", sql: sql.trim() || AI_SUGGEST, connectionId },
       { frequency: "daily", localTime: "09:00", timezone: tz },
-      // B3(2026-09-27):目标连接随规则落库——此前不传,执行时回退
-      // 「数据源列表第一项」,多库场景在 B 库保存的查询可能在 A 库执行
-      connectionId,
     );
     if (saved) {
       toast.success("已保存为定期任务（每日 09:00 执行），到「任务」页查看");
@@ -146,7 +142,7 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
    */
   const askAi = () => {
     const prompt = isRedis
-      ? `请基于 Redis 数据源「${database}」帮我写一条只读命令：`
+      ? `请基于 Redis 数据源「${database}」帮我写一条命令：`
       : `请基于数据源「${database}」的表结构帮我写一条 SQL：`;
     const params = new URLSearchParams();
     params.set("prompt", prompt);
@@ -177,12 +173,12 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
         </div>
         <div className="relative">
           <textarea
-            aria-label={isRedis ? "Redis 命令" : "SQL 查询"}
+            aria-label={isRedis ? "Redis 命令" : "SQL 命令"}
             rows={4}
             className="w-full bg-muted/30 text-foreground font-mono text-base sm:text-[13px] leading-relaxed resize-none p-4 focus:outline-none custom-scroll"
             placeholder={isRedis
-              ? "只读命令（GET / HGETALL / KEYS / SCAN / TYPE / TTL / LRANGE / SMEMBERS / ZRANGE / INFO …）"
-              : "-- 只读查询（SELECT / SHOW / EXPLAIN），或点击下方 AI 生成"}
+              ? "Redis 命令，如 GET key / SET key value / HGETALL key"
+              : "-- SQL 命令，支持查询、更新和表结构修改"}
             value={sql}
             onChange={(e) => setSql(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleRun(); }}
@@ -210,7 +206,7 @@ export function QueryConsole({ database, connectionId, engine, initialSql }: Que
 
       {!isRunning && hasRun && runError && (
         <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl px-4 py-3">
-          <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">查询失败</div>
+          <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">执行失败</div>
           <div className="text-xs font-mono text-red-600/80 dark:text-red-400/80 break-all">{runError}</div>
         </div>
       )}

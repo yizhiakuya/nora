@@ -1,55 +1,6 @@
-# Nora 生产部署(全栈一键拉起)
-#
-# 用法:
-#   cp .env.example .env      # 按需改端口/密码/密钥
-#   docker compose -f docker-compose.prod.yml up -d
-#
-# 说明:
-# - 镜像来自 GHCR(ghcr.io/yizhiakuya/nora/*),多架构(amd64/arm64);
-#   本地构建替换:docker compose -f docker-compose.prod.yml up -d --build
-# - 对外暴露网关和前端;基础设施管理端口仅绑定宿主机回环地址。
-# - 数据卷:nora-pgdata / nora-kafka-data / nora-data(文件+工作区+日志)。
+# Existing volume and project names are preserved for upgrades.
 name: nora
-
-x-service-defaults: &service-defaults
-  restart: unless-stopped
-  # 纯 IPv4 DNS(宿主 DNS 含 IPv6 服务器;容器无 IPv6 出口,IPv6 解析会超时)
-  dns:
-    - 223.5.5.5
-    - 8.8.8.8
-  depends_on:
-    postgres:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
-    nacos:
-      condition: service_healthy
-
-x-app-env: &app-env
-  # —— 基础设施连接(容器名;NORA_DB_URL 在每服务单独给,带各自 currentSchema) ——
-  SPRING_DATASOURCE_USERNAME: ${DB_USER:-nora}
-  SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?请在 .env 设置 DB_PASSWORD}
-  NORA_REDIS_HOST: redis
-  NORA_REDIS_PORT: "6379"
-  NORA_NACOS_SERVER: nacos:8848
-  NORA_KAFKA_SERVERS: kafka:9092
-  # —— 服务间调用(容器名 + 容器内端口) ——
-  NORA_FILE_URL: http://file-service:18081
-  NORA_RAG_URL: http://rag-service:18082
-  NORA_AGENT_URL: http://agent-service:18083
-  NORA_DATASOURCE_URL: http://datasource-service:18084
-  NORA_ENV_URL: http://env-service:18085
-  NORA_AUTOMATION_URL: http://automation-service:18086
-  # —— JVM:IPv4 优先(容器默认无 IPv6,DNS 可能返回 IPv6 优先导致外网超时) ——
-  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+UseG1GC -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true"
-  # —— 存储路径(卷内) ——
-  LOG_PATH: /app/logs
-  NORA_AGENT_WORKSPACE: /app/agent-workspace
-  NORA_MEDIA_CACHE_DIR: /app/data/media-cache
-  TZ: Asia/Shanghai
-
 services:
-  # ==================== 基础设施 ====================
   postgres:
     image: pgvector/pgvector:pg16
     container_name: nora-postgres
@@ -62,90 +13,47 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 首次创建数据卷时自动建 pgvector 扩展(rag-service 依赖)
       - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-nora-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nora} -d nora"]
       interval: 5s
       timeout: 3s
       retries: 20
-
-  redis:
-    image: redis:7-alpine
-    container_name: nora-redis
+  nora-api:
+    image: ghcr.io/yizhiakuya/nora/nora-api:${NORA_TAG:-latest}
+    container_name: nora-api
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  nacos:
-    image: nacos/nacos-server:v2.3.2
-    container_name: nora-nacos
-    restart: unless-stopped
-    environment:
-      MODE: standalone
-      JVM_XMS: 256m
-      JVM_XMX: 512m
-    ports:
-      - "127.0.0.1:${NACOS_PORT:-18848}:8848"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  kafka:
-    image: apache/kafka:3.7.1
-    container_name: nora-kafka
-    restart: unless-stopped
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 8s
-      retries: 30
-
-  # ==================== 应用服务(镜像来自 GHCR) ====================
-  gateway-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/gateway-service:${NORA_TAG:-latest}
-    container_name: nora-gateway
-    mem_limit: 448m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18080"
-      NORA_AUTH_TOKEN: ${NORA_AUTH_TOKEN:-}
-    volumes:
-      # 共享日志卷:环境控制台/agent read_service_logs 经 env-service 读取
-      - nora-logs:/app/logs
-    ports:
-      - "${GATEWAY_PORT:-18080}:18080"
+    init: true
+    mem_limit: 2g
+    dns: [223.5.5.5, 8.8.8.8]
     depends_on:
       postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-
-
-  # 前端(nginx 托管 + /api 反代网关)
+    ports:
+      - "${API_PORT:-18080}:18080"
+    environment:
+      NORA_PORT: "18080"
+      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora
+      NORA_DB_USERNAME: ${DB_USER:-nora}
+      NORA_DB_PASSWORD: ${DB_PASSWORD:?请在 .env 设置 DB_PASSWORD}
+      NORA_AUTH_TOKEN: ${NORA_AUTH_TOKEN:-}
+      NORA_FILE_STORAGE_DIR: /app/data/files
+      NORA_AGENT_WORKSPACE: /app/agent-workspace
+      NORA_MEDIA_CACHE_DIR: /app/data/media-cache
+      LOG_PATH: /app/logs
+      NORA_PWSH_BUNDLE: ""
+      NORA_EMBEDDING_API_KEY: ${NORA_EMBEDDING_API_KEY:-}
+      NORA_EMBEDDING_BASE_URL: ${NORA_EMBEDDING_BASE_URL:-https://api.jina.ai/v1}
+      NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
+      NORA_PROXY_HOST: ${NORA_PROXY_HOST:-127.0.0.1}
+      NORA_PROXY_PORT: ${NORA_PROXY_PORT:-7897}
+      JAVA_OPTS: "-XX:MaxRAMPercentage=50 -XX:+UseG1GC -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true"
+      TZ: Asia/Shanghai
+    volumes:
+      - nora-data:/app/data
+      - nora-workspace:/app/agent-workspace
+      - nora-logs:/app/logs
+      # Single-user system agent: Docker access is part of its host capabilities.
+      - /var/run/docker.sock:/var/run/docker.sock
   nora-web:
     image: ghcr.io/yizhiakuya/nora/nora-web:${NORA_TAG:-latest}
     container_name: nora-web
@@ -153,148 +61,15 @@ services:
     ports:
       - "${WEB_PORT:-13001}:80"
     depends_on:
-      gateway-service: { condition: service_started }
-
-  file-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/file-service:${NORA_TAG:-latest}
-    container_name: nora-file
-    mem_limit: 512m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18081"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_file
-    volumes:
-      - nora-data:/app/data
-      - nora-logs:/app/logs
-    depends_on:
-      postgres: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-
-  rag-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/rag-service:${NORA_TAG:-latest}
-    container_name: nora-rag
-    mem_limit: 512m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18082"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora
-      NORA_EMBEDDING_API_KEY: ${NORA_EMBEDDING_API_KEY:-}
-      NORA_EMBEDDING_BASE_URL: ${NORA_EMBEDDING_BASE_URL:-https://api.jina.ai/v1}
-      NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
-      NORA_PROXY_HOST: ${NORA_PROXY_HOST:-127.0.0.1}
-      NORA_PROXY_PORT: ${NORA_PROXY_PORT:-7897}
-    volumes:
-      - nora-logs:/app/logs
-    depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-
-  agent-service:
-    <<: *service-defaults
-    init: true
-    image: ghcr.io/yizhiakuya/nora/agent-service:${NORA_TAG:-latest}
-    container_name: nora-agent
-    mem_limit: 768m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18083"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_agent
-      NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}
-      NORA_PROXY_HOST: ${NORA_PROXY_HOST:-127.0.0.1}
-      NORA_PROXY_PORT: ${NORA_PROXY_PORT:-7897}
-      NORA_PWSH_BUNDLE: ""
-    volumes:
-      - nora-data:/app/data
-      - nora-workspace:/app/agent-workspace
-      - nora-logs:/app/logs
-    depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-
-  datasource-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/datasource-service:${NORA_TAG:-latest}
-    container_name: nora-datasource
-    mem_limit: 448m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18084"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_datasource
-    volumes:
-      - nora-logs:/app/logs
-    depends_on:
-      postgres: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-
-  env-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/env-service:${NORA_TAG:-latest}
-    container_name: nora-env
-    mem_limit: 448m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18085"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_env
-    volumes:
-      # 日志目录(可写:env-service 自己也要写日志;纳管 FILE 源读日志文件)
-      - nora-logs:/app/logs
-      # 宿主机 Docker 控制权(2026-10-02):环境控制台的 DOCKER 纳管源(启停容器、
-      # 读 docker logs)与 agent 的 manage_container 工具都经此 socket。
-      # 单用户自部署场景的既定设计;多人共享环境请移除本行(容器管理功能随之不可用)。
-      # 镜像内 nora 用户已加入 docker 组(GID 默认 999,与常见宿主机一致)。
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      postgres: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-
-  automation-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/automation-service:${NORA_TAG:-latest}
-    container_name: nora-automation
-    mem_limit: 448m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18086"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_automation
-    volumes:
-      - nora-logs:/app/logs
-    depends_on:
-      postgres: { condition: service_healthy }
-      nacos: { condition: service_healthy }
-      agent-service: { condition: service_started }
-
-  notification-service:
-    <<: *service-defaults
-    image: ghcr.io/yizhiakuya/nora/notification-service:${NORA_TAG:-latest}
-    container_name: nora-notification
-    mem_limit: 448m
-    environment:
-      <<: *app-env
-      NORA_PORT: "18087"
-      NORA_DB_URL: jdbc:postgresql://postgres:5432/nora?currentSchema=schema_notification
-    volumes:
-      - nora-logs:/app/logs
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-
+      nora-api: { condition: service_healthy }
 networks:
   default:
     name: nora_default
     driver: bridge
     driver_opts:
-      # 宿主 Wi-Fi 实际路径 MTU < 1500(实测 1428 可通);容器转发路径
-      # 无法做 PMTUD,必须显式降 MTU,否则大包被丢(外网部分站点超时)
       com.docker.network.driver.mtu: 1400
-
 volumes:
   pgdata:
-  kafka-data:
-  nora-data:      # 文件中心存储 + 媒体缓存
-  nora-workspace: # agent 工作区(记忆)
-  nora-logs:      # 服务日志(env-service 纳管源)
+  nora-data:
+  nora-workspace:
+  nora-logs:

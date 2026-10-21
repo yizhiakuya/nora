@@ -1,111 +1,45 @@
-'use client';
+import { Link } from "react-router-dom";
+import { AlertTriangle, Inbox, Loader2, MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { fetchChatRuns, fetchPendingActions } from "@/lib/api/agentApi";
+import { usePollingResource } from "@/hooks/usePollingResource";
+import { chatRunStatusLabel } from "@/lib/chatRunStatus";
 
-import { useEffect, useState } from "react";
-import { Loader2, Inbox, MessageSquare, AlertTriangle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { fetchChatRuns, type ChatRunInfo } from "@/lib/api/agentApi";
-import { useChatSessions } from "@/hooks/useChatSessions";
-
-/**
- * 「正在处理」视图(M3-01,2026-09-20,方案 §4.3):
- * 后端持久化的对话运行(chat_run)聚合——刷新/换页/进程重启后都能找到
- * 「我发出去还没回来看的任务」。
- *
- * 状态语义(方案 §6.3):running/queued/awaiting_approval/cancelling 为进行中;
- * interrupted(进程中断)单独列出,给「查看已记录内容」入口而不是假装完成。
- */
-const ACTIVE_STATUSES = ["queued", "running", "awaiting_approval", "cancelling"];
-
-const STATUS_LABEL: Record<string, string> = {
-  queued: "已接受,等待开始",
-  running: "处理中",
-  awaiting_approval: "等待确认",
-  cancelling: "正在停止",
-  interrupted: "已中断(进程重启,需手动决定是否重试)",
-};
+async function loadActiveWork() {
+  const [runs, pending] = await Promise.all([
+    fetchChatRuns(["queued", "running", "awaiting_approval", "cancelling", "interrupted"], 100),
+    fetchPendingActions(),
+  ]);
+  return { runs, pending };
+}
 
 export function RunningTasks({ compact = false }: { compact?: boolean } = {}) {
-  const navigate = useNavigate();
-  const setActive = useChatSessions((s) => s.setActive);
-  const [runs, setRuns] = useState<ChatRunInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // 进行中 + 中断(单独呈现)——均属"需要用户关注"的运行
-        const items = await fetchChatRuns([...ACTIVE_STATUSES, "interrupted"], 30);
-        if (!cancelled) setRuns(items);
-      } catch {
-        /* 后端不可达:空态 */
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="surface py-12 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
-        <Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在检查后台任务…
-      </div>
-    );
-  }
-
-  if (runs.length === 0) {
-    // 空态压缩(§7 评审:没有运行任务时大卡片把常用操作推下去):
-    // 收成一行说明,保留「去助手发起」的指引;compact=false(任务页)保留卡片。
-    if (compact) {
-      return (
-        <div className="surface text-xs leading-relaxed text-muted-foreground flex items-start gap-2 p-4">
-          <Inbox className="w-3 h-3 shrink-0" />
-          当前没有正在处理的任务——在「助手」中提出需求,未完成的轮次会出现在这里。
-        </div>
-      );
-    }
-    return (
-      <div className="surface py-16 text-center space-y-2">
-        <Inbox className="w-8 h-8 mx-auto text-muted-foreground/40" />
-        <div className="text-xs text-muted-foreground">当前没有正在处理的任务</div>
-        <div className="text-[11px] text-muted-foreground/70">
-          在「助手」中提出需求后,未完成的轮次会出现在这里;离开页面不会中断后台处理。
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {runs.map((r) => {
-        const interrupted = r.status === "interrupted";
-        const Icon = interrupted ? AlertTriangle : Loader2;
-        return (
-          <div key={r.id} className="surface p-4 flex items-center gap-3">
-            <Icon className={`w-4 h-4 shrink-0 ${interrupted ? "text-amber-500" : "animate-spin text-blue-500"}`} />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground truncate">
-                {r.sessionTitle || r.content?.slice(0, 30) || r.sessionId}
-              </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
-                {STATUS_LABEL[r.status] ?? r.status}
-                {r.startedAt ? ` · 开始于 ${r.startedAt.slice(11, 16)}` : ""}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setActive(r.sessionId);
-                navigate("/chat");
-              }}
-              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border border-border text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700 transition-colors cursor-pointer"
-            >
-              <MessageSquare className="w-3 h-3" /> 查看
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
+  const { data, error, loading, refresh } = usePollingResource(loadActiveWork);
+  const runs = (data?.runs ?? []).filter(run => !data?.pending.some(action => action.sessionId === run.sessionId))
+    .sort((a, b) => Number(a.status === "interrupted") - Number(b.status === "interrupted"));
+  const visible = compact ? runs.slice(0, 5) : runs;
+  return <div className="space-y-3">
+    {error && <div role="alert" className="surface p-4 space-y-2"><p className="text-sm whitespace-pre-wrap break-words">{error}</p>
+      <p className="text-xs text-muted-foreground">{data ? "以下为上次成功读取的状态。" : "未能读取运行状态。"}</p><Button size="sm" variant="outline" onClick={refresh}>重试</Button></div>}
+    {loading && <p role="status" className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />正在检查后台任务…</p>}
+    {data?.pending.map(action => <Link key={`${action.kind}:${action.sessionId}:${action.stepId}`} to={`/chat?session=${encodeURIComponent(action.sessionId)}`}
+      className="block rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 transition-colors hover:bg-amber-500/10">
+      <div className="text-xs font-medium text-amber-700 dark:text-amber-300">{action.kind === "approval" ? "等待你确认" : "等待你回答"}</div>
+      <p className="text-sm mt-1 break-words">{action.summary}</p><span className="text-xs text-muted-foreground">进入会话处理 →</span>
+    </Link>)}
+    {data && data.runs.length === 0 && data.pending.length === 0 && !error && <div className={`rounded-xl border border-dashed border-border text-sm text-muted-foreground flex items-center gap-2 ${compact ? "px-4 py-6" : "p-8"}`}>
+      <Inbox className="h-4 w-4 shrink-0" />当前没有正在处理的任务。描述目标即可开始。</div>}
+    {visible.length > 0 && <div className="work-list">{visible.map(run => {
+      const interrupted = run.status === "interrupted";
+      const Icon = interrupted ? AlertTriangle : Loader2;
+      return <Link key={run.id} to={`/chat?session=${encodeURIComponent(run.sessionId)}`} className="work-row group">
+        <Icon className={`h-4 w-4 shrink-0 ${interrupted ? "text-amber-500" : "animate-spin text-primary"}`} />
+        <div className="min-w-0 flex-1"><p className="text-[13px] font-medium truncate">{run.sessionTitle || run.content || run.sessionId}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">{chatRunStatusLabel(run.status)}{interrupted ? " · 查看已保存的过程" : ""}</p></div>
+        <MessageSquare className="h-3.5 w-3.5 text-muted-foreground/60 transition-colors group-hover:text-foreground" />
+      </Link>;
+    })}</div>}
+    {compact && runs.length > visible.length && <Link to="/tasks?view=running" className="block text-xs text-primary hover:underline">查看全部运行（另有 {runs.length - visible.length} 条）</Link>}
+    {data && data.runs.length === 100 && <p className="text-xs text-muted-foreground">显示最近 100 条运行。更早记录可在<Link className="underline" to="/sessions">全部会话</Link>中查找。</p>}
+  </div>;
 }

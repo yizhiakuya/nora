@@ -15,7 +15,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="http://localhost:18083")
+    parser.add_argument("--base", default="http://localhost:18080")
     parser.add_argument("--image", action="append", required=True)
     parser.add_argument("--workspace", type=Path, default=Path(__file__).resolve().parents[1] / "agent-workspace")
     args = parser.parse_args()

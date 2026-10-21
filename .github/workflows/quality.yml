@@ -28,6 +28,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm deadcode
       - run: pnpm test
       - run: pnpm build
 
@@ -45,21 +46,20 @@ jobs:
       - name: Real HTTP acceptance
         env:
           DB_PASSWORD: nora-ci-disposable-password
-          SPRING_DATASOURCE_PASSWORD: nora-ci-disposable-password
+          NORA_DB_PASSWORD: nora-ci-disposable-password
           NORA_AUTH_TOKEN: nora-ci-disposable-token
           NORA_RELAY_BASE: ""
         run: |
           pids=()
-          trap 'kill "${pids[@]}" 2>/dev/null || true; docker compose -f nora-api/docker-compose.prod.yml down -v' EXIT
-          docker compose -f nora-api/docker-compose.prod.yml up -d --wait --wait-timeout 180 postgres redis nacos
-          for service in agent-service datasource-service gateway-service; do
-            java -jar "nora-api/services/${service}/target/${service}-0.1.0-SNAPSHOT.jar" > "${RUNNER_TEMP}/${service}.log" 2>&1 &
-            pids+=("$!")
-          done
-          python scripts/e2e-standards.py
+          trap 'docker rm -f nora-e2e-redis >/dev/null 2>&1 || true; kill "${pids[@]}" 2>/dev/null || true; docker compose -f nora-api/docker-compose.prod.yml down -v' EXIT
+          docker compose -f nora-api/docker-compose.prod.yml up -d --wait --wait-timeout 180 postgres
+          docker run -d --name nora-e2e-redis -p 127.0.0.1:16379:6379 redis:7-alpine
+          java -jar nora-api/target/nora-api-0.1.0-SNAPSHOT.jar > "${RUNNER_TEMP}/nora-api.log" 2>&1 &
+          pids+=("$!")
+          python scripts/acceptance.py standards
       - name: Upload acceptance diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: backend-acceptance-logs
-          path: ${{ runner.temp }}/*-service.log
+          path: ${{ runner.temp }}/nora-api.log

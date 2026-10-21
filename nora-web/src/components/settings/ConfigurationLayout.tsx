@@ -26,8 +26,8 @@ export function ConfigurationLayout({ title, description, sections, active, chil
           <nav aria-label={`${title} 分类`} className="flex gap-1 overflow-x-auto pb-2 no-scrollbar [@container(min-width:900px)]:flex-col [@container(min-width:900px)]:self-start [@container(min-width:900px)]:sticky [@container(min-width:900px)]:top-0 [@container(min-width:900px)]:pb-0">
             {sections.map(section => <Link key={section.key} to={section.href} replace
               aria-current={active === section.key ? "page" : undefined}
-              className={cn("shrink-0 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition-colors",
-                active === section.key ? "bg-primary/[0.08] text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+              className={cn("shrink-0 rounded-lg border border-transparent px-3 py-2 text-left text-[13px] transition-colors",
+                active === section.key ? "bg-card border-border/70 font-medium text-foreground shadow-surface" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
             >{section.label}</Link>)}
           </nav>
           <div className="min-w-0 space-y-6">{children}</div>

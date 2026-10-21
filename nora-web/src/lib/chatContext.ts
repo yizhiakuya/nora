@@ -6,7 +6,7 @@ function stepTokens(step: ChatStep): number {
     return (step.inputTokens ?? estimateTextTokens(JSON.stringify(step.input ?? {})))
       + estimateTextTokens(step.result?.content ?? step.result?.error ?? "");
   }
-  if (step.type === "commentary" || step.id.startsWith("s-reasoning-")) return estimateTextTokens(step.detail ?? "");
+  if (step.type === "commentary") return estimateTextTokens(step.detail ?? "");
   if (step.type === "context") return step.context?.kind === "user-input" ? estimateTextTokens(step.detail ?? "")
     : (step.context?.files ?? []).reduce((sum, file) => sum + estimateTextTokens(file.content ?? ""), 0);
   return 0;
@@ -17,14 +17,6 @@ export function estimateChatMessageTokens(message: Partial<ChatMessage>, fromRou
   return estimateTextTokens(message.content ?? "") + (message.steps ?? [])
     .filter(step => fromRound == null || (step.roundIndex ?? 0) >= fromRound)
     .reduce((sum, step) => sum + stepTokens(step), 0);
-}
-
-/** 输出包括推理、正文和工具参数；真实 output_tokens 已包含它们。 */
-export function estimateModelOutputTokens(message: Partial<ChatMessage>, round: number): number {
-  if (message.sender === "compaction") return 0;
-  return estimateTextTokens(message.content ?? "") + (message.steps ?? []).filter(step => (step.roundIndex ?? 0) >= round)
-    .reduce((sum, step) => sum + (step.type === "tool" ? step.inputTokens ?? estimateTextTokens(JSON.stringify(step.input ?? {}))
-      : step.type === "commentary" || step.id.startsWith("s-reasoning-") ? estimateTextTokens(step.detail ?? "") : 0), 0);
 }
 
 export interface ContextMeter {
@@ -43,18 +35,8 @@ export function estimateChatContextTokens(messages: ChatMessage[]): number {
   const message = messages[measured];
   const round = message.contextUsage?.roundIndex ?? Math.max(0, ...(message.steps ?? []).map(step => step.roundIndex ?? 0));
   const received = message.contextUsage?.receivedTokens;
-  let generated: number;
-  if (received != null) {
-    const additional = estimateChatMessageTokens(message) - received;
-    const modelOutput = estimateModelOutputTokens(message, round) - (message.contextUsage?.receivedOutputTokens ?? 0);
-    generated = message.contextUsage?.outputTokens != null
-      ? message.contextUsage.outputTokens + Math.max(0, additional - modelOutput) : Math.max(0, additional);
-  } else if (message.contextUsage?.outputTokens != null) {
-    generated = message.contextUsage.outputTokens + (message.steps ?? []).filter(step => step.type === "tool" && (step.roundIndex ?? 0) >= round)
-      .reduce((sum, step) => sum + estimateTextTokens(step.result?.content ?? step.result?.error ?? ""), 0);
-  } else {
-    generated = estimateChatMessageTokens(message, round);
-  }
+  const generated = received != null ? Math.max(0, estimateChatMessageTokens(message) - received)
+    : estimateChatMessageTokens(message, round);
   const embeddedUsers = new Set((message.steps ?? []).filter(step => step.context?.kind === "user-input").map(step => step.id));
   return (message.contextUsage?.promptTokens ?? message.turnMetrics?.promptTokens ?? 0)
     + generated

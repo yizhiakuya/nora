@@ -5,7 +5,9 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { KeyRound, Loader2, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { setAuthToken, getAuthToken } from "@/lib/auth";
+import { setAuthToken } from "@/lib/auth";
+import { authApi } from "@/lib/services/authApi";
+import { ApiError } from "@/lib/api/client";
 
 /**
  * 令牌登录页(2026-09-19):单用户自部署工作台的访问门。
@@ -19,7 +21,8 @@ import { setAuthToken, getAuthToken } from "@/lib/auth";
 export default function LoginPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const back = params.get("back") || "/";
+  const target = params.get("back") || "/";
+  const back = target.startsWith("/") && !target.startsWith("//") && !target.includes("\\") ? target : "/";
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,25 +32,25 @@ export default function LoginPage() {
 
   // 进入时先问服务端"需要登录吗":免登录直接放行;已带有效令牌也直接放行
   useEffect(() => {
+    let disposed = false;
     (async () => {
       try {
-        const res = await fetch(`/api/auth/status`, {
-          headers: getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {},
-        });
-        const body = await res.json();
-        const data = body?.data ?? body;
+        const data = await authApi.status();
+        if (disposed) return;
         if (data?.authRequired === false || data?.authenticated === true) {
           navigate(back, { replace: true });
           return;
         }
-      } catch {
-        /* 网关不可达:留在本页,提交时会再报错 */
+      } catch (failure) {
+        if (!disposed) setError(failure instanceof Error ? failure.message : String(failure));
       }
-      setChecking(false);
+      if (!disposed) setChecking(false);
     })();
+    return () => { disposed = true; };
   }, [back, navigate]);
 
   const submit = async () => {
+    if (busy) return;
     const value = token.trim();
     if (!value) {
       setError("请输入访问令牌");
@@ -57,21 +60,12 @@ export default function LoginPage() {
     setError(null);
     setHint(null);
     try {
-      const res = await fetch(`/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: value }),
-      });
-      if (res.ok) {
-        setAuthToken(value);
-        navigate(back, { replace: true });
-        return;
-      }
-      const body = await res.json().catch(() => null);
-      setError(body?.message || `登录失败(HTTP ${res.status})`);
-      setHint(body?.hint || null);
-    } catch {
-      setError("无法连接服务,请确认 Nora 已启动");
+      await authApi.login(value);
+      setAuthToken(value);
+      navigate(back, { replace: true });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      setHint(failure instanceof ApiError ? failure.hint ?? null : null);
     } finally {
       setBusy(false);
     }

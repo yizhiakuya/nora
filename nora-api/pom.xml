@@ -1,125 +1,140 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>3.3.4</version>
         <relativePath/>
     </parent>
-
     <groupId>com.nora</groupId>
-    <artifactId>nora-parent</artifactId>
+    <artifactId>nora-api</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <packaging>pom</packaging>
-    <name>nora-parent</name>
-    <description>Nora personal workbench backend — Maven parent POM: unified dependency and plugin version management for all modules (see docs/architecture-v2.md)</description>
-
-    <!-- Default reactor: common + api modules only.
-         Services live in the 'services' profile below (activeByDefault), so:
-           - plain `mvn install`          -> builds common + api + services (profile is on)
-           - `mvn install -P '!services'` -> builds only common + api (fast library-only build) -->
-    <modules>
-        <module>common/nora-common</module>
-        <module>common/nora-security</module>
-        <module>api/rag-api</module>
-        <module>api/file-api</module>
-        <module>api/datasource-api</module>
-    </modules>
-
+    <name>Nora</name>
+    <description>Single-instance personal agent with local domain services</description>
     <properties>
         <java.version>21</java.version>
-        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
-
     <dependencyManagement>
         <dependencies>
-            <!-- Spring Boot 3.3.4 baseline (redundant with starter-parent chain, kept explicit as the version anchor) -->
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>3.3.4</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Spring Cloud 2023.0.3 (Leyton) -->
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>2023.0.3</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Spring Cloud Alibaba 2023.0.1.2 (Nacos / Sentinel) -->
-            <dependency>
-                <groupId>com.alibaba.cloud</groupId>
-                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
-                <version>2023.0.1.2</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- LangChain4j 1.0.1 -->
             <dependency>
                 <groupId>dev.langchain4j</groupId>
                 <artifactId>langchain4j-bom</artifactId>
-                <version>1.0.1</version>
+                <version>1.19.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Apache Dubbo 3.3.0 (plain managed entry, per task spec: not the dubbo-bom import) -->
-            <dependency>
-                <groupId>org.apache.dubbo</groupId>
-                <artifactId>dubbo</artifactId>
-                <version>3.3.0</version>
-            </dependency>
-            <!-- File parsing (file-service, per architecture-v2.md section 3) -->
-            <dependency>
-                <groupId>org.apache.tika</groupId>
-                <artifactId>tika-core</artifactId>
-                <version>2.9.2</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.tika</groupId>
-                <artifactId>tika-parsers-standard-package</artifactId>
-                <version>2.9.2</version>
-            </dependency>
-            <!-- 结构化 JSON 日志(logstash-logback-encoder):全服务统一 JSON 行文件输出,
-                 traceId/sessionId 进字段,便于 jq 检索与后续 Loki 采集 -->
-            <dependency>
-                <groupId>net.logstash.logback</groupId>
-                <artifactId>logstash-logback-encoder</artifactId>
-                <version>8.0</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
-
+    <dependencies>
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.17.0</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-anthropic-spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-http-client-jdk</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.21</version>
+        </dependency>
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>1.63.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.14.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>2.9.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>2.9.2</version>
+        </dependency>
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>8.0</version>
+        </dependency>
+    </dependencies>
     <build>
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.13.0</version>
-                    <configuration>
-                        <release>21</release>
-                    </configuration>
-                </plugin>
-                <plugin>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-maven-plugin</artifactId>
-                    <version>3.3.4</version>
-                </plugin>
-
-            </plugins>
-        </pluginManagement>
         <plugins>
-            <!-- 后端风格检查(保守规则:只做无争议的规范化,不重排代码布局——
-                 大仓库全量重排会产生巨量 diff 且掩盖真实改动)。
-                 `mvn spotless:check` 校验 / `mvn spotless:apply` 自动修复。 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
@@ -145,24 +160,4 @@
             </plugin>
         </plugins>
     </build>
-
-    <profiles>
-        <!-- Spring Boot executable services (jar + repackage). On by default; disable with -P '!services'. -->
-        <profile>
-            <id>services</id>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>
-            <modules>
-                <module>services/gateway-service</module>
-                <module>services/file-service</module>
-                <module>services/rag-service</module>
-                <module>services/agent-service</module>
-                <module>services/datasource-service</module>
-                <module>services/env-service</module>
-                <module>services/automation-service</module>
-                <module>services/notification-service</module>
-            </modules>
-        </profile>
-    </profiles>
 </project>

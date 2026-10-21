@@ -35,11 +35,11 @@ Nora 可以通过 MCP 连接**手机相册**——照片不用搬到电脑,直�
 | **相册整理** | 移动 / 复制 / 重命名 / 删除(进 App 回收站,可恢复)· 新建相册 |
 | **两种接入** | 手机主动连中继(换 Wi-Fi 无影响)或局域网直连;照片不出局域网、服务端零存储 |
 
-> 实现为独立配套项目 `phone-album-mcp`(Android App + 中继服务,私有仓库);在 Nora 的「设置 → 连接与工具」里添加这个 MCP 服务器即可启用。
+> 实现为独立配套项目 `phone-album-mcp`(Android App + 中继服务,私有仓库);在 Nora 的「Agent → 连接与工具」里添加这个 MCP 服务器即可启用。
 
 ## Nora 是什么
 
-一个**部署在自己机器上的单用户工作台**:与它对话,它会真实地操作工作台完成事情,而不是只给建议。
+一个**运行在自己机器上的个人智能体**:通过工作台与它对话，它会结合宿主系统环境、终端、文件和已连接的工具完成任务。
 
 - **对话即操作**:查数据库、读服务日志、读写文件、跑命令、管理容器与任务,每一步真实执行、结果可核对
 - **文件即交付**:报告与表格以真实文件落到工作区,聊天里出卡片,可直接在文件查看器中阅读、编辑、引用回对话
@@ -53,44 +53,19 @@ Nora 可以通过 MCP 连接**手机相册**——照片不用搬到电脑,直�
 | **对话 Agent** | SSE 流式输出 · 思考过程可见 · ReAct 工具循环 · 审批流 · 断线重连 · 上下文自动压缩 |
 | **知识库(RAG)** | 文件解析(Tika)→ 分块 → 向量化(Jina v3 / pgvector)· 混合检索(向量 + 关键词)· 资料库分组 · 引用来源 |
 | **文件中心** | 上传 / 文件夹组织 / 重命名 / 移动 / 下载 · 统一文件查看器(Markdown / 表格 / 图片 / PDF / HTML 隔离预览)· 「已保存成果」登记 |
-| **数据源** | PostgreSQL / MySQL / Redis 连接管理 · Schema 浏览 · 受限只读 SQL + 单条写语句守卫 |
+| **数据源** | PostgreSQL / MySQL / Redis 连接管理 · Schema 浏览 · SQL / Redis 原生命令读写 · 执行历史 |
 | **自动任务** | 真实日程(每日 / 每周 / 时区)· 无人值守执行 · 执行记录与失败原因 |
 | **环境控制台** | Docker 容器管理 · 日志流(SSE)· AI 诊断只读结论 |
 | **连接与工具(MCP)** | MCP 服务器管理(远程 / 本地 STDIO)· 工具按需加载 · 图像 / 媒体工具 · [手机相册 MCP](#手机相册-mcp配套能力) |
 | **技能** | 可复用的处理方法,AI 按需读取正文执行 · 对话中可自建 |
-| **通知中心** | Kafka 事件总线 · 任务完成 / 索引完成 / 进程异常推送 |
-| **访问控制** | 网关令牌鉴权(单用户)· 未配置即免登录 |
+| **通知中心** | 数据库通知 · 任务完成 / 索引完成 / 进程异常推送 |
+| **访问控制** | 统一令牌鉴权(单用户)· 未配置即免登录 |
 
 ## 技术架构
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  浏览器 (nora-web)                                        │
-│  React 18 · Vite · Tailwind · Zustand · SSE             │
-└────────────────────────┬────────────────────────────────┘
-                         │ HTTP / SSE（令牌鉴权）
-┌────────────────────────▼────────────────────────────────┐
-│  网关 (gateway:18080)  Spring Cloud Gateway + Nacos       │
-└──┬────────┬────────┬────────┬────────┬────────┬─────────┘
-   │        │        │        │        │        │
-┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐
-│file │  │ rag │  │agent│  │data │  │ env │  │auto │
-│18081│  │18082│  │18083│  │18084│  │18085│  │18086│
-└──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
-   │        │        │        │        │        │
-┌──▼────────▼────────▼────────▼────────▼────────▼──────┐
-│  PostgreSQL 16 + pgvector      Redis         Kafka   │
-│  （业务数据 + 向量检索）      （缓存/票据）  （通知总线） │
-└───────────────────────────────────────────────────────┘
-     另有 notification-service(18087):Kafka → 通知落库
-```
-
-| 层 | 选型 |
-|---|---|
-| 前端 | React 18 · Vite 7 · TypeScript 5 · Tailwind CSS 3 · Zustand 5 |
-| 后端 | Java 21 · Spring Boot 3.3 · Spring Cloud Alibaba(Nacos)· Maven 多模块(8 个服务) |
-| 数据 | PostgreSQL 16 + pgvector · Redis(可选降级)· Kafka(通知) |
-| 模型接入 | OpenAI 兼容协议(自定义 endpoint / key)· 流式 SSE · 思考等级注入 |
+浏览器（React / Vite / Zustand）通过 HTTP / SSE 访问一个 Spring Boot 应用（18080）。
+Agent、文件、知识库、数据源、环境、自动任务和通知按领域分包，直接调用领域服务，共用 PostgreSQL + pgvector。
+模型接入使用 LangChain4j，嵌入缓存使用 Caffeine；平台无需 Redis、Kafka、Nacos。
 
 ## 快速开始
 
@@ -110,24 +85,15 @@ docker compose -f docker-compose.prod.yml up -d       # 镜像从 GHCR 拉取
 环境要求:**Java 21**、**Maven 3.9+**、**Node 22.12+**、**pnpm 11.23.0**、**Docker**(基础设施)。
 
 ```bash
-# 1. 基础设施(PG+pgvector / Redis / Nacos / Kafka)
-cd nora-api && docker compose --profile dev-basic up -d
+# 1. PostgreSQL + pgvector
+cd nora-api && docker compose up -d
 
-# 2. 后端(8 服务,并发拉起 + 健康轮询)
-./nora.sh start          # 或 ./nora.sh deploy(自动检测变更并重建)
-./nora.sh status         # 端口/健康一览
+# 2. 构建并启动一个后端进程
+cd ..
+./nora.sh build           # mvn verify → 启动 → 健康检查
+./nora.sh status
+# 也可 cd nora-api && mvn verify && java -jar target/nora-api-0.1.0-SNAPSHOT.jar
 ```
-
-<details>
-<summary>不用脚本时的手动方式</summary>
-
-```bash
-mvn -q -pl services/gateway-service package -DskipTests
-java -jar services/gateway-service/target/gateway-service-0.1.0-SNAPSHOT.jar
-# 其余服务同理:file / rag / agent / datasource / env / automation / notification
-```
-
-</details>
 
 ### 启动前端
 
@@ -139,7 +105,7 @@ pnpm dev                 # http://localhost:3001(所有域直接接入真实后�
 
 ### 配置模型(首次)
 
-打开 `设置 → 模型`,添加一个 OpenAI 兼容的模型服务商(端点 + API Key),即可开始对话。
+打开 `Agent → 模型`，添加 OpenAI、Anthropic 或 Ollama 服务商，设置协议、端点和 API Key，即可开始对话。
 
 <details>
 <summary>服务端配置(.env.local,可选)</summary>
@@ -158,19 +124,18 @@ NORA_PROXY_PORT=7897
 
 ## 质量检查
 
-前端执行 `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`;后端执行 `mvn verify`(含单测与 Spotless)。CI 在 PR/分支推送时检查,镜像发布必须先通过同一套检查。
+前端执行 `pnpm typecheck`、`pnpm lint`、`pnpm deadcode`、`pnpm test`、`pnpm build`；后端执行 `mvn verify`(含单测与 Spotless)。CI 另跑真实 HTTP 验收，镜像发布必须先通过同一套检查。
 
-模型配置仅来自「设置 → 模型」保存的数据库记录,无静态环境变量兜底。生产 PostgreSQL/Redis/Nacos 管理端口仅绑定 `127.0.0.1`,远程管理使用 SSH 隧道。
+模型配置来自「Agent → 模型」保存的数据库记录。生产 PostgreSQL 管理端口仅绑定 `127.0.0.1`，远程管理使用 SSH 隧道。
 
 ## 目录结构
 
 ```
 Nora/
 ├── nora-web/         # 前端 — React 18 + Vite + Tailwind + Zustand
-├── nora-api/         # 后端 — Java 21 微服务（8 服务 · Maven 多模块）
-│   ├── services/     #   gateway / file / rag / agent / datasource / env / automation / notification
-│   ├── common/       #   共享基座（日志/异常/Redis/事件总线）
-│   └── docs/         #   架构与设计文档
+├── nora-api/         # Java 21 · 单 Spring Boot 应用
+│   ├── src/          # 按领域分包的源码、测试、迁移
+│   └── docs/         # 架构与设计文档
 ├── docs/demo/        # 功能演示视频（分场景短片）
 ├── .claude/          # AI 辅助开发配置（见下节）
 └── phone-album-mcp/  # 手机相册 MCP（独立仓库:Android App + 中继服务）
@@ -187,14 +152,14 @@ Nora/
 | `.claude/skills/flyway/` · `restart-service/` | 迁移检查、服务重启的标准流程 |
 | `.claude/agents/` | 代码审查子代理(后端:SSE/审批/重启坑;前端:双路径/持久化/暗色模式) |
 | `.claude/hooks/` | 自动化守卫:构建前 jar 锁检查、前端改动后自动 eslint --fix、会话结束前 tsc 把关 |
-| `.claude/workflows/` | 项目脚手架与 RAG 实施的工作流定义 |
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [docs/demo/](docs/demo/) | 功能演示视频(分场景短片) |
-| [nora-api/docs/architecture-v2.md](nora-api/docs/architecture-v2.md) | **微服务架构设计**(服务划分 / 数据流 / 路线图) |
+| [nora-api/docs/architecture-v2.md](nora-api/docs/architecture-v2.md) | 历史立项架构设计(当前状态见后端 README) |
+| [docs/dev/code-quality-2026-10-11.md](docs/dev/code-quality-2026-10-11.md) | 代码质量清理、通用依赖取舍与验证记录 |
 | [nora-api/docs/agent-implementation-spec.md](nora-api/docs/agent-implementation-spec.md) | **Agent 实施规格**(ReAct 协议 / 工具契约 / 审批协议) |
 | [nora-api/docs/agent-permission-and-tools-design.md](nora-api/docs/agent-permission-and-tools-design.md) | 权限与风险分级权威参考 |
 | [docs/dev/](docs/dev/) | 开发文档:设计评审 / 改造方案 / 实施记录(演进档案) |

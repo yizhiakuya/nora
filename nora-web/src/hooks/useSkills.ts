@@ -11,10 +11,10 @@ interface SkillsState {
   syncFromBackend: () => Promise<void>;
   /** 后端模式:读取单个技能详情(含正文) */
   loadDetail: (id: number) => Promise<Skill | null>;
-  addSkill: (skill: Skill) => void;
-  updateSkill: (id: number, patch: Partial<Skill>) => void;
-  removeSkill: (id: number) => void;
-  toggleSkill: (id: number) => void;
+  addSkill: (skill: Pick<Skill, "name" | "desc" | "category" | "instructions">) => Promise<void>;
+  updateSkill: (id: number, patch: Partial<Skill>) => Promise<void>;
+  removeSkill: (id: number) => Promise<void>;
+  toggleSkill: (id: number) => Promise<void>;
 }
 
 /** 自定义技能的统一视觉样式。 */
@@ -69,7 +69,7 @@ function fromBackend(row: BackendSkill): Skill {
 /**
  * 技能唯一数据源：AI 能力页 / 设置中心技能页共享，启停状态全局一致。
  *
- * CRUD 走 /api/skills,本地仅作缓存与乐观更新;
+ * CRUD 走 /api/skills,本地缓存仅在服务端写入成功后更新;
  *
  * 持久化时剔除 icon/color/bg：Lucide 组件引用 JSON 序列化后会变成空对象，
  * 再水合渲染会报 Element type is invalid。水合时统一恢复为 Braces 视觉。
@@ -99,58 +99,37 @@ export const useSkills = create<SkillsState>()(
           return null;
         }
       },
-      addSkill: (skill) => {
-        skillsApi
-          .createSkill({
-            name: skill.name,
-            description: skill.desc,
-            instructions: skill.instructions ?? "",
-            category: skill.category,
-          })
-          .then((saved) => {
-            // 用服务端行替换乐观项(id/时间为准)
-            set((state) => ({
-              skills: state.skills.map((s) => (s.id === skill.id ? fromBackend(saved) : s)),
-            }));
-          })
-          .catch((e) => {
-            // 失败回滚乐观项,避免界面出现未持久化的幽灵技能
-            set((state) => ({ skills: state.skills.filter((s) => s.id !== skill.id) }));
-            toast.error(e instanceof Error ? e.message : "创建技能失败");
-          });
-        set((state) => ({ skills: [...state.skills, skill] }));
+      addSkill: async (skill) => {
+        const saved = await skillsApi.createSkill({
+          name: skill.name,
+          description: skill.desc,
+          instructions: skill.instructions ?? "",
+          category: skill.category,
+        });
+        set((state) => ({ skills: [...state.skills, fromBackend(saved)] }));
       },
-      updateSkill: (id, patch) => {
-        set((state) => ({ skills: state.skills.map((s) => (s.id === id ? { ...s, ...patch } : s)) }));
-        skillsApi
-          .updateSkill(id, {
-            ...(patch.name !== undefined ? { name: patch.name } : {}),
-            ...(patch.desc !== undefined ? { description: patch.desc } : {}),
-            ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
-            ...(patch.category !== undefined ? { category: patch.category } : {}),
-            ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-          })
-          .catch((e) => {
-            toast.error(e instanceof Error ? e.message : "更新技能失败");
-            void get().syncFromBackend();
-          });
+      updateSkill: async (id, patch) => {
+        const saved = await skillsApi.updateSkill(id, {
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.desc !== undefined ? { description: patch.desc } : {}),
+          ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
+          ...(patch.category !== undefined ? { category: patch.category } : {}),
+          ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        });
+        set((state) => ({ skills: state.skills.map((s) => (s.id === id ? fromBackend(saved) : s)) }));
       },
-      removeSkill: (id) => {
+      removeSkill: async (id) => {
+        await skillsApi.deleteSkill(id);
         set((state) => ({ skills: state.skills.filter((s) => s.id !== id) }));
-        skillsApi.deleteSkill(id).catch((e) => {
-          toast.error(e instanceof Error ? e.message : "删除技能失败");
-          void get().syncFromBackend();
-        });
       },
-      toggleSkill: (id) => {
-        const next = get().skills.find((s) => s.id === id);
-        if (!next) return;
-        const enabled = !next.enabled;
-        set((state) => ({ skills: state.skills.map((s) => (s.id === id ? { ...s, enabled } : s)) }));
-        skillsApi.updateSkill(id, { enabled }).catch((e) => {
+      toggleSkill: async (id) => {
+        const skill = get().skills.find((s) => s.id === id);
+        if (!skill) return;
+        try {
+          await get().updateSkill(id, { enabled: !skill.enabled });
+        } catch (e) {
           toast.error(e instanceof Error ? e.message : "切换技能状态失败");
-          void get().syncFromBackend();
-        });
+        }
       },
     }),
     {

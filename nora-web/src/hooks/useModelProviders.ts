@@ -9,10 +9,10 @@ export const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xh
 export const REASONING_LEVELS_DISABLED = ["ultra"] as const;
 
 export const PROTOCOL_META: Record<ProviderProtocol, { label: string; desc: string }> = {
-  openai:    { label: "Chat Completions", desc: "标准 /v1/chat/completions 协议，适用于 OpenAI、DeepSeek、中转站等" },
+  openai: { label: "Chat Completions", desc: "标准 /v1/chat/completions 协议，适用于 OpenAI、DeepSeek、中转站等" },
   responses: { label: "OpenAI Responses", desc: "OpenAI 新版 /v1/responses 协议（GPT-5/o 系列官方端点）" },
-  anthropic: { label: "Anthropic",      desc: "Anthropic Messages API（/v1/messages）" },
-  ollama:    { label: "Ollama",          desc: "本地 Ollama 原生协议（/api/chat）" },
+  anthropic: { label: "Anthropic", desc: "Anthropic Messages API（/v1/messages）" },
+  ollama: { label: "Ollama", desc: "本地 Ollama 原生协议（/api/chat）" },
 };
 
 /** 单个模型的请求参数配置:上下文窗口 + 思考等级白名单 + 默认等级 + 协议覆盖 + 识图 */
@@ -52,6 +52,8 @@ export interface ModelProvider {
 
 
 interface ModelProvidersState {
+  loading: boolean;
+  syncError: string | null;
   providers: ModelProvider[];
   defaultModel: string;
   /**
@@ -98,15 +100,23 @@ export function resolveDefaultProvider(
  * 完整接入 = 名称 + 端点 URL + 密钥。
  * CRUD 与连通测试走 agent-service /api/models/providers。
  */
+let revision = 0;
+
 export const useModelProviders = create<ModelProvidersState>()(
   persist(
     (set, get) => ({
       providers: [],
+      loading: true,
+      syncError: null,
       defaultModel: "未配置",
       defaultProviderId: null,
       syncFromBackend: async () => {
+        const request = ++revision;
+        set({ loading: true });
         try {
           const providers = await modelsApi.listProviders();
+          if (request !== revision) return;
+          set({ syncError: null });
           set((state) => {
             const defaultStillThere = resolveDefaultProvider(
               providers, state.defaultModel, state.defaultProviderId);
@@ -125,22 +135,30 @@ export const useModelProviders = create<ModelProvidersState>()(
               defaultProviderId: fallback?.id ?? null,
             };
           });
-        } catch {
-          /* 后端不可用时沿用本地缓存 */
+        } catch (error) {
+          if (request === revision) set({ syncError: error instanceof Error ? error.message : String(error) });
+        } finally {
+          if (request === revision) set({ loading: false });
         }
       },
       addProvider: async ({ name, url, key, protocol = "openai", models, modelSettings }) => {
         const saved = await modelsApi.createProvider({
           name: name.trim(), protocol, endpoint: url.trim(), apiKey: key, models, modelSettings,
         });
-        set((state) => ({ providers: [...state.providers, saved] }));
+        set((state) => {
+          revision++;
+          return { loading: false, providers: [...state.providers, saved] };
+        });
       },
       editProvider: async (id, { name, url, key, protocol, models, modelSettings }) => {
         const saved = await modelsApi.updateProvider(id, {
           name: name.trim(), protocol, endpoint: url.trim(), models, modelSettings,
           ...(key?.trim() ? { apiKey: key.trim() } : {}),
         });
-        set((state) => ({ providers: state.providers.map((p) => p.id === id ? saved : p) }));
+        set((state) => {
+          revision++;
+          return { loading: false, providers: state.providers.map((p) => p.id === id ? saved : p) };
+        });
       },
       removeProvider: async (id) => {
         await modelsApi.deleteProvider(id);
@@ -150,7 +168,7 @@ export const useModelProviders = create<ModelProvidersState>()(
         // 删后重新解析默认模型的实际渠道:删的正是默认渠道(或默认模型已无可用渠道)
         // 时,重选到第一个启用渠道的首个模型;仅同名模型在其他渠道仍可解析则保留。
         const stillValid = resolveDefaultProvider(next, defaultModel,
-            defaultProviderId === id ? null : defaultProviderId);
+          defaultProviderId === id ? null : defaultProviderId);
         if (!stillValid) {
           const fallback = next.find((p) => p.enabled && p.models.length > 0);
           patch.defaultModel = fallback?.models[0] ?? "未配置";
@@ -159,13 +177,17 @@ export const useModelProviders = create<ModelProvidersState>()(
           // 同名模型回落到了另一渠道:把默认渠道改钉到回落结果,保持唯一解析
           patch.defaultProviderId = stillValid.id;
         }
-        set(patch);
+        revision++;
+        set({ ...patch, loading: false });
       },
       toggleEnabled: async (id) => {
         const target = get().providers.find((p) => p.id === id);
         if (!target) throw new Error("服务商已不存在,请刷新列表");
         const saved = await modelsApi.updateProvider(id, { enabled: !target.enabled });
-        set((state) => ({ providers: state.providers.map((p) => p.id === id ? saved : p) }));
+        set((state) => {
+          revision++;
+          return { loading: false, providers: state.providers.map((p) => p.id === id ? saved : p) };
+        });
       },
       setDefaultModel: (m, providerId) => set({
         defaultModel: m,
@@ -183,25 +205,51 @@ export const useModelProviders = create<ModelProvidersState>()(
           [model]: { ...current.modelSettings?.[model], ...patch },
         };
         const saved = await modelsApi.updateProvider(id, { modelSettings });
-        set((state) => ({ providers: state.providers.map((p) => p.id === id ? saved : p) }));
+        set((state) => {
+          revision++;
+          return { loading: false, providers: state.providers.map((p) => p.id === id ? saved : p) };
+        });
       },
       markStatus: (id, status) =>
-        set((state) => ({
-          providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)),
-        })),
+        set((state) => {
+          revision++;
+          return {
+            loading: false,
+            providers: state.providers.map((p) => (p.id === id ? { ...p, status } : p)),
+          };
+        }),
       testProvider: async (id) => {
         // 测试只更新连通状态;刷新已保存配置,保留用户选择的模型。
         const result = await modelsApi.testAndRefresh(id, (updated) => {
-          set((state) => ({
-            providers: state.providers.map((p) => (p.id === id ? updated : p)),
-          }));
+          set((state) => {
+            revision++;
+            return {
+              loading: false,
+              providers: state.providers.map((p) => (p.id === id ? updated : p)),
+            };
+          });
         });
-        set((state) => ({
-          providers: state.providers.map((p) => (p.id === id ? { ...p, status: result.status } : p)),
-        }));
+        set((state) => {
+          revision++;
+          return {
+            loading: false,
+            providers: state.providers.map((p) => (p.id === id ? { ...p, status: result.status } : p)),
+          };
+        });
         return result.status;
       },
     }),
-    { name: "model-providers" }
+    {
+      name: "model-providers",
+      version: 1,
+      partialize: ({ defaultModel, defaultProviderId }) => ({ defaultModel, defaultProviderId }),
+      migrate: (stored) => {
+        const value = stored as Partial<ModelProvidersState> | null;
+        return {
+          defaultModel: typeof value?.defaultModel === "string" ? value.defaultModel : "未配置",
+          defaultProviderId: typeof value?.defaultProviderId === "number" ? value.defaultProviderId : null,
+        };
+      },
+    }
   )
 );

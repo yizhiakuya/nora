@@ -118,7 +118,7 @@ export function WorkspaceBrowser({ dir, onNavigate, onExit }: WorkspaceBrowserPr
               <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
             )}
             <span className="text-sm text-foreground flex-1 truncate">{e.path.split("/").pop()}</span>
-            <span className="text-xs text-muted-foreground">{e.directory ? "目录" : `${e.size} B`}</span>
+            <span className="text-xs text-muted-foreground">{e.directory ? `${e.fileCount} 个文件 · ${e.size} B${e.incomplete ? "（统计不完整）" : ""}` : `${e.size} B`}</span>
             <span className="text-xs text-muted-foreground/60 hidden sm:inline">{e.modifiedAt}</span>
           </button>
           {!e.directory && <button type="button" aria-label={`删除 ${e.path}`} className="px-3 text-muted-foreground hover:text-red-500" onClick={() => useFileViewer.getState().requestAction(() => { void handleDelete(e.path); })}><Trash2 className="w-3.5 h-3.5" /></button>}

@@ -59,7 +59,7 @@ export default function BrowserPanel({ sessionId, browser }: { sessionId: string
     </details>}
     {!!state?.downloads.length && <details className="shrink-0 border-t text-xs">
       <summary className="px-3 py-2 cursor-pointer text-muted-foreground">网页下载 · {state.downloads.length}</summary>
-      <div className="max-h-24 overflow-auto px-3 pb-2 space-y-1">{state.downloads.map(item => <button key={item.target} type="button" className="block text-blue-500 hover:underline" onClick={() => openFile(item.target)}>{item.name}</button>)}</div>
+      <div className="max-h-24 overflow-auto px-3 pb-2 space-y-1">{state.downloads.map(item => <button key={item.id ?? item.target} type="button" className="block text-blue-500 hover:underline disabled:text-muted-foreground disabled:no-underline" disabled={!item.target} title={item.error} onClick={() => { if (item.target) openFile(item.target); }}>{item.name}{item.status === "pending" ? " · 下载中" : item.status === "failed" ? " · 未完成" : ""}</button>)}</div>
     </details>}
     {state?.active && <footer className="shrink-0 px-3 py-1.5 flex items-center gap-3 border-t text-[10px] text-muted-foreground">
       <span>{human ? "你正在操作" : "Agent 可以操作"} · 当前对话</span>

@@ -1,12 +1,14 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { ChatMessage } from "@/lib/api/chatApi";
-import { AgentAPI, fetchSessions, fetchSessionMessages } from "@/lib/api/agentApi";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { toast } from "sonner";
+import { reconcileChatHistory, type ChatMessage } from "@/lib/api/chatApi";
+import { fetchSessions, fetchSession, fetchSessionMessages, deleteSessionOnBackend } from "@/lib/api/agentApi";
+import { ApiError } from "@/lib/api/client";
 import { subscribeSessionTitle } from "@/lib/api/sessionTitleEvents";
 import type { QueuedChatMessage } from "@/types";
 import type { ChatRef } from "@/lib/chatRefs";
 
-export interface ChatSession {
+interface ChatSession {
   id: string;
   title: string;
   /**
@@ -28,28 +30,29 @@ export interface ChatSession {
    * 首条消息发出(saveMessages 收到非空消息)即清除。
    */
   draft?: boolean;
-  /** 本地缓存的消息(仅离线兜底/即时渲染用;真相在后端) */
-  messages: ChatMessage[];
   queuedMessages?: QueuedChatMessage[];
   queuePaused?: boolean;
-  composerDraft?: { input: string; refs: ChatRef[]; limitToRefs: boolean };
+  composerDraft?: { input: string; refs: ChatRef[]; limitToRefs: boolean; pendingInput?: QueuedChatMessage };
 }
 
 interface ChatSessionsState {
   sessions: ChatSession[];
+  messagesBySession: Record<string, ChatMessage[]>;
   activeId: string;
   /** 后端同步中 */
   syncing: boolean;
+  pendingDeletions: Record<string, { session: ChatSession; index: number; expiresAt: number }>;
   createSession: (activate?: boolean) => string;
-  deleteSession: (id: string) => void;
-  /** 撤销删除:后端无法恢复已删会话,这里只恢复本地状态并提示用户 */
-  undoDeleteSession: (session: ChatSession, index: number) => void;
+  deleteSession: (id: string) => boolean;
+  undoDeleteSession: (id: string) => boolean;
+  commitDeleteSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  loadSession: (id: string) => Promise<void>;
   /** 发送过程中本地缓存消息(流式渲染用) */
-  saveMessages: (id: string, messages: ChatMessage[]) => void;
+  saveMessages: (id: string, messages: ChatMessage[] | ((previous: ChatMessage[]) => ChatMessage[])) => void;
   saveComposerDraft: (id: string, draft: ChatSession["composerDraft"]) => void;
   updateQueuedMessages: (id: string, update: (messages: QueuedChatMessage[]) => QueuedChatMessage[], paused?: boolean) => void;
-  /** 从后端拉会话列表(启动/聚焦时调用);失败静默保留本地缓存 */
+  /** 从后端拉会话列表(启动/聚焦时调用);失败保留已有列表与内存消息 */
   syncFromBackend: () => Promise<void>;
   /** 切换会话时从后端拉完整历史,替换本地缓存 */
   loadHistory: (id: string) => Promise<void>;
@@ -76,29 +79,35 @@ function placeholderTitle(content: string): string {
   return flat.length <= PLACEHOLDER_CHARS ? flat : `${flat.slice(0, PLACEHOLDER_CHARS)}…`;
 }
 
-/**
- * 每会话本地消息写入版本号:loadHistory 返回后比对,落后即丢弃快照。
- * 否则流式/停止前后端晚到的旧历史(如健康检查重连触发的 loadHistory)会
- * 盲目覆盖缓存,把刚结束轮次的本地终态(stopped 标记、部分内容)整个冲掉。
- */
-const localWriteVersions = new Map<string, number>();
-function bumpLocalWriteVersion(id: string): void {
-  localWriteVersions.set(id, (localWriteVersions.get(id) ?? 0) + 1);
+function sessionSnapshot({ sessions, activeId, pendingDeletions }: ChatSessionsState) {
+  return { sessions: sessions.map(session => ({ ...session, messages: [] })), activeId, pendingDeletions: pendingDeletions ?? {} };
+}
+
+const deletionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const sessionLoads = new Map<string, object>();
+const committingDeletions = new Set<string>();
+let sessionsRevision = 0;
+
+function scheduleDeletion(id: string, expiresAt: number) {
+  clearTimeout(deletionTimers.get(id));
+  deletionTimers.set(id, setTimeout(() => { void useChatSessions.getState().commitDeleteSession(id); }, Math.max(0, expiresAt - Date.now())));
 }
 
 /**
- * 会话状态:后端 chat_session 表为唯一数据源,localStorage 只作缓存
- * (离线兜底 + 切会话时即时渲染,加载中会被后端历史覆盖)。
+ * 后端持久化完整历史；localStorage 只保存索引、草稿和排队消息。
+ * 切会话时先显示页面内存中的消息，再加载后端历史。
  * - syncFromBackend:拉列表(标题/时间排序),本地有而后端无的孤儿会话清除
  * - loadHistory:激活会话时拉完整消息(含 steps/sources,后端已合并去重)
- * - 删除双写:后端删除成功才移除本地;后端失败保留并让下次同步收敛
+ * - 删除先隐藏并保留 5 秒撤销窗口，提交失败恢复，刷新后继续待删除操作。
  */
 export const useChatSessions = create<ChatSessionsState>()(
   persist(
     (set, get) => ({
       sessions: [],
+      messagesBySession: {},
       activeId: "",
       syncing: false,
+      pendingDeletions: {},
       createSession: (activate = true) => {
         // 复用已有草稿会话(2026-09-20 用户反馈:连点「新建对话」/首页反复
         // 发需求会堆积一串空会话)。草稿 = 本地创建、从未发送过消息的会话
@@ -114,7 +123,7 @@ export const useChatSessions = create<ChatSessionsState>()(
         }
         const id = `sess-${Date.now()}`;
         const session: ChatSession = {
-          id, title: DEFAULT_TITLE, titleGenerated: false, updatedAt: Date.now(), messages: [], draft: true,
+          id, title: DEFAULT_TITLE, titleGenerated: false, updatedAt: Date.now(), draft: true,
         };
         set((state) => {
           const withoutSame = state.sessions.filter((s) => s.id !== id);
@@ -124,54 +133,122 @@ export const useChatSessions = create<ChatSessionsState>()(
       },
       deleteSession: (id) => {
         const { sessions, activeId } = get();
-        // 记录被删会话与其位置,供 undo 恢复
         const index = sessions.findIndex((s) => s.id === id);
-        if (index < 0) return;
-        const removed = sessions[index];
-        (get() as ChatSessionsState & { _lastDeleted?: { session: ChatSession; index: number } })._lastDeleted =
-          { session: removed, index };
-
-        // 乐观移除本地;后端删除延迟到 undo 窗口结束后执行
+        if (index < 0 || get().pendingDeletions[id]) return false;
+        const expiresAt = Date.now() + 5000;
+        sessionLoads.delete(id);
+        sessionsRevision++;
         const remaining = sessions.filter((s) => s.id !== id);
-        set({ sessions: remaining, activeId: activeId === id ? remaining[0]?.id ?? "" : activeId });
+        set(state => ({
+          sessions: remaining, activeId: activeId === id ? remaining[0]?.id ?? "" : activeId,
+          pendingDeletions: { ...state.pendingDeletions, [id]: { session: sessions[index], index, expiresAt } },
+        }));
+        scheduleDeletion(id, expiresAt);
+        return true;
       },
-      undoDeleteSession: (session, index) => {
-        // 恢复本地状态,取消待执行的后端删除
+      undoDeleteSession: (id) => {
+        const pending = get().pendingDeletions[id];
+        if (!pending || pending.expiresAt <= Date.now() || committingDeletions.has(id)) return false;
+        clearTimeout(deletionTimers.get(id));
+        deletionTimers.delete(id);
+        sessionsRevision++;
         set((state) => {
-          const sessions = [...state.sessions];
-          sessions.splice(Math.min(index, sessions.length), 0, session);
-          return { sessions, activeId: session.id };
+          const sessions = state.sessions.filter(session => session.id !== id);
+          sessions.splice(Math.min(pending.index, sessions.length), 0, pending.session);
+          const pendingDeletions = { ...state.pendingDeletions };
+          delete pendingDeletions[id];
+          return { sessions, pendingDeletions };
         });
-        (get() as ChatSessionsState & { _lastDeleted?: unknown })._lastDeleted = undefined;
+        return true;
+      },
+      commitDeleteSession: async (id) => {
+        const pending = get().pendingDeletions[id];
+        if (!pending || committingDeletions.has(id)) return;
+        clearTimeout(deletionTimers.get(id));
+        deletionTimers.delete(id);
+        committingDeletions.add(id);
+        sessionsRevision++;
+        try {
+          // 草稿可能已因绑定工作区而落库，统一请求幂等 DELETE。
+          await deleteSessionOnBackend(id);
+          sessionsRevision++;
+          set(state => {
+            const pendingDeletions = { ...state.pendingDeletions };
+            const messagesBySession = { ...state.messagesBySession };
+            delete pendingDeletions[id]; delete messagesBySession[id];
+            return { pendingDeletions, messagesBySession };
+          });
+        } catch (error) {
+          sessionsRevision++;
+          set(state => {
+            const sessions = state.sessions.filter(session => session.id !== id);
+            sessions.splice(Math.min(pending.index, sessions.length), 0, pending.session);
+            const pendingDeletions = { ...state.pendingDeletions };
+            delete pendingDeletions[id];
+            return { sessions, pendingDeletions };
+          });
+          toast.error(error instanceof Error ? error.message : String(error));
+        } finally {
+          committingDeletions.delete(id);
+        }
       },
       setActive: (id) => {
+        if (get().pendingDeletions[id]) return;
         set({ activeId: id });
-        void get().loadHistory(id);
       },
-      saveMessages: (id, messages) => {
-        // 同引用短路:useChat 收编 store 消息后写回的是同一数组,
-        // 不拦截会 map 出新引用 → 触发收编 effect → 无限循环
-        const existing = get().sessions.find((s) => s.id === id);
-        if (existing && existing.messages === messages) return;
-        bumpLocalWriteVersion(id);
-        set((state) => ({
-          sessions: state.sessions.map((s) =>
-            s.id === id
-              ? {
-                  ...s,
-                  messages,
-                  messageCount: Math.max(s.messageCount ?? 0, messages.length),
-                  updatedAt: Date.now(),
-                  // 首条消息发出即脱离草稿态(此后「新建对话」不再复用它会话)
-                  draft: messages.length === 0 ? s.draft : undefined,
-                  title:
-                    s.title === DEFAULT_TITLE && messages[0]?.role === "user"
-                      ? placeholderTitle(messages[0].content)
-                      : s.title,
-                }
-              : s
-          ),
-        }));
+      loadSession: async (id) => {
+        if (get().pendingDeletions[id]) return;
+        const request = {};
+        sessionLoads.set(id, request);
+        let remote;
+        try { remote = await fetchSession(id); }
+        catch (error) {
+          if (sessionLoads.get(id) !== request || get().pendingDeletions[id]) return;
+          sessionLoads.delete(id);
+          if (error instanceof ApiError && error.code === 404) {
+            sessionsRevision++;
+            set(state => {
+              const sessions = state.sessions.filter(session => session.id !== id);
+              const messagesBySession = { ...state.messagesBySession };
+              delete messagesBySession[id];
+              return { sessions, messagesBySession, activeId: state.activeId === id ? sessions[0]?.id ?? "" : state.activeId };
+            });
+          }
+          throw error;
+        }
+        if (sessionLoads.get(id) !== request || get().pendingDeletions[id]) return;
+        sessionLoads.delete(id);
+        set(state => {
+          const local = state.sessions.find(session => session.id === id);
+          const session: ChatSession = {
+            ...local, id, title: remote.title || DEFAULT_TITLE, titleGenerated: remote.titleGenerated,
+            messageCount: remote.messageCount, draft: false,
+            origin: remote.origin === "automation" ? "automation" : "user",
+            updatedAt: Math.max(local?.updatedAt ?? 0, new Date(remote.lastActivity ?? remote.createdAt).getTime()),
+          };
+          return { sessions: [session, ...state.sessions.filter(item => item.id !== id)].sort((a, b) => b.updatedAt - a.updatedAt) };
+        });
+      },
+      saveMessages: (id, update) => {
+        const state = get();
+        const existing = state.sessions.find(s => s.id === id);
+        if (!existing) return;
+        const previous = state.messagesBySession[id] ?? [];
+        const messages = typeof update === "function" ? update(previous) : update;
+        if (messages === previous) return;
+        const metadataChanged = previous.length !== messages.length
+          || previous.at(-1)?.isTyping !== messages.at(-1)?.isTyping;
+        set({
+          messagesBySession: { ...state.messagesBySession, [id]: messages },
+          ...(metadataChanged ? { sessions: state.sessions.map(s => s.id === id ? {
+            ...s,
+            messageCount: Math.max(s.messageCount ?? 0, messages.length),
+            updatedAt: Date.now(),
+            draft: messages.length === 0 ? s.draft : undefined,
+            title: s.title === DEFAULT_TITLE && messages[0]?.role === "user"
+              ? placeholderTitle(messages[0].content) : s.title,
+          } : s) } : {}),
+        });
       },
       updateQueuedMessages: (id, update, paused) => {
         set((state) => ({
@@ -206,8 +283,7 @@ export const useChatSessions = create<ChatSessionsState>()(
           try {
             // force=true：这里就要轮询到后端的新标题，必须绕过缓存，
             // 否则 30s TTL 会让三次轮询都命中同一份旧结果，永远等不到 AI 标题
-            const remote = await fetchSessions(true);
-            const found = remote.find((r) => r.id === id);
+            const found = await fetchSession(id);
             // 后端 titleGenerated=true = AI 标题已落库
             if (found?.title && found.titleGenerated) {
               get().applyTitle(id, found.title);
@@ -220,11 +296,13 @@ export const useChatSessions = create<ChatSessionsState>()(
       },
       syncFromBackend: async () => {
         if (get().syncing) return;
+        const requestRevision = sessionsRevision;
         set({ syncing: true });
         try {
-          const remote = await fetchSessions();
+          const remote = await fetchSessions(true);
+          if (requestRevision !== sessionsRevision) return;
           const now = Date.now();
-          const remoteSessions: ChatSession[] = remote.map((r) => {
+          const remoteSessions: ChatSession[] = remote.filter(r => !get().pendingDeletions[r.id]).map((r) => {
             const local = get().sessions.find((s) => s.id === r.id);
             // 后端真实活跃时间优先(发送中本地 updatedAt 更新,取两者较新)
             const serverTime = r.lastActivity ? new Date(r.lastActivity).getTime() : NaN;
@@ -239,8 +317,6 @@ export const useChatSessions = create<ChatSessionsState>()(
               messageCount: r.messageCount,
               updatedAt,
               origin: r.origin === "automation" ? "automation" as const : undefined,
-              // 保留本地消息缓存直到 loadHistory 拉到后端历史
-              messages: local?.messages ?? [],
               queuedMessages: local?.queuedMessages,
               queuePaused: local?.queuePaused,
               composerDraft: local?.composerDraft,
@@ -250,52 +326,62 @@ export const useChatSessions = create<ChatSessionsState>()(
           // 本地草稿(未发消息的会话)在后端没有行,不能被列表同步抹掉——
           // 否则「新建对话 → 侧栏挂载同步」会把刚建的草稿清掉,用户再点又建新的
           // (无限创建的另一半根因,2026-09-20)。草稿排在列表最前(最新)。
-          const drafts = get().sessions.filter((s) => s.draft);
+          const drafts = get().sessions.filter((s) => s.draft && !remoteSessions.some(remote => remote.id === s.id));
           set({
             sessions: [...drafts, ...remoteSessions],
+            messagesBySession: Object.fromEntries(Object.entries(get().messagesBySession)
+              .filter(([id]) => !!get().pendingDeletions[id] || [...drafts, ...remoteSessions].some(session => session.id === id))),
             activeId: activeStillThere || drafts.some((d) => d.id === get().activeId)
               ? get().activeId
               : remoteSessions[0]?.id ?? drafts[0]?.id ?? "",
           });
-          // 默认激活的第一个会话总是刷新历史(后台,不阻塞)。
-          // 不能用「缓存非空就跳过」:localStorage 里可能躺着陈旧瞬态
-          // (旧审批卡/typing 态),必须让后端真史覆盖,否则死卡永远重现
-          const first = remoteSessions[0];
-          if (first) {
-            void get().loadHistory(first.id);
-          }
         } catch {
-          // 后端不可达:保留 localStorage 缓存,离线兜底
+          // 后端不可达:保留会话列表和页面内存消息
         } finally {
           set({ syncing: false });
         }
       },
       loadHistory: async (id) => {
         if (!id) return;
-        // 快照新鲜度:请求发起后本会话若有过本地消息写入(流式写回/新回合
-        // 终态),返回的快照已落后于本地,整份丢弃——否则晚到的旧历史会把
-        // 停止/刚结束轮次的本地终态(stopped、部分内容)整个冲掉
-        const localWritesAtRequest = localWriteVersions.get(id) ?? 0;
+        const previous = get().messagesBySession[id];
+        if (previous?.some(message => message.isTyping)) return;
         try {
           const messages = await fetchSessionMessages(id);
-          if ((localWriteVersions.get(id) ?? 0) !== localWritesAtRequest) return;
-          set((state) => ({
-            sessions: state.sessions.map((s) =>
-              s.id === id
-                ? { ...s, messages, draft: messages.length > 0 ? undefined : s.draft }
-                : s
-            ),
-          }));
+          if (get().messagesBySession[id] !== previous) return;
+          get().saveMessages(id, current => reconcileChatHistory(current, messages));
         } catch {
-          // 网络失败:沿用本地缓存
+          // 网络失败:沿用页面内存缓存
         }
       },
     }),
     {
       name: "chat-sessions",
-      version: 1,
-      // v0 是纯本地会话源;v1 起后端为准,messages 只当缓存
-      migrate: (state) => ({ ...(state as ChatSessionsState), sessions: [] }),
+      version: 3,
+      partialize: sessionSnapshot,
+      migrate: (state) => sessionSnapshot(state as ChatSessionsState),
+      onRehydrateStorage: () => state => {
+        if (!state) return;
+        for (const [id, pending] of Object.entries(state.pendingDeletions)) {
+          scheduleDeletion(id, pending.expiresAt);
+        }
+      },
+      storage: createJSONStorage(() => ({
+        getItem: name => localStorage.getItem(name),
+        removeItem: name => localStorage.removeItem(name),
+        setItem: (name, value) => {
+          try {
+            if (localStorage.getItem(name) === value) return;
+            localStorage.setItem(name, value);
+            toast.dismiss("chat-storage-error");
+          } catch (error) {
+            if (!(error instanceof DOMException) || !["QuotaExceededError", "SecurityError"].includes(error.name)) throw error;
+            toast.error(error.message, {
+              id: "chat-storage-error",
+              description: "草稿、排队消息和待删除操作仅保留在当前页面，刷新后可能丢失。",
+            });
+          }
+        },
+      })),
     }
   )
 );
@@ -310,6 +396,3 @@ export const useChatSessions = create<ChatSessionsState>()(
 subscribeSessionTitle((sessionId, title) => {
   useChatSessions.getState().applyTitle(sessionId, title);
 });
-
-/** 兼容旧引用:发送完成后后端已落库,无需额外上报 */
-export const _sendMessage = AgentAPI.sendMessage;

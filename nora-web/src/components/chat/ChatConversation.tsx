@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment } from "react";
-import { ArrowDown, MessageSquare as MessageSquareOpen } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { ChatMessageItem } from "./ChatMessageItem";
@@ -13,7 +13,6 @@ import { useChatCommands } from "@/hooks/useChatCommands";
 
 interface ChatConversationProps {
   sessionId: string;
-  initialMessages: ChatMessage[];
   /** 初始输入框内容(如从数据源页跳转预填);仅挂载时生效 */
   initialInput?: string;
   /** 初始引用集合(跨页「交给助手」交接:M2-02);仅挂载时生效 */
@@ -52,9 +51,8 @@ function shouldShowTimeDivider(prev: ChatMessage | undefined, cur: ChatMessage):
  * 切换会话时整体重挂载，从会话 store 载入历史并持续持久化。
  * 智能滚动:用户上翻阅读历史时不强制拉底,显示「回到底部」按钮。
  */
-export function ChatConversation({ sessionId, initialMessages, initialInput, initialRefs, autoSendInitial, browser }: ChatConversationProps) {
+export function ChatConversation({ sessionId, initialInput, initialRefs, autoSendInitial, browser }: ChatConversationProps) {
   const { messages, input, setInput, isSending, isStopping, isCompacting, contextMeter, queuedMessages, processingQueuedId, insertQueuedMessage, removeQueuedMessage, restoreQueuedMessage, sendMessage, sendTaskMessage, reasoningLevel, setReasoningLevel, permissionMode, setPermissionMode, stopGenerating, retryMessage, editAndResend, refs, addRef, removeRef, limitToRefs, setLimitToRefs } = useChat({
-    initialMessages,
     initialInput,
     initialRefs,
     autoSendInitial,
@@ -72,19 +70,20 @@ export function ChatConversation({ sessionId, initialMessages, initialInput, ini
       {browser?.state?.task && <BrowserTaskCard sessionId={sessionId} browser={browser} isSending={isSending} onMessage={sendTaskMessage} onStop={stopGenerating} />}
       {/* Chat History */}
       <div className="relative flex-1 min-h-0">
-        <div ref={scrollRef} className="h-full overflow-y-auto px-4 py-6 custom-scroll [@container(min-width:640px)]:px-6">
-          <div className="max-w-[820px] mx-auto space-y-7">
+        <div ref={scrollRef} className="h-full overflow-y-auto px-4 py-8 custom-scroll [@container(min-width:640px)]:px-6">
+          <div className="max-w-[820px] mx-auto space-y-8">
             {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 pt-20">
-                <MessageSquareOpen className="w-7 h-7 text-muted-foreground/60" />
-                <span className="text-sm text-center leading-relaxed max-w-sm">开始新的对话，AI 会基于已启用的能力和知识库回答</span>
+              <div className="flex flex-col items-center justify-center text-center pt-[12vh] pb-8">
+                <img src="/brand-logo.png" alt="" width={36} height={36} className="mb-5 opacity-80" />
+                <h1 className="text-2xl font-medium tracking-tight">从这里，开始一件事。</h1>
+                <p className="mt-3 text-[13px] text-muted-foreground leading-relaxed max-w-sm">描述你的目标，Nora 会与你一起推进。<br />输入 @ 添加文件，或 / 选择技能与命令。</p>
               </div>
             ) : (
               messages.map((msg, i) => (
                 <Fragment key={msg.id}>
                   {shouldShowTimeDivider(messages[i - 1], msg) && (
                     <div className="flex justify-center pb-1">
-                      <span className="text-[10px] text-muted-foreground bg-muted/70 dark:bg-muted/40 px-2.5 py-0.5 rounded-full tabular-nums">
+                      <span className="text-[11px] text-muted-foreground/70 tabular-nums">
                         {msg.timestamp}
                       </span>
                     </div>

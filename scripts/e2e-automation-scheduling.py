@@ -41,11 +41,11 @@ def main():
             raise RuntimeError(label)
 
     try:
-        connection_id = api(18084, "/datasources", {"name": prefix, "engine": "postgresql", "host": "127.0.0.1",
+        connection_id = api(18080, "/datasources", {"name": prefix, "engine": "postgresql", "host": "127.0.0.1",
                                                      "port": 15432, "database": "nora", "username": "nora", "password": "nora"}, "POST")["id"]
         schedule = json.dumps({"frequency": "daily", "localTime": "23:59", "timezone": "Asia/Shanghai"})
         for i in range(3):
-            rule = api(18086, "/automations", {"name": prefix + "-" + str(i), "triggerType": "daily", "actionType": "sql",
+            rule = api(18080, "/automations", {"name": prefix + "-" + str(i), "triggerType": "daily", "actionType": "sql",
                                                 "sql": "SELECT pg_sleep(6), 'verified' AS proof", "connectionId": connection_id,
                                                 "schedule": schedule}, "POST")
             rules.append(rule["id"])
@@ -61,7 +61,7 @@ def main():
         seen_running = set()
         records = []
         while time.monotonic() < deadline:
-            records = [r for r in api(18086, "/automations/executions") if r["ruleId"] in rules[:2]]
+            records = [r for r in api(18080, "/automations/executions") if r["ruleId"] in rules[:2]]
             seen_running.update(r["ruleId"] for r in records if r["status"] in ("queued", "running"))
             if len(records) == 2 and all(r["status"] == "success" for r in records):
                 break
@@ -77,9 +77,9 @@ def main():
         if injected:
             sql("DROP TRIGGER IF EXISTS " + function + " ON schema_automation.execution_record; DROP FUNCTION IF EXISTS schema_automation." + function + "();")
         for rule_id in rules:
-            api(18086, "/automations/" + str(rule_id), method="DELETE")
+            api(18080, "/automations/" + str(rule_id), method="DELETE")
         if connection_id is not None:
-            api(18084, "/datasources/" + str(connection_id), method="DELETE")
+            api(18080, "/datasources/" + str(connection_id), method="DELETE")
         print("REPORT", path, flush=True)
 
 

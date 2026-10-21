@@ -8,72 +8,76 @@
   }
 
   :root {
-    --background: 220 20% 98%;
-    --foreground: 222 24% 16%;
-    --sidebar: 220 20% 97%;
+    --background: 40 20% 98%;
+    --foreground: 30 6% 16%;
+    --sidebar: 40 12% 94%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 24% 16%;
+    --card-foreground: 30 6% 16%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 24% 16%;
+    --popover-foreground: 30 6% 16%;
 
-    --primary: 221.2 83.2% 53.3%;
+    --primary: 220 65% 48%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 220 16% 95%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 40 10% 94%;
+    --secondary-foreground: 30 6% 20%;
 
-    --muted: 220 16% 95%;
-    --muted-foreground: 218 11% 44%;
+    --muted: 40 10% 94%;
+    --muted-foreground: 30 4% 44%;
 
-    --accent: 220 16% 94%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 40 10% 91%;
+    --accent-foreground: 30 6% 16%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 220 16% 90%;
-    --input: 220 16% 86%;
-    --ring: 221.2 83.2% 53.3%;
+    --border: 35 9% 88%;
+    --input: 35 8% 82%;
+    --ring: 220 65% 48%;
 
     /* 点阵网格用(服务不可用页):亮色下小灰点 */
     --dot-grid: 0 0% 60%;
 
     --radius: 0.625rem;
-    --shadow-surface: 0 1px 2px hsl(222 24% 16% / 0.03);
-    --shadow-float: 0 12px 40px hsl(222 24% 16% / 0.12), 0 2px 8px hsl(222 24% 16% / 0.06);
+    --motion-fast: 120ms;
+    --motion-normal: 180ms;
+    --motion-panel: 220ms;
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --shadow-surface: 0 1px 3px hsl(30 6% 16% / 0.035);
+    --shadow-float: 0 20px 60px -12px hsl(30 6% 16% / 0.18), 0 4px 12px hsl(30 6% 16% / 0.05);
     color-scheme: light;
   }
 
   .dark {
-    --background: 222 18% 9%;
-    --foreground: 216 24% 93%;
-    --sidebar: 222 17% 11%;
+    --background: 30 4% 11%;
+    --foreground: 40 8% 91%;
+    --sidebar: 30 5% 9%;
 
-    --card: 222 17% 12%;
-    --card-foreground: 216 24% 93%;
+    --card: 30 4% 13%;
+    --card-foreground: 40 8% 91%;
 
-    --popover: 222 17% 14%;
-    --popover-foreground: 216 24% 93%;
+    --popover: 30 4% 15%;
+    --popover-foreground: 40 8% 91%;
 
     --primary: 217 92% 68%;
     --primary-foreground: 222 24% 12%;
 
-    --secondary: 222 12% 18%;
+    --secondary: 30 4% 18%;
     --secondary-foreground: 210 40% 98%;
 
-    --muted: 222 12% 18%;
-    --muted-foreground: 218 12% 65%;
+    --muted: 30 4% 18%;
+    --muted-foreground: 35 5% 62%;
 
-    --accent: 222 12% 21%;
+    --accent: 30 4% 21%;
     --accent-foreground: 210 40% 98%;
 
     --destructive: 0 65% 48%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 222 12% 22%;
-    --input: 222 12% 28%;
+    --border: 30 4% 23%;
+    --input: 30 4% 30%;
     --ring: 217 92% 68%;
     --shadow-surface: 0 1px 2px hsl(0 0% 0% / 0.15);
     --shadow-float: 0 12px 40px hsl(0 0% 0% / 0.35), 0 2px 8px hsl(0 0% 0% / 0.2);
@@ -93,6 +97,9 @@
     font-size: 0.875rem;
     line-height: 1.5;
   }
+  ::selection { background: hsl(var(--primary) / 0.16); }
+  button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
+  button:enabled, [role="button"] { cursor: pointer; }
   :where(button, a, input, textarea, [role="tab"], [role="switch"]):focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
@@ -100,37 +107,100 @@
 }
 
 @layer components {
+  .app-button {
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--ease-out);
+  }
+  .app-button:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: translateY(1px);
+  }
+  .app-button :where(svg) {
+    @apply pointer-events-none size-4 shrink-0;
+  }
   .page-content {
-    @apply min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8 lg:px-8;
+    @apply min-h-0 flex-1 overflow-y-auto px-5 py-7 sm:px-8 sm:py-9 lg:px-10;
+    scrollbar-gutter: stable;
   }
   .page-container {
-    @apply mx-auto w-full max-w-6xl space-y-6 pb-10;
+    @apply mx-auto w-full max-w-6xl space-y-7 pb-10;
+    animation: content-enter var(--motion-normal) var(--ease-out);
   }
   .page-heading {
-    @apply text-2xl font-semibold tracking-tight text-foreground;
+    @apply text-2xl font-medium tracking-[-0.035em] text-foreground;
   }
   .page-description {
-    @apply mt-2 text-sm leading-relaxed text-muted-foreground;
+    @apply mt-2 text-[13px] leading-relaxed text-muted-foreground;
   }
   .surface {
-    @apply rounded-xl border border-border bg-card shadow-surface;
+    @apply rounded-xl border border-border/80 bg-card shadow-surface;
   }
   .section-heading {
-    @apply text-sm font-semibold text-foreground;
+    @apply text-[13px] font-semibold tracking-[-0.01em] text-foreground;
   }
+  .composer {
+    @apply rounded-2xl border border-input/70 bg-card shadow-[0_6px_28px_-8px_hsl(var(--foreground)/0.10)] transition-[border-color,box-shadow];
+    transition-duration: var(--motion-normal);
+    transition-timing-function: var(--ease-out);
+  }
+  .composer:has(textarea:focus-visible) {
+    @apply border-foreground/30 shadow-[0_4px_24px_-6px_hsl(var(--foreground)/0.12)];
+  }
+  .composer textarea:focus-visible { outline: none; }
+  .work-list {
+    @apply overflow-hidden rounded-xl border border-border/70 bg-card;
+  }
+  .work-row {
+    @apply flex items-center gap-3 border-b border-border/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/60;
+  }
+  .section-label {
+    @apply text-[11px] font-medium tracking-[0.06em] text-muted-foreground;
+  }
+  .app-toolbar {
+    @apply flex h-12 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+  .quick-action {
+    @apply flex min-w-0 items-start gap-3 rounded-xl border border-border/70 bg-card px-4 py-4 text-left hover:border-input hover:bg-muted/40;
+    transition: background-color var(--motion-fast), border-color var(--motion-fast), transform var(--motion-fast) var(--ease-out);
+  }
+  .quick-action:active { transform: translateY(1px); }
+  .content-enter { animation: content-enter var(--motion-normal) var(--ease-out); }
+  .motion-overlay[data-state="open"] { animation: overlay-enter var(--motion-normal) var(--ease-out); }
+  .motion-overlay[data-state="closed"] { animation: overlay-exit var(--motion-fast) ease-in; }
+  .motion-panel[data-state="open"] { animation: panel-enter var(--motion-normal) var(--ease-out); }
+  .motion-panel[data-state="closed"] { animation: panel-exit var(--motion-fast) ease-in; }
+  .motion-drawer[data-state="open"] { animation: drawer-enter var(--motion-panel) var(--ease-out); }
+  .motion-drawer[data-state="closed"] { animation: drawer-exit var(--motion-normal) ease-in; }
+  .loading-skeleton { @apply rounded-md bg-muted; }
 }
+
+@keyframes content-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes overlay-enter { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-exit { to { opacity: 0; } }
+@keyframes panel-enter { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes panel-exit { to { opacity: 0; transform: translateY(2px) scale(0.98); } }
+@keyframes drawer-enter { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes drawer-exit { to { transform: translateX(-100%); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  .app-button:active, .quick-action:active { transform: none; }
 }
 
 .custom-scroll::-webkit-scrollbar {
   width: 6px;
   height: 6px;
+}
+
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.25) transparent;
+  overscroll-behavior: contain;
 }
 
 .custom-scroll::-webkit-scrollbar-track {
@@ -234,5 +304,36 @@
 .chat-markdown code:not(pre code) {
   padding: 0.1em 0.3em;
   font-size: 0.85em;
+}
+
+.context-meter {
+  appearance: none;
+  display: block;
+  height: 5px;
+  border: 0;
+  border-radius: 999px;
+  background: hsl(var(--border));
+}
+
+.context-meter-detail { height: 6px; }
+
+.context-meter::-webkit-meter-bar {
+  height: 100%;
+  border: 0;
+  border-radius: 999px;
+  background: hsl(var(--border));
+  box-shadow: none;
+}
+
+.context-meter::-webkit-meter-optimum-value,
+.context-meter::-webkit-meter-suboptimum-value,
+.context-meter::-webkit-meter-even-less-good-value {
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.context-meter::-moz-meter-bar {
+  border-radius: 999px;
+  background: currentColor;
 }
 

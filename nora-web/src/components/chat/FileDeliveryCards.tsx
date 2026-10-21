@@ -18,8 +18,7 @@ export function FileDeliveryCards({ msg, sessionId }: { msg: ChatMessage; sessio
     try {
       const { files } = await viewerApi.resolve([target]);
       if (!files.length) throw new Error("文件已不可用");
-      const result = await savedArtifactsApi.register({ kind: "workspace_file", path: target.slice(10), name, sessionId, messageKey: stepId });
-      if (!result) throw new Error("成果登记失败，请稍后重试");
+      await savedArtifactsApi.register({ kind: "workspace_file", path: target.slice(10), name, sessionId, messageKey: stepId });
       setRegistered(previous => [...previous, target]);
       toast.success("成果已登记");
     } catch (error) { toast.error(error instanceof Error ? error.message : "登记失败"); }

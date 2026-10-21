@@ -1,0 +1,81 @@
+server:
+  port: ${NORA_PORT:18080}
+spring:
+  application:
+    name: nora
+  jackson:
+    time-zone: Asia/Shanghai
+  datasource:
+    url: ${NORA_DB_URL:jdbc:postgresql://localhost:15432/nora}
+    username: ${NORA_DB_USERNAME:nora}
+    password: ${NORA_DB_PASSWORD:nora}
+  flyway:
+    enabled: false # DatabaseConfig preserves each domain's existing migration history.
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+  task:
+    scheduling:
+      pool:
+        size: 4
+nora:
+  timezone: Asia/Shanghai
+  auth:
+    token: ${NORA_AUTH_TOKEN:}
+  file:
+    storage-dir: ${NORA_FILE_STORAGE_DIR:./data/files/}
+  agent:
+    # 工具轮数保险丝(不是任务预算):循环跑到模型自己不再调工具为止(对齐 Codex/Claude Code),
+    # 上下文增长由轮内压缩 + 旧图回收控制、用户随时可停;此值只兜病态死循环,
+    # 故给远超正常任务需要的大值(实测"扫相册找猫"50 张照片自然跑 17 轮)。
+    max-tool-rounds: 100
+    # 本机终端(run_command)的 PowerShell:
+    #   默认优先用随仓库分发的内置 pwsh 7(tools/pwsh,首次使用解压到同目录 pwsh-<ver>),
+    #   保证版本确定、不依赖宿主机;解压失败/归档缺失时回退 PATH 上的 pwsh,再兜底系统 powershell.exe(5.1)。
+    # powershell: 显式指定 pwsh 可执行文件(绝对路径或命令名);空=自动(内置→PATH)
+    powershell: ${NORA_POWERSHELL:}
+    # pwsh-bundle: 内置 pwsh 归档(zip)路径;空=禁用内置(直接用 PATH)
+    pwsh-bundle: ${NORA_PWSH_BUNDLE:tools/pwsh/PowerShell-7.6.6-win-x64.zip}
+  proxy:
+    # 出站代理:外网目标(LLM 上游/Jina embedding)经此转发，内网目标直连。
+    # 环境变量覆盖:NORA_PROXY_ENABLED / NORA_PROXY_HOST / NORA_PROXY_PORT
+    enabled: ${NORA_PROXY_ENABLED:false}
+    host: ${NORA_PROXY_HOST:127.0.0.1}
+    port: ${NORA_PROXY_PORT:7897}
+    # 直连名单(不走代理):这些「公网域名」实际指向自家宽带/内网,
+    # 经代理远程节点绕行反而慢(实测 +2.3s)。媒体中继 home.rainaki.top 即此类。
+    bypass-hosts: ${NORA_PROXY_BYPASS_HOSTS:home.rainaki.top}
+  # 媒体磁盘缓存(相册等远程媒体):一次拉取跨会话复用,手机离线也能看
+  media-cache:
+    dir: ${NORA_MEDIA_CACHE_DIR:./data/media-cache}
+    max-bytes: ${NORA_MEDIA_CACHE_MAX_BYTES:2147483648}
+    # 中继公网基址:用于后台探测其局域网端点(链路自动选择)+ 手机网络状态。
+    # 空 = 关闭该功能(媒体拉取仍可走公网直连)。
+    relay-base: ${NORA_RELAY_BASE:https://home.rainaki.top:8900}
+    # 局域网端点探测周期(秒);探测只打中继 /health,开销可忽略
+    lan-probe-seconds: ${NORA_RELAY_LAN_PROBE_SECONDS:120}
+  embedding:
+    api-key: ${NORA_EMBEDDING_API_KEY:}
+    base-url: ${NORA_EMBEDDING_BASE_URL:https://api.jina.ai/v1}
+    model: jina-embeddings-v3
+    dimensions: 1024
+  retrieval:
+    # 余弦相似度下限:低于此值不注入 prompt,避免「问你好也召回一堆垃圾」。
+    # 0.51 取自 2026-09-22 评测复校(45 问题集):无关查询最高 0.476
+    # (「明天开会几点」的语义漂移),相关查询最低 0.540(口语改写类)——
+    # 取两带中点;旧值 0.45 会让无关问题以 0.46~0.48 越阈。
+    min-score: ${NORA_RETRIEVAL_MIN_SCORE:0.51}
+    vector-weight: ${NORA_RETRIEVAL_VECTOR_WEIGHT:2}
+    keyword-weight: ${NORA_RETRIEVAL_KEYWORD_WEIGHT:1}
+    candidate-pool: ${NORA_RETRIEVAL_CANDIDATE_POOL:20}
+    min-keyword-query-length: ${NORA_RETRIEVAL_MIN_KEYWORD_QUERY_LENGTH:4}
+    # 可选重排(阶段 B,方案 §6.2):默认关闭;开启需同时配置模型名。
+    # 用 Jina /v1/rerank(与嵌入同一 provider/key);失败保留融合排序并标记降级。
+    rerank-enabled: ${NORA_RETRIEVAL_RERANK_ENABLED:false}
+    rerank-model: ${NORA_RETRIEVAL_RERANK_MODEL:jina-reranker-v2-base-multilingual}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

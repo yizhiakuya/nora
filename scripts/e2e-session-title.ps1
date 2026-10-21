@@ -1,4 +1,4 @@
-﻿# E2E: 会话标题「占位 → AI 改名」验证。
+# E2E: 会话标题「占位 → AI 改名」验证。
 #
 # 覆盖两条关键行为：
 #   1. 超长首条消息不再让会话创建失败（旧实现把原文塞进 VARCHAR(255) 会 500）
@@ -6,7 +6,7 @@
 #
 # 用法: powershell -ExecutionPolicy Bypass -File scripts/e2e-session-title.ps1
 $ErrorActionPreference = "Stop"
-$base = "http://localhost:18083/api/chat"
+$base = "http://localhost:18080/api/chat"
 $sessionId = "sess-title-e2e-" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 # 刻意用一条远超 255 字符的消息（旧实现必崩）

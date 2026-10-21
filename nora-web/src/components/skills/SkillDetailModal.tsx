@@ -11,7 +11,7 @@ interface SkillDetailModalProps {
   skill: Skill | null;
   onClose: () => void;
   onEdit: (skill: Skill) => void;
-  onDelete: (skill: Skill) => void;
+  onDelete: (skill: Skill) => Promise<void>;
   onToggle: (id: number) => void;
 }
 
@@ -20,6 +20,7 @@ interface SkillDetailModalProps {
  * 列表接口不带正文,打开时按需拉详情(渐进披露);加载中显示占位。
  */
 export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }: SkillDetailModalProps) {
+  const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const loadDetail = useSkills((s) => s.loadDetail);
@@ -44,14 +45,22 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
 
   const Icon = current.icon;
 
-  const handleDelete = () => {
-    onDelete(current);
-    toast.success(`已删除技能「${current.name}」`);
-    onClose();
+  const handleDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await onDelete(current);
+      toast.success(`已删除技能「${current.name}」`);
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "删除技能失败");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
-    <Modal isOpen onClose={onClose} title="技能详情" width="w-[94%] sm:w-[560px]">
+    <Modal isOpen onClose={() => { if (!deleting) onClose(); }} title="技能详情" width="w-[94%] sm:w-[560px]">
       <div className="space-y-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -70,7 +79,7 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[10px] text-muted-foreground">{current.enabled ? "可用" : "已停用"}</span>
-            <Switch checked={current.enabled} onCheckedChange={() => onToggle(current.id)} />
+            <Switch disabled={deleting} checked={current.enabled} onCheckedChange={() => onToggle(current.id)} />
           </div>
         </div>
 
@@ -102,8 +111,8 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
           <div className="bg-red-50 dark:bg-red-950/40 border border-red-100 dark:border-red-900 rounded-lg p-3 flex items-center justify-between gap-3 animate-in fade-in">
             <span className="text-xs text-red-600 dark:text-red-400">确认删除「{current.name}」？该操作不可恢复。</span>
             <div className="flex gap-2 shrink-0">
-              <Button variant="outline" size="sm" className="h-7 text-xs bg-card" onClick={() => setConfirming(false)}>取消</Button>
-              <Button size="sm" className="h-7 text-xs bg-red-600 dark:bg-red-500 hover:bg-red-700 dark:hover:bg-red-600" onClick={handleDelete}>确认删除</Button>
+              <Button disabled={deleting} variant="outline" size="sm" className="h-7 text-xs bg-card" onClick={() => setConfirming(false)}>取消</Button>
+              <Button disabled={deleting} size="sm" className="h-7 text-xs bg-red-600 dark:bg-red-500 hover:bg-red-700 dark:hover:bg-red-600" onClick={handleDelete}>确认删除</Button>
             </div>
           </div>
         )}
@@ -112,15 +121,15 @@ export function SkillDetailModal({ skill, onClose, onEdit, onDelete, onToggle }:
       <div className="mt-6 pt-4 border-t border-border flex justify-end gap-2">
         {!current.isOfficial && (
           <>
-            <Button variant="outline" size="sm" className="h-8 text-xs bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={() => setConfirming(true)}>
+            <Button disabled={deleting} variant="outline" size="sm" className="h-8 text-xs bg-card text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/40" onClick={() => setConfirming(true)}>
               <Trash2 className="w-3.5 h-3.5 mr-1" /> 删除
             </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs bg-card" onClick={() => onEdit(current)}>
+            <Button disabled={deleting} variant="outline" size="sm" className="h-8 text-xs bg-card" onClick={() => onEdit(current)}>
               <Pencil className="w-3.5 h-3.5 mr-1" /> 编辑
             </Button>
           </>
         )}
-        <Button size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={onClose}>关闭</Button>
+        <Button disabled={deleting} size="sm" className="h-8 text-xs bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={onClose}>关闭</Button>
       </div>
     </Modal>
   );

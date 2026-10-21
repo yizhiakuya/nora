@@ -1,5 +1,6 @@
 import { LucideIcon } from "lucide-react";
 import type { ChatRef } from "@/lib/chatRefs";
+import type { TaskContextPayload } from "@/lib/api/chatApi";
 
 /** GET /chat/settings：服务端保存的 Agent 默认行为。 */
 export interface AgentSettings {
@@ -11,12 +12,20 @@ export interface AgentSettings {
 
 export interface QueuedChatMessage {
   id: string;
-  kind?: "prompt" | "compact";
+  kind?: "message" | "compact";
   content: string;
   refs: ChatRef[];
   limitToRefs: boolean;
   /** 插入请求响应丢失时，使用同一轮次和消息 ID 确认，不能当作未发送消息撤回。 */
   insertTurnId?: string;
+  request?: {
+    content: string;
+    model?: string;
+    reasoningLevel?: string;
+    permissionMode?: string;
+    providerId?: number;
+    context?: TaskContextPayload;
+  };
 }
 
 export interface Skill {
@@ -51,11 +60,6 @@ export interface FileItem {
   indexed: boolean;
   /** 所属文件夹 id;null/undefined = 根目录 */
   folderId?: number | null;
-}
-
-export interface FolderItem {
-  name: string;
-  count: number;
 }
 
 export type FilePreviewKind = "pdf" | "word" | "excel" | "image" | "video" | "audio" | "text" | "unknown" | "markdown" | "csv" | "json" | "html";
@@ -192,7 +196,7 @@ export interface Citation {
 }
 
 /** 检索测试结果（含通道细分与完整证据;2026-09-22 阶段 A） */
-export interface RetrievalResult {
+interface RetrievalResult {
   docName: string;
   source: KnowledgeSource;
   chunkIndex: number;
@@ -262,22 +266,6 @@ export interface DbConnection {
   maxConn: number;
 }
 
-/** 数据库表结构 */
-export interface DbTable {
-  name: string;
-  rows: number;
-  size: string;
-  columns: DbColumn[];
-}
-
-export interface DbColumn {
-  name: string;
-  type: string;
-  nullable: boolean;
-  isPrimary?: boolean;
-  comment?: string;
-}
-
 /** 查询历史 */
 export interface QueryHistory {
   id: number;
@@ -295,8 +283,9 @@ export interface ServiceInstance {
   name: string;
   image: string;
   port: number;
-  status: "running" | "stopped" | "error";
-  health: "healthy" | "degraded" | "down";
+  status: "running" | "stopped" | "error" | "unknown";
+  health: "healthy" | "degraded" | "down" | "unknown";
+  observer?: { host: string; platform: string; scope: "host" | "container" };
   uptime: string;
   cpu: string;
   memory: string;
@@ -372,12 +361,13 @@ export interface EnvVar {
 // GET /api/workspace/browser/:sessionId
 export interface BrowserState {
   active: boolean;
+  busy?: boolean;
   owner?: "human" | "agent";
   activeTabId?: string;
   width: number;
   height: number;
   tabs: { id: string; url: string; title: string }[];
-  downloads: { name: string; target: string }[];
+  downloads: { id?: string; name: string; target?: string; status?: "pending" | "completed" | "failed"; error?: string }[];
   exports: BrowserReceipt[];
   task: BrowserTask | null;
 }

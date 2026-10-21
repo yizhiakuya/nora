@@ -2,14 +2,15 @@
 
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
-import { Cpu, MessageSquarePlus, Trash2, Copy, Check } from "lucide-react";
+import { MessageSquarePlus, Trash2, Copy, Check, MoreHorizontal, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { ChatConversation } from "@/components/chat/ChatConversation";
 import { useWorkspace } from "@/components/layout/WorkspaceContext";
 import { useModelProviders } from "@/hooks/useModelProviders";
-import { deleteSessionOnBackend } from "@/lib/api/agentApi";
-import { relativeTime } from "@/lib/relativeTime";
+import { useDeleteChatSession } from "@/hooks/useDeleteChatSession";
+import { ApiError } from "@/lib/api/client";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAgentOnline } from "@/hooks/useBackendHealth";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
@@ -20,9 +21,7 @@ export default function ChatPage() {
   const sessions = useChatSessions((s) => s.sessions);
   const createSession = useChatSessions((s) => s.createSession);
   const activeId = useChatSessions((s) => s.activeId);
-  const deleteSession = useChatSessions((s) => s.deleteSession);
-  const undoDeleteSession = useChatSessions((s) => s.undoDeleteSession);
-  const defaultModel = useModelProviders((s) => s.defaultModel);
+  const deleteSession = useDeleteChatSession();
   const syncProviders = useModelProviders((s) => s.syncFromBackend);
   const [copied, setCopied] = useState(false);
   // B7(2026-09-27):agent 独立探针——离线只提示本区域,不全屏替换
@@ -55,10 +54,26 @@ export default function ChatPage() {
   // 从资料页发起 = 一个新处理任务,不再默认接着当前活跃会话工作。
   const [wantNewSession] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
   const setActiveSession = useChatSessions((s) => s.setActive);
+  const loadSession = useChatSessions((s) => s.loadSession);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionReady, setSessionReady] = useState(!targetSessionId);
 
   useEffect(() => {
+    let disposed = false;
     if (targetSessionId) {
       setActiveSession(targetSessionId);
+      if (useChatSessions.getState().sessions.some(session => session.id === targetSessionId && session.draft)) {
+        setSessionReady(true);
+      } else {
+        void loadSession(targetSessionId).then(() => { if (!disposed) setSessionReady(true); })
+          .catch(error => {
+            if (disposed) return;
+            if (error instanceof ApiError && error.code === 404) {
+              navigate("/sessions", { replace: true });
+              toast.info("会话已删除或不存在");
+            } else setSessionError(error instanceof Error ? error.message : String(error));
+          });
+      }
     } else if (wantNewSession) {
       // 新建空会话并激活(prompt/refs 由 prefill 机制填入输入区,不自动发送)
       const newId = createSession();
@@ -70,35 +85,14 @@ export default function ChatPage() {
         window.history.replaceState({}, "", url.toString());
       } catch { /* URL 处理失败不影响 */ }
     }
-  }, [targetSessionId, wantNewSession, setActiveSession, createSession]);
+    return () => { disposed = true; };
+  }, [targetSessionId, wantNewSession, setActiveSession, createSession, loadSession, navigate]);
 
   useEffect(() => {
     void syncProviders().catch(() => undefined);
   }, [syncProviders]);
 
-  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
-
-  /** 会话删除 + undo(与侧栏一致;5 秒内可撤销,窗口后才删后端) */
-  const handleDeleteActive = () => {
-    if (!active) return;
-    const snapshot = sessions;
-    const index = snapshot.findIndex((s) => s.id === active.id);
-    const removed = active;
-    const title = active.title;
-    deleteSession(active.id);
-    toast.success(`已删除「${title.slice(0, 16)}${title.length > 16 ? "…" : ""}」`, {
-      description: "5 秒内可撤销",
-      action: {
-        label: "撤销",
-        onClick: () => undoDeleteSession(removed, index),
-      },
-      duration: 5000,
-    });
-    window.setTimeout(() => {
-      const stillDeleted = !useChatSessions.getState().sessions.some((s) => s.id === removed.id);
-      if (stillDeleted) void deleteSessionOnBackend(removed.id).catch(() => undefined);
-    }, 5300);
-  };
+  const active = targetSessionId ? sessions.find(s => s.id === targetSessionId) : sessions.find(s => s.id === activeId) ?? sessions[0];
 
   const copySessionId = async () => {
     if (!active) return;
@@ -114,52 +108,34 @@ export default function ChatPage() {
 
   const renderHeader = () => (
     <Header
+      compactActions
       breadcrumbs={[
-        { label: "Nora", href: "/", isCurrent: false },
-        { label: "对话", isCurrent: false },
-        { label: active?.title ?? "新对话", isCurrent: true }
+        { label: "会话", href: "/sessions", isCurrent: false },
+        { label: active?.title ?? (targetSessionId ? sessionError ? "会话不可用" : "加载会话…" : "新对话"), isCurrent: true }
       ]}
       actions={
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          {/* 会话 ID:点击复制,便于查库排障(agent_step/chat_message 按 session_id 关联) */}
-          {active && (
-            <button
-              type="button"
-              onClick={copySessionId}
-              title="点击复制会话 ID,用于日志与数据库排障"
-              className="hidden [@container(min-width:1000px)]:inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono text-muted-foreground border border-dashed border-border hover:text-foreground hover:border-foreground/40 cursor-pointer transition-colors"
-            >
-              {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-              {active.id}
-            </button>
-          )}
-          {active && (
-            <span className="hidden [@container(min-width:1000px)]:inline text-[10px] text-muted-foreground/70 tabular-nums" title="最近活跃时间">
-              {relativeTime(active.updatedAt)}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => navigate("/agent?section=model")}
-            className="h-8 px-2.5 bg-muted/60 text-muted-foreground border border-border/70 rounded-lg text-xs flex items-center gap-1.5 min-w-0 max-w-[160px] hover:bg-accent hover:text-foreground cursor-pointer transition-colors"
-            aria-label={`管理模型：${defaultModel}`}
-            title="点击管理模型服务商"
-          >
-            <Cpu className="w-3 h-3 shrink-0" /> <span className="truncate [@container(max-width:600px)]:hidden">{defaultModel}</span>
-          </button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
-            title="删除当前会话"
-            onClick={handleDeleteActive}
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" aria-label="会话操作" title="会话操作"><MoreHorizontal /></Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuLabel className="text-xs text-muted-foreground">当前会话</DropdownMenuLabel>
+            <DropdownMenuItem disabled={!active} onSelect={() => void copySessionId()}>{copied ? <Check /> : <Copy />}复制会话 ID</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => navigate("/agent?section=model")}><Settings />模型设置</DropdownMenuItem>
+            {active && <p className="px-2 py-1 text-[11px] text-muted-foreground break-all font-mono">{active.id}</p>}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={!active || !sessionReady || Boolean(sessionError)} onSelect={() => active && deleteSession(active.id)}><Trash2 />删除当前会话</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       }
     />
   );
+
+  if (sessionError || !sessionReady) return <>
+    {renderHeader()}
+    <div className="p-6 space-y-3" role={sessionError ? "alert" : "status"}>
+      <p className="text-sm whitespace-pre-wrap break-words">{sessionError ?? "正在加载会话…"}</p>
+      {sessionError && <Button variant="outline" onClick={() => window.location.reload()}>重试</Button>}
+    </div>
+  </>;
 
   return active ? (
     <>
@@ -171,7 +147,7 @@ export default function ChatPage() {
             Agent 服务不可用——对话暂时无法执行;其他区域(文件、任务、数据源)不受影响。服务恢复后本提示自动消失。
           </div>
         )}
-        <ChatConversation key={active.id} browser={browser} sessionId={active.id} initialMessages={active.messages} initialInput={prefillPrompt} initialRefs={prefillRefs} autoSendInitial={autoSend} />
+        <ChatConversation key={active.id} browser={browser} sessionId={active.id} initialInput={prefillPrompt} initialRefs={prefillRefs} autoSendInitial={autoSend} />
     </>
   ) : (
     <>

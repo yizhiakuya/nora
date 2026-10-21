@@ -12,10 +12,10 @@ import uuid
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=os.getenv("NORA_BASE_URL", "http://127.0.0.1:18083"))
+    parser.add_argument("--base", default=os.getenv("NORA_BASE_URL", "http://127.0.0.1:18080"))
     parser.add_argument("--tool", choices=["sh", "powershell"], default="powershell")
     parser.add_argument("--mcp", action="store_true")
-    parser.add_argument("--case", choices=["all", "single-line"], default="all")
+    parser.add_argument("--case", choices=["all", "single-line", "mcp", "mcp-get"], default="all")
     args = parser.parse_args()
     headers = {"Content-Type": "application/json"}
     if os.getenv("NORA_AUTH_TOKEN"):
@@ -40,12 +40,12 @@ def main():
     provider = next(p for p in api("/models/providers") if p.get("enabled") and p.get("models"))
     model = provider["models"][0]
 
-    def turn(label, prompt):
+    def turn(label, prompt, waiting=False, permission="full"):
         session = "context-sources-" + stamp + "-" + label
         item = {"session": session, "tools": {}, "errors": []}
         record["turns"].append(item)
         payload = {"content": prompt, "model": model, "providerId": provider["id"],
-                   "reasoningLevel": "none", "permissionMode": "full"}
+                   "reasoningLevel": "none", "permissionMode": permission}
         started = time.monotonic()
         with opener.open(Request(args.base.rstrip("/") + "/api/chat/sessions/" + session + "/messages",
                                  json.dumps(payload, ensure_ascii=False).encode(), headers), timeout=300) as response:
@@ -60,11 +60,47 @@ def main():
                         item["tools"][data["id"]] = {k: data.get(k) for k in ("toolName", "status", "input", "duration", "result")}
                     elif event == "error":
                         item["errors"].append(data)
+                    elif event == "question_required" and waiting:
+                        item["question"] = data
+                        api("/chat/sessions/" + session + "/cancel", {}, "POST")
         item["durationSeconds"] = round(time.monotonic() - started, 2)
         messages = api("/chat/sessions/" + session + "/messages")
         item["answer"] = messages[-1]["content"]
-        check(not item["errors"] and messages[-1].get("runStatus") == "completed", label + " 完成且无错误")
+        check(not item["errors"] and (bool(item.get("question")) if waiting else messages[-1].get("runStatus") == "completed"), label + " 完成且无错误")
         return item
+
+    if args.case == "mcp-get":
+        name = "mcp-get-e2e-" + stamp
+        secret = "e2e-disposable-" + uuid.uuid4().hex
+        server = api("/mcp/servers", {"name": name, "url": "http://user:" + secret + "@127.0.0.1:9/mcp?token=" + secret,
+                     "transport": "STREAMABLE", "headers": {"Authorization": "Bearer " + secret}})
+        try:
+            item = turn("mcp-config", "只读查看 MCP 服务器 " + name + " 的连接配置，确认地址和鉴权头是否已配置，不测试连接。", permission="assist")
+            tools = list(item["tools"].values())
+            reads = [tool for tool in tools if tool["toolName"] == "manage_mcp" and json.loads(tool["input"]["rawArgs"]).get("action") == "get"]
+            check(len(reads) == 1 and all(tool["toolName"] == "manage_mcp" for tool in tools), "只读配置使用 manage_mcp get，ASSIST 档自动执行")
+            content = reads[0].get("result", {}).get("content", "") if reads else ""
+            check("127.0.0.1:9/mcp" in content and "Authorization" in content and secret not in json.dumps(item), "get 可核对端点与鉴权键，URL/头凭据未泄露")
+        finally:
+            api("/mcp/servers/" + str(server["id"]), method="DELETE")
+        if any(not check["passed"] for check in record["checks"]):
+            raise SystemExit(1)
+        print("REPORT", report.resolve(), flush=True)
+        return
+
+    if args.case == "mcp":
+        before = api("/mcp/servers")
+        item = turn("mcp-connect", "把服务器上的手机 MCP http://192.168.0.109:8902/mcp 接入本工作台。"
+                    "用 Authorization: Bearer 鉴权；如果没有手机专用凭据就先等我提供。", waiting=True)
+        tools = {tool["toolName"] for tool in item["tools"].values()}
+        check("manage_mcp" in tools and "manage_env_vars" in tools, "MCP 注册与凭据查询走既有管理入口")
+        check(bool(item.get("question")), "缺手机专用凭据时向用户询问")
+        check(not (tools & {"sh", "powershell", "execute_sql", "read_service_logs", "manage_workspace"}), "接入远程 MCP 未扫描源码、日志或数据库")
+        check(api("/mcp/servers") == before, "缺凭据时不创建或更改注册")
+        if any(not check["passed"] for check in record["checks"]):
+            raise SystemExit(1)
+        print("REPORT", report.resolve(), flush=True)
+        return
 
     files_before = {name: api("/workspace/file?path=" + quote(name))["content"] for name in ("AGENTS.md", "USER.md", "MEMORY.md")}
     if args.case == "all":

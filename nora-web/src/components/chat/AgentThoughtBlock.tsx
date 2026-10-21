@@ -1,5 +1,5 @@
 import { AlertTriangle, Brain, ChevronDown, ChevronRight, Info, Loader2, MessageSquare } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { ChatStep } from "@/lib/api/chatApi";
 import { ArtifactsBlock } from "./galleries";
 import { parseArtifactsFence, parseLegacyGalleryFence, type ArtifactGallery } from "@/lib/artifacts";
@@ -111,7 +111,7 @@ function ReasoningRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: bool
 
 
 /** 单条步骤（think/tool/context 分发）。 */
-function StepRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }) {
+const StepRow = memo(function StepRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }) {
   if (step.type === "commentary" || step.type === "answer") {
     if (!step.detail) return null;
     return (
@@ -127,7 +127,7 @@ function StepRow({ step, defaultOpen }: { step: ChatStep; defaultOpen: boolean }
   if (step.type === "think") return <ReasoningRow step={step} defaultOpen={defaultOpen} />;
   if (step.type === "context") return <ContextRow step={step} />;
   return <ToolRow step={step} defaultOpen={defaultOpen} />;
-}
+});
 
 
 
@@ -176,9 +176,9 @@ export function AgentProcessBlock({
   const summary = toolCount > 0 ? `${toolCount} 次工具调用` : `${steps.length} 个步骤`;
   // 结果类内容:产物画廊(过程收起后仍展示;旧 nora-gallery 自动转换)。
   // 一条消息可能含多条画廊实例(每个工具结果一或多条),展平渲染。
-  const galleries = steps
+  const galleries = collapsed ? steps
     .flatMap((s) => parseArtifactsFence(s.result?.content) ?? parseLegacyGalleryFence(s.result?.content) ?? [])
-    .filter((g): g is ArtifactGallery => g !== null);
+    .filter((g): g is ArtifactGallery => g !== null) : [];
 
   return (
     <div className="animate-in fade-in">
@@ -189,7 +189,7 @@ export function AgentProcessBlock({
           setUserOpen(collapsed);
           setInspected(true);
         }}
-        className="group flex flex-wrap items-center gap-1.5 py-0.5 -mx-1 px-1 rounded-md text-left hover:bg-muted/60 cursor-pointer transition-colors"
+        className="group flex flex-wrap items-center gap-1.5 py-2 px-2.5 rounded-lg border border-border/60 bg-muted/30 text-left hover:bg-muted/70 cursor-pointer transition-colors"
       >
         <ChevronRight
           className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform ${collapsed ? "" : "rotate-90"}`}
@@ -211,7 +211,7 @@ export function AgentProcessBlock({
           </div>
       )}
       {(!collapsed || inspected) && (
-        <div hidden={collapsed} className="mt-1" onClickCapture={() => setInspected(true)}>
+        <div hidden={collapsed} className="mt-2 border-l border-border ml-3 pl-4" onClickCapture={() => setInspected(true)}>
           <AgentThoughtBlock steps={steps} />
           {isTyping && !steps.some(step => step.status === "running" || step.status === "pending") && (
             <div role="status" className="flex items-center gap-1.5 py-2 text-xs text-muted-foreground">

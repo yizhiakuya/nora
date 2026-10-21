@@ -5,7 +5,7 @@ import { Header } from "@/components/layout/Header";
 import { Database, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { EmptyState } from "@/components/ui/custom/States";
+import { EmptyState, ResourceStatus } from "@/components/ui/custom/States";
 import { ConnectionList } from "@/components/data-sources/ConnectionList";
 import { ConnectionActions } from "@/components/data-sources/ConnectionActions";
 import { SchemaBrowser } from "@/components/data-sources/SchemaBrowser";
@@ -23,6 +23,7 @@ export default function DataSourcesPage() {
   const [targetSql, setTargetSql] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const connections = useConnections((s) => s.connections);
+  const { loading, syncError } = useConnections();
   const syncFromBackend = useConnections((s) => s.syncFromBackend);
   const addNotification = useNotifications((s) => s.addNotification);
 
@@ -65,7 +66,8 @@ export default function DataSourcesPage() {
               <h1 className="page-heading">数据源</h1>
               <p className="page-description">连接数据库，浏览表结构，执行查询。</p>
             </div>
-            <EmptyState icon={Database} title="暂无数据源连接" description="添加第一个数据库后，即可浏览表结构或运行查询。" />
+            <ResourceStatus loading={loading} error={syncError} retry={syncFromBackend} />
+            {!loading && !syncError && <EmptyState icon={Database} title="暂无数据源连接" description="添加第一个数据库后，即可浏览表结构或运行查询。" />}
           </div>
           <NewConnectionModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={handleCreated} />
         </div>
@@ -91,11 +93,12 @@ export default function DataSourcesPage() {
               <Database className="w-5 h-5 text-muted-foreground" /> 数据源
             </h1>
             <p className="page-description">
-              连接开发/测试数据库，浏览 Schema，执行查询——AI 可读取表结构辅助生成 SQL。
+              连接数据库与 Redis，浏览结构，执行查询、写入和结构变更。
             </p>
           </div>
 
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <ResourceStatus loading={loading} error={syncError} retry={syncFromBackend} />
             {/* 连接选择条:横向 chip 行,选中即切换当前连接 */}
             <ConnectionList selectedId={selectedId ?? selected.id} onSelect={setSelectedId} />
 

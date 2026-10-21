@@ -12,7 +12,6 @@ export const CHAT_COMMANDS = [
 ] as const;
 
 export type ChatCommand = typeof CHAT_COMMANDS[number];
-export type ChatCommandName = ChatCommand["name"];
 export type ChatSettingsMenu = "model" | "reasoning" | "permissions";
 
 /** 只识别整条输入的已知命令；路径、未知命令和普通正文继续作为消息发送。 */

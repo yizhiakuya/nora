@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -10,7 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="http://localhost:18083")
+    parser.add_argument("--base", default="http://localhost:18080")
     parser.add_argument("--image", action="append", help="已导入的真实照片引用；省略时验证手机猫相册")
     parser.add_argument("--model")
     parser.add_argument("--provider", type=int)
@@ -37,6 +38,8 @@ def main():
                   + json.dumps({"folder": "photos/" + album, "type": "photo"})
                   + "。不要补范围，不设 all，不运行命令。让执行器校验并拒绝，返回错误后简短报告。")
     opener = build_opener(ProxyHandler({}))
+    if os.environ.get("NORA_AUTH_TOKEN"):
+        opener.addheaders = [("Authorization", "Bearer " + os.environ["NORA_AUTH_TOKEN"])]
     payload = {"content": prompt, "permissionMode": "FULL"}
     if args.model:
         payload["model"] = args.model
@@ -83,11 +86,13 @@ def main():
     verify_album(record, base, phone=not args.image)
 
 
-def verify_album(record, base="http://localhost:18083", phone=True):
+def verify_album(record, base="http://localhost:18080", phone=True):
     """按真实成果验收；保留曾发生过工具错误的 partial 状态，不把成功重试当成果缺失。"""
     steps = record["steps"]
     done = record.get("done")
     opener = build_opener(ProxyHandler({}))
+    if os.environ.get("NORA_AUTH_TOKEN"):
+        opener.addheaders = [("Authorization", "Bearer " + os.environ["NORA_AUTH_TOKEN"])]
     tools = {step["toolName"] for step in steps if step.get("status") == "completed"}
     if not {"manage_skill", "manage_photo_album", "open_file"}.issubset(tools) or not done or done.get("status") not in ("completed", "partial"):
         raise RuntimeError("真实 Agent 未完成技能读取、相册生成和文件交付，请检查记录")
@@ -102,7 +107,7 @@ def verify_album(record, base="http://localhost:18083", phone=True):
         if step.get("status") != "completed" or step.get("toolName") not in ("manage_file", "manage_workspace"):
             continue
         item = json.loads(step.get("input", {}).get("rawArgs", "{}"))
-        path = item.get("path", item.get("filename", ""))
+        path = item.get("id", item.get("path", item.get("filename", "")))
         if item.get("action") == "read" and path:
             reads.add(path if path.startswith("workspace:") else "workspace:" + path)
     if not all(photo["target"] in reads for photo in saved["document"]["photos"]):

@@ -31,20 +31,10 @@ function parseActionJson(actionJson: string | null | undefined): { prompt?: stri
  * detail 字段本身已是全文(automationsApi.toExecution),详情面板直接渲染。
  */
 export function ExecutionHistory({ onCreateSchedule }: { onCreateSchedule?: (prefill: { name: string; action: string }) => void } = {}) {
-  const [retrying, setRetrying] = useState<number | null>(null);
   const [viewing, setViewing] = useState<ExecutionRecord | null>(null);
   const records = useAutomations((s) => s.executions);
   const retryExecution = useAutomations((s) => s.retryExecution);
-
-  const retry = (record: ExecutionRecord) => {
-    // 真实重试(2026-09-19 去假功能):等待态只覆盖真实请求时长,不再用
-    // 800ms 假动画 + 硬编码"重试成功 1.4s"文案;结果由 store 的真实回调
-    // 决定(成功/失败各有通知)。
-    setRetrying(record.id);
-    retryExecution(record.id);
-    // 重试是异步的:短时间内清等待态(真实结果通过执行历史刷新呈现)
-    setTimeout(() => setRetrying(null), 3000);
-  };
+  const runningRuleIds = useAutomations((s) => s.runningRuleIds);
 
   return (
     <>
@@ -58,6 +48,7 @@ export function ExecutionHistory({ onCreateSchedule }: { onCreateSchedule?: (pre
           {records.map((rec) => {
             const meta = STATUS_META[rec.status];
             const Icon = meta.icon;
+            const retrying = rec.ruleId != null && runningRuleIds.includes(rec.ruleId);
             return (
               <div
                 key={rec.id}
@@ -83,10 +74,10 @@ export function ExecutionHistory({ onCreateSchedule }: { onCreateSchedule?: (pre
                 {rec.status === "failed" && (
                   <Button
                     variant="outline" size="sm" className="h-6 text-[10px] px-2 shrink-0"
-                    onClick={(e) => { e.stopPropagation(); retry(rec); }}
-                    disabled={retrying === rec.id}
+                    onClick={(e) => { e.stopPropagation(); void retryExecution(rec.id); }}
+                    disabled={retrying}
                   >
-                    {retrying === rec.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RotateCw className="w-2.5 h-2.5" />}
+                    {retrying ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RotateCw className="w-2.5 h-2.5" />}
                     重试
                   </Button>
                 )}

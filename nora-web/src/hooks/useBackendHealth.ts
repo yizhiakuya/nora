@@ -1,26 +1,10 @@
 import { create } from "zustand";
 import { API_BASE } from "@/lib/api/client";
-import { authHeaders } from "@/lib/auth";
 
-/**
- * 后端可达性全局状态:所有页面共享。
- *
- * B7(2026-09-27,评审报告):此前唯一探针是 agent-service `/chat/health`——
- * agent 挂了整个工作台被替换成「服务不可用」页,即使文件/数据源服务仍可用,
- * 用户无法通过正常导航进入任何区域。现在拆成两个探针:
- *
- * - {@code online}(网关):探 `/api/auth/status`(gateway 自身端点,不经下游
- *   路由)——只有网关不可达才全屏替换(此时确实全站不可用);
- * - {@code agentOnline}(Agent):探 `/chat/health`——只影响助手/对话区域的
- *   局部提示(文件、任务、数据源等区域不受影响,由各页面自身错误处理)。
- *
- * 探测失败(网络层)按不可达处理;两个探针独立退避。
- */
+/** Single backend availability shared by all pages. */
 interface BackendHealthState {
-  /** null = 尚未完成首次探测;false = 网关不可达(全屏服务不可用页) */
+  /** null = 尚未完成首次探测 */
   online: boolean | null;
-  /** null = 尚未探测;agent-service 可用性(助手区域局部提示用) */
-  agentOnline: boolean | null;
   /** 最近一次探测时间(ms) */
   lastCheckedAt: number | null;
   check: () => Promise<boolean>;
@@ -35,20 +19,9 @@ let pollingStarted = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let consecutiveFailures = 0;
 
-/** 网关探活:auth/status 由 gateway-service 自己服务(白名单免鉴权)。 */
-async function probeGateway(): Promise<boolean> {
+async function probeBackend(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/auth/status`);
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-/** agent 探活:chat/health 经网关路由到 agent-service。 */
-async function probeAgent(): Promise<boolean> {
-  try {
-    const response = await fetch(`${API_BASE}/chat/health`, { headers: authHeaders() });
+    const response = await fetch(`${API_BASE}/auth/status`, { signal: AbortSignal.timeout(5_000) });
     return response.ok;
   } catch {
     return false;
@@ -57,17 +30,14 @@ async function probeAgent(): Promise<boolean> {
 
 export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
   online: null,
-  agentOnline: null,
   lastCheckedAt: null,
   check: async () => {
-    const gatewayOk = await probeGateway();
+    const backendOk = await probeBackend();
     const wasOffline = get().online === false;
-    const firstOnline = get().online === null && gatewayOk;
-    set({ online: gatewayOk, lastCheckedAt: Date.now() });
-    if (gatewayOk) {
+    const firstOnline = get().online === null && backendOk;
+    set({ online: backendOk, lastCheckedAt: Date.now() });
+    if (backendOk) {
       consecutiveFailures = 0;
-      // 网关可达时探测 agent(独立,不阻塞网关状态)
-      void probeAgent().then((agentOk) => set({ agentOnline: agentOk }));
       const { useAgentSettings } = await import("@/hooks/useAgentSettings");
       void useAgentSettings.getState().syncFromBackend();
       // 首次探测成功(online 从 null 转 true)或离线恢复:重新拉数据
@@ -91,9 +61,8 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
       }
     } else {
       consecutiveFailures++;
-      set({ agentOnline: false });
     }
-    return gatewayOk;
+    return backendOk;
   },
   startPolling: () => {
     if (pollingStarted) return;
@@ -120,8 +89,5 @@ export const useBackendHealth = create<BackendHealthState>()((set, get) => ({
   },
 }));
 
-/** 组件内便捷选择器(网关在线)。 */
-export const useBackendOnline = () => useBackendHealth((s) => s.online);
-
-/** agent 可用性选择器(B7:助手区域局部提示用;null=未探测)。 */
-export const useAgentOnline = () => useBackendHealth((s) => s.agentOnline);
+/** Chat shares the same backend availability. */
+export const useAgentOnline = () => useBackendHealth((s) => s.online);

@@ -1,131 +1,51 @@
-# Nora 个人工作台前端项目规约 (Frontend Agent Constraints)
+# Nora 前端规范
 
-## 📌 项目定位
-本项目（`nora-web`）是 AI 驱动的**个人文件管理与开发者工作台**的前端仓库。
-目标用户：个人用户（文件管理）+ 开发者（数据源查询、环境控制、自动任务）。
-技术栈：Vite 7 (React SPA) · react-router-dom v7 · Tailwind CSS 3 · Radix UI · Zustand 5 · TypeScript 5 · Vitest 4。
+先遵守 [根项目规范](../AGENTS.md)。本文件只维护前端约束；技术栈、目录和运行命令见 [README](README.md)，业务接口定位见 [接入参考](docs/api-integration-status.md)，验收步骤见 [真实服务验收](../docs/dev/acceptance.md)。
 
-> **后端已接入（2026-10 更新）**：本仓库不再"纯前端"。后端 `nora-api`（Spring Boot 3.3 微服务）提供
-> 全部业务 API，**前端不内置 Mock——所有域都走真实后端**（Mock 模式已整体删除）。
-> 详见下方[「后端接入现状」](#-后端接入现状)。
+## 职责与组织
 
-## 🤖 AI 智能体开发职责边界 (Agent Boundaries)
+- `src/App.tsx` 集中注册路由，`src/app/*/page.tsx` 只组装页面；业务 UI 放 `components/{domain}`，请求编排放 `hooks`，共享业务类型放 `types`，局部 props 和契约类型就近维护。拆分按职责，不按行数。
+- 路由使用 React Router 的 `Link` / `useNavigate` / `useLocation`，懒加载使用 React `lazy` / `Suspense`，主题复用 `components/ThemeProvider.tsx`；不恢复 Next.js shim 或别名。
+- 前端负责呈现与交互，不直连数据库、不承担后端权限或业务校验。需要改接口时阅读后端规范，同步两端契约及调用方。
 
-### ✅ AI 负责的范围 (In Scope)
-1. **UI 页面搭建与还原**：将设计图或原型精确转换为高质量的 React 组件，保证 Tailwind 样式的极致还原。
-2. **前端交互逻辑**：弹窗动画、状态流转（上传、加载、失败等）、Tab 切换、表格排序与复选等。
-3. **前端工程化**：确保代码通过 TypeScript 编译、ESLint 检查与 Vitest 测试，页面无 Unhandled Runtime Error。
-4. **API 契约层对接**：在 `src/lib/services/*Api.ts` 中按后端契约编写请求函数，并处理 loading / error / 空态。
+## 请求、错误与认证
 
-### ❌ AI 不负责的范围 (Out of Scope)
-1. **不在前端实现后端业务逻辑**：不在此项目中引入 Prisma、Supabase、PostgreSQL 或任何 ORM / 直连数据库。
-2. **不绕过契约层直连**：组件与 Hook 不得直接 `fetch`，必须经由 `src/lib/api/client.ts` 的 `requestJson`
-   （统一解开 `{code,data,message}` 信封、统一错误抛出）与 `src/lib/services/*Api.ts`。
-3. **不在前端伪造业务结果**：前端不内置 Mock,不造假数据；接口失败直接展示原始错误,不添加解释或建议,空态引导操作。
-4. **不改动后端仓库**：后端代码在 `../nora-api`，需要改接口时提出契约需求而非在此处绕过。
+- 组件和 Hook 调用现有 `lib/api/` 或 `lib/services/` 领域模块；普通 JSON 请求统一经 `lib/api/client.ts` 的 `requestJson`。SSE、上传和下载复用已有专用入口，不在组件中直接 `fetch`，不再包装一套 HTTP 客户端。
+- 新接口优先扩展所属领域模块；只有新增独立领域才新建契约文件。DTO 与前端类型不一致时先确认目标契约，不用 `any`、强制断言或字段别名掩盖差异。
+- loading、空结果、失败分别展示；后台刷新可保留旧数据，但不能把旧数据当作刚刚成功获取的结果。未接通的能力明确不可用，不用 Mock 或默认成功代替。
+- 同一错误展示一次，使用契约提供的正文，不自行翻译、截断、折叠或添加猜测性建议；保留已有 traceId 等定位信息。服务端负责对错误脱敏，前端不展示凭据。
+- 需要认证的本站媒体/下载入口使用 `withAuthToken()`；不得给外部链接附加 Nora 令牌。
 
-## 🏗️ 前端架构与模块化规范 (Architecture & Modularization)
-**核心原则：高内聚、低耦合，严禁出现数百行的臃肿组件。**
+## 状态与异步生命周期
 
-1. **业务解耦 (契约层)**：
-   - 所有数据经 `src/lib/services/*Api.ts` 契约层调用真实后端,组件与 Hook 不直接 fetch。
-   - 接口失败直接展示原始错误,同一错误只显示一次,不翻译、截断或折叠错误正文；空态引导操作,不造假数据。
-2. **UI 模块化拆分 (UI Componentization)**：
-   - 页面级文件 (`src/app/*/page.tsx`) **仅作为胶水层**，负责引入组件、使用 Hook 传递状态（建议 ≤150 行）。
-   - 任何超过 100-150 行，或承担独立业务的 UI 区块，必须抽离为独立组件，存放在按领域划分的目录中（例如 `src/components/chat/ChatMessageItem.tsx`、`src/components/ui/custom/Modal.tsx`）。
-3. **状态抽离 (Custom Hooks)**：
-   - 页面中的复杂状态流转（批量选择、虚拟上传、聊天输入流）必须抽离为纯粹的 React Hooks 放入 `/src/hooks`。
-   - 跨页面共享的业务状态用 Zustand store + `persist` 中间件（localStorage 持久化）。
-   - **已接后端的域**：Hook 负责请求编排与乐观更新，仍需提供失败回退，避免后端不可用时白屏。
-4. **类型安全 (Strict Typing)**：
-   - 所有实体模型的数据结构必须提取至 `/src/types/index.ts` 中维护。
-   - 后端 DTO 与前端类型出现字段差异时，**改前端类型去对齐后端契约**，并在类型定义处注明来源端点。
+- 页面临时状态就近管理；跨页面数据复用已有 Zustand store。同一实体只保留一个可写来源，API 层只传输和解码，不维护第二份业务状态。
+- `persist` 只保存确需跨刷新保留的偏好、草稿等字段；服务端事实不全量复制到 localStorage，运行状态不以本地缓存为准。变更已有存储结构时处理旧数据迁移与损坏恢复。
+- 乐观更新须能回滚且不覆盖后续操作；权限、思考等级等运行设置保存成功后再更新共享状态。
+- 切换实体、卸载组件时清理订阅与计时器，取消或忽略过期请求；迟到响应不能覆盖新状态，重复提交须有执行中的反馈。轮询优先复用 `usePollingResource`。
+- 聊天发送和恢复共用 `ChatStreamEvent` 解码入口与 `useChat` reducer；文字缓冲先于控制和终态事件刷新。快照与增量衔接保持顺序、不重复应用，恢复历史不自动打开旧文件。
 
-## 界面样式约定（2026-10-07）
+## 跨入口一致性
 
-- 颜色、圆角、阴影复用 `globals.css` 与 `tailwind.config.ts` 的主题变量；浅色与深色同步处理。
-- 按钮、输入、下拉、分类切换、弹窗使用现有 `ui/` Radix 组件，不另造视觉体系。
-- 管理页复用 `page-content`、`page-container`、`page-heading`、`page-description`；卡片用 `surface`。聊天内容和输入框共同保持 820px 最大宽度。
+- 输入引用协议由 `lib/chatRefs.ts` 与后端 `MessageRefResolver` 共同维护；改格式时同步发送、历史解析与上下文注入，验证已有会话可读。
+- 执行状态复用 `lib/executionStatus.ts`；unknown、取消、中断不能简化为成功/失败。环境状态保留观察主机和执行域，日志存在不等于服务健康。
+- 成果保存复用 `savedArtifactsApi.ts`，分别反映文件保存与成果登记结果；登记失败不能显示全部成功。附件、工作区、媒体缓存继续归入根规范的文件中心体系。
+- Markdown 复用 `components/shared/Markdown`；文件、网页和产物沿用已有查看器、深链接及渲染组件。
+- 网页与文件统一进入 `components/layout/SideWorkspace` 的标签面板，共用收起、展开和宽度调整；浏览器状态由该布局提供，对话从 `WorkspaceContext` 读取。
+- 内容中的网页链接复用 `components/shared/BrowserLink`，按 `usePreferences` 的偏好打开，默认在内置浏览器新建标签；文件引用、下载和外部授权保留专用流程。
+
+## 界面与无障碍
+
+- 颜色、圆角、阴影复用 `globals.css` 与 `tailwind.config.ts` 的主题变量；按钮、输入、下拉、分类切换和弹窗使用现有 `ui/` 控件，通用弹窗与上传复用 `ui/custom/Modal`、`UploadModal`。
+- 管理页复用 `page-content`、`page-container`、`page-heading`、`page-description`，卡片用 `surface`；聊天内容和输入框共同保持 820px 最大宽度。
 - 白色或中性色承载内容，蓝色表示主要操作；成功、警告、失败保留语义色，避免随机彩色卡片和装饰渐变。
-- 正文和控件以 13–14px 为主，辅助信息不低于 11px；手机文本输入使用 16px。卡片高度随内容增长，列数随实际容器宽度调整。
-- 兼顾窄屏换行、键盘切换、弹窗关闭后的焦点恢复；关闭的手机导航同时从可访问树隐藏。交付时实测窄屏与深色模式。
-- 网页与文件统一进入 `components/layout/SideWorkspace` 的侧面标签面板，共用收起、展开和宽度调整；浏览器状态由该布局提供，对话从 `WorkspaceContext` 读取，禁止重新添加独立的浏览器分栏。
-- 内容中的网页链接复用 `components/shared/BrowserLink`，默认在内置浏览器新建标签；打开偏好在「设置 → 通用」管理，复用 `usePreferences`。文件引用、下载及明确的外部授权入口保留各自处理。
+- 正文和控件以 13–14px 为主，辅助信息不低于 11px，手机文本输入使用 16px。卡片随内容增长，列数随实际容器宽度调整，窄屏内容能换行。
+- 图标操作有可访问名称，交互支持键盘；弹窗关闭后恢复焦点，关闭的手机导航从可访问树隐藏。布局和样式改动实测窄屏、明暗主题与焦点行为。
+- 动效复用 `globals.css` 的时长与缓动，主要使用透明度和位移；弹层复用 `motion-panel`/`motion-overlay`，手机导航使用 Radix Dialog。避免动画宽高使主内容反复重排，遵守系统减少动态效果；加载态保留基本布局与可读状态。
 
-## 🔌 后端接入现状
+## 运行与验收
 
-- 全部域直连真实后端(无开关、无 Mock);`vite.config.ts` 将 `/api` 代理到 `http://localhost:18080`(gateway)。
-- 契约层:`src/lib/services/*Api.ts` + `src/lib/api/{agentApi,chatApi,sse}.ts`。
-
-| 域 | 契约文件 | 后端端点 | 状态 |
-|---|---|---|---|
-| 文件 | `filesApi.ts` | `/api/files/**` | ✅ 已接入（上传/文件夹/列表/删除/回收站/预览/下载/索引） |
-| 知识库 RAG | `ragService.ts` | `/api/rag/**` | ✅ 已接入（文档/检索/统计/引用/详情/重命名/删除/批量删除/重建索引） |
-| 对话 Agent | `agentApi.ts` / `chatApi.ts` / `sse.ts` | `/api/chat/**` | ✅ 已接入（SSE step/delta/done/approval/context_usage + 断线重连；内置斜杠控制命令、压缩排队、语义摘要与持久化检查点、原文回读、编辑失效，完整输入含缓存，生成中每秒估算、实测校准及历史恢复 + 并发冲突 409；运行中消息排队、插入、撤回编辑，实时与历史按插入位置分段；重启恢复过程与检索范围、手动继续，未执行与结果未知分别显示） |
-| Agent 配置 | `/agent` + `useAgentSettings` / `useModelProviders` / `userPreferencesApi.ts` | `/api/chat/settings`、`/api/user-preferences` 与下列管理接口 | ✅ 默认模型、思考等级、权限、过程显示和成果偏好；模型/技能/工具/环境/网络共用已有管理能力；指令记忆复用侧面文件面板。权限与思考等级服务端保存成功才更新，聊天和管理页共享同一 store |
-| 数据源 | `datasourcesApi.ts` | `/api/datasources/**` | ✅ 已接入（连接/Schema/查询；引擎 pg/mysql/redis） |
-| 环境控制台 | `environmentApi.ts` | `/api/environment/**` | ✅ 已接入（容器/日志 SSE/进程守护） |
-| 自动任务 | `automationsApi.ts` | `/api/automations/**` | ✅ 已接入（规则 CRUD/执行；**file/error 触发条件未接通,UI 已标不可选**） |
-| 模型 Provider | `modelsApi.ts` | `/api/models/**` | ✅ 已接入（CRUD/连通测试/草稿探测不落库；每模型上下文窗口与思考等级；输出额度遵循上游默认） |
-| 技能 | `skillsApi` / `useSkills` | `/api/skills/**` | ✅ 已接入（列表不带正文/详情按需拉取） |
-| MCP 管理 | `mcpApi` | `/api/mcp/**` | ✅ 已接入（含 STDIO/GitHub OAuth） |
-| 环境变量 | `envVarsApi.ts` | `/api/chat/settings/env-vars` | ✅ 与 Agent 原生工具共用存储，添加/删除使用单项接口，密钥回读脱敏；命令自动注入，MCP 使用 `${KEY}` 引用 |
-| 通知 | `notificationsApi.ts` / `useNotifications` | `/api/notifications/**` | ✅ 已接入（Kafka 事件落库 + 前端轮询同步） |
-| 工作区 | `workspaceApi.ts` | `/api/workspace/**` | ✅ 已接入（文件页内「Agent 工作区」浏览器） |
-| 内置浏览器 | `browserApi.ts` / `useBrowser` / `useBrowserResults` | `/api/workspace/browser/:sessionId` | ✅ 真实 Chromium 画面、多标签、人工接管；网页任务表单与进度卡、服务端样本确认、结果选行/去重/补采、CSV 下载与验收、方法保存进技能库 |
-| 照片成长相册 | 首页入口 + 同名 Agent 技能 | `/api/workspace/photo-albums` | ✅ 已接入（真实选片、独立 HTML、内容去重增量、文案与样式反馈、明确偏好继承；open_file 交付） |
-| 媒体缓存 | `mediaCacheApi.ts` | `/api/media/**` | ✅ 已接入（缓存列表/删除/保存到文件中心/代理预览） |
-| 登录 | `auth.ts` | `/api/auth/**` | ✅ 已接入（令牌登录,缺省免登录；SSE/img 走 `?token=`） |
-
-新增接入时遵循同一模式:在 `lib/services/` 建 `xxxApi.ts`,导出 async 函数并在内部 `requestJson`;
-Hook 直接调契约层,接口失败如实报错、空态引导操作。
-**带令牌的媒体/下载入口必须用 `withAuthToken()`**（`<img>`/`window.open`/EventSource 无法带 header，2026-09-20 统一修复过一批遗漏）。
-
-## 📁 目录约定 (Directory Structure)
-- `/` 根目录：`index.html`（Vite 入口）、`vite.config.ts`（构建配置，含 `@` 别名与 `/api` 代理）、`src/main.tsx`（ReactDOM.createRoot + BrowserRouter）、`src/App.tsx`（路由表）
-- `/src/app`: 路由页面组件 (Home=助手, Files=资料, Tasks=任务, Chat, Knowledge, Data-Sources, Environments, Agent, Settings, Login)。Agent 能力设置统一在 `/agent`，`/settings` 管理外观、资料索引、通知与隐私；旧模型/技能/MCP/环境变量入口重定向。由 `src/App.tsx` 统一注册到 react-router-dom；主视图组件可复用(如 `components/knowledge/KnowledgeView` 同时被资料页与 /knowledge 使用)。**禁止在此存放长段逻辑代码**。
-- `/src/components/ui`: 基础 UI 原语（Button, Input, Switch, Select, Tabs, Modal）。
-- `/src/components/{domain}`: 领域业务组件（如 `/chat`, `/files`, `/settings/model` 下的专属拆分组件）。
-- `/src/components/layout`: Sidebar, Header, NotificationBell, ThemeProvider。
-- `/src/components/shared`: Markdown 等跨域组件。
-- `/src/hooks`: 前端业务逻辑钩子（Zustand store + persist 或纯状态机）。
-- `/src/lib/api`: HTTP 客户端、SSE 客户端（`client.ts` / `sse.ts` / `agentApi.ts` / `chatApi.ts`）。
-- `/src/lib/services`: 后端 API 契约层（`filesApi.ts` / `ragService.ts` / `datasourcesApi.ts` / `environmentApi.ts` / `automationsApi.ts` / `modelsApi.ts`）。
-- `/src/lib/next-shims`: Next.js 兼容残留（仅 `dynamic.tsx`；Link / Image / navigation / usePathname / redirect 已于 2026-09-16 删除——全仓库零引用）。
-- `/src/lib`: 全局工具函数。
-- `/src/types`: 全局 TypeScript 接口定义。
-
-## 🔄 Next.js 兼容层 (next-shims)
-本项目从 Next.js 14 迁移至 Vite 7 + react-router-dom v7。
-`src/lib/next-shims/` 仅剩 `dynamic.tsx`（经 `next/dynamic` 别名被 Markdown.tsx 使用）与 `next-themes`（指向自写 ThemeProvider）。
-其余 shim（Link / Image / navigation / usePathname / redirect）已于 2026-09-16 删除——业务组件全部使用 react-router-dom 原生 API，全仓库零引用。
-新增组件一律直接使用 `react-router-dom` 的 `Link` / `useNavigate` / `useLocation`。
-
-## 📦 包管理器规约 (Package Manager)
-- 本项目**必须使用 `pnpm`** 管理依赖与运行脚本（如 `pnpm install`、`pnpm add -D xxx`、`pnpm dev`、`pnpm build`、`pnpm test`）。
-- **禁止使用 `npm` / `npx`**：仓库使用 `pnpm-lock.yaml`，`node_modules` 为 pnpm 结构，混用 npm 会破坏依赖树。
-- `pnpm-workspace.yaml` 中 `allowBuilds` 显式允许 esbuild / unrs-resolver 的构建脚本。
-
-## 🛠️ 常用命令
-| 命令 | 用途 |
-|------|------|
-| `pnpm dev` | 开发服务器（固定 3001 端口，HMR 即时生效） |
-| `pnpm build` | 生产构建（输出 `dist/`） |
-| `pnpm preview` | 生产预览（需先 build） |
-| `pnpm typecheck` | TypeScript 编译检查（`tsc --noEmit`） |
-| `pnpm lint` | ESLint 检查 |
-| `pnpm test` | Vitest 单元测试 |
-
-## 🎯 协作原则
-以**可运行、可验证、与后端契约一致**为优先，而非仅视觉完整：
-
-1. 改动涉及接口时，先确认后端契约（字段名、信封、错误码），再写前端。
-2. 提交前跑完质量门：`pnpm typecheck && pnpm lint && pnpm test`，必要时补 `pnpm build`。
-3. 保持模块化：页面只做胶水，业务进组件，逻辑进 Hook，类型进 `src/types`。
-4. 文档随代码更新：接入新域或改契约后，同步更新本文件的「后端接入现状」表。
-
-5. **不要以次充好**:缺依赖就安装依赖(pnpm add),不要手写临时替代品、不要降级实现、不要 mock 绕过。标准组件用标准库(如 radix-ui),与项目既有技术栈保持一致。
-
-6. **单测不写断言**（2026-09-12 用户明确要求）：前端单元测试仅作冒烟——执行渲染/交互路径、不校验结果（抛异常即失败）；行为正确性由 E2E 实测验证。写测试时不要加 `expect(...)` 断言；改动相关文件时顺手移除已有断言。
-
-7. **不主动用子代理**（2026-09-12 用户明确要求）：不要自行派发 subagent 分担任务，自己顺序执行；仅当用户明确要求时才用。
+- 包管理器和完整质量检查遵守根规范；命令清单以 `package.json` 和 README 为准。开发/预览固定 3001；切换到生产预览前先构建并停止占用该端口的本项目开发进程，完成后恢复原开发状态。
+- 依赖变更检查 `pnpm-workspace.yaml` 的构建脚本许可及 `patches/`；升级 sonner 时保留或验证后台页面通知计时补丁的等价行为。
+- Knip 删除候选还需核实路由、动态导入、运行时注册和测试引用，不用忽略列表掩盖废弃实现。
+- 按影响范围验收刷新恢复、切页、重复提交、失败回滚与取消。测试应等待实际异步路径结束，不以未捕获异常被忽略的空跑作为冒烟通过。
+- 业务能力或契约变化时更新 [接入参考](docs/api-integration-status.md) 的相关行；验收结果写开发记录，规范只保留长期约束。

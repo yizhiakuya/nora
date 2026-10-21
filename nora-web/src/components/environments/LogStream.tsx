@@ -122,7 +122,7 @@ export function LogStream() {
       `自动化修复诊断:${selected.service} 服务出现以下 ERROR 日志:\n` +
       `${selected.time} ${selected.message}\n` +
       `请读取该服务最近日志定位根因,结合知识库(项目文档)给出修复建议;只分析,不要执行任何修改操作。`;
-    const saved = await addRule(`诊断任务:${selected.service} 异常分析`, "手动触发", prompt);
+    const saved = await addRule(`诊断任务:${selected.service} 异常分析`, "manual", { actionType: "agent", prompt });
     if (!saved) {
       // 创建失败:store 已 toast 人话错误;不置"已创建"态,用户可重试(2026-09-19 修假成功)
       return;
@@ -146,10 +146,12 @@ export function LogStream() {
                   ? "bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800"
                   : activeSource.health === "degraded"
                     ? "bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800"
-                    : "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
+                    : activeSource.health === "unknown"
+                      ? "bg-muted text-muted-foreground border-border"
+                      : "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
               }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${activeSource.health === "down" ? "bg-red-500" : "bg-current animate-pulse"}`} />
-                {activeSource.status === "running" ? "运行中" : activeSource.status === "stopped" ? "已停止" : "异常"}
+                <span className={`w-1.5 h-1.5 rounded-full ${activeSource.health === "down" ? "bg-red-500" : activeSource.health === "unknown" ? "bg-current" : "bg-current animate-pulse"}`} />
+                {activeSource.status === "running" ? "运行中" : activeSource.status === "stopped" ? "已停止" : activeSource.status === "unknown" ? "未探测" : activeSource.kind === "FILE" ? "采集异常" : "异常"}
               </span>
               {activeSource.kind === "DOCKER" && activeSource.port ? (
                 <span className="font-mono tabular-nums shrink-0">:{activeSource.port}</span>

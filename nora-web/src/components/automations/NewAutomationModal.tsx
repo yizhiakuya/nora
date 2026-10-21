@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAutomations } from "@/hooks/useAutomations";
-import { automationsApi, type ScheduleSpec } from "@/lib/services/automationsApi";
+import { automationsApi, type AutomationTrigger, type ScheduleSpec } from "@/lib/services/automationsApi";
 
 const TRIGGER_OPTIONS = [
   { value: "manual", label: "手动触发" },
@@ -49,7 +49,7 @@ function localTimeZone(): string {
 export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationModalProps) {
   const addRule = useAutomations((s) => s.addRule);
   const [name, setName] = useState("");
-  const [trigger, setTrigger] = useState<string>("manual");
+  const [trigger, setTrigger] = useState<AutomationTrigger>("manual");
   const [action, setAction] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -102,6 +102,7 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
   };
 
   const handleSubmit = async () => {
+    if (submitting) return;
     if (!name.trim()) {
       setError("任务名称不能为空");
       return;
@@ -116,12 +117,7 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
       return;
     }
     setSubmitting(true);
-    const triggerLabel = needsSchedule
-      ? (trigger === "weekly"
-          ? `每周${WEEKDAYS.find((w) => w.value === dayOfWeek)?.label ?? ""} ${localTime}`
-          : `每日 ${localTime}`)
-      : TRIGGER_OPTIONS.find((t) => t.value === trigger)?.label ?? "手动触发";
-    const saved = await addRule(name.trim(), triggerLabel, action.trim(), schedule ?? undefined);
+    const saved = await addRule(name.trim(), trigger, { actionType: "agent", prompt: action.trim() }, schedule ?? undefined);
     setSubmitting(false);
     if (!saved) {
       // 后端失败:留在弹窗里让用户改后重试,不关窗、不报"创建成功"(2026-09-19 修假成功)
@@ -135,7 +131,7 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={() => { if (!submitting) onClose(); }}
       title="新建定期任务"
       footer={
         <>
@@ -159,7 +155,10 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
 
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-foreground">触发条件</label>
-          <Select value={trigger} onValueChange={(v) => { setTrigger(v); setPreview(null); setPreviewError(null); }}>
+          <Select value={trigger} onValueChange={(v) => {
+            if (v === "manual" || v === "daily" || v === "weekly") setTrigger(v);
+            setPreview(null); setPreviewError(null);
+          }}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="选择触发方式" />
             </SelectTrigger>
@@ -243,8 +242,8 @@ export function NewAutomationModal({ isOpen, onClose, prefill }: NewAutomationMo
             "知道自己在选什么"——定期任务到点自动执行,现场无人审批。 */}
         <div className="p-3 rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/50">
           <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">
-            执行权限:到点自动执行时<strong>无人审批</strong>,任务可调用本机终端等工具(与对话页的「完全访问」档相同);
-            仅删除/注册类不可逆操作会被强制拒绝。请确认指令范围与措辞。
+            自动运行使用<strong>完全访问权限</strong>，可调用本机终端等工具；
+            仍需交互审批的操作会被拒绝。请确认指令范围与措辞。
           </p>
         </div>
 

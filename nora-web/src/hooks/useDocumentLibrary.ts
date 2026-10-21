@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import { KnowledgeBase, KnowledgeDoc, KnowledgeSource, DocDetail } from "@/types";
 import { addChunk, createBase, deleteChunk, fetchBases, fetchDocDetail, reindexDoc, setChunkEnabled, setDocBase, setDocEnabled, updateChunk } from "@/lib/services/ragService";
@@ -33,61 +34,82 @@ export function useDocumentLibrary() {
   const [addingChunk, setAddingChunk] = useState(false);
   const [newChunkText, setNewChunkText] = useState("");
   const [chunkBusy, setChunkBusy] = useState(false);
+  const detailVersion = useRef(0);
+  const chunkPending = useRef(false);
 
   /** 分段操作后用返回列表原地刷新详情(避免整文档重拉)。 */
-  const applyChunks = (chunks: DocDetail["chunks"]) => {
-    setDetail((prev) => (prev ? { ...prev, chunks, doc: { ...prev.doc, chunks: chunks.length } } : prev));
+  const applyChunks = (docId: number, chunks: DocDetail["chunks"]) => {
+    setDetail((prev) => (prev?.doc.id === docId ? { ...prev, chunks, doc: { ...prev.doc, chunks: chunks.length } } : prev));
   };
 
   const handleChunkSave = async (chunkId: number) => {
+    if (!detail || chunkPending.current) return;
+    const docId = detail.doc.id, version = detailVersion.current;
+    chunkPending.current = true;
     setChunkBusy(true);
     try {
       const chunks = await updateChunk(chunkId, editingChunkText);
-      applyChunks(chunks);
+      if (version !== detailVersion.current) return;
+      applyChunks(docId, chunks);
       setEditingChunkId(null);
       toast.success("分段已保存,向量已重算");
     } catch (e) {
-      toast.error(`保存失败：${(e as Error).message}`);
+      if (version === detailVersion.current) toast.error(`保存失败：${(e as Error).message}`);
     } finally {
-      setChunkBusy(false);
+      if (version === detailVersion.current) { chunkPending.current = false; setChunkBusy(false); }
     }
   };
 
   const handleChunkToggle = async (chunkId: number, enabled: boolean) => {
+    if (!detail || chunkPending.current) return;
+    const docId = detail.doc.id, version = detailVersion.current;
+    chunkPending.current = true;
     setChunkBusy(true);
     try {
-      applyChunks(await setChunkEnabled(chunkId, enabled));
+      const chunks = await setChunkEnabled(chunkId, enabled);
+      if (version !== detailVersion.current) return;
+      applyChunks(docId, chunks);
       toast.success(enabled ? "分段已启用" : "分段已停用(退出检索)");
     } catch (e) {
-      toast.error(`操作失败：${(e as Error).message}`);
+      if (version === detailVersion.current) toast.error(`操作失败：${(e as Error).message}`);
     } finally {
-      setChunkBusy(false);
+      if (version === detailVersion.current) { chunkPending.current = false; setChunkBusy(false); }
     }
   };
 
   const handleChunkDelete = async (chunkId: number) => {
+    if (!detail || chunkPending.current) return;
+    const docId = detail.doc.id, version = detailVersion.current;
+    chunkPending.current = true;
     setChunkBusy(true);
     try {
-      applyChunks(await deleteChunk(chunkId));
+      const chunks = await deleteChunk(chunkId);
+      if (version !== detailVersion.current) return;
+      applyChunks(docId, chunks);
       toast.success("分段已删除,剩余分段已重新编号");
     } catch (e) {
-      toast.error(`删除失败：${(e as Error).message}`);
+      if (version === detailVersion.current) toast.error(`删除失败：${(e as Error).message}`);
     } finally {
-      setChunkBusy(false);
+      if (version === detailVersion.current) { chunkPending.current = false; setChunkBusy(false); }
     }
   };
 
   const handleChunkAdd = async (docId: number) => {
+    if (detail?.doc.id !== docId || chunkPending.current) return;
+    const version = detailVersion.current;
+    chunkPending.current = true;
     setChunkBusy(true);
     try {
-      applyChunks(await addChunk(docId, newChunkText));
+      const chunks = await addChunk(docId, newChunkText);
+      if (version !== detailVersion.current) return;
+      applyChunks(docId, chunks);
       setAddingChunk(false);
       setNewChunkText("");
       toast.success("分段已添加,向量已重算");
     } catch (e) {
-      toast.error(`添加失败：${(e as Error).message}`);
+      if (version === detailVersion.current) toast.error(`添加失败：${(e as Error).message}`);
     } finally {
-      setChunkBusy(false);
+      if (version === detailVersion.current) { chunkPending.current = false; setChunkBusy(false); }
     }
   };
 
@@ -166,30 +188,40 @@ export function useDocumentLibrary() {
 
   /** 文档详情抽屉里的来源会话(A2:对话保存的文档可回到来源会话)。 */
   const [detailSourceSession, setDetailSourceSession] = useState<string | null>(null);
-
-  const openDetail = async (doc: KnowledgeDoc) => {
-    setDetailLoading(doc.id);
-    setDetailSourceSession(null);
-    try {
-      const d = await fetchDocDetail(doc.id);
-      setDetail(d);
-      // A2(2026-09-27):对话保存的文档(source=chat)查登记表拿来源会话——
-      // 知识库详情可直接回到那次对话(sessionId 为空/非对话产出则不显示)
-      if (doc.source === "chat") {
-        try {
-          const artifacts = await savedArtifactsApi.list(200);
-          const match = artifacts.find((a) => a.kind === "knowledge_doc" && a.path === String(doc.id));
-          setDetailSourceSession(match?.sessionId ?? null);
-        } catch {
-          /* 登记查询失败:不显示来源会话,不阻断详情 */
-        }
-      }
-    } catch (e) {
-      toast.error(`加载详情失败：${(e as Error).message}`);
-    } finally {
-      setDetailLoading(null);
-    }
+  const [searchParams, setSearchParams] = useSearchParams();
+  const detailId = searchParams.get("doc");
+  const openDetail = (doc: KnowledgeDoc) => {
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.set("doc", String(doc.id)); return next; });
   };
+  const closeDetail = () => {
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete("doc"); return next; });
+  };
+  useEffect(() => {
+    let disposed = false;
+    const version = ++detailVersion.current;
+    chunkPending.current = false;
+    setEditingChunkId(null); setEditingChunkText("");
+    setAddingChunk(false); setNewChunkText(""); setChunkBusy(false);
+    setDetail(null); setDetailSourceSession(null);
+    if (!detailId) { setDetailLoading(null); return; }
+    const id = Number(detailId);
+    if (!Number.isSafeInteger(id) || id <= 0) { toast.error("Invalid document ID: " + detailId); return; }
+    setDetailLoading(id);
+    void (async () => {
+      try {
+        const value = await fetchDocDetail(id);
+        if (disposed) return;
+        setDetail(value);
+        if (value.doc.source === "chat") {
+          const artifacts = await savedArtifactsApi.list(200);
+          if (!disposed) setDetailSourceSession(artifacts.find(a => a.kind === "knowledge_doc" && a.path === String(id))?.sessionId ?? null);
+        }
+      } catch (error) {
+        if (!disposed) toast.error(error instanceof Error ? error.message : String(error));
+      } finally { if (!disposed) setDetailLoading(null); }
+    })();
+    return () => { disposed = true; detailVersion.current = version + 1; };
+  }, [detailId]);
 
   const handleReindex = async (doc: KnowledgeDoc) => {
     setBusyId(doc.id);
@@ -257,6 +289,7 @@ export function useDocumentLibrary() {
   };
 
   return {
+    closeDetail,
     allDocs, selectedLive, allSelected, toggleAll, toggleOne, grouped, busyId, renaming, setRenaming, renameValue, setRenameValue, detail, setDetail, detailLoading, confirmDelete, setConfirmDelete, bases, moving, setMoving, newBaseName, setNewBaseName, creatingBase, editingChunkId, setEditingChunkId, editingChunkText, setEditingChunkText, addingChunk, setAddingChunk, newChunkText, setNewChunkText, chunkBusy, handleChunkSave, handleChunkToggle, handleChunkDelete, handleChunkAdd, handleMove, handleCreateBase, detailSourceSession, openDetail, handleReindex, handleToggleEnabled, runDelete, submitRename
   };
 }

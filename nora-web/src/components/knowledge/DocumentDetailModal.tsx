@@ -8,16 +8,16 @@ import type { DocumentLibraryState } from "@/hooks/useDocumentLibrary";
 import { DocumentChunk } from "./DocumentChunk";
 
 export function DocumentDetailModal({ library }: { library: DocumentLibraryState }) {
-  const { detail, setDetail, addingChunk, setAddingChunk, newChunkText, setNewChunkText, chunkBusy, handleChunkAdd, detailSourceSession } = library;
+  const { detail, closeDetail, addingChunk, setAddingChunk, newChunkText, setNewChunkText, chunkBusy, handleChunkAdd, detailSourceSession } = library;
   return (<>
       <Modal
         isOpen={detail !== null}
-        onClose={() => setDetail(null)}
+        onClose={closeDetail}
         title={detail ? `分块详情 · ${detail.doc.name}` : ""}
         width="w-[720px]"
         footer={
           <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={() => setDetail(null)}>关闭</Button>
+            <Button variant="outline" size="sm" onClick={closeDetail}>关闭</Button>
           </div>
         }
       >

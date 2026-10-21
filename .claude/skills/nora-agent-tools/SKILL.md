@@ -23,7 +23,7 @@ description: Nora Agent 业务设计权威参考——权限三档(ASK/ASSIST/FU
 needApproval = ASK || (ASSIST && risk != LOW) || (FULL && risk == CRITICAL)
 ```
 
-- 无人值守通道(`/api/chat/agent/run`,无会话):**CRITICAL 一律拒绝**,HIGH 放行
+- 无人值守通过 ChatRunService 提交持久化会话：CRITICAL 一律拒绝；FULL 可执行 HIGH，ASSIST 诊断只允许 LOW。
 - 审批:服务端内存 token(sessionId+stepId),**120s 超时自动拒绝**;模型说"同意"不算批准
 - 系统目录(Windows/Program Files/盘根)写删**硬拒**——不走审批,任何档位都拒绝
 
@@ -31,23 +31,22 @@ needApproval = ASK || (ASSIST && risk != LOW) || (FULL && risk == CRITICAL)
 
 | 工具 | 动作 | 风险 |
 |---|---|---|
-| execute_sql / read_service_logs | — | LOW |
+| load_tools | 加载专用工具声明 | LOW（不执行目标工具，不改变权限） |
 | manage_file | list/read/folders | LOW(文件中心只读;2026-09-20 由 read_file 更名,旧名兼容别名) |
 | manage_file | import/rename/move/delete/mkdir | HIGH(文件中心管理面;delete=软删可恢复) |
-| environment_status | — | LOW(环境健康快照) |
 | search_knowledge | — | LOW(知识库主动检索) |
 | manage_workspace | 读(含区外读) | LOW |
 | manage_workspace | 区内写/追加/edit | LOW(记忆维护即时落盘) |
 | manage_workspace | 区外写/追加/edit、区内删 | HIGH |
 | manage_workspace | **区外删** | **CRITICAL** |
-| execute_write_sql / manage_container | — | HIGH |
+| execute_sql | — | HIGH（数据库命令支持读写，遵循统一权限档位） |
 | manage_datasource | list/test/schema | LOW |
 | manage_datasource | create | HIGH |
 | manage_datasource | **remove** | **CRITICAL** |
-| manage_service | list | LOW |
-| manage_service | enable/disable | HIGH |
+| manage_service | list/status/logs | LOW（统一目标名称或 ID） |
+| manage_service | start/stop/restart/enable/disable | HIGH |
 | manage_service | **register/remove** | **CRITICAL** |
-| manage_mcp | list / **tools**(读缓存快照) | LOW |
+| manage_mcp | list / **get**(脱敏连接配置) / **tools**(读缓存快照) | LOW |
 | manage_env_vars | list | LOW(只回变量名、备注和脱敏值) |
 | manage_env_vars | set/delete | HIGH(单项修改，与设置页共用存储，跟随全局权限档位) |
 | manage_mcp | refresh/enable/disable/register/remove/**setPolicy**/**call** | **HIGH(跟随全局档,无单独强制审批)** |
@@ -68,10 +67,12 @@ needApproval = ASK || (ASSIST && risk != LOW) || (FULL && risk == CRITICAL)
 | powershell/sh（仅当前平台注册的工具） | — | HIGH(本机终端;不做命令白名单,防线=审批卡完整命令) |
 
 **易错点**:
+- 基础文件、终端、知识检索、技能与提问工具直接可用；专用内置工具通过 `load_tools` 按准确名称加载，再直接调用。目录来自实际注册表；加载不绕过审批。`ChatToolsSpec.forMessages` 同时用于模型请求与 token 估算。环境状态、日志与启停已并入 `manage_service`，不再注册三个旧入口。
+- MCP 管理入口是 `manage_mcp`，按 list → get 核对疑似已有连接 → update/refresh / 新服务 register 执行。get 是只读，鉴权值、URL 查询和用户信息隐藏，启动参数不回读明文。凭据用 `manage_env_vars` 引用，缺少时 ask_user；不要扫描源码、数据库或应用包找接口或隐藏密钥。终端只用于安装缺少的 STDIO 运行依赖，已知远程端点直接配置。
 - `manage_mcp` 的 register/remove 是 **HIGH 不是 CRITICAL**(2026-09-11 用户明确要求:跟随全局权限档,不做单独审批业务)。曾被定成 CRITICAL 导致 FULL 档下注册仍弹窗,已修正
 - MCP action 别名 `create→register`/`delete→remove`(`normalizeMcpAction`):**分类器/执行层/审批明细三处必须共用**,否则判定漂移
 - **别名归一化已扩展到全部 manage_* 工具(2026-09-18 复盘数据驱动)**:`normalizeDatasourceAction`(add→create/delete→remove/tables→schema)、`normalizeServiceAction`(add→register/delete→remove/pause→disable/resume→enable)——实测模型写 add/delete 被拒;**同样三处共用**;`manage_mcp` 的归一化输出小写(setpolicy 用小写 case);`normalizeMcpTransport`(http→STREAMABLE/local→STDIO 等,实测模型写 transport="http");manage_workspace 的 download/save/fetch→import
-- **参数方言兼容(2026-09-18)**:manage_workspace 的 path 接受 `filename`/`file` 别名(实测 12 次失败全是模型写 filename)——harness 层吸收模型直觉,别让用户为参数名教学买单;manage_file 管理动作的 id 接受 target 别名
+- **参数契约**：内置工具从实际 LangChain4j `@Tool` 方法与请求 record 生成声明，并由 SDK 绑定执行。按声明使用 `manage_workspace.path`、`manage_file.id`；文件批量 ID 用逗号分隔，错误参数在产生副作用前拒绝，不添加隐藏参数别名。
 - **参数理解统一(2026-09-20,架构设计 §5.1)**:RiskClassifier 与执行层共用 `workspacePathOf`(path→filename→file 别名序)与 `normalizeWorkspaceAction`(download/save/fetch→import)——审批检查的目标必须与真正执行的目标一致(修复过:write+filename 写区外被判区内 LOW 的分歧);分类器解析已弃用字符串 indexOf(改 ObjectMapper)
 - **结果状态语义(2026-09-20)**:步骤状态除 completed/failed/declined 外新增 `unknown`(结果未知:调用已发出但中断,远端可能已生效——MCP 调用中断且未声明 readOnlyHint 时不自动重放,返回此状态)与 `partial`(部分成功:fetch_media 有失败项);chat_run 终态含任一 → partial
 - **循环检测结果感知(2026-09-20,§9.3)**:`LoopDetector` 同参数且**结果也不变**才累计(结果指纹=长度+头尾采样哈希),结果变化重置——正常轮询不被误拦;替换了旧的纯计数 Map

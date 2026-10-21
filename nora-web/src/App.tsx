@@ -21,6 +21,7 @@ installGlobalErrorReporting();
 const HomePage = lazy(() => import("@/app/page"));
 const FilesPage = lazy(() => import("@/app/files/page"));
 const ChatPage = lazy(() => import("@/app/chat/page"));
+const SessionsPage = lazy(() => import("@/app/sessions/page"));
 const KnowledgePage = lazy(() => import("@/app/knowledge/page"));
 const AgentPage = lazy(() => import("@/app/agent/page"));
 const DataSourcesPage = lazy(() => import("@/app/data-sources/page"));
@@ -35,6 +36,7 @@ const TITLES: Record<string, string> = {
   "/": "助手",
   "/files": "资料",
   "/chat": "助手",
+  "/sessions": "全部会话",
   "/tasks": "任务",
   "/knowledge": "资料",
   "/skills": "技能",
@@ -47,8 +49,9 @@ const TITLES: Record<string, string> = {
 };
 
 function RouteShell({ children }: { children: React.ReactNode }) {
-  const sessionId = useChatSessions(state => state.sessions.find(session => session.id === state.activeId)?.id ?? state.sessions[0]?.id ?? "");
+  const activeSessionId = useChatSessions(state => state.sessions.find(session => session.id === state.activeId)?.id ?? state.sessions[0]?.id ?? "");
   const location = useLocation();
+  const sessionId = (location.pathname === "/chat" ? new URLSearchParams(location.search).get("session") : null) || activeSessionId;
   const startPolling = useBackendHealth((s) => s.startPolling);
   const online = useBackendHealth((s) => s.online);
   // 全局搜索快捷键(§7 评审:此前 Cmd+K 注册在首页组件里,离开首页后
@@ -77,7 +80,7 @@ function RouteShell({ children }: { children: React.ReactNode }) {
     document.title = title ? `${title} · Nora` : "Nora";
   }, [location.pathname]);
   return (
-    <div className="h-dvh flex overflow-hidden text-foreground bg-background">
+    <div className="h-dvh flex overflow-hidden text-foreground bg-sidebar md:p-2 md:pl-0">
       {/* 全局后台事件观察器:自动任务执行/PROC 守护事件在任何页面都能进通知中心 */}
       <NotificationWatcher />
       {/* 全局搜索(Cmd+K):任何页面可呼出;首页搜索框复用同一实例。
@@ -116,8 +119,15 @@ function Page({ children }: { children: React.ReactNode }) {
 /** 懒加载占位:与页面背景一致的轻量骨架,避免切换时的白屏。 */
 function RouteLoading() {
   return (
-    <div className="flex-1 flex items-center justify-center bg-background">
-      <div className="text-xs text-muted-foreground">加载中…</div>
+    <div role="status" aria-label="正在加载页面" className="flex min-h-0 flex-1 flex-col bg-background">
+      <span className="sr-only">正在加载页面…</span>
+      <div aria-hidden="true" className="app-toolbar px-5 sm:px-8"><div className="loading-skeleton h-3 w-24" /></div>
+      <div aria-hidden="true" className="page-content">
+        <div className="mx-auto max-w-6xl space-y-7">
+          <div className="space-y-3"><div className="loading-skeleton h-7 w-40" /><div className="loading-skeleton h-3 w-56 max-w-full" /></div>
+          <div className="surface space-y-6 p-6"><div className="loading-skeleton h-4 w-1/3" /><div className="loading-skeleton h-4 w-3/4" /><div className="loading-skeleton h-4 w-1/2" /></div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -131,6 +141,7 @@ export default function App() {
       <Route path="/" element={<Page><HomePage /></Page>} />
       <Route path="/files" element={<Page><FilesPage /></Page>} />
       <Route path="/chat" element={<Page><ChatPage key={chatParams.toString()} /></Page>} />
+      <Route path="/sessions" element={<Page><SessionsPage /></Page>} />
       {/* 任务聚合页(M1):view=running|schedules|history */}
       <Route path="/tasks" element={<Page><TasksPage /></Page>} />
       {/* 兼容旧路由(产品改造方案 §3.2):/automations → /tasks(view 保留) */}

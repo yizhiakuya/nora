@@ -37,14 +37,15 @@ export function FilesHeader({ library }: { library: FileLibraryState }) {
           ...breadcrumbTail,
         ]}
         actions={
-          <div className="flex items-center gap-1 [@container(min-width:600px)]:gap-2 shrink-0">
+          <div className="flex items-center gap-1 [@container(min-width:600px)]:gap-2 shrink-0 [@container(max-width:600px)]:w-full">
             {workspaceDir === null && !mediaCacheOpen && !trashOpen && (
             <>
-            <div className="relative w-[88px] [@container(min-width:800px)]:w-[180px] shrink-0">
+            <div className="relative w-[120px] [@container(min-width:800px)]:w-[180px] shrink-0 [@container(max-width:600px)]:min-w-0 [@container(max-width:600px)]:flex-1">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground w-3.5 h-3.5" />
               <Input
-                placeholder="搜索..."
-                className="pl-7 pr-3 py-1.5 h-8 bg-muted border-border text-xs focus-visible:ring-1 focus-visible:ring-blue-500 transition-all w-full"
+                placeholder="搜索文件…"
+                aria-label="搜索资料文件"
+                className="pl-7 pr-3 h-8 text-xs w-full"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />

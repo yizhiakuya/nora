@@ -1,6 +1,7 @@
 """真实模型在两段独立对话中完成网页资料收集、验收、经验保存和参数复用。"""
 import argparse
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -9,7 +10,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="http://localhost:18083")
+    parser.add_argument("--base", default="http://localhost:18080")
     parser.add_argument("--model", default="deepseek-v4.1-flash")
     parser.add_argument("--provider", type=int, default=7)
     parser.add_argument("--skill-name", default="官方文档导航收集")
@@ -18,6 +19,8 @@ def main():
     parser.add_argument("--flow-only", action="store_true")
     args = parser.parse_args()
     opener = build_opener(ProxyHandler({}))
+    if os.environ.get("NORA_AUTH_TOKEN"):
+        opener.addheaders = [("Authorization", "Bearer " + os.environ["NORA_AUTH_TOKEN"])]
     prefix = "browser-agent-demo-" + str(int(time.time()))
 
     def browser_request(session, data=None, task=False):

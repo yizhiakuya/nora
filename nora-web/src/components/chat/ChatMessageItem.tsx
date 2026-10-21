@@ -1,4 +1,4 @@
-import { Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, FileDown, Loader2, Clock, User, Play } from "lucide-react";
+import { Database, MessageSquare, BookOpen, FileCode, Server, FileText, Check, Copy, RotateCcw, ChevronDown, AlertTriangle, Pencil, X, Clock, Play } from "lucide-react";
 import { useState } from "react";
 import { AgentProcessBlock, TurnMeta } from "./AgentThoughtBlock";
 import { ApprovalCard } from "./ApprovalCard";
@@ -8,19 +8,14 @@ import { splitChatRefs, refKey } from "@/lib/chatRefs";
 import { RefChip } from "./RefChip";
 import { Markdown } from "@/components/shared/Markdown";
 import { toast } from "sonner";
-import { saveTextAsync } from "@/lib/services/ragService";
-import { workspaceApi } from "@/lib/services/workspaceApi";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
-import { contentKey, contentHashSuffix, getSavedRecord, markSaved } from "@/lib/saveState";
-import { savedArtifactsApi } from "@/lib/services/savedArtifactsApi";
 import { FileDeliveryCards } from "./FileDeliveryCards";
 import { FileChangeCards } from "./FileChangeCards";
-import { parseArtifactsFence } from "@/lib/artifacts";
-import { useFileViewer } from "@/hooks/useFileViewer";
-import { usePreferences } from "@/hooks/usePreferences";
 import { humanizeError } from "@/lib/errorMessages";
 import { Button } from "@/components/ui/button";
+import { SaveToKnowledgeButton, SaveAsFileButton } from "./MessageSaveActions";
+import { contentKey } from "@/lib/saveState";
 import { CompactionMessage } from "./CompactionMessage";
 
 const SOURCE_ICON: Record<string, React.ElementType> = {
@@ -108,117 +103,6 @@ function SourceCitations({ sources }: { sources: NonNullable<ChatMessage["source
   );
 }
 
-function SaveToKnowledgeButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: string }) {
-  // 已保存状态按 (会话+内容哈希) 持久化:刷新/切屏后恢复(2026-09-21 修复重复保存)
-  const key = contentKey(sessionId, msg.content);
-  const [saved, setSaved] = useState(() => getSavedRecord(key).knowledgeSaved === true);
-
-  const handleSave = async () => {
-    if (saved) return;
-    const title = `对话结论 · ${msg.content.slice(0, 24).replace(/[#*\n]/g, "").trim()}`;
-    let docId: number | null = null;
-    try {
-      const doc = await saveTextAsync(title, msg.content);
-      docId = doc?.id ?? null;
-    } catch (e) {
-      toast.error(`入库失败：${(e as Error).message}`);
-      return;
-    }
-    setSaved(true);
-    markSaved(key, { knowledgeSaved: true, knowledgeDocId: docId ?? undefined });
-    // B1(2026-09-27):服务端登记归属(来自哪次对话)——换浏览器也能从
-    // 资料页找到;登记失败静默(保存本身已成功,登记是增益)
-    if (docId != null) {
-      void savedArtifactsApi.register({
-        kind: "knowledge_doc",
-        path: String(docId),
-        name: title,
-        sessionId,
-        messageKey: key,
-      });
-    }
-    toast.success("已入库，可在知识库检索");
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleSave}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${saved ? "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800" : "bg-card text-muted-foreground border-border hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700"}`}
-    >
-      {saved ? <Check className="w-3 h-3" /> : <BookOpen className="w-3 h-3" />}
-      {saved ? "已保存到知识库" : "保存到知识库"}
-    </button>
-  );
-}
-
-/**
- * 「保存为文件」(M2-03,2026-09-20,方案 §4.1 S1):
- * 把回答写成工作区真实 Markdown 文件(返回验证过的路径),与「保存到知识库」
- * 是两个不同动作(分别说明):文件=可下载/可引用的资产;知识库=可被检索。
- *
- * 2026-09-21 修复重复生成:① 已保存状态按 (会话+内容哈希) 持久化,刷新/切屏
- * 后恢复;② 文件名用内容哈希后缀替代时间戳——即使状态意外丢失再点,也只是
- * 覆盖同一文件,不再产生副本(双保险)。
- */
-function SaveAsFileButton({ msg, sessionId }: { msg: ChatMessage; sessionId?: string }) {
-  const key = contentKey(sessionId, msg.content);
-  const [savedPath, setSavedPath] = useState<string | null>(
-    () => getSavedRecord(key).filePath ?? null
-  );
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (savedPath) { void useFileViewer.getState().openTargets([`workspace:${savedPath}`], undefined, { sessionId }); return; }
-    if (saving) return;
-    setSaving(true);
-    try {
-      // 文件名:首行标题(去 Markdown 标记)+ 内容哈希后缀——同一回答重复保存
-      // 命中同一路径(覆盖),不因时间戳变化产生副本
-      const legacyReport = parseArtifactsFence(msg.content)?.find(gallery => gallery.gallery === "text" && typeof gallery.data.text === "string");
-      const body = legacyReport ? String(legacyReport.data.text) : msg.content;
-      const firstLine = body.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find((l) => l.length > 0) ?? "回答";
-      const base = firstLine.replace(/[\\/:*?"<>|]/g, "").slice(0, 40) || "回答";
-      const path = `reports/${base}-${contentHashSuffix(msg.content)}.md`;
-      await workspaceApi.writeFile(path, body);
-      // 写后回读验证(方案要求"返回验证过的路径",不空口报成功)
-      const check = await workspaceApi.readFile(path);
-      if (check !== body) {
-        throw new Error("写入后校验不一致");
-      }
-      setSavedPath(path);
-      markSaved(key, { filePath: path });
-      // B1(2026-09-27):服务端登记归属(来自哪次对话)——换浏览器也能从
-      // 资料页找到;登记失败静默(保存本身已成功,登记是增益)
-      void savedArtifactsApi.register({
-        kind: "workspace_file",
-        path,
-        name: firstLine.slice(0, 60) || "回答",
-        sessionId,
-        messageKey: key,
-      });
-      toast.success(`已保存:工作区 ${path}`, { description: "可在「资料 → 工作区」中打开" });
-    } catch (e) {
-      toast.error(`保存失败：${(e as Error).message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleSave}
-      disabled={saving}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${savedPath ? "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800" : "bg-card text-muted-foreground border-border hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700"}`}
-      title={savedPath ? `已保存:${savedPath}` : "保存为工作区 Markdown 文件(可下载/引用)"}
-    >
-      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : savedPath ? <Check className="w-3 h-3" /> : <FileDown className="w-3 h-3" />}
-      {savedPath ? "已保存为文件" : "保存为文件"}
-    </button>
-  );
-}
-
 export function ChatMessageItem(props: React.ComponentProps<typeof ConversationMessage>) {
   return props.msg.sender === "compaction" ? <CompactionMessage {...props} /> : <ConversationMessage {...props} />;
 }
@@ -244,9 +128,6 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
   };
   // 流式期间实时秒表(每秒递增);结束后停表不再显示(总耗时走 TurnMeta)
   const elapsedSeconds = useElapsedSeconds(msg.startedAtMs, !!msg.isTyping);
-  // 用户头像:有昵称显示首字,未设置昵称显示通用图标(此前硬编码假身份 "NC")
-  const accountName = usePreferences((s) => s.account.name);
-  const avatarText = accountName.trim() ? accountName.trim().charAt(0).toUpperCase() : null;
   const hasTimelineText = msg.steps?.some(step => step.type === "commentary" || step.type === "answer");
   const answerStep = msg.steps?.find(step => step.type === "answer");
   const displayContent = hasTimelineText || msg.turnMetrics?.status === "interrupted"
@@ -264,7 +145,7 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
   if (msg.role === 'user') {
     return (
       <>
-        <div className="group/user flex gap-2 animate-in fade-in slide-in-from-bottom-2">
+        <div className="group/user flex gap-2 animate-in fade-in duration-200">
             <div className="flex-1"></div>
             {editing ? (
               <div className="bg-background border border-blue-400 dark:border-blue-600 rounded-2xl rounded-tr-sm p-3 max-w-[80%] w-full">
@@ -300,7 +181,7 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
                 </div>
               </div>
             ) : (
-              <div className="bg-muted/50 min-w-0 px-4 py-3 rounded-2xl rounded-tr-sm border border-border/60 text-sm leading-relaxed max-w-[85%] break-words">
+              <div className="bg-muted min-w-0 px-4 py-3 rounded-2xl text-[14px] leading-7 max-w-[90%] break-words">
                 {/* 发送者标记(2026-09-20,定时任务=往会话发消息):该消息由定时任务
                     触发写入,不是用户手输——用户看历史时能明确区分 */}
                 {msg.sender === "steering" && (
@@ -329,43 +210,35 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
                 })()}
               </div>
             )}
-            <div className="flex flex-col items-center gap-1">
-              <div className="w-8 h-8 rounded-full flex-shrink-0 bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center shadow-sm">
-                {avatarText ?? <User className="w-3.5 h-3.5" />}
-              </div>
+            <div className="flex items-start pt-3">
               {onEdit && canEdit && !editing && (
                 <button
                   type="button"
                   title="编辑并重新发送(之后的对话将一并回退)"
                   onClick={() => { setEditDraft(msg.content); setEditing(true); }}
-                  className="opacity-0 group-hover/user:opacity-100 transition-opacity text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                  aria-label="编辑并重新发送"
+                  className="rounded p-1 text-muted-foreground hover:text-foreground md:opacity-0 md:group-hover/user:opacity-100 md:group-focus-within/user:opacity-100 focus-visible:opacity-100 transition-opacity"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
         </div>
-        <div className="text-right text-[10px] text-muted-foreground pr-12 mt-1">{msg.timestamp}</div>
       </>
     );
   }
 
   return (
     <>
-      <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2">
-          {/* 头像:气泡 N(深蓝剪影)。深色模式下近黑背景对比度低,
-              加一圈浅色细环把剪影从背景里拉出来(审查建议,2026-10-01) */}
-          <div className="w-8 h-8 rounded-full flex-shrink-0 shadow-sm mt-1 overflow-hidden ring-1 ring-black/10 dark:ring-white/25 [@container(max-width:640px)]:hidden">
-              <img src="/brand-avatar.png" alt="Nora" width={32} height={32} className="w-8 h-8" />
-          </div>
+      <div className="flex animate-in fade-in duration-200">
           <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="text-sm font-medium flex items-center gap-2 mb-2">Nora <span className="text-[10px] text-muted-foreground font-normal">{msg.timestamp}</span>
+              <div className="text-[13px] font-semibold flex items-center gap-2 mb-3"><img src="/brand-logo.png" alt="" width={18} height={18} />Nora <span className="text-[11px] text-muted-foreground/70 font-normal">{msg.timestamp}</span>
                 {msg.isTyping && elapsedSeconds != null && (
                   <span className="text-[10px] font-normal tabular-nums text-blue-600 dark:text-blue-400" title="本轮流式响应已用时">{elapsedSeconds}s</span>
                 )}
               </div>
               
-              <div className="relative pl-6 space-y-3 before:absolute before:inset-y-2 before:left-2.5 before:w-px before:bg-gray-200 dark:before:bg-gray-700">
+              <div className="space-y-4">
                   {msg.steps && msg.steps.length > 0 && (
                     <AgentProcessBlock
                       steps={msg.steps.filter(step => step.type !== "answer" && !(msg.error && step.id === "s-error"))}
@@ -438,10 +311,7 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
                   )}
                   {(displayContent || (msg.isTyping && !hasTimelineText) || msg.stopped) && (
                     <div className="relative animate-in fade-in">
-                        <div className="absolute -left-[27.5px] w-5 h-5 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 flex items-center justify-center top-0 shadow-[0_0_0_2px_rgba(255,255,255,1)]">
-                            <MessageSquare className="w-[10px] h-[10px] text-blue-500 dark:text-blue-400" />
-                        </div>
-                        <div className="text-sm text-foreground leading-relaxed pt-0.5">
+                        <div className="text-[14px] text-foreground leading-7 pt-0.5">
                             {displayContent ? (
                               <Markdown className="chat-markdown" sessionId={sessionId ?? undefined}>{displayContent}</Markdown>
                             ) : msg.isTyping ? (
@@ -464,16 +334,6 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
                             {msg.stopped && (
                               <span className="text-[10px] text-amber-600 dark:text-amber-400">· 已停止</span>
                             )}
-                            {msg.content && (
-                              <button
-                                type="button"
-                                onClick={copyContent}
-                                className="text-[10px] text-muted-foreground/0 group-hover/meta:text-muted-foreground/70 hover:!text-foreground transition-colors cursor-pointer"
-                                title="复制回答"
-                              >
-                                复制
-                              </button>
-                            )}
                           </div>
                         )}
                     </div>
@@ -483,10 +343,13 @@ function ConversationMessage({ msg, sessionId: sessionIdProp, onRetry, canRetry 
                     <SourceCitations sources={msg.sources} />
                   )}
 
-                  {!msg.isTyping && displayContent && (
-                    <div className="relative pt-1 flex items-center gap-2 flex-wrap">
-                      <SaveToKnowledgeButton msg={msg} sessionId={sessionId} />
-                      {!msg.steps?.some(step => step.result?.files?.length) && <SaveAsFileButton msg={msg} sessionId={sessionId} />}
+                  {!msg.isTyping && msg.content && (
+                    <div className="-ml-2 flex items-center gap-0.5 flex-wrap">
+                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-muted-foreground" onClick={copyContent} title="复制回答"><Copy className="h-3.5 w-3.5" />复制</Button>
+                      {displayContent && <>
+                        <SaveToKnowledgeButton key={`knowledge:${contentKey(sessionId, msg.content)}`} msg={msg} sessionId={sessionId} />
+                        {!msg.steps?.some(step => step.result?.files?.length) && <SaveAsFileButton key={`file:${contentKey(sessionId, msg.content)}`} msg={msg} sessionId={sessionId} />}
+                      </>}
                     </div>
                   )}
 

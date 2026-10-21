@@ -7,7 +7,7 @@ import zipfile
 
 root = Path(__file__).resolve().parents[1]
 java = Path(os.getenv('JAVA_HOME', 'D:/tools/jdk-21')) / 'bin'
-jar = root / 'nora-api/services/agent-service/target/agent-service-0.1.0-SNAPSHOT.jar'
+jar = root / 'nora-api/target/nora-api-0.1.0-SNAPSHOT.jar'
 dest = Path(tempfile.mkdtemp(prefix='nora-cmd-e2e-'))
 with zipfile.ZipFile(jar) as archive:
     for item in archive.namelist():

@@ -13,7 +13,7 @@
 const TOKEN_KEY = "nora-auth-token";
 
 /** 读取当前令牌(未登录返回空串)。 */
-export function getAuthToken(): string {
+function getAuthToken(): string {
   try {
     return localStorage.getItem(TOKEN_KEY) ?? "";
   } catch {
@@ -23,15 +23,11 @@ export function getAuthToken(): string {
 
 /** 保存令牌(登录成功后调用)。 */
 export function setAuthToken(token: string): void {
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    /* 隐私模式:令牌只活在内存中,刷新需重登 */
-  }
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 /** 清除令牌(登出/401 时调用)。 */
-export function clearAuthToken(): void {
+function clearAuthToken(): void {
   try {
     localStorage.removeItem(TOKEN_KEY);
   } catch {
@@ -68,9 +64,4 @@ export function handleUnauthorized(): void {
   }
   const back = encodeURIComponent(window.location.pathname + window.location.search);
   window.location.href = `/login?back=${back}`;
-}
-
-/** 是否已登录(有令牌;真实性由服务端校验)。 */
-export function hasAuthToken(): boolean {
-  return getAuthToken().length > 0;
 }

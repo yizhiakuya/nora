@@ -1,12 +1,8 @@
-import { Check, ChevronDown, FileText } from "lucide-react";
+import { Check, ChevronDown, FileText, Info, Loader2 } from "lucide-react";
 import { useState } from "react";
 import type { ChatStep, ContextFile } from "@/lib/api/chatApi";
-
-/**
- * 注入上下文步骤行(2026-09-17 从 AgentThoughtBlock 拆出,对齐 dsh 的注入
- * 可见性):折叠一行「注入 N 个文件/条目」,展开按 form 渲染——
- * instructions=文件清单+日记清单,catalog=条目列表;未知 form 降级通用展示。
- */
+import { Button } from "@/components/ui/button";
+import { useFileViewer } from "@/hooks/useFileViewer";
 
 /**
  * 注入上下文步骤(对齐 dsh 的注入可见性):折叠一行「注入 N 个文件/条目」,
@@ -21,6 +17,18 @@ export function ContextRow({ step }: { step: ChatStep }) {
   const entries = ctx?.entries ?? [];
   const dailyNotes = ctx?.dailyNotes ?? [];
   const form = ctx?.form;
+
+  if (form === "compaction") return (
+    <div className="min-w-0 py-0.5">
+      <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}
+        className="flex max-w-full cursor-pointer items-center gap-1.5 text-left text-[11px] text-muted-foreground hover:text-foreground">
+        {step.status === "running" ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <Info className="h-3.5 w-3.5 shrink-0 text-sky-500" />}
+        <span>{step.title}</span>
+        <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && <div className="ml-5 mt-2 border-l border-border pl-3"><CompactionContent step={step} /></div>}
+    </div>
+  );
 
   // 折叠行摘要:优先展示条目/文件名清单(dsh 的 collapsedContent 模式)
   const preview = form === "catalog"
@@ -99,6 +107,15 @@ export function ContextRow({ step }: { step: ChatStep }) {
       )}
     </div>
   );
+}
+
+export function CompactionContent({ step, sessionId }: { step: ChatStep; sessionId?: string }) {
+  const archive = step.context?.files?.[0]?.path;
+  return <div className="space-y-2">
+    {step.detail && <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground">{step.detail}</p>}
+    {step.context?.content && <pre className="max-h-80 overflow-auto rounded-lg bg-muted/50 p-3 text-[11px] leading-relaxed whitespace-pre-wrap break-words">{step.context.content}</pre>}
+    {archive && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void useFileViewer.getState().openTargets([`workspace:${archive}`], undefined, { sessionId })}>查看原始记录</Button>}
+  </div>;
 }
 
 /**

@@ -122,7 +122,7 @@ async function parseBody<T>(response: Response): Promise<T> {
  * 各资源的缓存 TTL（毫秒）；未列出的默认不缓存。
  *
  * 取值依据（按「数据多久变一次」定，不按「希望多快」定）：
- *   - 会话列表/历史：只有发消息才会变，写操作会失效缓存 → 给较长 TTL 无损
+ *   - 会话列表由 agentApi 控制缓存；历史只合并并发请求，运行状态实时读取。
  *   - 模型/技能/MCP/数据源配置：改一次用很久，改的时候会写 → 60s 足够安全
  *   - 健康检查：实时性要紧，不缓存（它本身就是极轻的探活）
  *
@@ -136,7 +136,6 @@ const CACHE_TTL_MS: Record<string, number> = {
   "/mcp/servers": 60_000,
   "/skills": 60_000,
   "/datasources": 60_000,
-  "/automations": 60_000,
   // 文件列表（/files 精确路径）值得缓存：切页/重连会反复拉
   "/files": 30_000,
 };
@@ -151,6 +150,7 @@ const CACHE_TTL_MS: Record<string, number> = {
  *     这个接口的调用时机本就由打开预览决定，重复率低。所以排除其子路径。
  */
 const CACHE_EXCLUDE: string[] = [
+  "/chat/sessions/", // 历史仅合并并发请求，运行状态和队列实时读取。
   "/files/",   // 子路径（preview/index/raw/upload）不缓存；精确 "/files" 由 TTL 表放行
   "/log/",     // 前端错误上报，只写不读
 ];
@@ -163,7 +163,7 @@ const CACHE_EXCLUDE: string[] = [
  */
 export function ttlFor(path: string): number {
   const clean = path.split("?")[0];
-  // 排除规则优先：匹配到就完全不缓存（连并发去重也不做，语义更直白）
+  // 排除规则优先：不留存响应；同路径的并发读取仍可合并。
   for (const ex of CACHE_EXCLUDE) {
     // 直接 startsWith：排除项 "/files/" 只排除子路径，不排除 "/files" 本身
     // （文件列表值得缓存、文件内容不值得）。曾把尾部斜杠去掉再比较，结果
@@ -188,8 +188,8 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
 
   // 只缓存 GET：非 GET 是写操作，必须落库后可见（并在成功后失效对应资源）
   if (method === "GET") {
-    // 可取消请求和实时读取都跳过共享缓存，遵循调用方的连接/缓存语义。
-    if (init?.signal || init?.cache === "no-store") return doRequestJson<T>(path, init);
+    // 自定义请求头可能改变响应语义，不能与仅按路径索引的缓存共享。
+    if (init?.signal || init?.headers || init?.cache === "no-store") return doRequestJson<T>(path, init);
     return cached<T>(path, ttlFor(path), false, () => doRequestJson<T>(path, init));
   }
 
@@ -200,14 +200,15 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
 }
 
 async function doRequestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    "X-Nora-Trace-Id": BROWSER_TRACE_ID,
+    ...authHeaders(),
+  });
+  new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Nora-Trace-Id": BROWSER_TRACE_ID,
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
+    headers,
     signal: init?.signal ?? defaultTimeoutSignal(),
   });
 

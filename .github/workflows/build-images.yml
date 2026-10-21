@@ -1,11 +1,3 @@
-# 构建 8 个服务镜像并推送到 GHCR(多架构 amd64/arm64)
-#
-# 触发:
-#   - 推送 tag(v*):打版本 tag + latest
-#   - 手动触发(workflow_dispatch):可指定 tag
-# 说明:
-#   - 多架构构建用 QEMU + buildx;amd64 为主、arm64 通过模拟构建
-#   - 每个服务独立 job(并行);构建上下文为 nora-api/(Dockerfile 通用)
 name: Build & Push Images
 
 on:
@@ -35,14 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { service: gateway-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: file-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: rag-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: agent-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: datasource-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: env-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: automation-service, context: ./nora-api, file: ./nora-api/Dockerfile }
-          - { service: notification-service, context: ./nora-api, file: ./nora-api/Dockerfile }
+          - { service: nora-api, context: ./nora-api, file: ./nora-api/Dockerfile }
           - { service: nora-web, context: ./nora-web, file: ./nora-web/Dockerfile }
     steps:
       - name: Checkout
@@ -78,8 +63,6 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          build-args: |
-            SERVICE=${{ matrix.service }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |

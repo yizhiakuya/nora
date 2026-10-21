@@ -1,6 +1,10 @@
+import { useState } from "react";
 import { BookOpen, Database, FileText, Wrench, X, Zap } from "lucide-react";
+import { Modal } from "@/components/ui/custom/Modal";
+import { ImagePreview } from "@/components/files/viewer/preview/ImagePreview";
 import { refKey, type ChatRef } from "@/lib/chatRefs";
 import { useFileViewer } from "@/hooks/useFileViewer";
+import { withAuthToken } from "@/lib/auth";
 
 /**
  * 引用 chip(2026-09-17):输入区待发送区与用户气泡共用。
@@ -12,7 +16,7 @@ const FILE_META = {
     label: "文件",
     Icon: FileText,
 };
-export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; label: string; Icon: React.ElementType }> = {
+const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; label: string; Icon: React.ElementType }> = {
   file: FILE_META,
   viewer: FILE_META,
   doc: {
@@ -42,8 +46,27 @@ export const REF_META: Record<ChatRef["kind"], { cls: string; iconCls: string; l
 };
 
 export function RefChip({ chatRef, onRemove }: { chatRef: ChatRef; onRemove?: (key: string) => void }) {
+  const [imageOpen, setImageOpen] = useState(false);
   const meta = REF_META[chatRef.kind];
   const target = chatRef.kind === "viewer" ? chatRef.id : chatRef.kind === "file" ? `file:${chatRef.id}` : null;
+  if (chatRef.kind === "file" && /\.(png|jpe?g|gif|webp)$/i.test(chatRef.name)) return (
+    <span className="relative inline-flex rounded-lg border border-border bg-muted/30 p-1">
+      <button type="button" title={chatRef.name} aria-label={`查看图片 ${chatRef.name}`}
+        className="overflow-hidden rounded-md cursor-zoom-in" onClick={() => setImageOpen(true)}>
+        <img src={withAuthToken(`/api/files/${chatRef.id}/raw`)} alt={chatRef.name} className="h-16 w-16 object-cover" />
+      </button>
+      {onRemove && <button type="button" aria-label={`移除图片 ${chatRef.name}`} title="移除图片"
+        onClick={() => onRemove(refKey(chatRef))}
+        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground">
+        <X className="h-3 w-3" />
+      </button>}
+      <Modal isOpen={imageOpen} onClose={() => setImageOpen(false)} title={<span className="block truncate">{chatRef.name}</span>} width="w-[1100px]">
+        <div className="h-[min(calc(85dvh-132px),80vw,720px)]">
+          <ImagePreview preview={{ kind: "image", imageUrl: withAuthToken(`/api/files/${chatRef.id}/raw`) }} />
+        </div>
+      </Modal>
+    </span>
+  );
   return (
     <span
       className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[10px] font-medium border ${meta.cls}`}

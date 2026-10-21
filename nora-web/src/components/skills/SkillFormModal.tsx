@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/custom/Modal";
@@ -12,7 +14,7 @@ interface SkillFormModalProps {
   onClose: () => void;
   /** 编辑模式传入待编辑技能；创建模式传 null */
   initial?: Skill | null;
-  onSubmit: (values: SkillFormValues) => void;
+  onSubmit: (values: SkillFormValues) => Promise<void>;
 }
 
 /**
@@ -20,27 +22,43 @@ interface SkillFormModalProps {
  * 启用后目录注入 agent 上下文,正文由 agent 按需读取遵循。
  */
 export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillFormModalProps) {
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
   const isEdit = !!initial;
   const form = useSkillForm(initial ?? null, isOpen);
   const { name, setName, description, setDescription, instructions, setInstructions,
     category, setCategory, errors, submit } = form;
 
+  const handleSubmit = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setSaving(true);
+    try {
+      await submit(onSubmit);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存技能失败");
+    } finally {
+      pending.current = false;
+      setSaving(false);
+    }
+  };
+
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={() => { if (!saving) onClose(); }}
       title={isEdit ? `编辑技能 · ${initial?.name}` : "新建技能"}
       width="w-[94%] sm:w-[620px]"
       footer={
         <>
-          <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" onClick={() => submit(onSubmit)}>
-            {isEdit ? "保存修改" : "保存并创建"}
+          <Button variant="outline" size="sm" disabled={saving} onClick={onClose}>取消</Button>
+          <Button size="sm" className="bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600" disabled={saving} onClick={() => void handleSubmit()}>
+            {saving ? "保存中…" : isEdit ? "保存修改" : "保存并创建"}
           </Button>
         </>
       }
     >
-      <div className="space-y-5">
+      <fieldset disabled={saving} className="space-y-5">
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-foreground">技能名称</label>
           <Input
@@ -91,7 +109,7 @@ export function SkillFormModal({ isOpen, onClose, initial, onSubmit }: SkillForm
           {errors.instructions && <p className="text-[11px] text-red-500 dark:text-red-400">{errors.instructions}</p>}
           <p className="text-[10px] text-muted-foreground">提示：对话中直接让 AI「把刚才的流程存成技能」，它也能自动创建。</p>
         </div>
-      </div>
+      </fieldset>
     </Modal>
   );
 }

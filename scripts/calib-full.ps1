@@ -1,5 +1,5 @@
 param([string]$Sid = 'sess-1789298882261')
-$log = 'D:\claude\Nora\logs\agent-service-text.log'
+$log = 'D:\claude\Nora\logs\nora-text.log'
 $hits = Select-String -Path $log -Pattern $Sid | Where-Object { $_.Line -match 'context estimate' }
 Write-Host ("calibration lines: " + $hits.Count)
 foreach ($h in $hits) {

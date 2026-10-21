@@ -50,7 +50,7 @@
 ## 4. 数据层
 
 | 数据层已收敛：全部 Mock 文件（`mockData.ts` / `devData.ts` / `knowledgeData.ts`）已于 2026-09-07 删除，
-后端成为唯一数据源（见 `nora-web/AGENTS.md` 的「后端接入现状」）。 |
+后端成为唯一数据源（见 [业务接入参考](api-integration-status.md)）。 |
 
 ## 5. 回滚
 

@@ -1,8 +1,8 @@
 import { toast } from "sonner";
-import { Play, Zap, Clock, Repeat } from "lucide-react";
+import { Play, Zap, Clock, Repeat, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import type { AutomationRule } from "@/types";
+import { EmptyState } from "@/components/ui/custom/States";
 import { useAutomations } from "@/hooks/useAutomations";
 
 const STATUS_MAP = {
@@ -18,79 +18,55 @@ export function AutomationList() {
   const rules = useAutomations((s) => s.rules);
   const toggleRule = useAutomations((s) => s.toggleRule);
   const markRun = useAutomations((s) => s.markRun);
+  const runningRuleIds = useAutomations((s) => s.runningRuleIds);
+  const togglingRuleIds = useAutomations((s) => s.togglingRuleIds);
 
   const toggle = async (id: number) => {
-    const rule = rules.find((r) => r.id === id);
     const ok = await toggleRule(id);
-    // R06(2026-09-20):只有后端确认成功才提示"已暂停/已启用";失败由 store
-    // 回滚 + toast 报错,这里不再重复报成功
-    if (ok && rule) toast.success(`「${rule.name}」已${rule.enabled ? "暂停" : "启用"}`);
+    const rule = useAutomations.getState().rules.find((r) => r.id === id);
+    if (ok && rule) toast.success(`「${rule.name}」已${rule.enabled ? "启用" : "暂停"}`);
   };
 
-  const runNow = (rule: AutomationRule) => {
-    toast.loading(`「${rule.name}」执行中…`, { id: `run-${rule.id}` });
-    // 等真实执行结果(2026-09-19 修假成功):后端失败/未保存的乐观条目都不再报"已触发"
-    // M0-03(2026-09-20):「已触发」→「已完成」——markRun 返回时服务器已落
-    // 终态执行记录,文案与真实结果一致(审查报告 B08)
-    void markRun(rule.id).then((ok) => {
-      if (ok) {
-        toast.success(`「${rule.name}」已完成`, { id: `run-${rule.id}` });
-      } else {
-        toast.error(`「${rule.name}」执行未成功`, { id: `run-${rule.id}` });
-      }
-    });
-  };
+  if (rules.length === 0) return <EmptyState icon={Zap} title="暂无定期任务" description="创建一个任务，让 Nora 按计划处理重复工作。" />;
 
   return (
-    <div className="space-y-3">
+    <div className="work-list">
       {rules.map((rule) => {
         const s = STATUS_MAP[rule.status];
         return (
-          <div key={rule.id} className="surface p-4">
-            <div className="flex items-center justify-between gap-3 mb-4">
+          <article key={rule.id} className="px-4 py-4 sm:px-5 border-b border-border/60 last:border-0">
+            <div className="flex items-center justify-between gap-3 mb-2">
               <div className="min-w-0 flex flex-wrap items-center gap-2">
-                <Zap className={`w-4 h-4 ${rule.enabled ? "text-primary" : "text-muted-foreground/60"}`} />
-                <span className={`text-sm font-semibold ${rule.enabled ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className={`text-[13px] font-medium break-words ${rule.enabled ? "text-foreground" : "text-muted-foreground"}`}>
                   {rule.name}
                 </span>
-                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${s.cls}`}>{s.label}</span>
                 {/* M4-05:存量规则缺真实日程/连接 → 显示「需配置」而非正常启用 */}
                 {rule.needsConfig && (
-                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" title="缺少真实日程/连接配置:请编辑补充后再启用">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" title="缺少真实日程/连接配置:请编辑补充后再启用">
                     需配置
                   </span>
                 )}
               </div>
-              <Switch aria-label={`启用任务：${rule.name}`} checked={rule.enabled} onCheckedChange={() => toggle(rule.id)} />
+              <Switch aria-label={`启用任务：${rule.name}`} disabled={togglingRuleIds.includes(rule.id)} checked={rule.enabled} onCheckedChange={() => toggle(rule.id)} />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs mb-3">
-              <div className="min-w-0 flex items-start gap-2 p-3 bg-muted/60 rounded-lg break-words">
-                <Repeat className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                <div>
-                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">触发条件</div>
-                  <div className="text-foreground">{rule.trigger}</div>
-                </div>
-              </div>
-              <div className="min-w-0 flex items-start gap-2 p-3 bg-muted/60 rounded-lg break-words">
-                <Play className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                <div>
-                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">执行动作</div>
-                  <div className="text-foreground leading-relaxed break-words">{rule.action}</div>
-                </div>
-              </div>
+            <div className="space-y-1.5 text-xs leading-relaxed">
+              <p className="flex items-start gap-2 text-muted-foreground"><Repeat className="w-3.5 h-3.5 mt-0.5 shrink-0" /><span className="min-w-0 break-words"><span className="sr-only">触发条件：</span>{rule.trigger}</span></p>
+              <p className="break-words">{rule.action}</p>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 上次: {rule.lastRun}</span>
                 {rule.nextRun && <span>下次: {rule.nextRun}</span>}
               </div>
-              <Button variant="outline" size="sm" className="h-8 text-xs px-3" onClick={() => runNow(rule)}>
-                <Play className="w-2.5 h-2.5 mr-0.5" /> 立即运行
+              <Button variant="ghost" size="sm" className="h-8 text-xs px-2 text-muted-foreground" disabled={runningRuleIds.includes(rule.id)} onClick={() => void markRun(rule.id)}>
+                {runningRuleIds.includes(rule.id) ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Play className="w-2.5 h-2.5 mr-0.5" />}
+                {runningRuleIds.includes(rule.id) ? "执行中…" : "立即运行"}
               </Button>
             </div>
-          </div>
+          </article>
         );
       })}
     </div>

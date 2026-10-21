@@ -1,6 +1,6 @@
 """验收本机 PostgreSQL/Redis 连接与 Schema，仅读取真实服务。
 
-启动 gateway/datasource 和本地容器后，设置 NORA_AUTH_TOKEN，运行本文件。
+启动 Nora 单应用和本地数据库容器后，设置 NORA_AUTH_TOKEN，运行本文件。
 """
 import runpy
 from pathlib import Path

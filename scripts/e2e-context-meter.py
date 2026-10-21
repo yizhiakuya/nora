@@ -13,7 +13,7 @@ import uuid
 
 def main():
     stamp = str(time.time_ns())
-    base = "http://127.0.0.1:18083"
+    base = "http://127.0.0.1:18080"
     model = "deepseek-v4.1-flash"
     op = build_opener(ProxyHandler({}))
     report = {"checks": [], "turns": []}
@@ -199,7 +199,16 @@ def main():
             f"SELECT '{stamp}-fill-'||i,'{session}','assistant',{literal},'[]','[]',LOCALTIMESTAMP+i*interval '1 microsecond','assistant' FROM generate_series(1,45) i;")
         item = run("pressure", "继续任务，只回答此前已确认的 PROJECT_CODE 和文件操作限制。禁止重读初始 code.txt 文件或扫描目录；需要核实时仅回读给出的历史归档路径。", session)
         check(any(e["event"] == "step" and e["data"].get("id", "").startswith("s-compact-") for e in item["events"]), "容量压力实际触发整理")
+        compact_steps = [e["data"] for e in item["events"] if e["event"] == "step" and e["data"].get("context", {}).get("kind") == "microcompaction"]
+        wire_text = "\n\n".join(block.get("text", "") if isinstance(block, dict) else str(block)
+                               for request in requests for message in request["body"]["messages"]
+                               for block in (message["content"] if isinstance(message["content"], list) else [message["content"]]))
+        check(bool(compact_steps) and all(step["type"] == "context" and step["context"].get("content") and
+              all(part in wire_text for part in step["context"]["content"].split("\n\n") if part) for step in compact_steps),
+              "整理步骤携带实际模型请求中的替换正文")
         history = api(f"/api/chat/sessions/{session}/messages")[-1]
+        check(all(any(saved["id"] == step["id"] and saved.get("context") == step["context"] for saved in history["steps"]) for step in compact_steps),
+              "刷新历史保留同一整理正文")
         check(code in history["content"] and "只读" in history["content"], "整理后保留真实编码和用户限制")
         check(any("context/history-" in json.dumps(r["body"], ensure_ascii=False) for r in requests), "实际请求包含原文回读入口")
         run("cancel", "只做一次 ask_user 提问：计量验收是否通过？等待我作答，不要调用其他工具，也不要替我回答。", waiting=True)

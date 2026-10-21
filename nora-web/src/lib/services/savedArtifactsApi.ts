@@ -21,22 +21,18 @@ export interface SavedArtifact {
 }
 
 export const savedArtifactsApi = {
-  /** 登记一次保存(kind+path 幂等 upsert);失败静默返回 null(保存动作本身已成功,登记是增益)。 */
+  /** 登记一次保存(kind+path 幂等 upsert)，由调用方区分保存和登记的结果。 */
   async register(input: {
     kind: "workspace_file" | "knowledge_doc";
     path: string;
     name: string;
     sessionId?: string;
     messageKey?: string;
-  }): Promise<SavedArtifact | null> {
-    try {
-      return await requestJson<SavedArtifact>("/saved-artifacts", {
-        method: "POST",
-        body: JSON.stringify(input),
-      });
-    } catch {
-      return null;
-    }
+  }): Promise<SavedArtifact> {
+    return requestJson<SavedArtifact>("/saved-artifacts", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 
   /** 列表(最新在前)。 */

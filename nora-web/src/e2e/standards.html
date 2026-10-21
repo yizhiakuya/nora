@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>规范修复真实服务验收</title>
+<style>body{max-width:960px;margin:32px auto;font:15px system-ui;padding:24px}button{padding:10px 16px}pre{white-space:pre-wrap;line-height:1.8}</style>
+<h1>规范修复真实服务验收</h1>
+<p>仅用于隔离数据库和工作区。创建临时文件与知识文档，验证后清理；通知必须起始为空。请求直连真实后端，竞态只延迟真实响应交付。</p>
+<button id="run">运行隔离环境验收</button>
+<pre id="result">尚未运行</pre>
+<div id="detail"></div>
+<script type="module">
+import { createElement, useEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
+import { useDocumentLibrary } from "/src/hooks/useDocumentLibrary.ts";
+import { useFiles } from "/src/hooks/useFiles.ts";
+import { useKnowledgeDocs } from "/src/hooks/useKnowledgeDocs.ts";
+import { useConnections } from "/src/hooks/useConnections.ts";
+import { useModelProviders } from "/src/hooks/useModelProviders.ts";
+import { useServices } from "/src/hooks/useServices.ts";
+import { useAutomations } from "/src/hooks/useAutomations.ts";
+import { useNotifications } from "/src/hooks/useNotifications.ts";
+import { usePreferences } from "/src/hooks/usePreferences.ts";
+import { filesApi } from "/src/lib/services/filesApi.ts";
+import { notificationsApi } from "/src/lib/services/notificationsApi.ts";
+import { fetchDocDetail } from "/src/lib/services/ragService.ts";
+import { requestJson } from "/src/lib/api/client.ts";
+import { invalidateAll, cached, invalidateForPath } from "/src/lib/api/requestCache.ts";
+import { setAuthToken } from "/src/lib/auth.ts";
+
+let detail;
+function DetailProbe() {
+  const state = useDocumentLibrary();
+  useEffect(() => { detail = state; });
+  return createElement("pre", null, state.detail ? `${state.detail.doc.name}: ${state.detail.chunks.map(c => c.content).join(" | ")}` : "详情已关闭");
+}
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(predicate) {
+  const end = Date.now() + 20000;
+  while (!predicate()) { if (Date.now() > end) throw new Error("等待真实状态超时"); await pause(20); }
+}
+document.getElementById("run").onclick = async () => {
+  const button = document.getElementById("run"), result = document.getElementById("result");
+  button.disabled = true; result.textContent = "";
+  let passed = 0, folder, root, release;
+  const uploaded = [], docs = [];
+  const originalFetch = window.fetch.bind(window);
+  const originalSetItem = Storage.prototype.setItem;
+  const notificationPreferences = usePreferences.getState().notifications;
+  const preferences = new Map(["model-providers", "environment-services"].map(key => [key, localStorage.getItem(key)]));
+  const check = (ok, name) => { if (!ok) throw new Error(name); result.textContent += `PASS ${++passed}. ${name}\n`; };
+  const prefix = `standards-${Date.now()}`;
+  try {
+    check((await notificationsApi.list()).length === 0, "隔离环境通知初始为空");
+    localStorage.setItem("model-providers", JSON.stringify({ version: 0, state: { providers: [{ id: -1 }], defaultModel: "migration-choice", defaultProviderId: 42 } }));
+    await useModelProviders.persist.rehydrate();
+    check(useModelProviders.getState().providers.length === 0 && useModelProviders.getState().defaultModel === "migration-choice", "旧模型缓存迁移仅保留选择偏好");
+    localStorage.setItem("environment-services", JSON.stringify({ version: 0, state: { services: [{ id: -1 }], activeServiceId: 42 } }));
+    await useServices.persist.rehydrate();
+    check(useServices.getState().services.length === 0 && useServices.getState().activeServiceId === 42, "旧环境缓存迁移不恢复服务运行快照");
+    await Promise.all([useFiles, useKnowledgeDocs, useConnections, useModelProviders, useServices, useAutomations].map(store => store.getState().syncFromBackend()));
+    check([useFiles, useKnowledgeDocs, useConnections, useModelProviders, useServices, useAutomations].every(store => !store.getState().syncError), "六类业务列表真实同步成功");
+    let calls = 0;
+    invalidateAll();
+    const load = async () => { calls++; return requestJson("/files", { cache: "no-store" }); };
+    await Promise.all(Array.from({ length: 6 }, () => cached("/files", 30000, false, load)));
+    check(calls === 1, "并发缓存调用只发送一次真实 HTTP");
+    folder = await filesApi.createFolder(prefix);
+    uploaded.push(await filesApi.uploadFile(new File(["FIRST 文件正文"], `${prefix}.txt`, { type: "text/plain" }), folder.id));
+    uploaded.push(await filesApi.uploadFile(new File(["SECOND 文件正文"], `${prefix}.txt`, { type: "text/plain" }), folder.id));
+    invalidateForPath("/files");
+    const fresh = await cached("/files", 30000, false, load);
+    check(calls === 2 && fresh.some(file => file.id === uploaded[0].id), "写后失效真实读取新文件");
+    await useFiles.getState().syncFromBackend();
+    await filesApi.deleteFolder(folder.id); folder = null;
+    await useFiles.getState().syncFromBackend();
+    check(uploaded.every(file => useFiles.getState().files.find(row => row.id === file.id)?.folderId == null), "删除文件夹后文件回根目录且内存列表一致");
+    const zip = await originalFetch(filesApi.downloadUrl(uploaded.map(file => file.id)));
+    const zipBytes = new Uint8Array(await zip.arrayBuffer());
+    check(zip.ok && zipBytes[0] === 80 && zipBytes[1] === 75, "同名文件批量下载得到 ZIP");
+    const missing = await originalFetch(filesApi.downloadUrl([uploaded[0].id, 9007199254740000]));
+    check(missing.status === 404, "包含不存在 ID 的批量下载整体失败");
+    for (const file of uploaded) docs.push(await useKnowledgeDocs.getState().indexFileFromBackend(file.id, file.name));
+    check(docs.every(doc => useKnowledgeDocs.getState().docs.some(row => row.id === doc.id)), "不同来源同名知识文档同时保留");
+    root = createRoot(document.getElementById("detail"));
+    root.render(createElement(MemoryRouter, null, createElement(DetailProbe)));
+    await until(() => detail);
+    detail.openDetail(docs[0]); await until(() => detail.detail?.doc.id === docs[0].id);
+    const chunk = detail.detail.chunks[0];
+    check(Boolean(chunk), "真实索引生成分段");
+    let responseReady = false;
+    window.fetch = async (url, init) => {
+      const response = await originalFetch(url, init);
+      if (String(url).includes(`/rag/chunks/${chunk.id}/enabled`)) {
+        responseReady = true;
+        await new Promise(resolve => { release = resolve; });
+      }
+      return response;
+    };
+    const mutation = detail.handleChunkToggle(chunk.id, false);
+    await until(() => responseReady);
+    detail.closeDetail(); await until(() => !detail.detail);
+    detail.openDetail(docs[1]); await until(() => detail.detail?.doc.id === docs[1].id);
+    const expectedChunks = JSON.stringify(detail.detail.chunks);
+    release(); await mutation; await pause(50);
+    window.fetch = originalFetch;
+    check(detail.detail.doc.id === docs[1].id && JSON.stringify(detail.detail.chunks) === expectedChunks, "旧文档分段响应不覆盖新文档详情");
+    check((await fetchDocDetail(docs[0].id)).chunks.find(c => c.id === chunk.id).enabled === false, "切页不取消已受理的服务端写入");
+
+    usePreferences.setState({ notifications: { ...usePreferences.getState().notifications, browser: false } });
+    await useNotifications.getState().addNotification(prefix, "真实通知");
+    check(useNotifications.getState().notifications.some(n => n.title === prefix && n.id > 0), "通知仅展示服务端已保存 ID");
+    await Promise.all([useNotifications.getState().markAllRead(), useNotifications.getState().markAllRead()]);
+    check((await notificationsApi.list()).every(n => n.read), "重复全部已读后服务端与前端一致");
+    const before = JSON.stringify(useNotifications.getState().notifications);
+    window.fetch = async (url, init) => {
+      if (String(url).includes("/notifications") && init?.method === "DELETE") throw new TypeError("验收注入：连接中断");
+      return originalFetch(url, init);
+    };
+    await useNotifications.getState().clearAll();
+    check(JSON.stringify(useNotifications.getState().notifications) === before, "清空请求断网不伪造已清空状态");
+    window.fetch = originalFetch;
+    await useNotifications.getState().clearAll();
+    check((await notificationsApi.list()).length === 0 && useNotifications.getState().notifications.length === 0, "清空通知真实落库");
+    const originalRows = useFiles.getState().files;
+    invalidateAll();
+    window.fetch = async (url, init) => {
+      if (String(url) === "/api/files") throw new TypeError("验收注入：文件列表连接中断");
+      return originalFetch(url, init);
+    };
+    await useFiles.getState().syncFromBackend();
+    check(Boolean(useFiles.getState().syncError) && useFiles.getState().files === originalRows, "列表请求失败保留旧数据并标记失败");
+    window.fetch = originalFetch;
+    await useFiles.getState().syncFromBackend();
+    check(!useFiles.getState().syncError, "重试成功清除失败状态");
+    Storage.prototype.setItem = function(key, value) {
+      if (key === "nora-auth-token") throw new DOMException("验收注入：存储拒绝", "QuotaExceededError");
+      return originalSetItem.call(this, key, value);
+    };
+    let authFailed = false;
+    try { setAuthToken("e2e-token-never-saved"); } catch (error) { authFailed = error.name === "QuotaExceededError"; }
+    check(authFailed, "令牌保存失败向登录调用方传播");
+    Storage.prototype.setItem = originalSetItem;
+    result.textContent += `完成：${passed} 项通过。\n`;
+  } catch (error) {
+    result.textContent += `FAIL ${error.stack || error}\n`;
+  } finally {
+    window.fetch = originalFetch; Storage.prototype.setItem = originalSetItem;
+    usePreferences.setState({ notifications: notificationPreferences });
+    for (const [key, value] of preferences) { if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
+    release?.(); root?.unmount(); detail = null;
+    try {
+      for (const doc of docs) await useKnowledgeDocs.getState().removeDoc(doc.id);
+      if (folder) await filesApi.deleteFolder(folder.id);
+      if (uploaded.length) { const ids = uploaded.map(file => file.id); await filesApi.deleteFiles(ids); await filesApi.purgeTrash(ids); }
+      result.textContent += "本轮文件与文档已清理。\n";
+    } catch (error) { result.textContent += `清理失败：${error.message}\n`; }
+    button.disabled = false;
+  }
+};
+</script>

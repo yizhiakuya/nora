@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input";
 import { useFiles } from "@/hooks/useFiles";
 import { useKnowledgeDocs } from "@/hooks/useKnowledgeDocs";
 import type { ChatRef } from "@/lib/chatRefs";
+import { ResourceStatus } from "@/components/ui/custom/States";
 
 /**
  * 引用选择器(2026-09-17):对话框 📄(文件中心文件)与 @(知识库文档)共用。
- * - kind=file:列出文件中心的文件(打开即拉最新,失败回退本地缓存);
+ * - kind=file:列出文件中心的文件，打开即拉最新并展示同步错误;
  * - kind=doc:列出知识库已索引文档;
  * - 点选即回调 ChatRef(带真实 id),由输入区序列化进消息。
  */
@@ -26,19 +27,16 @@ export function ReferencePicker({
   const files = useFiles((s) => s.files);
   const docs = useKnowledgeDocs((s) => s.docs);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+  const fileState = useFiles();
+  const docState = useKnowledgeDocs();
+  const { loading, syncError, syncFromBackend } = kind === "file" ? fileState : docState;
 
   // 打开时拉最新列表(后端模式):避免引用到已删除/过期的条目
   useEffect(() => {
     if (!isOpen) return;
     setQuery("");
-    setLoading(true);
-    const sync =
-      kind === "file"
-        ? useFiles.getState().syncFromBackend()
-        : useKnowledgeDocs.getState().syncFromBackend();
-    sync.catch(() => undefined).finally(() => setLoading(false));
-  }, [isOpen, kind]);
+    void syncFromBackend();
+  }, [isOpen, syncFromBackend]);
 
   const title = kind === "file" ? "引用资料里的文件" : "引用知识库文档";
   const emptyHint =
@@ -70,7 +68,7 @@ export function ReferencePicker({
           />
         </div>
 
-        {loading ? (
+        {syncError ? <ResourceStatus loading={loading} error={syncError} retry={syncFromBackend} /> : loading ? (
           <div className="py-10 flex items-center justify-center text-muted-foreground text-xs gap-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> 加载列表…
           </div>

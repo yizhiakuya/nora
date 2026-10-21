@@ -1,11 +1,11 @@
-﻿# E2E: 验证「占位标题先落库」这一阶段（AI 标题会覆盖它，所以必须在 AI 返回前采样）。
+# E2E: 验证「占位标题先落库」这一阶段（AI 标题会覆盖它，所以必须在 AI 返回前采样）。
 #
 # 做法：把 SSE 请求放到后台跑，立刻高频轮询 /sessions，捕捉标题从占位 → AI 的跳变。
 # 这样能同时证明两点：占位标题形态正确（约 20 字 + …）、且确实被 AI 标题替换。
 #
 # 用法: powershell -ExecutionPolicy Bypass -File scripts/e2e-placeholder-title.ps1
 $ErrorActionPreference = "Stop"
-$base = "http://localhost:18083/api/chat"
+$base = "http://localhost:18080/api/chat"
 $sessionId = "sess-ph-" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 $long = "帮我分析一下手机相册里最近拍的猫的照片都分布在哪些相册里，顺便统计一下总共有多少张，" +

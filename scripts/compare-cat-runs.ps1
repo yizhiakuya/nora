@@ -8,7 +8,7 @@ foreach ($sid in $sessions) {
   $bodies = New-Object System.Collections.Generic.List[string]
   $calib = New-Object System.Collections.Generic.List[string]
 
-  Get-ChildItem $dir -Filter 'agent-service-text*.log*' | Sort-Object LastWriteTime | ForEach-Object {
+  Get-ChildItem $dir -Filter 'nora-text*.log*' | Sort-Object LastWriteTime | ForEach-Object {
     $isGz = $_.Extension -eq '.gz'
     if ($isGz) {
       $fs = [System.IO.File]::OpenRead($_.FullName)

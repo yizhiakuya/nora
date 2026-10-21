@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import {describe, it, vi, afterEach} from "vitest";
 import { Modal } from "./Modal";
 
@@ -9,6 +9,21 @@ afterEach(() => {
 });
 
 describe("Modal", () => {
+  it("自动聚焦输入框的弹窗反复打开关闭", async () => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    const content = <input autoFocus aria-label="搜索资料" />;
+    const { rerender, unmount } = render(<Modal isOpen={false} onClose={() => {}}>{content}</Modal>);
+    try {
+      for (let i = 0; i < 2; i++) {
+        opener.focus();
+        rerender(<Modal isOpen onClose={() => {}}>{content}</Modal>);
+        fireEvent.change(screen.getByRole("textbox", { name: "搜索资料" }), { target: { value: "资料" } });
+        rerender(<Modal isOpen={false} onClose={() => {}}>{content}</Modal>);
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+      }
+    } finally { unmount(); opener.remove(); }
+  });
   it("isOpen=true 时渲染标题和 children", () => {
     render(
       <Modal isOpen onClose={() => {}} title="测试标题">
