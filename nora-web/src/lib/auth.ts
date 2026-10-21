@@ -43,14 +43,17 @@ export function authHeaders(): Record<string, string> {
 
 /**
  * 给 URL 附加令牌 query(SSE/EventSource/`<img src>` 等无法带 header 的场景)。
- * 无令牌/已有 token 参数时原样返回。
+ * 仅处理本站 API，避免将令牌附加到外部媒体；已有 token 参数时原样返回。
  */
 export function withAuthToken(url: string): string {
   const token = getAuthToken();
-  if (!token || /[?&]token=/.test(url)) {
-    return url;
-  }
-  return url + (url.includes("?") ? "&" : "?") + `token=${encodeURIComponent(token)}`;
+  if (!token) return url;
+  let target: URL;
+  try { target = new URL(url, window.location.href); }
+  catch { return url; }
+  if (target.origin !== window.location.origin || !target.pathname.startsWith("/api/") || target.searchParams.has("token")) return url;
+  target.searchParams.set("token", token);
+  return `${target.pathname}${target.search}${target.hash}`;
 }
 
 /**

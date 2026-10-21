@@ -9,12 +9,16 @@ import { withAuthToken } from "@/lib/auth";
  * - 浏览器侧 7 天强缓存 + Range(视频可 seek);
  * - 手机离线后已缓存内容仍可查看。
  *
- * 仅对 http(s) 远程地址生效;本地/相对路径(如 /api/files/... )原样返回。
+ * 本站 API 直接附加鉴权；外部 http(s) 媒体走缓存代理，其他资源保持原样。
  */
 
 /** 后端缓存端点(经网关;相对路径使浏览器直接走当前 host)。
  *  媒体 src(img/video 标签)无法带 header:令牌走 ?token=。 */
 export function mediaCacheUrl(url: string): string {
+  let source: URL;
+  try { source = new URL(url, window.location.href); }
+  catch { return url; }
+  if (source.origin === window.location.origin && source.pathname.startsWith("/api/")) return withAuthToken(url);
   if (!/^https?:\/\//i.test(url)) return url;
   return withAuthToken(`/api/media/cache?url=${encodeURIComponent(url)}`);
 }

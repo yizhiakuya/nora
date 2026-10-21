@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>媒体鉴权真实服务验收</title>
+<body>
+<button id="run">运行验收</button>
+<pre id="result" role="status"></pre>
+<div id="gallery"></div>
+<script type="module">
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { MediaGallery } from "/src/components/chat/galleries/MediaGallery.tsx";
+import { filesApi } from "/src/lib/services/filesApi.ts";
+import { withAuthToken } from "/src/lib/auth.ts";
+import { mediaCacheUrl } from "/src/lib/mediaCache.ts";
+import "/src/app/globals.css";
+
+const button = document.querySelector("#run");
+const result = document.querySelector("#result");
+button.onclick = async () => {
+  button.disabled = true;
+  result.textContent = "";
+  let file, root;
+  let passed = 0;
+  const check = (ok, label) => {
+    if (!ok) throw new Error(label);
+    result.textContent += `PASS ${++passed}. ${label}\n`;
+  };
+  try {
+    const token = localStorage.getItem("nora-auth-token");
+    if (!token) throw new Error("请先在本站登录；本验收需要开启鉴权的真实后端。");
+    const path = "/api/files/1/raw";
+    for (const external of ["https://media.example/a.png", "//media.example/a.png", "/logo.png", "data:image/png;base64,AA==", "http://["]) {
+      check(withAuthToken(external) === external, "外站、静态资源或无效地址不附加令牌");
+    }
+    const fragment = new URL(withAuthToken(`${path}?v=1#token=fragment`), location.href);
+    check(fragment.searchParams.get("token") === token && fragment.searchParams.get("v") === "1" && fragment.hash === "#token=fragment", "令牌写入 query，保留原查询和片段");
+    check(withAuthToken(`${path}?token=existing`) === `${path}?token=existing`, "已有令牌不重复附加");
+    const external = "https://media.example/a.png?x=1#preview";
+    const proxy = new URL(mediaCacheUrl(external), location.href);
+    check(proxy.origin === location.origin && proxy.pathname === "/api/media/cache" && proxy.searchParams.get("url") === external && proxy.searchParams.get("token") === token, "外部媒体沿用本站代理，目标地址不含本站令牌");
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 16;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#2563eb";
+    context.fillRect(0, 0, 16, 16);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("生成验收图片失败");
+    file = await filesApi.uploadFile(new File([blob], `media-auth-e2e-${Date.now()}.png`, { type: "image/png" }));
+    const raw = `/api/files/${file.id}/raw`;
+    const denied = await fetch(raw, { cache: "no-store" });
+    check(denied.status === 401, "真实后端拒绝无令牌媒体读取");
+    const wrong = await fetch(`${raw}?token=media-auth-invalid`, { cache: "no-store" });
+    check(wrong.status === 401, "真实后端拒绝错误令牌");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    for (const source of [raw, `${location.origin}${raw}?v=1#preview`, withAuthToken(raw)]) {
+      const url = mediaCacheUrl(source);
+      const target = new URL(url, location.href);
+      check(target.pathname === raw && target.searchParams.getAll("token").length === 1, "本站媒体直读且只有一个令牌");
+      const response = await fetch(url, { cache: "no-store" });
+      const actual = new Uint8Array(await response.arrayBuffer());
+      check(response.ok && actual.length === bytes.length && actual.every((value, index) => value === bytes[index]), "真实文件内容与上传字节一致");
+    }
+    root = createRoot(document.querySelector("#gallery"));
+    root.render(React.createElement(MediaGallery, { data: { title: "本站图片鉴权回归", items: [
+      { url: raw, caption: "相对地址" }, { url: `${location.origin}${raw}#preview`, caption: "本站完整地址" },
+    ] } }));
+    const deadline = Date.now() + 10000;
+    while (document.querySelectorAll("#gallery img").length !== 2) {
+      if (Date.now() > deadline) throw new Error("画廊未完成渲染");
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    for (const image of document.querySelectorAll("#gallery img")) {
+      await image.decode();
+      check(image.naturalWidth === 16 && image.naturalHeight === 16, "真实画廊图片成功解码");
+    }
+    result.textContent += `完成：${passed} 项通过。\n`;
+  } catch (error) {
+    result.textContent += `FAIL ${error.message}\n`;
+  } finally {
+    root?.unmount();
+    try {
+      if (file) { await filesApi.deleteFiles([file.id]); await filesApi.purgeTrash([file.id]); }
+      result.textContent += "本轮临时图片已清理。\n";
+    } catch (error) { result.textContent += `FAIL 清理失败：${error.message}\n`; }
+    button.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
