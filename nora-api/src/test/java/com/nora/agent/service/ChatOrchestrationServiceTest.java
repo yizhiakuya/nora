@@ -65,10 +65,11 @@ class ChatOrchestrationServiceTest {
         var emitter = new ToolStepEmitter(mapper, approvals, executor, capabilities, cancellation);
         var upstream = new UpstreamLlmClient(mapper, capabilities);
         var assembler = new ChatContextAssembler(mapper, workspace, new WorkspaceBootstrap(workspace), skills, specifications, datasources, logs, null, null);
-        return new ChatOrchestrationService(retrieval, mapper, terminal, specifications, executor, capabilities,
+        var refResolver = new MessageRefResolver(files, retrieval, skills, mcp, null);
+        return new ChatOrchestrationService(new TurnRetrieval(retrieval, refResolver), mapper, terminal, specifications, executor, capabilities,
                 emitter, upstream, new ModelResolver(providers), assembler,
                 new ChatContextCompactor(mapper, assembler, upstream, workspace),
-                new MessageRefResolver(files, retrieval, skills, mcp, null), gallery, cancellation, null, null, maxRounds);
+                refResolver, gallery, cancellation, null, null, maxRounds);
     }
 
     /**
