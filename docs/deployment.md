@@ -81,7 +81,7 @@ nginx -t
 curl --fail --silent --show-error --head --resolve nora.rainaki.top:13001:127.0.0.1 https://nora.rainaki.top:13001/
 ```
 
-旧 systemd 和静态目录部署脚本已移除，避免误操作现有 Compose 业务。megumin 当前后端运行 `20261018-question-steering`（`.env` 的固定 `NORA_TAG`），服务器 Compose 的前端镜像固定为 `20261018-agent-tools-uiux`。提问中插入请求的修复、备份与线上验收见[提问等待修复记录](dev/question-steering-2026-10-18.md)，此前完整发布见[10 月 18 日部署记录](dev/deployment-2026-10-18.md)。此前的工作台版本见[10 月 13 日部署记录](dev/deployment-2026-10-13.md)，单应用迁移见[10 月 12 日记录](dev/deployment-2026-10-12.md)。其他部署历史在[开发记录](dev/README.md)。
+旧 systemd 和静态目录部署脚本已移除，避免误操作现有 Compose 业务。megumin 当前后端运行 `20261018-question-steering`（`.env` 的固定 `NORA_TAG`），服务器 Compose 的前端镜像固定为 `20261022-media-auth-a6b5916`。本站媒体鉴权修复、前端备份与线上验收见[10 月 22 日记录](dev/media-auth-2026-10-22.md)。提问中插入请求的修复、备份与线上验收见[提问等待修复记录](dev/question-steering-2026-10-18.md)，此前完整发布见[10 月 18 日部署记录](dev/deployment-2026-10-18.md)。此前的工作台版本见[10 月 13 日部署记录](dev/deployment-2026-10-13.md)，单应用迁移见[10 月 12 日记录](dev/deployment-2026-10-12.md)。其他部署历史在[开发记录](dev/README.md)。
 
 ## 本地开发
 
