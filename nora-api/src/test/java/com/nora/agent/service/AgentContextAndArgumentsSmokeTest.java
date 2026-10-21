@@ -14,7 +14,7 @@ class AgentContextAndArgumentsSmokeTest {
     @TempDir java.nio.file.Path workspace;
 
     private ChatContextAssembler assembler() {
-        return new ChatContextAssembler(mapper, null, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
+        return new ChatContextAssembler(mapper, null, null, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
     }
 
     @Test
@@ -47,7 +47,7 @@ class AgentContextAndArgumentsSmokeTest {
     @Test
     void archivesOmittedHistoryWithoutDiscardingUserConstraints() {
         var ws = new AgentWorkspaceService(workspace.toString());
-        var context = new ChatContextAssembler(mapper, ws, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
+        var context = new ChatContextAssembler(mapper, ws, null, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
         var history = new ArrayList<ChatStoreService.StoredMessage>();
         history.add(new ChatStoreService.StoredMessage("user", "只读，不删除文件", List.of(), List.of()));
         history.add(new ChatStoreService.StoredMessage("assistant", "已完成阶段的结论 PROJECT_CODE=demo", List.of(), List.of()));
@@ -61,7 +61,7 @@ class AgentContextAndArgumentsSmokeTest {
 
     @Test
     void budgetsSdkThinkingAndArchivesWholeOldToolRounds() {
-        var context = new ChatContextAssembler(mapper, new AgentWorkspaceService(workspace.toString()), null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
+        var context = new ChatContextAssembler(mapper, new AgentWorkspaceService(workspace.toString()), null, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
         var messages = new ArrayList<WireMessage>();
         messages.add(WireMessage.system("system"));
         messages.add(WireMessage.user("只读，不重复执行"));
@@ -83,7 +83,7 @@ class AgentContextAndArgumentsSmokeTest {
     @Test
     void archivesToolTextBeforePressureCompaction() {
         var ws = new AgentWorkspaceService(workspace.toString());
-        var context = new ChatContextAssembler(mapper, ws, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
+        var context = new ChatContextAssembler(mapper, ws, null, null, new ChatToolsSpec(mapper, ToolSmokeFixtures.annotated(mapper), null, null), null, null, null, null);
         var messages = new ArrayList<WireMessage>();
         messages.add(WireMessage.system("test"));
         for (int i = 0; i < 8; i++) {
@@ -118,16 +118,16 @@ class AgentContextAndArgumentsSmokeTest {
 
     @Test
     void scrubsNestedAndEncodedToolCredentials() throws Exception {
-        var emitter = new ToolStepEmitter(mapper, null, null, null, null);
-        var scrub = ToolStepEmitter.class.getDeclaredMethod("scrubArgsForLog", String.class, String.class);
+        var presentation = new ToolPresentation(mapper, null);
+        var scrub = ToolPresentation.class.getDeclaredMethod("scrubArgsForLog", String.class, String.class);
         scrub.setAccessible(true);
         for (String args : List.of(
                 "{\"password\":\"dummy\",\"rows\":[{\"access_token\":\"dummy\"}]}",
                 "{\"arguments\":\"{\\\"apiKey\\\":\\\"dummy\\\",\\\"env\\\":{\\\"CUSTOM\\\":\\\"dummy\\\"}}\"}",
                 "{\"headers\":{\"Custom-Auth\":\"dummy\"}}", "{broken", "\"dummy\"")) {
-            scrub.invoke(emitter, args, null);
+            scrub.invoke(presentation, args, null);
         }
-        scrub.invoke(emitter, "{\"action\":\"set\",\"key\":\"GH_TOKEN\",\"value\":\"dummy\",\"secret\":true,\"description\":\"dummy\",\"note\":\"dummy\"}", "manage_env_vars");
+        scrub.invoke(presentation, "{\"action\":\"set\",\"key\":\"GH_TOKEN\",\"value\":\"dummy\",\"secret\":true,\"description\":\"dummy\",\"note\":\"dummy\"}", "manage_env_vars");
     }
 
     @Test

@@ -17,10 +17,12 @@ import org.springframework.stereotype.Service;
 public class SessionProjectService {
     private final JdbcTemplate jdbc;
     private final AgentWorkspaceService workspace;
+    private final WorkspaceBootstrap workspaceBootstrap;
 
-    public SessionProjectService(JdbcTemplate jdbc, AgentWorkspaceService workspace) {
+    public SessionProjectService(JdbcTemplate jdbc, AgentWorkspaceService workspace, WorkspaceBootstrap workspaceBootstrap) {
         this.jdbc = jdbc;
         this.workspace = workspace;
+        this.workspaceBootstrap = workspaceBootstrap;
     }
 
     public Path root(String sessionId) {
@@ -34,7 +36,7 @@ public class SessionProjectService {
         Path root = root(sessionId);
         return new ProjectView(root.toString(), System.getProperty("os.name"),
                 Files.exists(Path.of("/.dockerenv")) ? "当前 Agent 容器" : "当前 Agent 进程所在系统",
-                workspace.bootstrap(root).files());
+                workspaceBootstrap.bootstrap(root).files());
     }
 
     public ProjectView bind(String sessionId, String directory) {
@@ -73,5 +75,5 @@ public class SessionProjectService {
                                 List<DirectoryEntry> directories, boolean truncated) {}
 
     public record ProjectView(String projectRoot, String platform, String environment,
-                              List<AgentWorkspaceService.BootstrapFileInfo> rules) {}
+                              List<WorkspaceBootstrap.BootstrapFileInfo> rules) {}
 }

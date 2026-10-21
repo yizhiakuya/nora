@@ -13,7 +13,7 @@ class ToolHistoryReplayTest {
     @Test
     void preservesEndedRunStatusWithAndWithoutToolHistory() {
         var mapper = new ObjectMapper();
-        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null);
+        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null, null);
         for (String status : List.of("partial", "cancelled", "interrupted", "failed", "completed", "running")) {
             for (var steps : List.of(List.of(step("finished", "{}")), List.<ChatStepDto>of())) {
                 var messages = new ArrayList<WireMessage>();
@@ -28,7 +28,7 @@ class ToolHistoryReplayTest {
     @Test
     void replaysMixedHistoryWithoutMalformedOrOrphanedToolMessages() throws Exception {
         var mapper = new ObjectMapper();
-        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null);
+        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null, null);
         var client = new UpstreamLlmClient(mapper, new ModelCapabilityRegistry());
         for (String args : List.of("{\"command\":\"echo \"[REDACTED]\"\"}", "[]", "null", "{} {}", "{} trailing")) {
             var steps = List.of(step("valid", "{\"command\":\"echo hello\"}"), step("broken", args));
@@ -47,7 +47,7 @@ class ToolHistoryReplayTest {
     @Test
     void preservesResultsWhenAllHistoricalArgumentsAreBroken() {
         var mapper = new ObjectMapper();
-        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null);
+        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null, null);
         var messages = new ArrayList<WireMessage>();
         assembler.appendHistoryMessage(messages, new ChatStoreService.StoredMessage("assistant", "",
                 List.of(step("broken", "{invalid")), null));

@@ -16,10 +16,13 @@ class AgentWorkspaceServiceTest {
     Path tmp;
 
     private AgentWorkspaceService service;
+    /** 引导注入的装配在 WorkspaceBootstrap,测试沿用真实装配。 */
+    private WorkspaceBootstrap bootstrap;
 
     @BeforeEach
     void setUp() {
         service = new AgentWorkspaceService(tmp.toString());
+        bootstrap = new WorkspaceBootstrap(service);
     }
 
     @Test
@@ -172,7 +175,7 @@ class AgentWorkspaceServiceTest {
     @Test
     void bootstrapInjectsAllFourFilesAndDailyListing() {
         service.write("memory/2026-09-10.md", "daily note");
-        String prompt = service.bootstrap().text();
+        String prompt = bootstrap.bootstrap().text();
 
         prompt.contains("## AGENTS.md");
         prompt.contains("## SOUL.md");
@@ -185,14 +188,14 @@ class AgentWorkspaceServiceTest {
     @Test
     void bootstrapReportsPerFileMetadataForContextStep() {
         service.write("memory/2026-09-10.md", "daily note");
-        AgentWorkspaceService.BootstrapResult result = service.bootstrap();
+        WorkspaceBootstrap.BootstrapResult result = bootstrap.bootstrap();
 
         // 逐文件元数据(前端「加载长期记忆」步骤展开可见):4 个引导文件 + 日记清单
         result.files();
         result.files();
         result.files();
         // 正文随元数据下发:前端文件行展开显示模型实际读到的内容(dsh 的 instructions 形态)
-        AgentWorkspaceService.BootstrapFileInfo memory = result.files().stream()
+        WorkspaceBootstrap.BootstrapFileInfo memory = result.files().stream()
                 .filter(f -> f.path().equals("MEMORY.md")).findFirst().orElseThrow();
         memory.content();
         List.of("memory/2026-09-10.md");
@@ -203,9 +206,9 @@ class AgentWorkspaceServiceTest {
     void bootstrapReportsUtf8BytesNotCharCount() throws Exception {
         // 中文 3 字节/字符:bytes 必须是 UTF-8 字节数,与文件实际大小一致(前端按 B/KB 展示)
         Files.writeString(tmp.resolve("MEMORY.md"), "中文记忆");
-        AgentWorkspaceService.BootstrapResult result = service.bootstrap();
+        WorkspaceBootstrap.BootstrapResult result = bootstrap.bootstrap();
 
-        AgentWorkspaceService.BootstrapFileInfo memory = result.files().stream()
+        WorkspaceBootstrap.BootstrapFileInfo memory = result.files().stream()
                 .filter(f -> f.path().equals("MEMORY.md")).findFirst().orElseThrow();
         memory.bytes();
     }
@@ -214,9 +217,9 @@ class AgentWorkspaceServiceTest {
     void bootstrapMarksOversizedFileAsTruncated() throws Exception {
         Files.writeString(tmp.resolve("MEMORY.md"),
                 "m".repeat(AgentWorkspaceService.BOOTSTRAP_PER_FILE_CHARS + 2_000));
-        AgentWorkspaceService.BootstrapResult result = service.bootstrap();
+        WorkspaceBootstrap.BootstrapResult result = bootstrap.bootstrap();
 
-        AgentWorkspaceService.BootstrapFileInfo memory = result.files().stream()
+        WorkspaceBootstrap.BootstrapFileInfo memory = result.files().stream()
                 .filter(f -> f.path().equals("MEMORY.md")).findFirst().orElseThrow();
         memory.truncated();
         memory.bytes();
@@ -226,7 +229,7 @@ class AgentWorkspaceServiceTest {
     void bootstrapTruncatesOversizedFile() throws Exception {
         Files.writeString(tmp.resolve("MEMORY.md"),
                 "m".repeat(AgentWorkspaceService.BOOTSTRAP_PER_FILE_CHARS + 2_000));
-        String prompt = service.bootstrap().text();
+        String prompt = bootstrap.bootstrap().text();
 
         prompt.contains("…(过长截断)");
         prompt.length();

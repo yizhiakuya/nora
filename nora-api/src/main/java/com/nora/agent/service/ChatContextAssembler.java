@@ -35,6 +35,8 @@ class ChatContextAssembler {
 
     private final ObjectMapper objectMapper;
     private final AgentWorkspaceService agentWorkspaceService;
+    /** 工作区引导注入（装配与预算在 WorkspaceBootstrap）。 */
+    private final WorkspaceBootstrap workspaceBootstrapService;
     private final AgentSkillService agentSkillService;
     /** tools spec 提供者(实际工具声明与预算)。 */
     private final ChatToolsSpec toolsSpecBuilder;
@@ -54,11 +56,13 @@ class ChatContextAssembler {
     }
 
     ChatContextAssembler(ObjectMapper objectMapper,
-                         AgentWorkspaceService agentWorkspaceService, AgentSkillService agentSkillService,
+                         AgentWorkspaceService agentWorkspaceService, WorkspaceBootstrap workspaceBootstrapService,
+                         AgentSkillService agentSkillService,
                          ChatToolsSpec toolsSpecBuilder, DataSourceTools dataSourceManageClient,
                          ServiceLogTools serviceLogClient, AppSettingStore appSettingStore, EnvVarsService envVarsService) {
         this.objectMapper = objectMapper;
         this.agentWorkspaceService = agentWorkspaceService;
+        this.workspaceBootstrapService = workspaceBootstrapService;
         this.agentSkillService = agentSkillService;
         this.toolsSpecBuilder = toolsSpecBuilder;
         this.dataSourceManageClient = dataSourceManageClient;
@@ -548,12 +552,12 @@ class ChatContextAssembler {
         // 现挖(实测:每轮"看昨天拍的视频"都要先跑一条 PowerShell 查日期)
         sb.append("\n当前时间:").append(currentTimeLine()).append("。\n");
         sb.append('\n').append(toolsSpecBuilder.terminalRuntimeContext()).append('\n');
-        AgentWorkspaceService.BootstrapResult workspaceBootstrap = null;
+        WorkspaceBootstrap.BootstrapResult workspaceBootstrap = null;
         AgentSkillService.CatalogBundle skillCatalog = null;
         // 全局记忆:跨会话事实/偏好,约束每轮回答
-        if (agentWorkspaceService != null) {
+        if (workspaceBootstrapService != null) {
             try {
-                workspaceBootstrap = agentWorkspaceService.bootstrap(projectRoot);
+                workspaceBootstrap = workspaceBootstrapService.bootstrap(projectRoot);
                 if (workspaceBootstrap != null && !workspaceBootstrap.text().isBlank()) {
                     sb.append('\n').append(workspaceBootstrap.text());
                 }
@@ -610,7 +614,7 @@ class ChatContextAssembler {
 
     /** 系统提示文本 + 注入元数据(下发「注入上下文」步骤用;null = 该来源未注入)。 */
     record SystemPromptResult(String text,
-                                      AgentWorkspaceService.BootstrapResult workspace,
+                                      WorkspaceBootstrap.BootstrapResult workspace,
                                       AgentSkillService.CatalogBundle skills) {
     }
 

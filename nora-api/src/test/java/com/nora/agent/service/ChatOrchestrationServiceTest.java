@@ -64,7 +64,7 @@ class ChatOrchestrationServiceTest {
         var capabilities = new ModelCapabilityRegistry();
         var emitter = new ToolStepEmitter(mapper, approvals, executor, capabilities, cancellation);
         var upstream = new UpstreamLlmClient(mapper, capabilities);
-        var assembler = new ChatContextAssembler(mapper, workspace, skills, specifications, datasources, logs, null, null);
+        var assembler = new ChatContextAssembler(mapper, workspace, new WorkspaceBootstrap(workspace), skills, specifications, datasources, logs, null, null);
         return new ChatOrchestrationService(retrieval, mapper, terminal, specifications, executor, capabilities,
                 emitter, upstream, new ModelResolver(providers), assembler,
                 new ChatContextCompactor(mapper, assembler, upstream, workspace),
@@ -164,22 +164,22 @@ class ChatOrchestrationServiceTest {
 
     @Test
     void scrubArgsForLogMasksCredentialValues() throws Exception {
-        // 2026-09-17 拆分后 scrubArgsForLog 在 ToolStepEmitter(包可见)
-        ToolStepEmitter emitter = stepEmitterOf(service);
-        var method = ToolStepEmitter.class.getDeclaredMethod("scrubArgsForLog", String.class, String.class);
+        // 展示层职责拆分后 scrubArgsForLog 在 ToolPresentation(包可见)
+        ToolPresentation presentation = presentationOf(service);
+        var method = ToolPresentation.class.getDeclaredMethod("scrubArgsForLog", String.class, String.class);
         method.setAccessible(true);
         // headers 值(headers 的键保留、值替换);name/url 等非凭据字段原样
-        String scrubbed = (String) method.invoke(emitter,
+        String scrubbed = (String) method.invoke(presentation,
                 "{\"action\":\"register\",\"name\":\"weather\",\"url\":\"https://x\","
                         + "\"headers\":{\"Authorization\":\"Bearer secret123\"}}", "manage_mcp");
         scrubbed.contains("secret123");
         scrubbed.contains("\"name\":\"weather\"");
         scrubbed.contains("***");
         // password/token 类字段同样脱敏(manage_datasource create 的既有泄漏点)
-        String scrubbed2 = (String) method.invoke(emitter, "{\"action\":\"create\",\"password\":\"hunter2\"}", "manage_datasource");
+        String scrubbed2 = (String) method.invoke(presentation, "{\"action\":\"create\",\"password\":\"hunter2\"}", "manage_datasource");
         scrubbed2.contains("hunter2");
         // 非法 JSON 原样返回,不炸日志行
-        method.invoke(emitter, "not json", null);
+        method.invoke(presentation, "not json", null);
     }
 
     @Test
@@ -428,6 +428,13 @@ class ChatOrchestrationServiceTest {
         var field = ChatOrchestrationService.class.getDeclaredField("stepEmitter");
         field.setAccessible(true);
         return (ToolStepEmitter) field.get(svc);
+    }
+
+    /** 展示层由 emitter 持有,测试沿用同一实例以覆盖真实装配。 */
+    private ToolPresentation presentationOf(ChatOrchestrationService svc) throws Exception {
+        var field = ToolStepEmitter.class.getDeclaredField("presentation");
+        field.setAccessible(true);
+        return (ToolPresentation) field.get(stepEmitterOf(svc));
     }
 
     @Test

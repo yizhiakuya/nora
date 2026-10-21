@@ -14,7 +14,8 @@ class SessionProjectServiceTest {
 
     @Test
     void browsesDirectoriesAndRejectsInvalidPaths() throws Exception {
-        var service = new SessionProjectService(mock(JdbcTemplate.class), new AgentWorkspaceService(temporary.toString()));
+        var workspace = new AgentWorkspaceService(temporary.toString());
+        var service = new SessionProjectService(mock(JdbcTemplate.class), workspace, new WorkspaceBootstrap(workspace));
         Path empty = Files.createDirectory(temporary.resolve("空目录 with spaces"));
         Path file = Files.writeString(temporary.resolve("file.txt"), "test");
         service.directories(null, null);

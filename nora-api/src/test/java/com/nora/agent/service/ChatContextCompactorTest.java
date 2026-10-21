@@ -18,7 +18,7 @@ class ChatContextCompactorTest {
         ChatContextCompactor.history(history, null);
         ChatContextCompactor.history(history, checkpoint);
         ChatContextCompactor.history(List.of(), null);
-        var assembler = new ChatContextAssembler(new ObjectMapper(), null, null, null, null, null, null, null);
+        var assembler = new ChatContextAssembler(new ObjectMapper(), null, null, null, null, null, null, null, null);
         var messages = new java.util.ArrayList<WireMessage>();
         assembler.appendCheckpoint(messages, checkpoint);
         for (var message : history) assembler.appendHistoryMessage(messages, message);
@@ -32,7 +32,7 @@ class ChatContextCompactorTest {
     @Test
     void workingCheckpointReplaysOnlyLaterRoundsOfItsRun() throws Exception {
         var mapper = new ObjectMapper();
-        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null);
+        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null, null);
         var checkpoint = new ContextCheckpointDto("u1", "已完成第一轮，继续第二轮", "context/working.json", 20000,
                 null, 1000, 100, LocalDateTime.now(), "r1", 1);
         var steps = List.of(tool(1), tool(2));
@@ -53,7 +53,7 @@ class ChatContextCompactorTest {
     @Test
     void archivesSdkMessagesAsReadableTranscript() {
         var mapper = new ObjectMapper();
-        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null);
+        var assembler = new ChatContextAssembler(mapper, null, null, null, null, null, null, null, null);
         var message = new WireMessage(dev.langchain4j.data.message.AiMessage.builder()
                 .text("已验证结果").thinking("归档中的过程").build());
         assembler.transcript(List.of(message));
