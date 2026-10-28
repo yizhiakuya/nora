@@ -56,7 +56,7 @@ public class ChatStoreService {
                 result.rowCount(), result.lineCount(), result.truncated(), content.startsWith("ERROR:") ? content : null,
                 result.files(), result.focusTarget(), result.fileErrors(), result.fileChanges(), execution);
         return new ChatStepDto(step.id(), step.type(), step.title(), updated.summary(), step.duration(), step.status(),
-                step.toolName(), step.input(), updated, step.roundIndex(), step.context(), step.progress());
+                step.toolName(), step.input(), updated, step.roundIndex(), step.context(), step.progress(), step.parentStepId(), step.callIndex());
     }
 
     /**
@@ -464,6 +464,20 @@ public class ChatStoreService {
                 .orElseThrow(() -> new com.nora.common.exception.BusinessException(404, "session not found: " + id));
     }
 
+    public String executionMode(String sessionId) {
+        var modes = jdbcTemplate.query("SELECT execution_mode FROM chat_session WHERE id=? AND deleted_at IS NULL",
+                (rs, row) -> rs.getString(1), sessionId);
+        return modes.isEmpty() ? "standard" : modes.getFirst();
+    }
+
+    @Transactional
+    public void setExecutionMode(String sessionId, String mode) {
+        mode = ExecutionMode.parse(mode);
+        ensureSession(sessionId, "新对话");
+        if (jdbcTemplate.update("UPDATE chat_session SET execution_mode=? WHERE id=? AND deleted_at IS NULL", mode, sessionId) != 1)
+            throw new IllegalArgumentException("会话已删除，不能切换执行模式");
+    }
+
     public SessionPage searchSessions(String query, int offset, int limit) {
         if (query.length() > 200 || offset < 0 || limit < 1 || limit > 100)
             throw new IllegalArgumentException("query must be <= 200 characters; offset >= 0; limit between 1 and 100");
@@ -559,9 +573,14 @@ public class ChatStoreService {
      */
     @Transactional
     public void startRun(String runId, String sessionId, String content, String sender, TaskContext taskContext) {
+        startRun(runId, sessionId, content, sender, taskContext, "standard");
+    }
+
+    @Transactional
+    public void startRun(String runId, String sessionId, String content, String sender, TaskContext taskContext, String executionMode) {
         jdbcTemplate.update("""
-                INSERT INTO chat_run (id, session_id, status, content) VALUES (?, ?, 'running', ?)
-                """, runId, sessionId, content);
+                INSERT INTO chat_run (id, session_id, status, content, execution_mode) VALUES (?, ?, 'running', ?, ?)
+                """, runId, sessionId, content, ExecutionMode.parse(executionMode));
         saveMessageAt(sessionId, "user", content, null, null, null, null, null, sender, null, runId, taskContext);
         consumeQueuedRun(runId);
     }
@@ -651,14 +670,15 @@ public class ChatStoreService {
     private List<ChatStepDto> loadRunSteps(String runId) {
         return jdbcTemplate.query("""
                 SELECT step_id, step_type, title, detail, duration_ms, status, tool_name,
-                       tool_input, tool_result, round_index, context
+                       tool_input, tool_result, round_index, context, parent_step_id, call_index
                 FROM agent_step WHERE run_id = ? AND step_id IS NOT NULL ORDER BY id
                 """, (rs, row) -> new ChatStepDto(rs.getString("step_id"), rs.getString("step_type"),
                 rs.getString("title"), rs.getString("detail"), rs.getObject("duration_ms", Long.class),
                 rs.getString("status"), rs.getString("tool_name"),
                 readJson(rs.getString("tool_input"), ChatStepDto.StepInput.class),
                 readJson(rs.getString("tool_result"), ChatStepDto.StepResult.class),
-                rs.getObject("round_index", Integer.class), readJson(rs.getString("context"), ChatStepDto.ContextInfo.class)), runId);
+                rs.getObject("round_index", Integer.class), readJson(rs.getString("context"), ChatStepDto.ContextInfo.class))
+                .childOf(rs.getString("parent_step_id"), rs.getObject("call_index", Integer.class)), runId);
     }
 
     static ChatStepDto interruptedStep(ChatStepDto step) {
@@ -673,7 +693,7 @@ public class ChatStoreService {
         return new ChatStepDto(step.id(), step.type(), step.title(), step.detail(), step.duration(),
                 pending ? "declined" : "unknown", step.toolName(), step.input(),
                 new ChatStepDto.StepResult(message, pending ? "未执行" : "结果未知", null, null, false, message),
-                step.roundIndex(), step.context());
+                step.roundIndex(), step.context()).childOf(step.parentStepId(), step.callIndex());
     }
 
     public void updateRunContext(String runId, ContextUsageDto usage) {
@@ -725,11 +745,12 @@ public class ChatStoreService {
     public void saveStep(String sessionId, String runId, int stepIndex, ChatStepDto step) {
         jdbcTemplate.update("""
                 INSERT INTO agent_step (session_id, step_index, step_type, title, detail, status, duration_ms,
-                                        tool_name, tool_input, tool_result, round_index, run_id, step_id, context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::json, ?::json, ?, ?, ?, ?::jsonb)
+                                        tool_name, tool_input, tool_result, round_index, run_id, step_id, context, parent_step_id, call_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::json, ?::json, ?, ?, ?, ?::jsonb, ?, ?)
                 """,
                 sessionId, stepIndex, step.type(), step.title(), step.detail(), step.status(), step.duration(),
-                step.toolName(), toJson(step.input()), toJson(step.result()), step.roundIndex(), runId, step.id(), toJson(step.context()));
+                step.toolName(), toJson(step.input()), toJson(step.result()), step.roundIndex(), runId, step.id(), toJson(step.context()),
+                step.parentStepId(), step.callIndex());
     }
 
 

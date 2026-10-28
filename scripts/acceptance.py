@@ -9,7 +9,7 @@ import time
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("suite", choices=["standards", "core", "builtins", "annotated", "catalog", "steering", "live"])
+    parser.add_argument("suite", choices=["standards", "core", "builtins", "annotated", "catalog", "steering", "ptc", "live"])
     parser.add_argument("--base", default=os.environ.get("NORA_E2E_BASE_URL", "http://127.0.0.1:18080"))
     parser.add_argument("--provider", type=int)
     parser.add_argument("--model")
@@ -20,7 +20,7 @@ def main():
     environment = {**os.environ, "NORA_E2E_BASE_URL": options.base, "PYTHONUTF8": "1"}
     if options.suite == "standards":
         commands = [[sys.executable, "scripts/e2e-standards.py"]]
-    elif options.suite in ("core", "builtins", "annotated", "catalog", "steering"):
+    elif options.suite in ("core", "builtins", "annotated", "catalog", "steering", "ptc"):
         commands = [[sys.executable, "scripts/e2e-single-app.py", "--base", options.base,
                      "--provider", str(options.provider), "--model", options.model,
                      "--case", "all" if options.suite == "core" else options.suite]]

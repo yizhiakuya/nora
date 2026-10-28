@@ -38,6 +38,11 @@ public class ChatInputQueueService {
         if (jdbc.queryForObject("SELECT deleted_at IS NOT NULL FROM chat_session WHERE id=?", Boolean.class, sessionId))
             throw new IllegalArgumentException("会话已删除，不能继续排队");
         var existing = entries(sessionId, input.id(), false);
+        // 重试同一入队请求沿用首次冻结的模式，不受后来会话切换影响。
+        String mode = input.request().executionMode() != null ? ExecutionMode.parse(input.request().executionMode())
+                : existing.isEmpty() ? store.executionMode(sessionId)
+                : ExecutionMode.parse(existing.getFirst().input().request().executionMode());
+        input = new Input(input.id(), input.kind(), input.content(), input.refs(), input.limitToRefs(), input.request().withExecutionMode(mode));
         if (!existing.isEmpty()) {
             if (!json.valueToTree(existing.getFirst().input()).equals(json.valueToTree(input)))
                 throw new IllegalArgumentException("messageId already belongs to different input");
@@ -151,7 +156,11 @@ public class ChatInputQueueService {
         catch (JsonProcessingException e) { throw new IllegalArgumentException("invalid queue payload", e); }
     }
     private Input decode(String text) {
-        try { return json.readValue(text, Input.class); }
+        try {
+            Input input = json.readValue(text, Input.class);
+            return new Input(input.id(), input.kind(), input.content(), input.refs(), input.limitToRefs(),
+                    input.request().withExecutionMode(ExecutionMode.parse(input.request().executionMode())));
+        }
         catch (JsonProcessingException e) { throw new IllegalStateException("invalid stored queue payload", e); }
     }
 }

@@ -92,7 +92,10 @@ public class ChatRunService {
             input = queued ? queue.claim(sessionId, id) : null;
             if (queued && input == null) { active.remove(sessionId, slot); return null; }
             if (!queued) queue.pause(sessionId, false);
-            ChatRequest request = input == null ? submitted : input.request();
+            ChatRequest original = input == null ? submitted : input.request();
+            String mode = original.executionMode() != null ? ExecutionMode.parse(original.executionMode())
+                    : queued || Boolean.TRUE.equals(original.unattended()) ? "standard" : store.executionMode(sessionId);
+            ChatRequest request = original.withExecutionMode(ExecutionMode.parse(mode));
             CompactRequest compact = input == null ? submittedCompact : "compact".equals(input.kind())
                     ? new CompactRequest(input.id().toString(), request.content().substring("/compact".length()).trim(),
                             request.model(), request.reasoningLevel(), request.providerId()) : null;

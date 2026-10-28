@@ -69,19 +69,19 @@ public class ChatTurnRunner {
         return runTurn(sessionId, request.content().trim(), request.model(), reasoning, permission,
                 request.providerId(), request.context(),
                 request.sender() == null || request.sender().isBlank() ? "user" : request.sender().trim(),
-                Boolean.TRUE.equals(request.unattended()), request.sessionTitle(), emitter, runId, null, false);
+                Boolean.TRUE.equals(request.unattended()), request.sessionTitle(), emitter, runId, null, false, request.executionMode());
     }
 
     public ChatRunService.Result runCompactTurn(String sessionId, String content, String model, String reasoningLevel,
             Long providerId, String runId, String focus, SseEmitter emitter) {
         return runTurn(sessionId, content, model, reasoningLevel, PermissionMode.ASK, providerId, null,
-                "compaction", false, null, emitter, runId, focus, true);
+                "compaction", false, null, emitter, runId, focus, true, "standard");
     }
 
     private ChatRunService.Result runTurn(String sessionId, String content, String model, String reasoningLevel,
                          PermissionMode permissionMode, Long providerId, com.nora.agent.dto.TaskContext taskContext,
                          String sender, boolean unattended, String sessionTitle, SseEmitter emitter,
-                         String runId, String compactFocus, boolean compaction) {
+                         String runId, String compactFocus, boolean compaction, String executionMode) {
         ChatRunService.Result[] result = {null};
         TurnStreamRegistry.LiveTurn liveTurn = turnStreams.start(sessionId, content, runId,
                 compaction ? "compact" : "chat");
@@ -110,7 +110,7 @@ public class ChatTurnRunner {
                 firstTurn = chatStoreService.initializeTitleForFirstMessage(sessionId, content);
             }
             if (compaction) chatStoreService.startCompactRun(runId, sessionId, content);
-            else chatStoreService.startRun(runId, sessionId, content, sender, taskContext);
+            else chatStoreService.startRun(runId, sessionId, content, sender, taskContext, executionMode);
             runStarted[0] = true;
             // 仅本会话首次命名：后续轮次改标题会覆盖上一轮已经起好的名字
             if (firstTurn) {
@@ -362,7 +362,7 @@ public class ChatTurnRunner {
                     providerId,
                     taskContext,
                     unattended,
-                    eventConsumer);
+                    executionMode, eventConsumer);
             if (turnFuture == null) {
                 throw new IllegalStateException("agent orchestration returned no future");
             }

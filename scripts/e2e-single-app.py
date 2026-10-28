@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--base", default="http://127.0.0.1:18080")
 parser.add_argument("--provider", type=int, required=True)
 parser.add_argument("--model", required=True)
-parser.add_argument("--case", choices=["all", "tools", "resources", "run", "automation", "annotated", "builtins", "catalog", "steering"], default="all")
+parser.add_argument("--case", choices=["all", "tools", "resources", "run", "automation", "annotated", "builtins", "catalog", "steering", "ptc"], default="all")
 args = parser.parse_args()
 client = build_opener(ProxyHandler({}))
 token = os.environ.get("NORA_AUTH_TOKEN", "")
@@ -493,6 +493,81 @@ def runs():
     print("PASS: session ownership, live replay state, queue withdrawal/insertion/dispatch and cancellation", flush=True)
 
 
+def ptc():
+    from pathlib import Path
+    if not os.environ.get("NORA_E2E_DB_NAME", "").startswith("nora_e2e_"):
+        raise RuntimeError("PTC acceptance requires an isolated database")
+    root = Path(os.environ["NORA_E2E_WORKSPACE_ROOT"]).resolve()
+    paths = [root / (prefix + suffix) for suffix in ("-a.txt", "-b.txt", "-result.txt", "-denied.txt", "-allowed.txt")]
+    a, b, result, denied, allowed = paths
+    a.write_text("PTC_ALPHA_" + prefix, encoding="utf-8")
+    b.write_text("PTC_BETA_" + prefix, encoding="utf-8")
+    def mode(sid, value):
+        return call(f"/chat/sessions/{sid}/execution-mode", {"executionMode": value})
+    def program(sid, code, events, permission="full"):
+        return stream(sid, "这是 PTC 真实验收。只调用一次 execute_program，code 必须逐字使用下列 JavaScript，不要改写、重试或增加其他操作。执行后简短报告真实结果。\n" + code,
+                      events, mode=permission, guided=False)
+    try:
+        sid = session("ptc")
+        assert call(f"/chat/sessions/{sid}/execution-mode")["executionMode"] == "standard"
+        assert mode(sid, "ptc")["ptcAvailable"]
+        assert call(f"/chat/sessions/{sid}/execution-mode")["executionMode"] == "ptc"
+        call(f"/chat/sessions/{sid}/execution-mode", {"executionMode": "invalid"}, status=400)
+        events = []
+        stream(sid, f"先 load_tools 查询 manage_workspace 的真实参数。然后一次 execute_program 中使用 Promise.all 读取 {a.name} 和 {b.name}，提取两个文件正文，将正文按顺序用换行拼接写入 {result.name}，output 输出拼接正文。不要用终端。", events, guided=False)
+        steps = [v for e, v in events if e == "step"]
+        assert result.read_text(encoding="utf-8").strip() == a.read_text(encoding="utf-8") + "\n" + b.read_text(encoding="utf-8")
+        parents = {s["id"] for s in steps if s.get("toolName") == "execute_program" and s["status"] == "completed"}
+        children = [s for s in steps if s.get("parentStepId") in parents and s["status"] == "completed"]
+        assert len({s["id"] for s in children}) >= 3
+        assert any(s.get("toolName") == "load_tools" and s["status"] == "completed" for s in steps)
+        saved = history(sid)[-1]["steps"]
+        assert any(s.get("parentStepId") in parents for s in saved)
+        followup = []
+        stream(sid, "不调用工具，根据刚才真实结果回答两个文件内的标记。", followup, guided=False)
+        assert "PTC_ALPHA_" + prefix in history(sid)[-1]["content"] and "PTC_BETA_" + prefix in history(sid)[-1]["content"]
+        print("PASS: PTC discovery, parallel reads, serial write, real file result and history restoration", flush=True)
+
+        sid = session("ptc-approval"); mode(sid, "ptc"); events = []
+        code = "output(await Promise.all([tools.call('manage_workspace',{action:'write',path:" + json.dumps(denied.name) + ",content:'DENIED'}),tools.call('manage_workspace',{action:'write',path:" + json.dumps(allowed.name) + ",content:'ALLOWED'})]));"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            job = pool.submit(program, sid, code, events, "ask")
+            ticket = wait(lambda: next((v for e, v in events if e == "approval_required"), None))
+            pending = call(f"/chat/sessions/{sid}/approvals")
+            assert len(pending) == 1
+            queue_id = str(uuid.uuid4())
+            queued = {"id": queue_id, "kind": "message", "content": "queued", "refs": [], "limitToRefs": False, "request": payload("仅回复 QUEUED")}
+            q = call(f"/chat/sessions/{sid}/queue", queued)
+            assert q["messages"][0]["request"]["executionMode"] == "ptc"
+            mode(sid, "standard")
+            q = call(f"/chat/sessions/{sid}/queue", queued)
+            assert q["messages"][0]["request"]["executionMode"] == "ptc"
+            call(f"/chat/sessions/{sid}/queue/{queue_id}", method="DELETE")
+            call(f"/chat/approvals/{ticket['approvalToken']}?sessionId={sid}", {"approved": False})
+            second = wait(lambda: next((v for e, v in events if e == "approval_required" and v["approvalToken"] != ticket["approvalToken"]), None))
+            assert len(call(f"/chat/sessions/{sid}/approvals")) == 1
+            call(f"/chat/approvals/{second['approvalToken']}?sessionId={sid}", {"approved": True})
+            job.result(timeout=180)
+        assert not denied.exists() and allowed.read_text(encoding="utf-8") == "ALLOWED"
+        assert any(s.get("parentStepId") and s["status"] == "declined" for s in history(sid)[-1]["steps"])
+        print("PASS: child approvals serialize; denial has no side effect; queue retry retains frozen mode", flush=True)
+
+        sid = session("ptc-cancel"); mode(sid, "ptc"); events = []
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            job = pool.submit(program, sid, "await new Promise(r=>setTimeout(r,60000)); output('should not finish');", events)
+            wait(lambda: any(e == "step" and v.get("toolName") == "execute_program" and v["status"] == "running" for e, v in events))
+            call(f"/chat/sessions/{sid}/cancel", method="POST")
+            job.result(timeout=45)
+        wait(lambda: not call(f"/chat/sessions/{sid}/turn/live")["running"], 30)
+        assert any(e == "done" and v["status"] == "cancelled" for e, v in events)
+        recovered = []; program(sid, "output('PTC_RECOVERED')", recovered)
+        assert any(e == "step" and v.get("toolName") == "execute_program" and v["status"] == "completed" and "PTC_RECOVERED" in v["result"]["content"] for e, v in recovered)
+        print("PASS: cancellation releases container/run; next program succeeds", flush=True)
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+
 def automation():
     call("/automations", {"name": prefix, "triggerType": "manual", "actionType": "sql", "sql": "SELECT 1"}, status=400)
     rule = call("/automations", {"name": prefix, "triggerType": "manual", "actionType": "agent", "prompt": "不调用工具，仅回复 AUTOMATION_RUN_OK。"})
@@ -530,6 +605,8 @@ try:
         catalog()
     if args.case == "steering":
         steering()
+    if args.case == "ptc":
+        ptc()
 finally:
     for sid in sessions:
         call(f"/chat/sessions/{sid}/cancel", method="POST")

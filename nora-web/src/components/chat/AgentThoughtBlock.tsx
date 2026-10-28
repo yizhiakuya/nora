@@ -140,10 +140,24 @@ const StepRow = memo(function StepRow({ step, defaultOpen }: { step: ChatStep; d
 export function AgentThoughtBlock({ steps }: { steps: ChatStep[] }) {
   const defaultOpen = usePreferences((s) => s.reasoningSummary === "detailed");
   if (steps.length === 0) return null;
+  const ids = new Set(steps.map(step => step.id));
+  const children = new Map<string, ChatStep[]>();
+  for (const step of steps) {
+    if (step.parentStepId && ids.has(step.parentStepId)) {
+      const group = children.get(step.parentStepId) ?? [];
+      group.push(step);
+      children.set(step.parentStepId, group);
+    }
+  }
+  const ordered = steps.filter(step => !step.parentStepId || !ids.has(step.parentStepId))
+    .flatMap(step => [step, ...(children.get(step.id) ?? []).sort((a, b) => (a.callIndex ?? 0) - (b.callIndex ?? 0))]);
   return (
     <div className="space-y-1">
-      {steps.map((step) => (
-        <StepRow key={step.id || `${step.type}-${step.title}`} step={step} defaultOpen={defaultOpen} />
+      {ordered.map((step) => (
+        <div key={step.id || `${step.type}-${step.title}`} className={step.parentStepId ? "ml-4 border-l border-border pl-3" : undefined}>
+          {step.parentStepId && <span className="text-[11px] text-muted-foreground">PTC 子调用 {step.callIndex}</span>}
+          <StepRow step={step} defaultOpen={defaultOpen} />
+        </div>
       ))}
     </div>
   );

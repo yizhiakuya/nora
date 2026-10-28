@@ -36,6 +36,7 @@ import com.nora.common.response.ApiResponse;
 public class AgentController {
 
     private final ChatStoreService chatStoreService;
+    private final com.nora.agent.service.PtcProgramService programs;
     private final ApprovalService approvalService;
     private final com.nora.agent.service.QuestionService questionService;
     private final TurnStreamRegistry turnStreams;
@@ -46,7 +47,7 @@ public class AgentController {
     public AgentController(ChatStoreService chatStoreService, ApprovalService approvalService,
             com.nora.agent.service.QuestionService questionService, TurnStreamRegistry turnStreams,
             com.nora.agent.service.SessionProjectService sessionProjects,
-            com.nora.agent.service.ChatInputQueueService inputQueue, com.nora.agent.service.ChatRunService runs) {
+            com.nora.agent.service.ChatInputQueueService inputQueue, com.nora.agent.service.ChatRunService runs, com.nora.agent.service.PtcProgramService programs) {
         this.chatStoreService = chatStoreService;
         this.approvalService = approvalService;
         this.questionService = questionService;
@@ -54,6 +55,23 @@ public class AgentController {
         this.sessionProjects = sessionProjects;
         this.inputQueue = inputQueue;
         this.runs = runs;
+        this.programs = programs;
+    }
+
+    public record ModeSettings(String executionMode, boolean ptcAvailable) {}
+    public record ModeRequest(String executionMode) {}
+
+    @GetMapping("/sessions/{sessionId}/execution-mode")
+    public ApiResponse<ModeSettings> executionMode(@PathVariable String sessionId) {
+        return ApiResponse.ok(new ModeSettings(chatStoreService.executionMode(sessionId), programs.available()));
+    }
+
+    @PostMapping("/sessions/{sessionId}/execution-mode")
+    public ApiResponse<ModeSettings> executionMode(@PathVariable String sessionId, @RequestBody ModeRequest request) {
+        String mode = com.nora.agent.service.ExecutionMode.parse(request.executionMode());
+        if ("ptc".equals(mode) && !programs.available()) throw new IllegalArgumentException("PTC 运行镜像尚未配置");
+        chatStoreService.setExecutionMode(sessionId, mode);
+        return executionMode(sessionId);
     }
 
     @GetMapping("/sessions/{sessionId}/queue")

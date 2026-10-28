@@ -104,7 +104,7 @@ class ToolStepEmitter {
         }
     }
 
-    private boolean canRunInParallel(String name, String args, PermissionMode permissionMode) {
+    boolean canRunInParallel(String name, String args, PermissionMode permissionMode) {
         if (permissionMode == PermissionMode.ASK) return false;
         if (TerminalService.isCommandTool(name)) return permissionMode == PermissionMode.FULL;
         if (toolExecutor.classifyRisk(name, args) != RiskClassifier.Risk.LOW) return false;
@@ -176,6 +176,17 @@ class ToolStepEmitter {
                               boolean unattended,
                               ResolvedLlm llm,
                               ChatOrchestrationService.ChatEventConsumer eventConsumer) {
+        InvocationResult result = invokeTool(toolStepId, name, rawArgs, loopDetector, roundIndex,
+                permissionMode, sessionId, unattended, eventConsumer);
+        backfillToolMessage(messages, callId, name, result.outcome().content(), result.outcome().images(), llm);
+    }
+
+    record InvocationResult(String status, ChatToolExecutor.ToolOutcome outcome) {}
+
+    /** 标准调用和程序子调用共用审批、执行和落库；模型消息只由各自的外层回填。 */
+    InvocationResult invokeTool(String toolStepId, String name, String rawArgs, LoopDetector loopDetector,
+                               int roundIndex, PermissionMode permissionMode, String sessionId,
+                               boolean unattended, ChatOrchestrationService.ChatEventConsumer eventConsumer) {
         String args = toolExecutor.resolveProjectArgs(name, rawArgs, sessionId);
         ToolPresentation.ParsedArgs parsed = presentation.parseArgs(name, args);
         String displayArgs = presentation.scrubArgsForLog(args, name);
@@ -217,8 +228,7 @@ class ToolStepEmitter {
             finishToolStep(toolStepId, name, title, input, toolStart,
                     new ChatStepDto.StepResult(null, "重复调用被循环熔断阻断", null, null, false, error),
                     "declined", roundIndex, eventConsumer);
-            backfillToolMessage(messages, callId, name, "ERROR: " + error);
-            return;
+            return new InvocationResult("declined", ChatToolExecutor.textOutcome("ERROR: " + error, error));
         }
         if (loopDetector.shouldWarn(fingerprint, LOOP_WARN_THRESHOLD)) {
             log.info("loop warning: {} repeated with unchanged result {} time(s)", name,
@@ -233,8 +243,7 @@ class ToolStepEmitter {
             finishToolStep(toolStepId, name, title, input, toolStart,
                     new ChatStepDto.StepResult(null, "无人值守通道拒绝执行", null, null, false, error),
                     "declined", roundIndex, eventConsumer);
-            backfillToolMessage(messages, callId, name, "ERROR: " + error);
-            return;
+            return new InvocationResult("declined", ChatToolExecutor.textOutcome("ERROR: " + error, error));
         }
 
         if ("ask_user".equals(name)) {
@@ -245,8 +254,7 @@ class ToolStepEmitter {
             finishToolStep(toolStepId, name, title, input, toolStart,
                     new ChatStepDto.StepResult(outcome.content(), outcome.summary(), null, null, false,
                             failed ? outcome.content() : null), failed ? "declined" : "completed", roundIndex, eventConsumer);
-            backfillToolMessage(messages, callId, name, outcome.content());
-            return;
+            return new InvocationResult(failed ? "declined" : "completed", outcome);
         }
 
         // 审批门:ASK 全问;ASSIST 问 HIGH+CRITICAL;FULL 只问 CRITICAL
@@ -271,14 +279,15 @@ class ToolStepEmitter {
                             new ChatStepDto.StepResult(null, "用户未批准", null, null, false,
                                     "用户未批准该操作,Agent 已跳过执行。如需执行请调整方案或让用户切换权限档位"),
                             "declined", roundIndex, eventConsumer);
-                    backfillToolMessage(messages, callId, name,
-                            "ERROR: 用户拒绝批准该操作。请说明操作目的,或改用无需写权限的方式回答");
-                    return;
+                    return new InvocationResult("declined", ChatToolExecutor.textOutcome(
+                            "ERROR: 用户拒绝批准该操作。请说明操作目的,或改用无需写权限的方式回答", "用户未批准"));
                 }
             }
         }
 
         // 这条记录持久化成功后才调用工具，启动恢复可据此区分未执行与结果未知。
+        if (Thread.currentThread().isInterrupted() || turnCancellation != null && turnCancellation.isCancelled(sessionId))
+            throw new CancellationException("turn cancelled before tool execution");
         emitStep(eventConsumer, new ChatStepDto(toolStepId, "tool", title,
                 null, null, "running", name, input, null, roundIndex));
         execStart[0] = System.currentTimeMillis();
@@ -335,7 +344,7 @@ class ToolStepEmitter {
         loopDetector.recordResult(fingerprint, outcome.unknown() ? null
                 : outcome.content() == null ? null : resultHashOf(outcome.content()));
         finishToolStep(toolStepId, name, title, input, execStart[0], result, status, roundIndex, eventConsumer);
-        backfillToolMessage(messages, callId, name, outcome.content(), outcome.images(), llm);
+        return new InvocationResult(status, outcome);
     }
 
     /**
@@ -419,7 +428,7 @@ class ToolStepEmitter {
      *
      * @param visionOverride TRUE/FALSE = 设置强制;null = 运行时自适应
      */
-    private void backfillToolMessage(List<WireMessage> messages, String callId, String name, String content,
+    void backfillToolMessage(List<WireMessage> messages, String callId, String name, String content,
                                      java.util.List<McpServerService.McpToolResult.ImageBlock> images,
                                      ResolvedLlm llm) {
         boolean wantImages = images != null && !images.isEmpty();

@@ -42,12 +42,12 @@ final class LoopDetector {
     }
 
     /** 记录一次调用尝试(步骤 id 的序号用;与重复判定无关)。 */
-    void countAttempt() {
+    synchronized void countAttempt() {
         attempts++;
     }
 
     /** 尝试总数(步骤 id 序号)。 */
-    int attempts() {
+    synchronized int attempts() {
         return attempts;
     }
 

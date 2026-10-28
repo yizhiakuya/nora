@@ -20,7 +20,7 @@ class AgentControllerTest {
         when(runs.stream("s1", request, null)).thenReturn(new SseEmitter());
         when(store.loadMessages("s1")).thenReturn(List.of());
         var controller = new AgentController(store, mock(ApprovalService.class), mock(QuestionService.class),
-                new TurnStreamRegistry(), mock(SessionProjectService.class), mock(ChatInputQueueService.class), runs);
+                new TurnStreamRegistry(), mock(SessionProjectService.class), mock(ChatInputQueueService.class), runs, mock(com.nora.agent.service.PtcProgramService.class));
         controller.health();
         controller.messages("s1");
         controller.sendMessage("s1", request).getTimeout();

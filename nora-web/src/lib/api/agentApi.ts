@@ -16,6 +16,12 @@ export interface SessionProject {
   rules: { path: string; truncated: boolean; missing: boolean }[];
 }
 
+export interface ExecutionModeSettings { executionMode: "standard" | "ptc"; ptcAvailable: boolean }
+export const fetchExecutionMode = (id: string) => requestJson<ExecutionModeSettings>(`/chat/sessions/${encodeURIComponent(id)}/execution-mode`);
+export const saveExecutionMode = (id: string, executionMode: "standard" | "ptc") => requestJson<ExecutionModeSettings>(`/chat/sessions/${encodeURIComponent(id)}/execution-mode`, {
+  method: "POST", body: JSON.stringify({ executionMode }),
+});
+
 export const fetchSessionProject = (id: string) => requestJson<SessionProject>(`/chat/sessions/${encodeURIComponent(id)}/project`);
 export interface ProjectDirectories {
   path: string;
@@ -65,6 +71,8 @@ interface StepContextPayload {
 }
 
 interface StepPayload {
+  parentStepId?: string;
+  callIndex?: number;
   id?: string;
   type?: ChatStep["type"];
   title?: string;
@@ -140,12 +148,14 @@ export function normalizeStep(step: StepPayload, index: number): ChatStep {
     duration,
     status: step.status ?? "running",
     toolName: step.toolName,
-    input: step.input ? displayInput : undefined,
+    input: step.input ? { ...displayInput, ...(step.toolName === "execute_program" && _rawArgs ? { program: _rawArgs } : {}) } : undefined,
     inputTokens: step.input?.rawArgs != null ? estimateTextTokens(step.input.rawArgs) : undefined,
     result: step.result,
     context: step.context,
     progress: step.progress,
     roundIndex: step.roundIndex,
+    parentStepId: step.parentStepId,
+    callIndex: step.callIndex,
   };
 }
 

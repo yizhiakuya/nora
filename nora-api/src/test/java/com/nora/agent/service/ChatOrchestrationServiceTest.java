@@ -40,7 +40,7 @@ class ChatOrchestrationServiceTest {
     private CompletableFuture<ChatOrchestrationService.ChatTurn> chat(ChatOrchestrationService svc,
             String content, List<ChatStoreService.StoredMessage> history,
             ChatOrchestrationService.ChatEventConsumer consumer) {
-        return svc.chat(content, history, null, null, PermissionMode.ASSIST, null, null, null, false, consumer);
+        return svc.chat(content, history, null, null, PermissionMode.ASSIST, null, null, null, false, "standard", consumer);
     }
 
     @BeforeEach
@@ -67,7 +67,7 @@ class ChatOrchestrationServiceTest {
         var assembler = new ChatContextAssembler(mapper, workspace, new WorkspaceBootstrap(workspace), skills, specifications, datasources, logs, null, null);
         var refResolver = new MessageRefResolver(files, retrieval, skills, mcp, null);
         return new ChatOrchestrationService(new TurnRetrieval(retrieval, refResolver), mapper, terminal, specifications, executor, capabilities,
-                emitter, upstream, new ModelResolver(providers), assembler,
+                emitter, null, upstream, new ModelResolver(providers), assembler,
                 new ChatContextCompactor(mapper, assembler, upstream, workspace),
                 refResolver, gallery, cancellation, null, null, maxRounds);
     }
@@ -850,7 +850,7 @@ class ChatOrchestrationServiceTest {
         List<List<CitationDto>> sourcesEvents = new java.util.ArrayList<>();
 
         CompletableFuture<ChatOrchestrationService.ChatTurn> future = service.chat("向量检索", List.of(), null, null, PermissionMode.ASSIST, null, null,
-                new com.nora.agent.dto.TaskContext(1, List.of(), null, new com.nora.agent.dto.TaskContext.Origin("knowledge", null), null, null), false,
+                new com.nora.agent.dto.TaskContext(1, List.of(), null, new com.nora.agent.dto.TaskContext.Origin("knowledge", null), null, null), false, "standard",
                 new ChatOrchestrationService.ChatEventConsumer() {
                     @Override
                     public void step(ChatStepDto step) {

@@ -48,6 +48,15 @@ class ChatToolsSpec {
     }
 
     List<ToolSpecification> forMessages(List<WireMessage> messages) {
+        return forMessages(messages, "standard");
+    }
+
+    List<ToolSpecification> forMessages(List<WireMessage> messages, String executionMode) {
+        if ("ptc".equals(executionMode)) {
+            var result = new ArrayList<>(PtcProgramService.specifications());
+            build().stream().filter(spec -> "ask_user".equals(spec.name())).forEach(result::add);
+            return result;
+        }
         var selected = new HashSet<>(AnnotatedTools.CORE_TOOLS);
         for (var message : messages) {
             for (var call : message.toolCalls()) selected.add(call.name());

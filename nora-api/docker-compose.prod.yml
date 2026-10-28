@@ -41,6 +41,7 @@ services:
       NORA_MEDIA_CACHE_DIR: /app/data/media-cache
       LOG_PATH: /app/logs
       NORA_PWSH_BUNDLE: ""
+      NORA_PTC_IMAGE: ${NORA_PTC_IMAGE:-}
       NORA_EMBEDDING_API_KEY: ${NORA_EMBEDDING_API_KEY:-}
       NORA_EMBEDDING_BASE_URL: ${NORA_EMBEDDING_BASE_URL:-https://api.jina.ai/v1}
       NORA_PROXY_ENABLED: ${NORA_PROXY_ENABLED:-false}

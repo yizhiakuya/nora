@@ -11,6 +11,7 @@ import { ReferencePicker } from "./ReferencePicker";
 import { RefChip } from "./RefChip";
 import { ChatMessageQueue } from "./ChatMessageQueue";
 import { SessionProjectButton } from "./SessionProjectButton";
+import { ExecutionModeButton } from "./ExecutionModeButton";
 import { ChatSubmitButton } from "./ChatSubmitButton";
 import type { QueuedChatMessage } from "@/types";
 import { useChatAttachments } from "@/hooks/useChatAttachments";
@@ -601,6 +602,7 @@ export function ChatInputArea({ sessionId, commandPanel, onCloseCommandPanel, in
           </Popover>
           <div className="mt-1.5 flex items-center justify-between gap-2 px-1">
             <SessionProjectButton sessionId={sessionId} disabled={isSending} />
+            <ExecutionModeButton key={sessionId} sessionId={sessionId} />
             <span className="hidden sm:block shrink-0 text-[11px] text-muted-foreground/70">Enter {isSending ? "加入队列" : "发送"} · Shift + Enter 换行</span>
           </div>
       </div>

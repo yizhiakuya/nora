@@ -30,8 +30,19 @@ public record ChatStepDto(
         StepResult result,
         Integer roundIndex,
         ContextInfo context,
-        StepProgress progress
+        StepProgress progress,
+        String parentStepId,
+        Integer callIndex
 ) {
+    public ChatStepDto(String id, String type, String title, String detail, Long duration, String status,
+                       String toolName, StepInput input, StepResult result, Integer roundIndex,
+                       ContextInfo context, StepProgress progress) {
+        this(id, type, title, detail, duration, status, toolName, input, result, roundIndex, context, progress, null, null);
+    }
+
+    public ChatStepDto childOf(String parent, Integer index) {
+        return new ChatStepDto(id, type, title, detail, duration, status, toolName, input, result, roundIndex, context, progress, parent, index);
+    }
 
     /** 遗留调用点的便捷构造(无结构化工具载荷)。 */
     public ChatStepDto(String id, String type, String title, String detail, Long duration, String status) {

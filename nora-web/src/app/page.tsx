@@ -13,6 +13,7 @@ import { useChatSessions } from "@/hooks/useChatSessions";
 import { ReferencePicker } from "@/components/chat/ReferencePicker";
 import { RefChip } from "@/components/chat/RefChip";
 import { SessionProjectButton } from "@/components/chat/SessionProjectButton";
+import { ExecutionModeButton } from "@/components/chat/ExecutionModeButton";
 import { refKey, type ChatRef } from "@/lib/chatRefs";
 
 /**
@@ -137,7 +138,10 @@ export default function Home() {
               </div>
             </div>
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2 px-1">
-              {homeSession && <SessionProjectButton sessionId={homeSession.id} disabled={starting} />}
+              {homeSession && <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <SessionProjectButton sessionId={homeSession.id} disabled={starting} />
+                <ExecutionModeButton key={homeSession.id} sessionId={homeSession.id} />
+              </div>}
               <span className="hidden sm:block shrink-0 text-[11px] text-muted-foreground/70">Enter 发送 · Shift + Enter 换行</span>
             </div>
             <div className="mt-6"><h2 className="section-label mb-3">从这里开始</h2><QuickActions /></div>

@@ -288,7 +288,7 @@ class ChatContextAssembler {
         }
         return steps.stream()
                 .filter(s -> "tool".equals(s.type())
-                        && s.toolName() != null && !s.toolName().isBlank()
+                        && s.parentStepId() == null && s.toolName() != null && !s.toolName().isBlank()
                         && s.input() != null && s.input().rawArgs() != null && !s.input().rawArgs().isBlank())
                 .toList();
     }
@@ -324,15 +324,19 @@ class ChatContextAssembler {
     private static final int COMPACTION_KEEP_RECENT_IMAGE_ROUNDS = 2;
 
     /** 与本次实际发送的工具声明一致，按需加载后重新计算预算。 */
-    int toolsOverheadTokens(List<WireMessage> messages) {
-        String json = toolsSpecBuilder.forMessages(messages).stream()
+    int toolsOverheadTokens(List<WireMessage> messages) { return toolsOverheadTokens(messages, "standard"); }
+
+    private int toolsOverheadTokens(List<WireMessage> messages, String executionMode) {
+        String json = toolsSpecBuilder.forMessages(messages, executionMode).stream()
                 .map(dev.langchain4j.agent.tool.ToolSpecification::toJson)
                 .collect(Collectors.joining(",", "[", "]"));
         return ContextBudget.estimateTokens(json);
     }
 
-    int requestTokens(List<WireMessage> messages) {
-        return messages.stream().mapToInt(ChatContextAssembler::messageTokens).sum() + toolsOverheadTokens(messages);
+    int requestTokens(List<WireMessage> messages) { return requestTokens(messages, "standard"); }
+
+    int requestTokens(List<WireMessage> messages, String executionMode) {
+        return messages.stream().mapToInt(ChatContextAssembler::messageTokens).sum() + toolsOverheadTokens(messages, executionMode);
     }
 
     /**
@@ -342,8 +346,10 @@ class ChatContextAssembler {
      * {@link #COMPACTION_TAIL_KEEP} 条消息完整保留;历史轮的失败也只留要点。
      * force=true(上游已报超限)时压缩目标降为恢复线(窗口 60%)。
      */
-    Compaction compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) {
-        int before = budget.tokens(requestTokens(messages));
+    Compaction compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force) { return compactForRound(messages, budget, force, "standard"); }
+
+    Compaction compactForRound(List<WireMessage> messages, ContextBudget budget, boolean force, String executionMode) {
+        int before = budget.tokens(requestTokens(messages, executionMode));
         Set<WireMessage> changed = Collections.newSetFromMap(new IdentityHashMap<>());
         // 旧图回收:与 token 预算无关的带宽护栏——每轮都执行(见 recycleOldImages)
         int recycledImages = recycleOldImages(messages, force, changed);
@@ -382,7 +388,7 @@ class ChatContextAssembler {
             }
         }
         int archivedRounds = archiveOldRounds(messages, total, limit, changed);
-        int after = budget.tokens(requestTokens(messages));
+        int after = budget.tokens(requestTokens(messages, executionMode));
         return new Compaction(compactedCount, archivedRounds, recycledImages, before - after, after, target,
                 compactedContent(messages, changed));
     }

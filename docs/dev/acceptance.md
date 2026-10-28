@@ -11,6 +11,7 @@
 | `catalog` | 隔离数据库/工作区、真实模型；设置 `NORA_E2E_DB_NAME`（`nora_e2e_` 前缀）和 `NORA_E2E_WORKSPACE_ROOT` | 无工具提示的自然任务按需加载、后续复用、真实环境状态/日志、历史落库和非法加载名称 |
 | `steering` | 隔离数据库/工作区、真实模型、Node 与前端依赖；设置 `NORA_E2E_DB_NAME`（`nora_e2e_` 前缀）和 `NORA_E2E_WORKSPACE_ROOT` | 提问等待中插入、普通排队不唤醒、两种插入入口、重复受理、旧票据、引用与再次回答；回放真实 SSE 和重连快照，核对问题卡清理 |
 | `live` | 隔离数据库/文件目录、支持长输出及工具的真实模型、Node 与前端依赖 | 长输出、快照、游标续传、提问与历史；自动构建当前客户端并回放真实事件记录 |
+| `ptc` | 隔离数据库/工作区、真实模型、Docker；后端配置并预拉取固定 digest 的 `NORA_PTC_IMAGE`，设置 `NORA_E2E_DB_NAME`（`nora_e2e_` 前缀）和 `NORA_E2E_WORKSPACE_ROOT` | 串并行、真实文件、历史、子审批拒绝/批准、排队模式冻结、取消与恢复；容器专项在后端运行 `mvn -Dtest=PtcRuntimeIT test` |
 
 默认后端为 `http://127.0.0.1:18080`，可以用 `--base` 或 `NORA_E2E_BASE_URL` 指定。令牌通过 `NORA_AUTH_TOKEN` 提供。
 

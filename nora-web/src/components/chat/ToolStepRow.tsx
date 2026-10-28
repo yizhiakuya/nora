@@ -145,6 +145,7 @@ function argsPreview(step: ChatStep): string {
     return [step.input?.target].filter(Boolean).join(" ") || "";
   }
   if (!step.input) return "";
+  if (step.toolName === "execute_program") return "JavaScript";
   const json = JSON.stringify(step.input);
   return json.length > 72 ? `${json.slice(0, 72)}…` : json;
 }
@@ -366,7 +367,7 @@ function ToolDetail({ step }: { step: ChatStep }) {
 
   return (
     <div className="ml-6 my-1 space-y-1.5 max-w-2xl">
-      {inputJson && <Section title="工具参数" content={inputJson} />}
+      {inputJson && <Section title={step.input?.program ? "程序参数" : "工具参数"} content={step.input?.program ?? inputJson} />}
       {result?.error ? (
         <Section title={step.status === "unknown" ? "结果未知(需核对)" : step.status === "declined" ? "未执行原因" : "失败原因"} content={result.error} tone="error" />
       ) : result?.content != null ? (

@@ -45,6 +45,7 @@ public class ChatOrchestrationService {
     private final ChatToolExecutor toolExecutor;
     private final ModelCapabilityRegistry capabilityRegistry;
     private final ToolStepEmitter stepEmitter;
+    private final PtcProgramService programs;
     private final UpstreamLlmClient upstreamClient;
     private final ModelResolver modelResolver;
     private final ChatContextAssembler contextAssembler;
@@ -63,6 +64,7 @@ public class ChatOrchestrationService {
                                     ChatToolExecutor toolExecutor,
                                     ModelCapabilityRegistry capabilityRegistry,
                                     ToolStepEmitter stepEmitter,
+                                    PtcProgramService programs,
                                     UpstreamLlmClient upstreamClient,
                                     ModelResolver modelResolver,
                                     ChatContextAssembler contextAssembler,
@@ -80,6 +82,7 @@ public class ChatOrchestrationService {
         this.toolExecutor = toolExecutor;
         this.capabilityRegistry = capabilityRegistry;
         this.stepEmitter = stepEmitter;
+        this.programs = programs;
         this.upstreamClient = upstreamClient;
         this.modelResolver = modelResolver;
         this.contextAssembler = contextAssembler;
@@ -101,7 +104,9 @@ public class ChatOrchestrationService {
                                             Long providerId,
                                             com.nora.agent.dto.TaskContext taskContext,
                                             boolean unattended,
-                                            ChatEventConsumer eventConsumer) {
+                                            String executionMode, ChatEventConsumer eventConsumer) {
+        executionMode = ExecutionMode.parse(executionMode);
+        if ("ptc".equals(executionMode) && !programs.available()) throw new IllegalStateException("PTC 运行环境不可用，请检查 Docker 与固定 digest 镜像");
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
@@ -137,6 +142,11 @@ public class ChatOrchestrationService {
         var modelHistory = ChatContextCompactor.history(history, checkpoint);
         List<WireMessage> messages = contextAssembler.buildMessages(userMessage, modelHistory, citations, promptOut, checkpoint,
                 sessionProjects == null ? null : sessionProjects.root(sessionId));
+        if ("ptc".equals(executionMode)) messages.set(0, WireMessage.system(messages.getFirst().text()
+                + "\n\n当前为 PTC 模式。用 load_tools({names:[工具名]}) 获取真实参数；names:[] 列目录。"
+                + "execute_program 的 code 内唯一工具入口是 await tools.call(name,args)，例如 const r=await tools.call('manage_workspace',{action:'list'}); output(r.status)。"
+                + "工具不是 tools 上的同名方法，也不是全局函数。必须 await 全部调用，用 output(value) 输出需要的结果。"
+                + "子工具逐项受权限约束。必须核对返回 status，unknown 不可盲目重试。"));
         var currentUser = messages.getLast().withImages(references.images());
         messages.set(messages.size() - 1, currentUser);
         boolean semanticCompactionAttempted = false;
@@ -174,7 +184,7 @@ public class ChatOrchestrationService {
                             + BuiltinTools.commandContent(execution)));
                 }
                 if (!semanticCompactionAttempted && chatStoreService != null && history.size() > 2
-                        && budget.tokens(contextAssembler.requestTokens(messages)) > budget.triggerTokens()) {
+                        && budget.tokens(contextAssembler.requestTokens(messages, executionMode)) > budget.triggerTokens()) {
                     semanticCompactionAttempted = true;
                     try {
                         eventConsumer.step(new ChatStepDto("s-auto-compact", "context", "压缩历史上下文", null,
@@ -201,7 +211,7 @@ public class ChatOrchestrationService {
                     }
                 }
                 if (chatStoreService != null && sessionId != null && !history.isEmpty() && history.getLast().id() != null
-                        && round - lastWorkingCompactionRound >= 3 && budget.tokens(contextAssembler.requestTokens(messages)) > budget.triggerTokens()) {
+                        && round - lastWorkingCompactionRound >= 3 && budget.tokens(contextAssembler.requestTokens(messages, executionMode)) > budget.triggerTokens()) {
                     lastWorkingCompactionRound = round;
                     String stepId = "s-working-compact-" + round;
                     eventConsumer.step(new ChatStepDto(stepId, "context", "压缩当前任务上下文", null,
@@ -227,7 +237,7 @@ public class ChatOrchestrationService {
                                 new ChatStepDto.ContextInfo("compaction", "compaction", null, null, null, null)));
                     }
                 }
-                var compaction = contextAssembler.compactForRound(messages, budget, false);
+                var compaction = contextAssembler.compactForRound(messages, budget, false, executionMode);
                 if (compaction.changed() || compaction.promptTokens() > compaction.targetTokens()) {
                     StringBuilder what = new StringBuilder();
                     if (compaction.toolResults() > 0) what.append("已压缩 ").append(compaction.toolResults()).append(" 条早期工具结果");
@@ -248,7 +258,7 @@ public class ChatOrchestrationService {
                             new ChatStepDto.ContextInfo("compaction", "microcompaction", null, null, null, compaction.content())));
                 }
                 StreamTurnResult result = streamTurn(messages, requestedModel, reasoningLevel,
-                        round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget);
+                        round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget, executionMode);
                 if (result.usage() != null) {
                     totalUsage = totalUsage == null ? result.usage() : totalUsage.add(result.usage());
                 }
@@ -269,7 +279,7 @@ public class ChatOrchestrationService {
                         log.info("vision retry for {} ({}): stripped {} image(s), explicit={}",
                                 resolved.model(), resolved.baseUrl(), stripped, explicitVisionReject);
                         StreamTurnResult visionRetry = streamTurn(messages, requestedModel, reasoningLevel,
-                                round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget);
+                                round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget, executionMode);
                         if (!visionRetry.failed()) {
                             if (explicitVisionReject) capabilityRegistry.markVisionRejected(resolved);
                             eventConsumer.step(new ChatStepDto("s-vision-" + round, "think",
@@ -281,12 +291,12 @@ public class ChatOrchestrationService {
                         retry = visionRetry;
                     } else if (ChatContextAssembler.isContextOverflow(result.errorMessage())) {
                         // 上下文超限:硬压缩到恢复线(窗口 60%)后重试一次
-                        var recovery = contextAssembler.compactForRound(messages, budget, true);
+                        var recovery = contextAssembler.compactForRound(messages, budget, true, executionMode);
                         if (recovery.changed()) {
                             eventConsumer.step(new ChatStepDto("s-compact-retry-" + round, "context", "整理上下文",
                                     "上游拒绝输入长度，已整理至约 " + recovery.promptTokens() + " tokens 后重试", 0L, "completed", null, null, null, round + 1,
                                     new ChatStepDto.ContextInfo("compaction", "microcompaction", null, null, null, recovery.content())));
-                            retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget);
+                            retry = streamTurn(messages, requestedModel, reasoningLevel, round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget, executionMode);
                         }
                     } else if (ModelCapabilityRegistry.isReasoningEffortUnsupported(result.errorMessage())
                             && reasoningLevel != null && !reasoningLevel.isBlank()) {
@@ -301,7 +311,7 @@ public class ChatOrchestrationService {
                         capabilityRegistry.markEffortStripped(resolved);
                         log.info("reasoning_effort rejected by {} ({}), retrying without it",
                                 resolved.model(), resolved.baseUrl());
-                        retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget);
+                        retry = streamTurn(messages, requestedModel, null, round + 1, eventConsumer, ttftMs, turnStartMs, providerId, budget, executionMode);
                         if (!retry.failed()) {
                             eventConsumer.step(new ChatStepDto("s-effort-" + round, "think", "模型不支持该思考等级",
                                     "已自动降级为模型默认（可在设置中为该模型配置支持的等级）",
@@ -332,11 +342,13 @@ public class ChatOrchestrationService {
                     // 回答(与推理)已随流逐 token 转发完毕
                     // 校准用**当轮** usage:传累计值会与单轮估算相除产生虚高比值
                     int promptTokens = result.usage() != null && result.usage().inputTokens() != null && result.usage().inputTokens() > 0
-                            ? result.usage().inputTokens() : budget.tokens(contextAssembler.requestTokens(messages));
+                            ? result.usage().inputTokens() : budget.tokens(contextAssembler.requestTokens(messages, executionMode));
                     return CompletableFuture.completedFuture(new ChatTurn(result.content(), citations, totalUsage, budget.window(), promptTokens, ttftMs[0] < 0 ? null : ttftMs[0]));
                 }
                 messages.add(new WireMessage(result.assistantMessage(), round + 1));
-                stepEmitter.emitToolCalls(result.toolCalls(), loopDetector, messages, round + 1,
+                if ("ptc".equals(executionMode)) programs.emitCalls(result.toolCalls(), loopDetector, messages, round + 1,
+                        permissionMode, sessionId, unattended, resolved, eventConsumer, scope);
+                else stepEmitter.emitToolCalls(result.toolCalls(), loopDetector, messages, round + 1,
                         permissionMode, sessionId, unattended, resolved, eventConsumer, scope);
                 for (var input : pending) {
                     messages.add(userInputMessage(input));
@@ -614,11 +626,11 @@ public class ChatOrchestrationService {
     private StreamTurnResult streamTurn(List<WireMessage> messages, String requestedModel,
                                         String reasoningLevel, int round,
                                         ChatEventConsumer eventConsumer,
-                                        long[] ttftMs, long turnStartMs, Long providerId, ContextBudget budget) {
+                                        long[] ttftMs, long turnStartMs, Long providerId, ContextBudget budget, String executionMode) {
         ResolvedLlm llm = ResolvedLlm.withLevel(modelResolver.resolve(requestedModel, null, providerId), reasoningLevel);
-        var body = upstreamClient.chatRequest(messages, toolsSpecBuilder.forMessages(messages));
+        var body = upstreamClient.chatRequest(messages, toolsSpecBuilder.forMessages(messages, executionMode));
         // 请求即将发出:刷新消费方的推理计时锚点(RAG/装配时间不计入思考时长)
-        int estimate = contextAssembler.requestTokens(messages);
+        int estimate = contextAssembler.requestTokens(messages, executionMode);
         var contextUsage = new ContextUsageDto(budget.tokens(estimate), null, estimate,
                 budget.window(), budget.windowConfigured(), round, "estimate", modelKey(llm), null, null);
         eventConsumer.upstreamRequestStarted(contextUsage);

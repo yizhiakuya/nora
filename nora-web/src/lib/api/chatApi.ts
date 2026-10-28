@@ -3,6 +3,7 @@ import { estimateChatMessageTokens } from "@/lib/chatContext";
 
 /** 结构化工具入参(execute_sql → sql;read_service_logs → service/limit) */
 interface ChatStepInput {
+  program?: string;
   sql?: string;
   service?: string;
   limit?: number;
@@ -101,6 +102,8 @@ interface ChatStepContext {
 }
 
 export interface ChatStep {
+  parentStepId?: string;
+  callIndex?: number;
   id: string;
   type: "think" | "tool" | "context" | "commentary" | "answer";
   title: string;

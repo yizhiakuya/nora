@@ -61,6 +61,7 @@ docker exec nora-postgres pg_dump -U nora -Fc nora > nora-backup.dump
 | 变量 | 用途 |
 |---|---|
 | NORA_TAG | 固定镜像版本 |
+| NORA_PTC_IMAGE | 可选 PTC 运行镜像，固定 sha256 digest 并提前拉取；留空禁用 |
 | API_PORT / WEB_PORT / POSTGRES_PORT | 默认 18080 / 13001 / 15432，支持宿主绑定地址 |
 | DB_USER / DB_PASSWORD | 数据库用户及已有库的密码 |
 | NORA_AUTH_TOKEN | 统一访问令牌，留空为免登录 |
@@ -70,6 +71,8 @@ docker exec nora-postgres pg_dump -U nora -Fc nora > nora-backup.dump
 数据库中的模型、MCP、Agent 设置和会话继续沿用。嵌入缓存改为 Caffeine 进程缓存（32 MiB、七天有效期），重启只会失去缓存，不会丢失知识向量或原文件。
 
 ## megumin 入口
+
+PTC 启用前拉取经验证的镜像，例如 `docker pull node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914`，在 `.env` 设置同值 `NORA_PTC_IMAGE` 后重建 API 容器。核对 API 用户可访问 Docker、模式接口 `ptcAvailable=true`，再验证程序及子工具。脚本容器不挂载工作区/socket，副作用走原权限门。限额、恢复和迁移见 [PTC 记录](dev/ptc-mode-design-2026-10-23.md)。
 
 既有入口为 `https://nora.rainaki.top:13001/`。宿主 Nginx 配置见 `scripts/nginx-nora.conf`，证书沿用 `/etc/nginx/certs/rainaki.pem` 和 rainaki.key。保留现有 acme.sh 续期和路由器端口转发。
 
