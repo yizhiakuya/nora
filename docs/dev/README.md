@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [deployment-2026-10-29.md](deployment-2026-10-29.md) | PTC 生产发布、Compose 变量传递修复、回退与备份边界；10 月 31 日复核并补齐记录 |
 | [ptc-mode-design-2026-10-23.md](ptc-mode-design-2026-10-23.md) | PTC 编程式工具调用模式设计：统一权限入口、隔离 JS 编排、父子步骤、取消恢复与验收 |
 | [media-auth-2026-10-22.md](media-auth-2026-10-22.md) | 本站媒体鉴权修复、URL 边界处理、真实图片与画廊验收及前端部署 |
 | [agent-domain-splits-2026-10-22.md](agent-domain-splits-2026-10-22.md) | Agent 域体量收敛:工具展示层、工作区引导注入、检索阶段三处拆分与验证 |

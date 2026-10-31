@@ -58,6 +58,8 @@ docker exec nora-postgres pg_dump -U nora -Fc nora > nora-backup.dump
 
 文件和工作区还需独立备份；仅备份数据库不能恢复原始文件。
 
+每次发布尝试使用独立的备份目录；目录已存在时停止并换新名称，不覆盖已有备份。记录备份时的迁移版本，回退后重试也要保留第一次迁移前的备份。包含新迁移的备份不能用作迁移前快照；恢复业务数据前仍须核对备份范围与发布后的写入。
+
 | 变量 | 用途 |
 |---|---|
 | NORA_TAG | 固定镜像版本 |
@@ -74,6 +76,16 @@ docker exec nora-postgres pg_dump -U nora -Fc nora > nora-backup.dump
 
 PTC 启用前拉取经验证的镜像，例如 `docker pull node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914`，在 `.env` 设置同值 `NORA_PTC_IMAGE` 后重建 API 容器。核对 API 用户可访问 Docker、模式接口 `ptcAvailable=true`，再验证程序及子工具。脚本容器不挂载工作区/socket，副作用走原权限门。限额、恢复和迁移见 [PTC 记录](dev/ptc-mode-design-2026-10-23.md)。
 
+升级保留了本地定制的旧 Compose 时，还须确认 `nora-api.environment` 包含 `NORA_PTC_IMAGE: ${NORA_PTC_IMAGE:-}`；仅修改 `.env` 不会把未映射的变量传入容器。沿用下述生产路径，只输出此配置项，避免显示包含密钥的完整配置：
+
+```bash
+docker compose --env-file /opt/nora/.env -f /opt/nora/repo/nora-api/docker-compose.prod.yml config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["nora-api"]["environment"].get("NORA_PTC_IMAGE", ""))'
+# 重建后使用 API 的运行用户检查容器内变量与 Docker 镜像访问
+docker exec nora-api sh -c 'test -n "$NORA_PTC_IMAGE" && docker image inspect "$NORA_PTC_IMAGE" --format "{{.Id}}"'
+```
+
+以上检查和已鉴权的 `GET /api/chat/sessions/{sessionId}/execution-mode` 只确认配置、镜像访问与已有会话模式可读，不能替代隔离环境中的真实 PTC 工具执行验收。
+
 既有入口为 `https://nora.rainaki.top:13001/`。宿主 Nginx 配置见 `scripts/nginx-nora.conf`，证书沿用 `/etc/nginx/certs/rainaki.pem` 和 rainaki.key。保留现有 acme.sh 续期和路由器端口转发。
 
 现有 `.env` 使用 `WEB_PORT=127.0.0.1:13002`，容器 HTTP 只监听回环地址，由宿主 Nginx 提供 HTTPS。生产配置路径为 `/opt/nora/.env`，Compose 位于 `/opt/nora/repo/nora-api/`：
@@ -81,10 +93,10 @@ PTC 启用前拉取经验证的镜像，例如 `docker pull node:22-alpine@sha25
 ```bash
 docker compose --env-file /opt/nora/.env -f /opt/nora/repo/nora-api/docker-compose.prod.yml ps
 nginx -t
-curl --fail --silent --show-error --head --resolve nora.rainaki.top:13001:127.0.0.1 https://nora.rainaki.top:13001/
+curl --noproxy '*' --fail --silent --show-error --head --resolve nora.rainaki.top:13001:127.0.0.1 https://nora.rainaki.top:13001/
 ```
 
-旧 systemd 和静态目录部署脚本已移除，避免误操作现有 Compose 业务。megumin 当前后端运行 `20261018-question-steering`（`.env` 的固定 `NORA_TAG`），服务器 Compose 的前端镜像固定为 `20261022-media-auth-a6b5916`。本站媒体鉴权修复、前端备份与线上验收见[10 月 22 日记录](dev/media-auth-2026-10-22.md)。提问中插入请求的修复、备份与线上验收见[提问等待修复记录](dev/question-steering-2026-10-18.md)，此前完整发布见[10 月 18 日部署记录](dev/deployment-2026-10-18.md)。此前的工作台版本见[10 月 13 日部署记录](dev/deployment-2026-10-13.md)，单应用迁移见[10 月 12 日记录](dev/deployment-2026-10-12.md)。其他部署历史在[开发记录](dev/README.md)。
+旧 systemd 和静态目录部署脚本已移除，避免误操作现有 Compose 业务。megumin 前后端均运行 `20261029-ptc-1c978dc`（2026-10-31 复核）：后端由 `.env` 的 `NORA_TAG` 固定，前端在服务器 Compose 中固定同一版本。PTC 发布、首次切换回退、备份范围与验收边界见[10 月 29 日记录](dev/deployment-2026-10-29.md)。本站媒体鉴权修复见[10 月 22 日记录](dev/media-auth-2026-10-22.md)，提问中插入请求的修复见[提问等待修复记录](dev/question-steering-2026-10-18.md)。其他部署历史在[开发记录](dev/README.md)。
 
 ## 本地开发
 
